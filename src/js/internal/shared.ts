@@ -440,18 +440,8 @@ const kHandle = Symbol("kHandle");
 const kClusterOwner = Symbol("kClusterOwner");
 const kCapture = Symbol("kCapture");
 const kShapeMode = Symbol("shapeMode");
-const kAutoDestroyed = Symbol("kAutoDestroyed");
 const kWeakHandler = Symbol("kWeak");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
-declare global {
-  namespace $Node {
-    interface Readable {
-      /** Set when the stream destroyed itself after its end, as `autoDestroy` asks. */
-      [kAutoDestroyed]?: boolean;
-    }
-  }
-}
 
 // Filled by the module that writes the functions. What lies in a public prototype object when another module loads may be a program's patch.
 const originals: {
@@ -491,7 +481,6 @@ export default {
   kClusterOwner,
   kCapture,
   kShapeMode,
-  kAutoDestroyed,
   kWeakHandler,
   kCustomPromisifyArgsSymbol,
   kEmptyObject,

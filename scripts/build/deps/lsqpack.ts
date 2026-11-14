@@ -25,6 +25,9 @@ export const lsqpack: Dependency = {
     // The decoder asks dhi_prepare_decode() for room for the bytes it has in
     // hand, so the buffer of a long name or value grows as it arrives.
     "patches/lsqpack/decode-room-for-bytes-in-hand.patch",
+    // The decoder failed a field section with no field lines, which is valid
+    // (RFC 9204 section 4.5), and lsquic then closed the connection.
+    "patches/lsqpack/accept-empty-field-section.patch",
   ],
 
   // lsqpack.c is compiled inside the lsquic dep because lsquic feeds it a

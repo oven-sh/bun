@@ -99,7 +99,6 @@ const named = secondTexts
 const loadedWith: Record<string, string> = {
   "internal/http.ts": "node:http2",
   "internal/http/FakeSocket.ts": "node:_http_outgoing",
-  "internal/http1_server_fallback.ts": "node:http2",
   "internal/net/isIP.ts": "node:net",
   "internal/net/symbols.ts": "node:net",
   "internal/primordials.js": "node:util",

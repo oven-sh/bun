@@ -293,7 +293,7 @@ function ClientRequest(
     input = urlToHttpOptions(new URL(urlStr));
   } else if (isURL(input)) {
     // url.URL instance
-    input = urlToHttpOptions(input);
+    input = urlToHttpOptions(input as URL);
   } else {
     cb = options as ResponseListener | undefined;
     options = input as $Node.ClientRequestOptions | ResponseListener | null | undefined;

@@ -30,16 +30,13 @@ pub struct SocketGroup {
     pub iterator: Cell<*mut us_socket_t>,
     pub prev: Cell<*mut SocketGroup>,
     pub next: Cell<*mut SocketGroup>,
-    pub global_tick: Cell<u32>,
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
     /// `close_all`/`destroy` must account for them separately.
-    pub low_prio_count: Cell<u16>,
-    pub timestamp: Cell<u8>,
-    pub long_timestamp: Cell<u8>,
+    pub low_prio_count: Cell<u32>,
     pub linked: Cell<u8>,
     /// `us_socket_group_init` zeroes the tail padding too.
-    _padding: Cell<[u8; 7]>,
+    _padding: Cell<[u8; 3]>,
 }
 
 #[repr(C)]
@@ -52,7 +49,6 @@ pub struct VTable {
     pub on_close:
         Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
     pub on_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_long_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_end: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_connect_error: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
     pub on_connecting_error:
@@ -62,13 +58,13 @@ pub struct VTable {
 }
 
 // Must match `struct us_socket_group_t` in libusockets.h.
-// 9 ptrs + u32 + u16 + 3×u8, padded to 8-byte alignment.
+// 9 ptrs + u32 + u8, padded to 8-byte alignment.
 const _: () = assert!(
-    core::mem::size_of::<SocketGroup>() == 9 * core::mem::size_of::<*mut c_void>() + 16,
+    core::mem::size_of::<SocketGroup>() == 9 * core::mem::size_of::<*mut c_void>() + 8,
     "SocketGroup layout drifted from us_socket_group_t"
 );
 const _: () = assert!(
-    core::mem::size_of::<VTable>() == 11 * core::mem::size_of::<*mut c_void>(),
+    core::mem::size_of::<VTable>() == 10 * core::mem::size_of::<*mut c_void>(),
     "VTable layout drifted from us_socket_vtable_t"
 );
 
@@ -128,6 +124,12 @@ impl SocketGroup {
         unsafe { us_socket_group_close_all(self) }
     }
 
+    /// [`close_all`](Self::close_all) for a thread that ends: see `thread_ends` in libusockets.h.
+    pub fn close_all_as_thread_ends(&self) {
+        // SAFETY: forwarding to C; `self` is a valid initialized group.
+        unsafe { us_socket_group_close_all_ex(self, 1, 1) }
+    }
+
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
     /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
     /// `RareData` pass null, so callers must know which they have.
@@ -150,6 +152,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
+        dns_err: &mut c_int,
     ) -> *mut ListenSocket {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
@@ -162,6 +165,7 @@ impl SocketGroup {
                 options,
                 socket_ext_size,
                 err,
+                dns_err,
             )
         }
     }
@@ -212,6 +216,21 @@ impl SocketGroup {
                 socket_ext_size,
                 err,
             )
+        }
+    }
+
+    /// Decodes an error uSockets reported for a listen, a connect or a close: an errno, or a Windows error code.
+    pub fn errno(err: c_int) -> Option<bun_errno::SystemErrno> {
+        if err == 0 {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            bun_errno::SystemErrno::init(err.unsigned_abs())
+        }
+        #[cfg(not(windows))]
+        {
+            bun_errno::SystemErrno::init(i64::from(err))
         }
     }
 
@@ -310,6 +329,11 @@ unsafe extern "C" {
     );
     fn us_socket_group_deinit(group: *const SocketGroup);
     fn us_socket_group_close_all(group: *const SocketGroup);
+    fn us_socket_group_close_all_ex(
+        group: *const SocketGroup,
+        also_listeners: c_int,
+        thread_ends: c_int,
+    );
     fn us_socket_group_listen(
         group: *const SocketGroup,
         kind: u8,
@@ -319,6 +343,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
+        dns_err: *mut c_int,
     ) -> *mut ListenSocket;
     fn us_socket_group_listen_unix(
         group: *const SocketGroup,

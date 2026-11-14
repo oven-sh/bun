@@ -1,6 +1,8 @@
 use core::ffi::c_void;
 
-use crate::socket::{SSLConfig, SSLConfigFromJs};
+use crate::api::SSLContextCache::SSLContextCache;
+use crate::generated_bindgen::ssl_config::TLSOptions;
+use crate::socket::ssl_config::ParsedTls;
 use bun_boringssl as boringssl;
 use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
@@ -299,7 +301,7 @@ pub(crate) struct JSValkeyClient {
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
-    pub(crate) _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
+    pub(crate) _secure: JsCell<Option<(u64, boringssl::c::OwnedSslCtx)>>,
 
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
@@ -1424,13 +1426,16 @@ impl JSValkeyClient {
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
             // Reuse across reconnect — the SSL_CTX is the only thing the
             // old `_socket_ctx` cache existed to preserve.
-            if self._secure.get().is_none() {
+            let version = vm.tls_defaults_version();
+            if !matches!(self._secure.get(), Some((built_at, _)) if *built_at == version) {
                 let mut err = uws::create_bun_socket_error_t::none;
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                let cache = crate::jsc_hooks::ssl_ctx_cache();
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                let config = vm.tls_config((**custom).clone(), false);
+                let ctx =
+                    SSLContextCache::get_or_create_for_client(&config.as_usockets(), &mut err);
+                self._secure.set(ctx.map(|ctx| (version, ctx)));
             }
             self._secure.get().is_none()
         } else {
@@ -1448,7 +1453,7 @@ impl JSValkeyClient {
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => Some(crate::jsc_hooks::default_client_ssl_ctx(vm)),
-            valkey::TLS::Custom(_) => Some(self._secure.get().as_ref().unwrap().as_ptr()),
+            valkey::TLS::Custom(_) => Some(self._secure.get().as_ref().unwrap().1.as_ptr()),
         };
 
         self.client_mut().status = valkey::Status::Connecting;
@@ -1934,14 +1939,11 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
-                if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
-                {
-                    this.tls = valkey::TLS::Custom(Box::new(ssl_config));
-                } else {
+                let options = TLSOptions::from_js(global_object, tls)?;
+                let Some(given) = ParsedTls::given(global_object, &options, false)? else {
                     return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
-                }
+                };
+                this.tls = valkey::TLS::Custom(Box::new(given));
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "tls",

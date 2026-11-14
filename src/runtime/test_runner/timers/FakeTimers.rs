@@ -476,6 +476,8 @@ pub(crate) struct FakeTimers {
     /// Empty while inactive.
     faked: Cell<ApiSet>,
     fakes_abort_signal_timeout: Cell<bool>,
+    /// `fakeLibraryTimers()` of `bun:internal-for-testing`.
+    fakes_library_timers: Cell<bool>,
     /// A preload script set up the current mock, so `on_test_file_end` keeps it.
     from_preload: Cell<bool>,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
@@ -508,6 +510,7 @@ impl Default for FakeTimers {
             active: Cell::new(false),
             faked: Cell::new(ApiSet::default()),
             fakes_abort_signal_timeout: Cell::new(false),
+            fakes_library_timers: Cell::new(false),
             from_preload: Cell::new(false),
             installs: Cell::new(0),
             firing: Cell::new(0),
@@ -581,6 +584,15 @@ impl FakeTimers {
     pub(crate) fn set_timeout_clock(&self) -> Clock {
         if self.faked.get().contains(Api::SetTimeout) {
             Clock::Fake
+        } else {
+            Clock::Real
+        }
+    }
+
+    /// The clock of the `setTimeout()` that a fake replaces. Built-in modules keep calling it.
+    pub(crate) fn replaced_set_timeout_clock(&self) -> Clock {
+        if self.fakes_library_timers.get() {
+            self.set_timeout_clock()
         } else {
             Clock::Real
         }
@@ -1844,6 +1856,10 @@ pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) ->
     timer_all().fake_timers.clear(global.bun_vm());
 
     Ok(chainable_this(global, this_value))
+}
+
+pub(crate) fn fake_library_timers(enabled: bool) {
+    timer_all().fake_timers.fakes_library_timers.set(enabled);
 }
 
 pub(crate) fn is_fake_timers() -> bool {

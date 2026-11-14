@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 26a4a653d8f942a822a4a5b79b8005d8725ed9562c1b0e5b742392e74be9e862.
+// Written against that file with the SHA-256 187149b53a9f2817dfa45fdb83095da5cf50ca1a44dfe0a8bc21c06681f11625.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -45,7 +45,6 @@ const TypedArrayPrototypeSet = Uint8Array.prototype.set;
 const { errorOrDestroy } = destroyImpl;
 const nop = () => {};
 const { emit } = shared.originals.eventEmitter!;
-const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const kShapeMode: typeof shared.kShapeMode = IS_COMPILED_AHEAD_OF_TIME ? shared.kShapeMode : (undefined as never);
 const kCapture: typeof shared.kCapture = IS_COMPILED_AHEAD_OF_TIME ? shared.kCapture : (undefined as never);
 const EventEmitterPrototype: $Node.EventEmitterPrototype = IS_COMPILED_AHEAD_OF_TIME
@@ -1811,8 +1810,7 @@ async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.Read
   try {
     while (true) {
       const chunk =
-        IS_COMPILED_AHEAD_OF_TIME &&
-        $findsDeclaredMember(stream as unknown as $Node.IncomingMessage, "destroyed", Readable)
+        IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream, "destroyed", Readable)
           ? readUnlessDestroyed(stream)
           : stream.destroyed
             ? null
@@ -2191,7 +2189,6 @@ const finishEnd = function endReadableNT(state: ReadableState, stream: $Node.Rea
     $findsNoMember(stream, "_writableState")
   ) {
     if ($findsDeclaredMember(state, "autoDestroy") ? (state[kState] & Flag.AutoDestroy) !== 0 : state.autoDestroy) {
-      stream[kAutoDestroyed] = true;
       stream.destroy();
     }
     return;
@@ -2214,7 +2211,6 @@ const finishEnd = function endReadableNT(state: ReadableState, stream: $Node.Rea
           (wState.finished || wState.writable === false));
 
     if (autoDestroy) {
-      stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
       stream.destroy();
     }
   }

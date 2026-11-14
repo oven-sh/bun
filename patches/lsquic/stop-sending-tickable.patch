@@ -1,0 +1,13 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1830,6 +1830,10 @@ handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
+         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
+                                                     next_send_stream);
+     stream->sm_qflags |= SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF;
++    /* bun: only a tick writes the frame.  lsquic_stream_shutdown() makes the
++     * connection tickable only `if (how && ...)', so a read shutdown outside
++     * a tick left the frame queued until the next alarm or packet. */
++    maybe_conn_to_tickable_if_writeable(stream, 1);
+ }
+ 
+ 

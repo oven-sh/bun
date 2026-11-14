@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::socket::ssl_config" });
+
 export const TLSOptionsSingleFile = b.union({
   string: b.string,
   buffer: b.bufferSource.arrayBuffer,
@@ -20,6 +22,16 @@ export const ALPNProtocols = b.union({
   buffer: b.bufferSource.arrayBuffer,
 });
 
+/** The protocol code for one of node:tls's names, such as "TLSv1.2". 0 for any other string. */
+export const protocolVersionCode = b.fn({ args: { name: b.string.utf8 }, returns: b.i32 });
+
+/** One of node:tls's names, or the protocol code node:tls itself passes. */
+export const TLSVersion = b.union({
+  none: b.null,
+  name: b.string,
+  code: b.i32.allowBigInt,
+});
+
 export const TLSOptions = b.dictionary(
   {
     passphrase: b.string.nullable,
@@ -32,8 +44,8 @@ export const TLSOptions = b.dictionary(
     cert: TLSOptionsFile,
     key: TLSOptionsFile,
     secureOptions: b.u32.allowBigInt.default(0),
-    minVersion: { type: b.i32.allowBigInt.default(0), rustName: "ssl_min_version" },
-    maxVersion: { type: b.i32.allowBigInt.default(0), rustName: "ssl_max_version" },
+    minVersion: { type: TLSVersion, rustName: "ssl_min_version" },
+    maxVersion: { type: TLSVersion, rustName: "ssl_max_version" },
     keyFile: b.string.nullable,
     certFile: b.string.nullable,
     caFile: b.string.nullable,

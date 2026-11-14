@@ -3944,3 +3944,110 @@ describe.concurrent.each([
     await client.closed;
   });
 });
+
+// Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.
+it("stop(true) survives a close handler that terminates the other sockets and runs the event loop", async () => {
+  using dir = tempDir("ws-stop-nested-tick", {
+    "stop.test.js": /* js */ `
+      import { expect, test } from "bun:test";
+
+      test("stop(true)", async () => {
+        const count = 6;
+        const sockets = [];
+        const stopped = Promise.withResolvers();
+        let closed = false;
+        let ranLoop = false;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          idleTimeout: 0,
+          fetch(request, server) {
+            return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+          },
+          websocket: {
+            open(ws) {
+              // From a timer, so that no tick of the socket loop is on the stack.
+              if (sockets.push(ws) === count) setTimeout(() => stopped.resolve(server.stop(true)), 1);
+            },
+            message() {},
+            close() {
+              if (closed) return;
+              closed = true;
+              for (const ws of sockets) ws.terminate();
+              let waited = false;
+              Bun.build({
+                entrypoints: ["./none.js"],
+                plugins: [{ name: "nested tick", setup: () => Bun.sleep(400).then(() => void (waited = true)) }],
+              }).catch(() => {});
+              ranLoop = waited;
+            },
+          },
+        });
+        const clients = [];
+        for (let i = 0; i < count; i++) {
+          const client = new WebSocket("ws://127.0.0.1:" + server.port);
+          client.onerror = () => {};
+          clients.push(client);
+        }
+        await stopped.promise;
+        expect(ranLoop).toBe(true);
+      });
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "stop.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
+// A sweep is 4 seconds, and the upgrade comes a moment after one.
+it.concurrent.each([
+  [8, "ping 2, close 3"],
+  [10, "ping 2, close 3"],
+  [16, "ping 3, close 5"],
+  [120, "ping 27, close 31"],
+])("idleTimeout %d closes a silent client within 4 seconds of it: %s", async (idleTimeout, expected) => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import { once } from "node:events";
+      import net from "node:net";
+      let sweeps = 0, ping, close;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: (request, server) => void server.upgrade(request),
+        websocket: { idleTimeout: ${idleTimeout}, message() {}, close: () => void (close = sweeps) },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {});
+      await once(client, "connect");
+      sweepSocketTimers(1);
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
+      await once(client, "data");
+      const pinged = once(client, "data");
+      while (close === undefined) {
+        sweeps++;
+        sweepSocketTimers(1);
+        if (sweeps === ${Number.parseInt(expected.slice(5))}) ping = (await pinged)[0][0] === 0x89 && sweeps;
+      }
+      console.log("ping " + ping + ", close " + close);
+      client.destroy();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(expected);
+  expect(exitCode).toBe(0);
+});

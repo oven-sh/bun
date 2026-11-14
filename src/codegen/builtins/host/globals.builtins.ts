@@ -661,6 +661,7 @@ const serverOptionNames = [
   "hostname",
   "host",
   "unix",
+  "fd",
   "baseURI",
   "id",
   "reusePort",
@@ -683,8 +684,8 @@ const pluginsSetUpUnder = (...path: readonly string[]) =>
     args: [b.any],
     result: "Escapes",
   });
-// The server, the URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
-const nodeRequestHandlerArguments = Array.from({ length: 12 }, () => b.any);
+// The URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
+const nodeRequestHandlerArguments = Array.from({ length: 11 }, () => b.any);
 const routeMethodNames = ["CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"];
 
 // A socket is one object for as long as it lives, whichever handler it is handed to.
@@ -1005,7 +1006,7 @@ const serverMembers = {
     returns: thisServer,
     uses: { this: serverState, options: serverOptions(thisServer) },
   },
-  // The handler gets a request of its own and no second argument: a copy of the Request that is passed, which is told from any other object by its class.
+  // The handler gets a request of its own: a copy of the Request that is passed, which is told from any other object by its class. Any other object is read as its href.
   fetch: {
     ...startedByOptions,
     args: { request: b.any.optional, options: b.any.optional },
@@ -1016,7 +1017,7 @@ const serverMembers = {
         b.keptCalled(requestHandlerCell, {
           times: "Once",
           this: thisServer,
-          args: [b.instance("Request").fresh],
+          args: [b.instance("Request").fresh, thisServer],
           result: "Escapes",
         }),
       ],
@@ -1047,7 +1048,7 @@ const serverMembers = {
     ...changesServerState,
     throws: true,
     args: { request: b.any.optional, seconds: b.any.optional },
-    returns: b.union(b.undefined, b.strictNull),
+    returns: b.undefined,
     uses: { this: serverState, request: [b.readsContents(), b.writesContents()], seconds: b.inspected },
   },
   port: readsServerState(b.union(b.f64, b.undefined)),

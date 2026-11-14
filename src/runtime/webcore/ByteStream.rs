@@ -197,6 +197,17 @@ impl ProducerHold {
         self.source.get().is_some()
     }
 
+    /// Whether a reader, a native sink or a whole-body read has taken the held stream.
+    pub(crate) fn has_consumer(&self) -> bool {
+        self.source.get().is_some_and(|source| {
+            // SAFETY: live through our ref.
+            let source = unsafe { source.as_ref() };
+            source.reader_context.get().is_some()
+                || source.context.sink.get().is_some()
+                || source.context.buffer_action.get().is_some()
+        })
+    }
+
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and the wrapper is not always rooted.
     pub(crate) fn bytes(&self) -> Option<PinnedBytes> {
@@ -425,14 +436,7 @@ impl ByteStream {
 
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
+    /// Seeds a new stream from the drain result.
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
@@ -955,10 +959,7 @@ impl ByteStream {
                 p.result = streams::Result::Done;
             });
             self.parent_const().is_closed.set(true);
-            return Some(blob::Any::InternalBlob(blob::Internal {
-                bytes: buffer,
-                was_string: false,
-            }));
+            return Some(blob::Any::from_owned_slice(buffer));
         }
 
         None

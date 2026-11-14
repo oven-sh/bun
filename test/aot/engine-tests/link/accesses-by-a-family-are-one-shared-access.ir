@@ -4,7 +4,7 @@
 # class A { m() {} static make() {} }  class B1 extends A { m() {} static make() {} } ..  function r(C) { return C.make; } r(B7); r(B1); ..  function s(C) { C.tag = 1; } ..  function p(C) { return C.prototype.m; } ..
 # Each field of a layout of the table of built-ins is one edge in every program: a layout more in the table moves the number by its fields.
 # RUN: link counts mechanisms=all
-# CHECK: counts flow | nodes {{*}} | edges 5080 | observers 3806 |
+# CHECK: counts flow | nodes {{*}} | edges 5071 | observers 3806 |
 
 layout L0 kind=Instance name="A" module=m0 constructor=f1
 # REPEAT: i = 1..200

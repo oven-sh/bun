@@ -306,11 +306,19 @@ JSValue JSReadableStreamDefaultController::dequeueChunkForRead(JSGlobalObject* g
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     ASSERT(!m_queue.isEmpty());
+    // Copy before dequeuing, so a failed allocation leaves the chunk in the queue.
+    JSValue copy;
+    if (teeBranchCopiesChunks(this)) [[unlikely]] {
+        copy = copyByteChunk(globalObject, m_queue.first().value.get());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     JSValue chunk;
     {
         WTF::Locker locker { cellLock() };
         chunk = m_queue.dequeueValue(locker);
     }
+    if (copy)
+        chunk = copy;
     if (m_closeRequested && m_queue.isEmpty()) {
         readableStreamDefaultControllerClearAlgorithms(this);
         readableStreamClose(globalObject, m_stream.get());

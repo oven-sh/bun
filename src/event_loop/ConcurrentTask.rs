@@ -78,9 +78,11 @@ pub mod task_tag {
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,
-        DuplexUpgradeContext,
+        UpgradedDuplex,
+        FdPipe,
         FetchTasklet,
         FetchTaskletDeinit,
+        FetchTaskletDelivered,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
         FSWatchTask,
@@ -119,8 +121,6 @@ pub mod task_tag {
         HTTPSServerDeinit,
         DebugHTTPServerDeinit,
         DebugHTTPSServerDeinit,
-        HTTPAppClose,
-        HTTPSAppClose,
         ShellAsync,
         ShellCondExprStatTask,
         ShellCpTask,
@@ -138,13 +138,15 @@ pub mod task_tag {
         AsyncCpTask,
         ShellAsyncCpTask,
         StreamPending,
+        TCPSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<false>
+        TLSSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<true>
         ThreadSafeFunction,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
-        WindowsNamedPipeContext,
+        WindowsNamedPipe,
         Write,
         Writev,
     }

@@ -16,14 +16,14 @@ const server = http.createServer((req, res) => {
     attempt("store a method", () => { prototype.end = function () { return -1; }; return prototype.end === end; });
     attempt("store the same method", () => { prototype.end = end; return prototype.end === end; });
     attempt("Reflect.set", () => Reflect.set(prototype, "write", () => 0));
-    attempt("delete a member", () => delete prototype.cork);
+    attempt("delete a member", () => delete prototype.flushHeaders);
     attempt("Reflect.deleteProperty", () => Reflect.deleteProperty(prototype, "writeHead"));
     attempt("add a name", () => { prototype.added = 1; return "added" in prototype; });
     attempt("another parent", () => Object.setPrototypeOf(prototype, null) === prototype);
     attempt("the same parent", () => Object.setPrototypeOf(prototype, Object.getPrototypeOf(prototype)) === prototype);
     attempt("Reflect.setPrototypeOf", () => Reflect.setPrototypeOf(prototype, {}));
     attempt("Object.assign", () => Object.assign(prototype, { abort() {} }) === prototype);
-    attempt("as it was", () => Object.getOwnPropertyDescriptor(prototype, "flags").get === flags.get && prototype.end === end && "cork" in prototype && "writeHead" in prototype);
+    attempt("as it was", () => Object.getOwnPropertyDescriptor(prototype, "flags").get === flags.get && prototype.end === end && "flushHeaders" in prototype && "writeHead" in prototype);
   } else if (round === 2) {
     let reads = 0; const finished = Object.getOwnPropertyDescriptor(prototype, "finished").get;
     Object.defineProperty(handle, "finished", { get() { reads++; return finished.call(this); }, configurable: true });

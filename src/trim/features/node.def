@@ -1,5 +1,5 @@
 feature NodeQuic "node:quic"
-  c-function us_nq_loop_flush_if_pending us_nq_loop_drain
+  c-function us_quic_loop_process us_quic_loop_flush_if_pending
 
 feature NodeHttp2 "node:http2"
 

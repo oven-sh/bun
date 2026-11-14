@@ -732,6 +732,7 @@ const nativeCalls = [
         times: 2,
         onBehalfOf: [...channelUsers, "%Subprocess%.prototype.send"],
       },
+      { file: "src/runtime/ipc_host.rs", caller: "handle_ipc_close", onBehalfOf: channelUsers },
       {
         file: "src/runtime/node/node_crypto_binding.rs",
         caller: "random_int",
@@ -755,7 +756,7 @@ const nativeCalls = [
     ],
     calls: environmentObjectMade(),
     otherMentions: [
-      { file: inBindings("JSEnvironmentVariableMap.cpp") },
+      { file: inBindings("JSEnvironmentVariableMap.cpp"), times: 2 },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },
       { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
@@ -810,7 +811,6 @@ const callsOfInspect = b.nativeCalls({
     { file: inBindings("UtilInspect.cpp") },
     { file: inBindings("ZigGlobalObject.cpp"), times: 2 },
     { file: inBindings("ZigGlobalObject.h") },
-    { file: inBindings("bindings.cpp") },
     { file: inBindings("webcore/JSBroadcastChannel.cpp") },
     { file: inBindings("webcore/JSPerformanceEntry.cpp") },
     { file: inBindings("webcore/JSURLSearchParams.cpp") },

@@ -65,6 +65,16 @@ pub(crate) fn handle_internal_message_child(
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
+    // A worker that hasn't loaded node:cluster has no server to close first. If it loads later, it finds the message.
+    if !child_singleton().is_ready()
+        && message.is_object()
+        && let Some(act) = message.get(global, "act")?
+        && act.is_string()
+        && act.to_bun_string(global)?.eq_ascii(b"disconnect")
+    {
+        crate::hw_exports::close_child_ipc(global);
+    }
+
     child_singleton().dispatch(message, handle, global)
 }
 
@@ -213,7 +223,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    if !message.is_object() || !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -306,7 +316,7 @@ pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObjec
 }
 
 pub(crate) fn cluster_raw_bind<'a>(
-    cx: &mut JsScope<'a>,
+    _cx: &mut JsScope<'a>,
     address_type: BindAddressType<'a>,
     address: BindAddress<'a>,
     port: f64,
@@ -316,7 +326,6 @@ pub(crate) fn cluster_raw_bind<'a>(
 
     #[cfg(windows)]
     {
-        let _ = cx;
         match address_type {
             BindAddressType::Udp(_) => return Ok(BindResult::Errno(-bun_sys::UV_E::NOTSUP)),
             BindAddressType::Family(family) if family == -1.0 => {
@@ -393,62 +402,28 @@ pub(crate) fn cluster_raw_bind<'a>(
             BindAddressType::Family(_) | BindAddressType::Ignored(_) => (false, 4),
         };
 
-        fn last_neg_errno() -> BindResult {
-            BindResult::Errno(-bun_core::ffi::errno())
-        }
-
-        fn close_fd(fd: c_int) {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
-
-        fn set_cloexec_nonblock(fd: c_int) {
-            let fd = bun_sys::Fd::from_native(fd);
-            let _ = bun_sys::set_close_on_exec(fd);
-            let _ = bun_sys::set_nonblocking(fd);
-        }
+        use bun_uws::udp::raw::{bsd_close_socket, bsd_create_socket};
 
         if atype == -1 {
-            let path_bytes = match address {
-                BindAddress::Text(path) => path,
-                BindAddress::Ignored(value) => {
-                    return Err(cx.global().throw_invalid_argument_type_value(
-                        "address",
-                        "string",
-                        value.to_js(),
-                    ));
-                }
+            let BindAddress::Text(path_bytes) = address else {
+                return Ok(BindResult::Errno(-(libc::EINVAL)));
             };
-            let mut sun: libc::sockaddr_un = bun_core::ffi::zeroed();
-            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
-            if path_bytes.len() >= sun.sun_path.len() {
-                return Ok(BindResult::Errno(-(libc::ENAMETOOLONG)));
+            let mut err: c_int = 0;
+            // SAFETY: `path_bytes` is readable for its length, and `err` is a live local.
+            let fd = unsafe {
+                bun_uws::socket_transfer::bsd_create_bound_socket_unix(
+                    path_bytes.as_ptr().cast(),
+                    path_bytes.len(),
+                    &raw mut err,
+                )
+            };
+            if fd < 0 {
+                return Ok(BindResult::Errno(-err));
             }
-            for (i, b) in path_bytes.iter().enumerate() {
-                sun.sun_path[i] = *b as _;
-            }
-            // SAFETY: socket/bind FFI; `sun` is a live `sockaddr_un` and `len` is at most its size.
-            unsafe {
-                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-                if fd < 0 {
-                    return Ok(last_neg_errno());
-                }
-                set_cloexec_nonblock(fd);
-                // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
-                let len = if path_bytes.first() == Some(&0) {
-                    core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
-                } else {
-                    core::mem::size_of::<libc::sockaddr_un>()
-                } as libc::socklen_t;
-                if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
-                    let e = last_neg_errno();
-                    close_fd(fd);
-                    return Ok(e);
-                }
-                return Ok(BindResult::Handle(BoundHandle {
-                    fd: fd as u64,
-                    port: -1,
-                }));
-            }
+            return Ok(BindResult::Handle(BoundHandle {
+                fd: fd as u64,
+                port: -1,
+            }));
         }
 
         let family: c_int = if atype == 6 {
@@ -500,11 +475,11 @@ pub(crate) fn cluster_raw_bind<'a>(
             // locals of the length passed, and every caller's `ss_len` is the size of a
             // `sockaddr_in` or `sockaddr_in6`, which fits in `ss`.
             unsafe {
-                let fd = libc::socket(family, socktype, 0);
+                let mut err: c_int = 0;
+                let fd = bsd_create_socket(family, socktype, 0, &mut err);
                 if fd < 0 {
-                    return Err(-bun_core::ffi::errno());
+                    return Err(-err);
                 }
-                set_cloexec_nonblock(fd);
 
                 let one: c_int = 1;
                 let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
@@ -557,7 +532,7 @@ pub(crate) fn cluster_raw_bind<'a>(
 
                 if libc::bind(fd, core::ptr::from_ref(ss).cast(), ss_len) != 0 {
                     let e = -bun_core::ffi::errno();
-                    close_fd(fd);
+                    bsd_close_socket(fd);
                     return Err(e);
                 }
                 Ok(fd)
@@ -694,7 +669,7 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
 }
 
-/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
+/// Returns 0 if `fd` is an unconnected socket of the wanted type that this thread doesn't listen on, or a negative errno.
 pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
@@ -740,6 +715,9 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
             if connected {
                 return -bun_sys::UV_E::INVAL;
             }
+            if VirtualMachine::get().uws_loop().listens_on(fd) {
+                return -bun_sys::UV_E::EXIST;
+            }
         }
         0
     }
@@ -751,19 +729,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
 }
 
 pub(crate) fn cluster_close_handle(fd: f64) {
-    #[cfg(windows)]
-    {
-        if fd.is_finite() && fd >= 0.0 {
-            bun_uws::socket_transfer::bsd_close_socket(
-                fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let fd = fd as i32;
-        if fd >= 0 {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
+    if fd.is_finite() && fd >= 0.0 {
+        bun_uws::socket_transfer::bsd_close_socket(fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR);
     }
 }

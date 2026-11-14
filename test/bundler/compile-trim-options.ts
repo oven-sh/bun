@@ -88,6 +88,11 @@ export const obeyed: Record<string, string[]> = {
     "--dns-result-order=verbatim",
     "--dns-result-order=nonsense",
   ],
+  "--network-family-autoselection-attempt-timeout": [
+    "--network-family-autoselection-attempt-timeout=500",
+    "--network-family-autoselection-attempt-timeout=nonsense",
+  ],
+  "--tls-keylog": ["--tls-keylog=keys.log"],
   "--redirect-warnings": ["--redirect-warnings=warnings.txt"],
   "--disable-warning": ["--disable-warning=x"],
   "--title": ["--title=x", "--title x", "--title 'two words'"],

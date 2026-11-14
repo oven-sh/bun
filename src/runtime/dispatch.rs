@@ -90,6 +90,7 @@ use crate::shell::interpreter::ShellTask;
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
+use crate::socket::DeferredWriteCompletion;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
@@ -291,24 +292,21 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::DuplexUpgradeContext => {
-            feature_arm!([Sockets], |context: crate::socket::DuplexUpgradeContext| {
-                // SAFETY: tag identifies pointee; the queue owns the live context
+        task_tag::UpgradedDuplex => {
+            feature_arm!([Sockets], |engine: UpgradedDuplex| {
+                // SAFETY: tag identifies pointee; the queue owns the live engine
                 // until `run_event` (which may free it).
-                crate::socket::DuplexUpgradeContext::run_event(unsafe {
-                    bun_ptr::ThisPtr::new(context)
-                });
+                UpgradedDuplex::run_event(unsafe { bun_ptr::ThisPtr::new(engine) });
             })
         }
-        #[cfg(windows)]
-        task_tag::WindowsNamedPipeContext => {
-            // Same shape as `DuplexUpgradeContext`: may free the context.
+        task_tag::FdPipe => feature_arm!([Sockets], |pipe: crate::socket::fd_pipe::FdPipe| {
             // SAFETY: tag identifies the pointee; the queue owns it until here.
-            unsafe {
-                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
-                    crate::socket::WindowsNamedPipeContext
-                ))
-            };
+            unsafe { crate::socket::fd_pipe::FdPipe::run_event(pipe) };
+        }),
+        #[cfg(windows)]
+        task_tag::WindowsNamedPipe => {
+            // SAFETY: tag identifies the pointee; the queue owns it until here.
+            unsafe { WindowsNamedPipe::run_event(cast_ptr!(WindowsNamedPipe)) };
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
@@ -386,6 +384,14 @@ pub(crate) fn run_task(
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
         }
+        task_tag::FetchTaskletDelivered => {
+            feature_arm!(
+                [Fetch],
+                |delivered: crate::webcore::fetch::FetchTaskletDelivered| {
+                    crate::webcore::fetch::FetchTaskletDelivered::run(delivered);
+                }
+            )
+        }
         task_tag::FetchTaskletRequestDrain => {
             feature_arm!(
                 [Fetch],
@@ -454,16 +460,6 @@ pub(crate) fn run_task(
             };
         }
         // A server that speaks TLS was given TLS options, which is what retains `TlsSockets`.
-        task_tag::HTTPAppClose => {
-            feature_arm!([Serve], |app: crate::server::AppCloseTask<false>| {
-                crate::server::AppCloseTask::<false>::run(app);
-            })
-        }
-        task_tag::HTTPSAppClose => {
-            feature_arm!([TlsSockets], |app: crate::server::AppCloseTask<true>| {
-                crate::server::AppCloseTask::<true>::run(app);
-            })
-        }
         task_tag::HTTPServerDeinit => {
             feature_arm!([Serve], |server: crate::server::ServerDeinitTask<
                 false,
@@ -781,6 +777,18 @@ pub(crate) fn run_task(
         task_tag::StreamPending => feature_arm!([WebStreams], |pending: StreamPending| {
             StreamPending::run_from_js_thread(pending);
         }),
+        task_tag::TCPSocketWriteCompletion => {
+            feature_arm!([Sockets], |completion: DeferredWriteCompletion<false>| {
+                // SAFETY: boxed in `complete_write_later`; the arm consumes it.
+                unsafe { bun_core::heap::take(completion) }.run();
+            })
+        }
+        task_tag::TLSSocketWriteCompletion => {
+            feature_arm!([Sockets], |completion: DeferredWriteCompletion<true>| {
+                // SAFETY: boxed in `complete_write_later`; the arm consumes it.
+                unsafe { bun_core::heap::take(completion) }.run();
+            })
+        }
 
         _ => {
             // A value outside `task_tag::COUNT` is a producer bug, but it's
@@ -876,7 +884,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 88,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1077,6 +1085,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             }
         }
         poll_tag::TERMINAL_POLL => feature_poll_arm!([Terminal], TerminalPoll),
+        bun_io::PollTag::FdPipe => {
+            in_features!([Sockets], (pipe: *mut crate::socket::fd_pipe::FdPipe = owner.ptr.cast()) {
+                // SAFETY: tag matched, so `owner.ptr` is the live pipe that registered this poll.
+                unsafe { (*pipe).on_poll() }
+            })
+        }
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {
@@ -1352,14 +1366,6 @@ pub(crate) unsafe fn fire_timer(
                 |c, _now, _vm| (*c).timer_callback()
             )
         }
-        EventLoopTimerTag::UpgradedDuplex => {
-            feature_timer_arm!(
-                [Sockets],
-                UpgradedDuplex,
-                event_loop_timer,
-                |c, _now, _vm| (*c).on_timeout()
-            )
-        }
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
@@ -1501,16 +1507,6 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         ),
-        EventLoopTimerTag::QuicEndpoint => in_features!(
-            [NodeQuic],
-            (
-                c: *mut crate::node::quic::QuicEndpoint =
-                    owner!(crate::node::quic::QuicEndpoint, event_loop_timer),
-            ) -> JsResult<()> {
-                crate::node::quic::QuicEndpoint::on_timer_fire(c);
-                Ok(())
-            }
-        ),
         EventLoopTimerTag::ViWait => in_features!(
             [Test],
             (
@@ -1644,8 +1640,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
         task_tag::CppTask => release!(CppTask),
-        task_tag::DuplexUpgradeContext => {
-            release_in!([Sockets], crate::socket::DuplexUpgradeContext)
+        task_tag::UpgradedDuplex => release_in!([Sockets], UpgradedDuplex),
+        task_tag::FdPipe => {
+            release_in!([Sockets], crate::socket::fd_pipe::FdPipe)
         }
         task_tag::FetchTasklet => release_in!([Fetch], FetchTasklet),
         task_tag::FetchTaskletDeinit => {
@@ -1688,6 +1685,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::BundleV2ParseTaskResult => {
             release_in!([Bundler], BundleV2ParseTaskResult)
         }
+        task_tag::FetchTaskletDelivered => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletDelivered)
+        }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
@@ -1712,8 +1712,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::GraphContextStopAndFree => {
             release!(bun_jsc::virtual_machine::GraphContextStopAndFree)
         }
-        task_tag::HTTPAppClose => release_in!([Serve], crate::server::AppCloseTask<false>),
-        task_tag::HTTPSAppClose => release_in!([TlsSockets], crate::server::AppCloseTask<true>),
         task_tag::HTTPServerDeinit => {
             release_in!([Serve], crate::server::ServerDeinitTask<false, false>)
         }
@@ -1784,6 +1782,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::AsyncCpTask => release_in!([NodeFs], crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_in!([WebStreams], StreamPending),
+        task_tag::TCPSocketWriteCompletion => {
+            release_in!([Sockets], DeferredWriteCompletion<false>)
+        }
+        task_tag::TLSSocketWriteCompletion => {
+            release_in!([Sockets], DeferredWriteCompletion<true>)
+        }
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
@@ -1813,9 +1817,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
-        task_tag::WindowsNamedPipeContext => {
+        task_tag::WindowsNamedPipe => {
             #[cfg(windows)]
-            release!(crate::socket::WindowsNamedPipeContext);
+            release!(WindowsNamedPipe);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

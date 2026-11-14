@@ -972,11 +972,10 @@ pub(crate) fn upload_stream(
     // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
     // `readStreamIntoSink` pump.
     if let Some(byte_stream) = readable_stream.ptr.bytes() {
-        if byte_stream.sink.get().is_none() {
+        if byte_stream.sink.get().is_none() && readable_stream.try_lock_native(cx.global()) {
             sink.source = crate::webcore::streams::SourceHandle::ByteStream(byte_stream);
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);
-            readable_stream.lock_native(cx.global());
             byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
@@ -1450,7 +1449,6 @@ pub(crate) fn readable_stream(
             ..Default::default()
         });
 
-    reader.context.setup();
     let readable_value = reader.to_readable_stream(cx)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {

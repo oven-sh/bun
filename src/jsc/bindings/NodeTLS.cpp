@@ -175,6 +175,35 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(getOpenSSLDefaultCertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::MarkedArgumentBuffer args;
+    for (X509* cert : us_get_openssl_default_certs()) {
+        uint8_t* der = nullptr;
+        int length = i2d_X509(cert, &der);
+        if (length < 0) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        auto pem = pemFromDER({ der, static_cast<size_t>(length) }, PEMStyle::OpenSSL);
+        OPENSSL_free(der);
+        args.append(JSC::jsString(vm, WTF::move(pem)));
+    }
+
+    if (args.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto certificates = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, certificates)));
+}
+
 static int noPasswordCallback(char*, int, int, void*)
 {
     return 0;

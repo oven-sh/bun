@@ -2,13 +2,13 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 
 // Sentry BUN-3KFE: SEGV in drain_queued_shutdowns derefing a freed socket
-// left in the abort tracker after Handler::on_close fell through on a
+// that the request still recorded after Handler::on_close fell through on a
 // DeadSocket/PooledSocket ext. See PR #32862 for the root-cause analysis.
 //
 // All production events were macOS aarch64 release; on Linux debug+ASAN the
-// per-tick assert_abort_tracker_sockets_alive() check never fired pre-fix
+// per-tick assert_request_sockets_alive() check never fired pre-fix
 // over ~10k iterations, so this test asserts the abort/close race stays
-// memory-safe under ASAN: a leaked tracker entry trips ASAN (or the debug
+// memory-safe under ASAN: a stale socket trips ASAN (or the debug
 // invariant check) in the child and fails the exit-code assertion.
 
 const handshakeFailFixture = /* ts */ `
@@ -71,7 +71,7 @@ server.close();
 console.log(JSON.stringify({ iters: ITERS, aborted, errored }));
 `;
 
-test.skipIf(!isASAN)("abort racing a TLS handshake failure does not leave a stale abort-tracker entry", async () => {
+test.skipIf(!isASAN)("abort racing a TLS handshake failure leaves no request on a closed socket", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", handshakeFailFixture],
     env: bunEnv,
@@ -134,21 +134,18 @@ for (let i = 0; i < ITERS; i++) {
 console.log(JSON.stringify({ iters: ITERS, settled }));
 `;
 
-test.skipIf(!isASAN)(
-  "abort racing a TLS Connection: close response does not leave a stale abort-tracker entry",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", connectionCloseFixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+test.skipIf(!isASAN)("abort racing a TLS Connection: close response leaves no request on a closed socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", connectionCloseFixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ summary: stdout.trim(), stderr, exitCode }).toEqual({
-      summary: JSON.stringify({ iters: 250, settled: 250 }),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  },
-);
+  expect({ summary: stdout.trim(), stderr, exitCode }).toEqual({
+    summary: JSON.stringify({ iters: 250, settled: 250 }),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});

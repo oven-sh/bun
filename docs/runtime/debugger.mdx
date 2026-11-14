@@ -145,7 +145,7 @@ await fetch("https://example.com", {
 ```
 
 ```txt
-[fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.3.3" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
+[fetch] $ curl --http1.1 'https://example.com/' -X POST -H 'content-type: application/json' -H 'Connection: keep-alive' -H 'User-Agent: Bun/1.3.3' -H 'Accept: */*' -H 'Host: example.com' -H 'Accept-Encoding: gzip, deflate, br' --compressed -H 'Content-Length: 13' --data-raw '{"foo":"bar"}'
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
 [fetch] > Connection: keep-alive
@@ -168,6 +168,8 @@ await fetch("https://example.com", {
 ```
 
 The lines with `[fetch] >` are the request from your local code, and the lines with `[fetch] <` are the response from the remote server.
+
+On macOS and Linux, each argument of the `curl` command is single-quoted, so a shell like `bash` or `zsh` passes `$`, backticks and double quotes to `curl` as they are. On Windows, the arguments are double-quoted for `cmd.exe`.
 
 To print without the `curl` command, set `BUN_CONFIG_VERBOSE_FETCH` to `true`.
 

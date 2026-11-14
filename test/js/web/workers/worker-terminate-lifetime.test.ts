@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -1301,6 +1301,193 @@ test(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(JSON.stringify({ failures: [], leakedFileSinks: 0 }) + "\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// The servers start after a tick because leaksan.supp suppresses everything allocated under
+// JSModuleLoader::evaluateNonVirtual, which is on the stack during module evaluation.
+describe.skipIf(!isASAN || isWindows)("Bun.serve request pools", () => {
+  const suppressions = join(import.meta.dirname, "../../../leaksan.supp");
+  const asanOptions = (option: string) => [bunEnv.ASAN_OPTIONS, option].filter(Boolean).join(":");
+
+  async function run(files: Record<string, string>, env: Record<string, string>) {
+    using dir = tempDir("worker-serve-pool", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  }
+
+  const runWorker = `
+    const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+    const closed = new Promise((resolve, reject) => {
+      worker.addEventListener("close", resolve);
+      worker.addEventListener("error", e => reject(e.message));
+    });
+  `;
+
+  test.concurrent.each([
+    ["http", `{}`],
+    ["https and http3", `{ tls: ${JSON.stringify({ cert: tls.cert, key: tls.key })}, http3: true }`],
+  ])(
+    "are freed when a Worker that served %s exits",
+    (_, options) =>
+      run(
+        {
+          "main.ts": `${runWorker} await closed; console.log("ok");`,
+          "worker.ts": `
+            await Bun.sleep(0);
+            const server = Bun.serve({ ...${options}, port: 0, fetch: () => new Response("ok") });
+            await (await fetch(server.url, { tls: { rejectUnauthorized: false } })).text();
+            await server.stop(true);
+          `,
+        },
+        {
+          ASAN_OPTIONS: asanOptions("detect_leaks=1"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${suppressions}`,
+        },
+      ),
+    timeout,
+  );
+
+  const parkedServer = (onRequest: string) => `
+    await Bun.sleep(0);
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        ${onRequest}
+        return new Promise(() => {});
+      },
+    });
+    fetch(server.url).catch(() => {});
+  `;
+
+  // Malloc=1 lets ASAN see a destructor touch the dead JSC VM. It needs leak detection off.
+  test.concurrent(
+    "keep a request that is in flight when the Worker is terminated",
+    () =>
+      run(
+        {
+          "main.ts": `
+            ${runWorker}
+            await new Promise(resolve => (worker.onmessage = resolve));
+            worker.terminate();
+            await closed;
+            console.log("ok");
+          `,
+          "worker.ts": parkedServer(`postMessage("in flight");`),
+        },
+        { Malloc: "1", ASAN_OPTIONS: asanOptions("detect_leaks=0") },
+      ),
+    timeout,
+  );
+
+  // Only the parked request still references the server, so this runs without the entries that hide a server.
+  test.concurrent(
+    "keep a request that is in flight when the main thread exits",
+    async () =>
+      run(
+        {
+          "lsan.supp": (await Bun.file(suppressions).text())
+            .split("\n")
+            .filter(line => !/uws|ServerAllConnectionsClosedTask/.test(line))
+            .join("\n"),
+          "main.ts": parkedServer(`setImmediate(() => { console.log("ok"); process.exit(0); });`),
+        },
+        { ASAN_OPTIONS: asanOptions("detect_leaks=1"), LSAN_OPTIONS: "print_suppressions=0:suppressions=lsan.supp" },
+      ),
+    timeout,
+  );
+});
+
+// On macOS every event loop allocates a mach port as its cross-thread wakeup channel. The child
+// counts its own receive rights with mach_port_names across Worker create/terminate cycles.
+test.skipIf(!isMacOS)(
+  "terminated Workers do not leak mach receive rights",
+  async () => {
+    const cycles = slow ? 6 : 10;
+    using dir = tempDir("worker-machport-leak", {
+      "worker.js": `postMessage("ready");\nsetInterval(() => {}, 1e9);\n`,
+      "main.js": `
+        import { dlopen, ptr, toArrayBuffer } from "bun:ffi";
+
+        const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", {
+          task_self_trap: { args: [], returns: "u32" },
+          mach_port_names: { args: ["u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        });
+
+        const task = symbols.task_self_trap();
+        const MACH_PORT_TYPE_RECEIVE = 1 << 17;
+
+        function countReceiveRights() {
+          const names = new BigUint64Array(1);
+          const namesCnt = new Uint32Array(1);
+          const types = new BigUint64Array(1);
+          const typesCnt = new Uint32Array(1);
+          const kr = symbols.mach_port_names(task, ptr(names), ptr(namesCnt), ptr(types), ptr(typesCnt));
+          if (kr !== 0) throw new Error("mach_port_names failed: " + kr);
+          const cnt = typesCnt[0];
+          const arr = new Uint32Array(toArrayBuffer(Number(types[0]), 0, cnt * 4));
+          let n = 0;
+          for (let i = 0; i < cnt; i++) {
+            if (arr[i] & MACH_PORT_TYPE_RECEIVE) n++;
+          }
+          return n;
+        }
+
+        const workerUrl = new URL("./worker.js", import.meta.url).href;
+
+        async function cycle() {
+          const w = new Worker(workerUrl);
+          await new Promise((resolve, reject) => {
+            w.onmessage = resolve;
+            w.onerror = e => reject(new Error("worker error: " + (e && e.message)));
+          });
+          await w.terminate();
+        }
+
+        // Warm up lazy one-time allocations (thread pools, dispatch state).
+        for (let i = 0; i < 3; i++) await cycle();
+
+        const CYCLES = ${cycles};
+        const baseline = countReceiveRights();
+        for (let i = 0; i < CYCLES; i++) await cycle();
+
+        // The worker thread releases the port on its exit path, which can lag terminate().
+        const deadline = Date.now() + 15_000;
+        let current = countReceiveRights();
+        while (current - baseline > CYCLES / 2 && Date.now() < deadline) {
+          await Bun.sleep(50);
+          current = countReceiveRights();
+        }
+
+        if (current - baseline > CYCLES / 2) {
+          console.log("LEAK baseline=" + baseline + " final=" + current + " cycles=" + CYCLES);
+          process.exit(1);
+        }
+        console.log("OK baseline=" + baseline + " final=" + current);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toStartWith("OK ");
     expect(exitCode).toBe(0);
   },
   timeout,

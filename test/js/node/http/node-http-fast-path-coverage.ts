@@ -54,7 +54,7 @@ export async function measure(cmd: string[]) {
 type Counts = { requests: number; fastDispatch: number; compactHeaders: number; singleTickFinish: number };
 export type Coverage = Record<string, Counts>;
 
-const usual = { requests: 10, fastDispatch: 10, compactHeaders: 10, singleTickFinish: 9 };
+const usual = { requests: 10, fastDispatch: 10, compactHeaders: 10, singleTickFinish: 10 };
 const everyRoute = {
   "GET /text": usual,
   "GET /json": usual,
@@ -73,5 +73,5 @@ export const stacks: [stack: string, expected: Coverage][] = [
     "express with middleware",
     { ...everyRoute, "GET /missing": finishesInSeveralTicks, "POST /echo": finishesInSeveralTicks },
   ],
-  ["fastify", { ...everyRoute, "POST /echo": { ...usual, singleTickFinish: 10 } }],
+  ["fastify", everyRoute],
 ];

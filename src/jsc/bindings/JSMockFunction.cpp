@@ -19,6 +19,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include "_NativeModule.h"
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -3078,6 +3079,22 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
         target->prototypeProperty(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // A builtin module's lazy export (fs.ReadStream) is an accessor until its first read. Read it, then spy on the value.
+    if (access == SpyAccess::Value && object->type() != JSC::JSType::ProxyObjectType) {
+        JSC::PropertySlot probe(object, JSC::PropertySlot::InternalMethodType::HasProperty);
+        bool has = object->getPropertySlot(globalObject, propertyKey, probe);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (has && probe.isAccessor() && probe.slotBase() == object) {
+            JSObject* getter = probe.getterSetter()->getter();
+            // A getter in C++ (Map.prototype.size) asks its receiver, which a prototype is not.
+            auto* function = dynamicDowncast<JSFunction>(getter);
+            if (Zig::isBunDefinedGetter(getter) && !(function && function->isNonBoundHostFunction())) {
+                probe.getValue(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
     }
 
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
 // @ts-ignore undici 5's types don't declare ping()
-import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
+import { ping, request, errors as undiciErrors, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -170,6 +170,73 @@ describe("undici", () => {
       });
     });
 
+    describe("body.dump()", () => {
+      it("drains the body and resolves null", async () => {
+        const { body } = await request(`${hostUrl}/get`);
+        expect(await body.dump()).toBeNull();
+        expect(body.bodyUsed).toBe(true);
+        expect(body.destroyed).toBe(true);
+        expect(await body.dump()).toBeNull();
+        expect(await body.text().catch(e => e.message)).toBe("unusable");
+      });
+
+      it.each([
+        ["a Content-Length", () => new Response(Buffer.alloc(1024 * 1024, "x"))],
+        [
+          "no Content-Length",
+          () =>
+            new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue(Buffer.alloc(4096, "x"));
+                },
+              }),
+            ),
+        ],
+      ])("destroys a body over the limit that has %s and resolves null", async (_, fetch) => {
+        await using server = Bun.serve({ port: 0, fetch });
+        const { body } = await request(server.url.href);
+        expect(await body.dump({ limit: 1024 })).toBeNull();
+        expect(body.destroyed).toBe(true);
+      });
+
+      it("rejects with the signal's reason", async () => {
+        const reason = new Error("stop");
+        const aborted = await request(`${hostUrl}/get`);
+        expect(await aborted.body.dump({ signal: AbortSignal.abort(reason) } as never).catch(e => e)).toBe(reason);
+        aborted.body.destroy();
+
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(new ReadableStream({ start: controller => controller.enqueue(Buffer.from("x")) })),
+        });
+        const controller = new AbortController();
+        const { body } = await request(server.url.href);
+        const dumped = body.dump({ signal: controller.signal } as never);
+        controller.abort(reason);
+        expect(await dumped.catch(e => e)).toBe(reason);
+      });
+
+      it("rejects a signal that isn't an AbortSignal", async () => {
+        const { body } = await request(`${hostUrl}/get`);
+        expect(await body.dump({ signal: 42 } as never).catch(e => e)).toMatchObject({
+          code: "UND_ERR_INVALID_ARG",
+          message: "signal must be an AbortSignal",
+        });
+        body.destroy();
+      });
+    });
+
+    it("body.bytes() resolves with a Uint8Array", async () => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("hello bytes") });
+      const { body } = await request(server.url.href);
+      // @ts-ignore undici 5's types don't declare bytes()
+      const bytes = await body.bytes();
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(bytes)).toBe("hello bytes");
+      expect(body.bodyUsed).toBe(true);
+    });
+
     it("should make a POST request when provided a body and POST method", async () => {
       const { body } = await request(`${hostUrl}/post`, {
         method: "POST",
@@ -276,6 +343,25 @@ describe("undici", () => {
       expect(chunks).toEqual([]);
     });
 
+    it.each([
+      [true, "method must be a string"],
+      [123, "method must be a string"],
+      [["POST"], "method must be a string"],
+      ["GET POST", "invalid request method"],
+      [" GET", "invalid request method"],
+      ["GET\r\n", "invalid request method"],
+      ["CONNECT", "invalid method"],
+    ])("rejects the method %p like undici", async (method, message) => {
+      const error = await request(`${hostUrl}/get`, { method: method as never }).catch(e => e);
+      expect(error).toBeInstanceOf(undiciErrors.InvalidArgumentError);
+      expect({ code: error.code, message: error.message }).toEqual({ code: "UND_ERR_INVALID_ARG", message });
+    });
+
+    it.each([undefined, null, ""])("sends GET for the method %p", async method => {
+      const { body } = await request(`${hostUrl}/get`, { method: method as never });
+      expect(await body.json()).toMatchObject({ method: "GET" });
+    });
+
     it("should allow a query string to be passed", async () => {
       const { body } = await request(`${hostUrl}/get?foo=bar`);
       expect(body).toBeDefined();
@@ -349,6 +435,103 @@ describe("undici", () => {
     //   const json = (await body.json()) as { form: { foo: string } };
     //   expect(json.form.foo).toBe("bar");
     // });
+  });
+});
+
+describe("undici.errors", () => {
+  // undici 5's types lack some of the classes and constructor arguments.
+  const errors: Record<string, any> = undiciErrors;
+
+  it.each([
+    ["AbortError", "AbortError", "UND_ERR_ABORT", "The operation was aborted"],
+    [
+      "BalancedPoolMissingUpstreamError",
+      "MissingUpstreamError",
+      "UND_ERR_BPL_MISSING_UPSTREAM",
+      "No upstream has been added to the BalancedPool",
+    ],
+    ["BodyTimeoutError", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT", "Body Timeout Error"],
+    ["ClientClosedError", "ClientClosedError", "UND_ERR_CLOSED", "The client is closed"],
+    ["ClientDestroyedError", "ClientDestroyedError", "UND_ERR_DESTROYED", "The client is destroyed"],
+    ["ConnectTimeoutError", "ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT", "Connect Timeout Error"],
+    ["HeadersOverflowError", "HeadersOverflowError", "UND_ERR_HEADERS_OVERFLOW", "Headers Overflow Error"],
+    ["HeadersTimeoutError", "HeadersTimeoutError", "UND_ERR_HEADERS_TIMEOUT", "Headers Timeout Error"],
+    ["InformationalError", "InformationalError", "UND_ERR_INFO", "Request information"],
+    ["InvalidArgumentError", "InvalidArgumentError", "UND_ERR_INVALID_ARG", "Invalid Argument Error"],
+    [
+      "InvalidReturnValueError",
+      "InvalidReturnValueError",
+      "UND_ERR_INVALID_RETURN_VALUE",
+      "Invalid Return Value Error",
+    ],
+    ["NotSupportedError", "NotSupportedError", "UND_ERR_NOT_SUPPORTED", "Not supported error"],
+    ["RequestAbortedError", "AbortError", "UND_ERR_ABORTED", "Request aborted"],
+    [
+      "RequestContentLengthMismatchError",
+      "RequestContentLengthMismatchError",
+      "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH",
+      "Request body length does not match content-length header",
+    ],
+    ["RequestRetryError", "RequestRetryError", "UND_ERR_REQ_RETRY", "Request retry error"],
+    [
+      "ResponseContentLengthMismatchError",
+      "ResponseContentLengthMismatchError",
+      "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
+      "Response body length does not match content-length header",
+    ],
+    [
+      "ResponseExceededMaxSizeError",
+      "ResponseExceededMaxSizeError",
+      "UND_ERR_RES_EXCEEDED_MAX_SIZE",
+      "Response content exceeded max size",
+    ],
+    [
+      "ResponseStatusCodeError",
+      "ResponseStatusCodeError",
+      "UND_ERR_RESPONSE_STATUS_CODE",
+      "Response Status Code Error",
+    ],
+    ["SocketError", "SocketError", "UND_ERR_SOCKET", "Socket error"],
+  ])("%s has undici's name, code and default message", (className, name, code, defaultMessage) => {
+    const ErrorClass = errors[className];
+    expect(ErrorClass.name).toBe(className);
+    const error = new ErrorClass();
+    expect(error).toBeInstanceOf(errors.UndiciError);
+    expect({ name: error.name, code: error.code, message: error.message }).toEqual({
+      name,
+      code,
+      message: defaultMessage,
+    });
+    expect(new ErrorClass("custom")).toMatchObject({ name, code, message: "custom" });
+  });
+
+  it("keeps the extra constructor arguments", () => {
+    expect(new errors.RequestAbortedError()).toBeInstanceOf(errors.AbortError);
+    expect(new errors.UndiciError("custom")).toMatchObject({ name: "UndiciError", code: "UND_ERR", message: "custom" });
+    expect(new errors.HTTPParserError("bad", "INVALID_CONSTANT", Buffer.from("x"))).toMatchObject({
+      name: "HTTPParserError",
+      code: "HPE_INVALID_CONSTANT",
+      data: "x",
+    });
+    expect(new errors.SocketError("other side closed", { remotePort: 80 }).socket).toEqual({ remotePort: 80 });
+    expect(new errors.ResponseStatusCodeError("bad", 500, { a: "b" }, "body")).toMatchObject({
+      status: 500,
+      statusCode: 500,
+      headers: { a: "b" },
+      body: "body",
+    });
+    expect(new errors.RequestRetryError("retry", 503, { headers: { a: "b" }, data: { count: 1 } })).toMatchObject({
+      statusCode: 503,
+      headers: { a: "b" },
+      data: { count: 1 },
+    });
+    const cause = new Error("tls");
+    expect(new errors.SecureProxyConnectionError(cause)).toMatchObject({
+      name: "SecureProxyConnectionError",
+      code: "UND_ERR_PRX_TLS",
+      message: "Secure Proxy Connection failed",
+      cause,
+    });
   });
 });
 

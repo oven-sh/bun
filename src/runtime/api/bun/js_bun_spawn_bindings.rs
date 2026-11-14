@@ -1472,6 +1472,8 @@ fn spawn_maybe_sync(
     #[cfg(unix)]
     let mut posix_ipc_info: Option<IPC::Socket> = None;
     #[cfg(unix)]
+    let mut posix_ipc_err: Option<sys::Error> = None;
+    #[cfg(unix)]
     if !is_sync {
         if let Some(mode) = maybe_ipc_mode {
             let loop_ = jsc_vm.uws_loop();
@@ -1483,7 +1485,18 @@ fn spawn_maybe_sync(
                 0,
                 true,
             );
-            if !raw_socket.is_null() {
+            if raw_socket.is_null() {
+                let syscall = if cfg!(any(target_os = "linux", target_os = "android")) {
+                    sys::Tag::epoll_ctl
+                } else {
+                    sys::Tag::kevent
+                };
+                posix_ipc_err = Some(sys::Error::from_code_int(sys::last_errno(), syscall));
+                posix_ipc_fd.close();
+                subprocess.stdio_pipes.with_mut(|v| {
+                    v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                });
+            } else {
                 let socket = raw_socket;
                 subprocess.ipc_data.set(Some(IPC::SendQueue::new(
                     mode,
@@ -1660,10 +1673,14 @@ fn spawn_maybe_sync(
         Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
         _ => None,
     };
-    if let Some(err) = &setup_err {
+    #[cfg(unix)] // Windows adopts the pipe at create and start() cannot fail there.
+    if setup_err.is_some() {
         // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
-        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
+    } else {
+        setup_err = posix_ipc_err;
+    }
+    if let Some(err) = &setup_err {
         // No wrapper finalizes a sync Subprocess, and only this call can reap its child: it is killed once
         // it is watched, and the error is thrown after the wait below has released everything.
         if !is_sync {

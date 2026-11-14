@@ -1,0 +1,45 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2648,6 +2648,17 @@ enum LSQUIC_CONN_STATUS
+ enum LSQUIC_CONN_STATUS
+ lsquic_conn_status (lsquic_conn_t *, char *errbuf, size_t bufsz);
+ 
++/**
++ * bun: the transport error code this side recorded for its CONNECTION_CLOSE
++ * frame.  lsquic_conn_status() has no code, and it reports an error that fails
++ * the handshake (a TLS alert, say) as LSCONN_ST_VERNEG_FAILURE.
++ *
++ * @retval  1   `code' is set.
++ * @retval  0   No error is recorded, or it's an application error.
++ */
++int
++lsquic_conn_local_transport_error (const lsquic_conn_t *, uint64_t *code);
++
+ extern const char *const
+ lsquic_ver2str[N_LSQVER];
+ 
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -8980,6 +8980,22 @@ ietf_full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
+ }
+ 
+ 
++/* bun: see lsquic.h */
++int
++lsquic_conn_local_transport_error (const struct lsquic_conn *lconn,
++                                                            uint64_t *code)
++{
++    const struct ietf_full_conn *const conn
++                                    = (const struct ietf_full_conn *) lconn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF
++            || !conn->ifc_error.recorded || conn->ifc_error.app_error)
++        return 0;
++    *code = conn->ifc_error.u.err;
++    return 1;
++}
++
++
+ static void
+ ietf_full_conn_ci_stateless_reset (struct lsquic_conn *lconn)
+ {

@@ -14,9 +14,8 @@ struct H2App {
     Http2Context *http2Context;
 
     template <bool SSL>
-    static H2App *create(TemplatedApp<SSL> *parent, bool allowHttp1, unsigned idleTimeoutSecs = 0) {
-        if (!parent || parent->constructorFailed()) return nullptr;
-        Http2Context *ctx = Http2Context::create(Loop::get(), idleTimeoutSecs);
+    static H2App *create(TemplatedApp<SSL> *parent, bool allowHttp1, unsigned idleTimeoutSecs, uint64_t maxRequestBodySize) {
+        Http2Context *ctx = Http2Context::create(Loop::get(), idleTimeoutSecs, maxRequestBodySize);
         parent->attachHttp2(ctx, allowHttp1);
         return new H2App{ctx};
     }
@@ -51,8 +50,6 @@ struct H2App {
 
     void clearRoutes() { http2Context->clearRoutes(); }
     /* GOAWAY + close every connection. */
-    void close() { http2Context->closeAll(); }
-    void *getNativeHandle() { return http2Context; }
 };
 
 }

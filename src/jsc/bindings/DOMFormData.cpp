@@ -33,7 +33,6 @@
 #include "URLSearchParams.h"
 #include "VectorSizeLimit.h"
 #include "wtf/DebugHeap.h"
-#include <wtf/URLParser.h>
 
 namespace WebCore {
 
@@ -63,18 +62,6 @@ ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext* contex
     }
 
     return newFormData;
-}
-
-String DOMFormData::toURLEncodedString()
-{
-    WTF::URLParser::URLEncodedForm form;
-    form.reserveInitialCapacity(m_items.size());
-    for (auto& item : m_items) {
-        if (auto value = std::get_if<String>(&item.data))
-            form.append({ item.name, *value });
-    }
-
-    return WTF::URLParser::serialize(form);
 }
 
 extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, EncodedSlice*, void*, EncodedSlice*, uint8_t))

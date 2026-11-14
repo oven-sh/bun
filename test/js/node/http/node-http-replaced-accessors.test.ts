@@ -34,15 +34,15 @@ shouldKeepAlive of the response replaced on the object, a body that is read, end
 shouldKeepAlive of the response replaced on the object, a body that is ignored, end(body): 200 ok keep-alive
     get shouldKeepAlive: true | the listener returns
 shouldKeepAlive of the response replaced on an heir of its prototype, end(body): 200 ok keep-alive
-    get shouldKeepAlive: true | the listener returns
+    the listener returns
 shouldKeepAlive of the response replaced on an heir of its prototype, write(), end(body): 200 ok keep-alive
-    get shouldKeepAlive: true | the listener returns
+    the listener returns
 shouldKeepAlive of the response replaced on an heir of its prototype, a content-length, write(), end(): 200 ok keep-alive
-    get shouldKeepAlive: true | the listener returns
+    the listener returns
 shouldKeepAlive of the response replaced on an heir of its prototype, a body that is read, end(body): 200 ok keep-alive
-    the listener returns | get shouldKeepAlive: true
+    the listener returns
 shouldKeepAlive of the response replaced on an heir of its prototype, a body that is ignored, end(body): 200 ok keep-alive
-    get shouldKeepAlive: true | the listener returns
+    the listener returns
 shouldKeepAlive of the response replaced on the object, beside a tick and a promise job, end(body): 200 ok keep-alive
     get shouldKeepAlive: true | the listener returns | a tick | a promise job
 shouldKeepAlive of the response replaced on the object, beside a tick and a promise job, write(), end(body): 200 ok keep-alive
@@ -76,9 +76,9 @@ shouldKeepAlive of the response replaced on the object, and the response has lis
 socket of the response replaced on the object, end(body): 200 ok keep-alive
     the listener returns | set socket: null
 socket of the response replaced on the object, write(), end(body): 200 ok keep-alive
-    get socket: an object | the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced on the object, a content-length, write(), end(): 200 ok keep-alive
-    get socket: an object | the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced on the object, a body that is read, end(body): 200 ok keep-alive
     the listener returns | set socket: null
 socket of the response replaced on the object, a body that is ignored, end(body): 200 ok keep-alive
@@ -86,9 +86,9 @@ socket of the response replaced on the object, a body that is ignored, end(body)
 socket of the response replaced on an heir of its prototype, end(body): 200 ok keep-alive
     the listener returns | set socket: null
 socket of the response replaced on an heir of its prototype, write(), end(body): 200 ok keep-alive
-    get socket: an object | the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced on an heir of its prototype, a content-length, write(), end(): 200 ok keep-alive
-    get socket: an object | the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced on an heir of its prototype, a body that is read, end(body): 200 ok keep-alive
     the listener returns | set socket: null
 socket of the response replaced on an heir of its prototype, a body that is ignored, end(body): 200 ok keep-alive
@@ -96,9 +96,9 @@ socket of the response replaced on an heir of its prototype, a body that is igno
 socket of the response replaced on the object, beside a tick and a promise job, end(body): 200 ok keep-alive
     the listener returns | set socket: null | a tick | a promise job
 socket of the response replaced on the object, beside a tick and a promise job, write(), end(body): 200 ok keep-alive
-    get socket: an object | the listener returns | set socket: null | a tick | get socket: an object | a promise job
+    the listener returns | set socket: null | a tick | a promise job
 socket of the response replaced on the object, beside a tick and a promise job, a content-length, write(), end(): 200 ok keep-alive
-    get socket: an object | the listener returns | set socket: null | a tick | get socket: an object | a promise job
+    the listener returns | set socket: null | a tick | a promise job
 socket of the response replaced on the object, beside a tick and a promise job, a body that is read, end(body): 200 ok keep-alive
     the listener returns | a tick | a promise job | set socket: null
 socket of the response replaced on the object, beside a tick and a promise job, a body that is ignored, end(body): 200 ok keep-alive
@@ -106,9 +106,9 @@ socket of the response replaced on the object, beside a tick and a promise job, 
 socket of the response replaced on the object, by a listener of prefinish, end(body): 200 ok keep-alive
     the listener returns | set socket: null
 socket of the response replaced on the object, by a listener of prefinish, write(), end(body): 200 ok keep-alive
-    the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced on the object, by a listener of prefinish, a content-length, write(), end(): 200 ok keep-alive
-    the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced on the object, by a listener of prefinish, a body that is read, end(body): 200 ok keep-alive
     the listener returns | set socket: null
 socket of the response replaced on the object, by a listener of prefinish, a body that is ignored, end(body): 200 ok keep-alive
@@ -116,9 +116,9 @@ socket of the response replaced on the object, by a listener of prefinish, a bod
 socket of the response replaced on the object, and the response has listeners, end(body): 200 ok keep-alive
     prefinish | the listener returns | set socket: null | finish | close
 socket of the response replaced on the object, and the response has listeners, write(), end(body): 200 ok keep-alive
-    get socket: an object | prefinish | the listener returns | set socket: null | get socket: an object | finish | close
+    prefinish | the listener returns | set socket: null | finish | close
 socket of the response replaced on the object, and the response has listeners, a content-length, write(), end(): 200 ok keep-alive
-    get socket: an object | prefinish | the listener returns | set socket: null | get socket: an object | finish | close
+    prefinish | the listener returns | set socket: null | finish | close
 socket of the response replaced on the object, and the response has listeners, a body that is read, end(body): 200 ok keep-alive
     the listener returns | prefinish | set socket: null | finish | close
 socket of the response replaced on the object, and the response has listeners, a body that is ignored, end(body): 200 ok keep-alive
@@ -308,9 +308,9 @@ shouldKeepAlive of the response replaced between write() and end(): 200 ok keep-
 shouldKeepAlive of the response replaced between write() and end(), behind a content-length: 200 ok keep-alive
     the listener returns
 socket of the response replaced between write() and end(): 200 ok keep-alive
-    the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 socket of the response replaced between write() and end(), behind a content-length: 200 ok keep-alive
-    the listener returns | set socket: null | get socket: an object
+    the listener returns | set socket: null
 writableHighWaterMark of the response replaced between write() and end(): 200 ok keep-alive
     the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced between write() and end(), behind a content-length: 200 ok keep-alive

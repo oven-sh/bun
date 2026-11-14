@@ -5020,6 +5020,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
+extern "C" bool Bun__isMainThreadVM();
 
 // A module body is about to run. That means "the entry's graph is linked and executing" only if it is
 // part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
@@ -5039,6 +5040,8 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating)
         return;
     Bun__VM__noteEntryEvaluationStarted(bunVM);
+    if (Bun__isMainThreadVM())
+        globalObject->processObject()->openChannelOfClusterWorker(globalObject);
 }
 
 // The body of a compiled module starts without moduleLoaderEvaluate(), so a starting Worker asks after each turn of its event loop.

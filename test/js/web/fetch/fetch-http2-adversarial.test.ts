@@ -38,11 +38,13 @@ const hpackLit = (name: string, value: string) =>
 // ─── raw server with full preface control ────────────────────────────────────
 
 type RawSock = nodetls.TLSSocket;
-type StreamCb = (socket: RawSock, streamId: number, connIndex: number) => void;
+type StreamCb = (socket: RawSock, streamId: number, connIndex: number, headerBlock: Buffer) => void;
 type PrefaceCb = (socket: RawSock, connIndex: number) => void;
+/** `rst` has every RST_STREAM that arrived before this PING ACK. */
+type PingAckCb = (socket: RawSock, rst: ReadonlyArray<{ id: number; code: number }>) => void;
 
 async function withAdversarialServer(
-  opts: { onPreface?: PrefaceCb; onStream?: StreamCb; settingsPayload?: Buffer | null },
+  opts: { onPreface?: PrefaceCb; onStream?: StreamCb; onPingAck?: PingAckCb; settingsPayload?: Buffer | null },
   fn: (url: string, state: { connections: number; rst: Array<{ id: number; code: number }> }) => Promise<void>,
 ) {
   const state = { connections: 0, rst: [] as Array<{ id: number; code: number }> };
@@ -74,8 +76,9 @@ async function withAdversarialServer(
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1) && opts.settingsPayload !== null) socket.write(frame(4, 1, 0));
-        if (type === 1) opts.onStream?.(socket, id, connIndex);
+        if (type === 1) opts.onStream?.(socket, id, connIndex, Buffer.from(payload));
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
+        if (type === 6 && flags & 1) opts.onPingAck?.(socket, state.rst);
       }
     });
     socket.on("error", () => {});
@@ -267,6 +270,41 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     );
   });
 
+  // 1f. RFC 9113 section 8.6: HTTP/2 has no 101, so a 101 block is malformed, not
+  //     an interim response. The origin holds the final response until the client
+  //     ACKs the PING it sent after the 1xx block, so a reset that arrived by then
+  //     is for that block alone.
+  test.each([
+    ["103", { status: 200, body: "final" }, []],
+    ["101", { err: "HTTP2ProtocolError" }, [{ id: 1, code: 1 }]],
+  ])(":status %s before the final response", async (interim, expected, expectedRst) => {
+    const rstAtPingAck = Promise.withResolvers<Array<{ id: number; code: number }> | string>();
+    let streamId = 0;
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streamId = id;
+          // A client that fails the whole connection never sends the ACK.
+          socket.once("close", () => rstAtPingAck.resolve("the connection closed before the PING ACK"));
+          socket.write(Buffer.concat([frame(1, 0x4, id, hpackStatus(interim)), frame(6, 0, 0, Buffer.alloc(8))]));
+        },
+        onPingAck: (socket, rst) => {
+          rstAtPingAck.resolve([...rst]);
+          socket.write(
+            Buffer.concat([frame(1, 0x4, streamId, hpackStatus200), frame(0, 0x1, streamId, Buffer.from("final"))]),
+          );
+        },
+      },
+      async url => {
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
+        expect({ out, rst: await rstAtPingAck.promise }).toEqual({ out: expected, rst: expectedRst });
+      },
+    );
+  });
+
   // 2. MAX_CONCURRENT_STREAMS=0: server allows zero streams.
   test("MAX_CONCURRENT_STREAMS=0 does not hang", async () => {
     await withAdversarialServer(
@@ -309,6 +347,52 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         // saw an RST_STREAM(FLOW_CONTROL_ERROR=3).
         const fc = state.rst.some(r => r.code === 3);
         expect(fc || /FlowControl|HTTP2/.test(String(result))).toBe(true);
+      },
+    );
+  });
+
+  test("DATA past the stream's receive window resets the stream", async () => {
+    // The client advertises 16 MiB per stream and sends no WINDOW_UPDATE for a body nobody reads.
+    const chunk = frame(0, 0, 1, Buffer.alloc(16384));
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          socket.write(frame(1, 4, id, hpackStatus200));
+          socket.write(Buffer.concat(Array(1025).fill(chunk)));
+        },
+      },
+      async (url, state) => {
+        const res = await fetch(url, h2);
+        while (state.rst.length === 0) await new Promise(setImmediate);
+        expect(state.rst).toEqual([{ id: 1, code: 3 /* FLOW_CONTROL_ERROR */ }]);
+        expect(await res.bytes().catch(errcode)).toBe("HTTP2FlowControlError");
+      },
+    );
+  });
+
+  test("a request whose header block can't be encoded leaves the connection usable", async () => {
+    let answerFirst: (() => void) | undefined;
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          const answer = () => void socket.write(frame(1, 5, id, hpackStatus200));
+          if (id === 1) answerFirst = answer;
+          else answer();
+        },
+      },
+      async (url, state) => {
+        const status = (headers: Record<string, string>) => fetch(url, { ...h2, headers }).then(r => r.status, errcode);
+        const first = status({});
+        while (!answerFirst) await new Promise(setImmediate);
+        const tooLarge = await status({ "x-value": Buffer.alloc(70_000, "v").toString() });
+        const next = await status({});
+        answerFirst();
+        expect({ first: await first, tooLarge, next, connections: state.connections }).toEqual({
+          first: 200,
+          tooLarge: "UnableToEncode",
+          next: 200,
+          connections: 1,
+        });
       },
     );
   });
@@ -438,35 +522,101 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     await withAdversarialServer(
       {
         onStream: (socket, id) => {
-          // END_HEADERS only (0x4) — no END_STREAM.
+          if (id === 1) {
+            // END_HEADERS only (0x4) — no END_STREAM.
+            socket.write(
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+            );
+          } else {
+            // The barrier request.
+            socket.write(frame(1, 0x5, id, hpackStatus200));
+          }
+        },
+      },
+      async (url, state) => {
+        await using proc = spawnFetch(`
+          const opts = {
+            protocol: "http2",
+            signal: AbortSignal.timeout(8000),
+            tls: { rejectUnauthorized: false },
+          };
+          const r = await fetch(${JSON.stringify(url)}, opts);
+          const body = await r.text();
+          // RST_STREAM(1) is queued ahead of HEADERS(3) on the same socket, so
+          // this response proves the RST reached the server. Without it the
+          // subprocess can exit with the RST still in the send buffer.
+          const barrier = (await fetch(${JSON.stringify(url)}, opts)).status;
+          console.log(JSON.stringify({ status: r.status, body, barrier }));
+        `);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        // stderr first: on a crash it carries the panic/ASAN report.
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "", barrier: 200 });
+        expect(exitCode).toBe(0);
+        // The server never ended stream 1, so the client must send
+        // RST_STREAM(CANCEL). Otherwise the stream stays half-open and counts
+        // against MAX_CONCURRENT_STREAMS.
+        expect({ rst: state.rst, connections: state.connections }).toEqual({
+          rst: [{ id: 1, code: 8 }],
+          connections: 1,
+        });
+      },
+    );
+  });
+
+  // 9b. Same headers with DATA in the same TLS record. The extra byte
+  //     contradicts content-length: 0 (RFC 9113 §8.1.1). The head is already
+  //     valid by then, so fetch() resolves and the body read rejects.
+  test("content-length: 0 with coalesced DATA is a Content-Length mismatch", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // One write so HEADERS and DATA land in the same parseFrames pass.
           socket.write(
-            frame(
-              1,
-              0x4,
-              id,
-              Buffer.concat([
-                hpackStatus200,
-                hpackLit("content-length", "0"),
-                hpackLit("content-type", "text/event-stream"),
-              ]),
-            ),
+            Buffer.concat([
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+              frame(0, 0, id, Buffer.from("x")),
+            ]),
           );
         },
       },
       async url => {
         await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
+          const out = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",
             signal: AbortSignal.timeout(8000),
             tls: { rejectUnauthorized: false },
-          });
-          const body = await r.text();
-          console.log(JSON.stringify({ status: r.status, body }));
+          }).then(
+            r =>
+              r.text().then(
+                body => ({ status: r.status, body }),
+                e => ({ status: r.status, bodyErr: e.code || e.name }),
+              ),
+            e => ({ err: e.code || e.name }),
+          );
+          console.log(JSON.stringify(out));
         `);
         const { stdout, stderr, exitCode } = await collect(proc);
-        // stderr first: on a crash it carries the panic/ASAN report.
         expect(stderr).toBe("");
-        expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, bodyErr: "HTTP2ContentLengthMismatch" });
         expect(exitCode).toBe(0);
       },
     );
@@ -742,6 +892,145 @@ async function withRawOrigin(
     await endpoint.destroy();
   }
 }
+
+// fetch() checks frames with the code node:http2 uses, so it refuses what that refuses.
+describe.concurrent("malformed HTTP/2 frames end the connection", () => {
+  const h2 = { protocol: "http2", tls: { ca: tls.cert } } as const;
+  const outcome = (url: string) =>
+    fetch(url, h2).then(
+      res => res.status,
+      err => err.code,
+    );
+  const ok = (id: number) => frame(1, 5, id, hpackStatus200);
+
+  test.each<[string, Buffer | undefined, (id: number) => Buffer, string]>([
+    [
+      "HEADERS with the PRIORITY flag and 3 bytes",
+      undefined,
+      id => frame(1, 0x25, id, Buffer.alloc(3)),
+      "HTTP2FrameSizeError",
+    ],
+    ["SETTINGS_ENABLE_PUSH = 2", setting(2, 2), ok, "HTTP2ProtocolError"],
+    ["SETTINGS_ENABLE_CONNECT_PROTOCOL = 2", setting(8, 2), ok, "HTTP2ProtocolError"],
+  ])("%s", async (_, settingsPayload, answer, code) => {
+    await withAdversarialServer(
+      { settingsPayload, onStream: (socket, id) => void socket.write(answer(id)) },
+      async url => {
+        expect(await outcome(url)).toBe(code);
+      },
+    );
+  });
+
+  test("padding longer than its DATA frame, on a stream that has closed", async () => {
+    const onStream: StreamCb = (socket, id) => {
+      if (id > 1) socket.write(frame(0, 8, 1, Buffer.from([0xff])));
+      socket.write(ok(id));
+    };
+    await withAdversarialServer({ onStream }, async url => {
+      expect([await outcome(url), await outcome(url)]).toEqual([200, "HTTP2ProtocolError"]);
+    });
+  });
+
+  test("DATA past Content-Length fails the body without waiting for END_STREAM", async () => {
+    const onStream: StreamCb = (socket, id) => {
+      socket.write(frame(1, 4, id, Buffer.concat([hpackStatus200, hpackLit("content-length", "2")])));
+      socket.write(frame(0, 0, id, Buffer.from("okEXTRA")));
+    };
+    await withAdversarialServer({ onStream }, async url => {
+      const body = fetch(url, h2).then(res => res.text());
+      expect(await body.catch(err => err.code)).toBe("HTTP2ContentLengthMismatch");
+    });
+  });
+
+  test("SETTINGS_HEADER_TABLE_SIZE above 4096 doesn't grow the encoder's table", async () => {
+    const sizeUpdates: boolean[] = [];
+    const onStream: StreamCb = (socket, id, _, headerBlock) => {
+      // A dynamic table size update is 001xxxxx (RFC 7541 section 6.3).
+      sizeUpdates.push((headerBlock[0] & 0xe0) === 0x20);
+      socket.write(ok(id));
+    };
+    await withAdversarialServer({ settingsPayload: setting(1, 65536), onStream }, async url => {
+      expect([await outcome(url), await outcome(url), await outcome(url)]).toEqual([200, 200, 200]);
+      expect(sizeUpdates).toEqual([false, false, false]);
+    });
+  });
+});
+
+describe.concurrent("a response that ends before its head is complete rejects", () => {
+  const outcome = (response: Promise<Response>) =>
+    response.then(
+      res => res.status,
+      err => err.code,
+    );
+  const requests: [string, BunFetchRequestInit][] = [
+    ["GET", {}],
+    ["POST", { method: "POST", body: "body" }],
+  ];
+  const hpackStatus100 = hpackStatus("100");
+
+  describe.each(requests)("%s", (_, init) => {
+    test.each([
+      ["nothing", ""],
+      ["half a status line", "HTTP/1.1 2"],
+      ["half a head", "HTTP/1.1 200 OK\r\nContent-Le"],
+      ["a 100 alone", "HTTP/1.1 100 Continue\r\n\r\n"],
+    ])("HTTP/1.1: %s, then the connection closes", async (_, bytes) => {
+      const server = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.end(bytes));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = server.address() as net.AddressInfo;
+        expect(await outcome(fetch(`http://127.0.0.1:${port}/`, init))).toBe("ECONNRESET");
+      } finally {
+        server.close();
+      }
+    });
+
+    test.each<[string, (id: number) => Buffer[], string]>([
+      ["END_STREAM on an empty DATA frame", id => [frame(0, 1, id)], "HTTP2ProtocolError"],
+      ["DATA", id => [frame(0, 0, id, Buffer.from("x"))], "HTTP2ProtocolError"],
+      ["RST_STREAM(NO_ERROR)", id => [frame(3, 0, id, u32be(0))], "HTTP2StreamReset"],
+      ["RST_STREAM(CANCEL)", id => [frame(3, 0, id, u32be(8))], "HTTP2StreamReset"],
+      ["a 100 with END_STREAM", id => [frame(1, 5, id, hpackStatus100)], "HTTP2ProtocolError"],
+      ["a 100, then END_STREAM", id => [frame(1, 4, id, hpackStatus100), frame(0, 1, id)], "HTTP2ProtocolError"],
+    ])("HTTP/2: %s", async (_, frames, code) => {
+      await withAdversarialServer(
+        { onStream: (socket, id) => void socket.write(Buffer.concat(frames(id))) },
+        async url => {
+          expect(await outcome(fetch(url, { ...init, protocol: "http2", tls: { ca: tls.cert } }))).toBe(code);
+        },
+      );
+    });
+
+    // lsquic, the only HTTP/3 peer there is here, can't send DATA or a FIN before HEADERS.
+    test.each<[string, (stream: any) => void, string]>([
+      ["a 100 and the FIN", stream => stream.sendHeaders({ ":status": "100" }, { terminal: true }), "HTTP3StreamReset"],
+      ["a reset", stream => stream.destroy(new Error("reset")), "HTTP3StreamReset"],
+    ])("HTTP/3: %s", async (_, answer, code) => {
+      const endpoint = await listen(
+        async (session: any) => {
+          session.onstream = (stream: any) => stream.closed.catch(() => {});
+          await session.closed.catch(() => {});
+        },
+        {
+          sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+          transportParams: { maxIdleTimeout: 5 },
+          onheaders(this: any) {
+            answer(this);
+          },
+        },
+      );
+      try {
+        const url = `https://127.0.0.1:${endpoint.address!.port}/`;
+        expect(await outcome(fetch(url, { ...init, protocol: "http3", tls: { ca: tls.cert } }))).toBe(code);
+      } finally {
+        await endpoint.destroy();
+      }
+    });
+  });
+});
 
 describe.each(["http1.1", "http2", "http3"] as const)("padded response field values over %s", protocol => {
   test("Headers has the value without its leading and trailing SP / HTAB", async () => {

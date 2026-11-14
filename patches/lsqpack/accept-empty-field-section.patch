@@ -1,0 +1,14 @@
+--- a/lsqpack.c
++++ b/lsqpack.c
+@@ -4046,7 +4046,10 @@ parse_header_prefix (struct lsqpack_dec *dec,
+                 read_ctx->hbrc_parse = parse_header_data;
+                 read_ctx->hbrc_parse_ctx_u.data.state
+                                                 = DATA_STATE_NEXT_INSTRUCTION;
+-                if (end - buf)
++                /* bun: a field section can end at its prefix (RFC 9204 Section
++                 * 4.5).  qdec_read_header() turns LQRHS_NEED into LQRHS_ERROR
++                 * there, so let parse_header_data() finish the block. */
++                if (end - buf || read_ctx->hbrc_size == 0)
+                     return parse_header_data(dec, read_ctx, buf, end - buf);
+                 else
+                     return LQRHS_NEED;

@@ -543,7 +543,7 @@ pub(crate) fn set_timeout_export(
         callback,
         arguments,
         countdown,
-        Clock::Real,
+        timer_all().fake_timers.replaced_set_timeout_clock(),
     )
 }
 

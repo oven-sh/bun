@@ -144,7 +144,6 @@ function isInt32(value): value is number {
 // COMPILING HOST's <errno.h> value, so on Windows it reports -9/-22/-105
 // where Node/libuv report the synthetic -4083/-4071/-4081.
 const UV_EBADF = process.platform === "win32" ? -4083 : -9;
-const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
 const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 // Unlike the codes above, ECANCELED's number differs across the POSIX
 // platforms (Linux 125, Darwin 89, FreeBSD 85) and is a libuv-synthetic
@@ -156,10 +155,6 @@ const UV_ECANCELED: number = $bindgen("node_util_binding.bind.ts", "ecanceledErr
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
 const getFdFn = $bindgen("udp_socket.bind.ts", "getFd") as (socket: $Node.UDPSocketHandle) => number;
-// Read-only query of the process-wide DGRAM_FDS registry the native layer
-// already maintains, so bind({ fd }) can synchronously report EEXIST like
-// libuv's uv_udp_open() without keeping a second per-VM copy of the same fact.
-const isFdAdoptedFn: (fd: number) => boolean = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
 // Fresh getsockname on a live socket's descriptor: the cached `.address`
 // getter can be stale for an adopted-but-unbound fd once the kernel
 // auto-binds on first sendto(); Node calls getsockname on every address().
@@ -528,13 +523,10 @@ function handleGetSendQueueCount(this: UDPHandle) {
 function onMessage(nread: number, handle: UDPHandle, buf: Buffer, rinfo: RemoteInfo) {
   const self = handle[kOwnerSymbol]!;
   if (nread < 0) {
-    return self.emit(
-      "error",
-      Object.assign(new Error("recvmsg"), {
-        syscall: "recvmsg",
-        errno: nread,
-      }),
-    );
+    const error: NodeJS.ErrnoException = new Error("recvmsg");
+    error.syscall = "recvmsg";
+    error.errno = nread;
+    return self.emit("error", error);
   }
   rinfo.size = buf.length; // compatibility
   self.emit("message", buf, rinfo);
@@ -726,11 +718,6 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
     if (type !== "UDP") {
       throw $ERR_INVALID_FD_TYPE(type);
     }
-    // Query the native registry so bind({ fd }) throws synchronously like
-    // uv_udp_open (startBunSocket routes the same failure to emit('error')).
-    if (isFdAdoptedFn(fd)) {
-      throw new ErrnoException(UV_EEXIST, "open");
-    }
     startBunSocket(this, state, { fd });
     return this;
   }
@@ -860,7 +847,9 @@ function releaseSharedHandle(state: DgramState, handle: SharedHandle) {
 function startBunSocket(
   self: $Node.DgramSocket,
   state: DgramState,
-  createOptions: { fd: number | undefined } | { hostname: string; port: number; flags: number },
+  createOptions:
+    | { fd: number | undefined; hostname?: undefined; port?: undefined }
+    | { fd?: undefined; hostname: string; port: number; flags: number },
   sharedHandle?: SharedHandle,
 ) {
   try {
@@ -941,12 +930,18 @@ function startBunSocket(
       err => {
         state.bindState = BIND_STATE_UNBOUND;
         if (sharedHandle) releaseSharedHandle(state, sharedHandle);
-        self.emit("error", err);
+        self.emit(
+          "error",
+          require("internal/net/errors").bindException(err, createOptions.hostname, createOptions.port),
+        );
       },
     );
-  } catch (err) {
+  } catch (nativeError) {
+    const err = require("internal/net/errors").bindException(nativeError, createOptions.hostname, createOptions.port);
     state.bindState = BIND_STATE_UNBOUND;
     if (sharedHandle) releaseSharedHandle(state, sharedHandle);
+    // bind({ fd }) is the caller, and node throws what handle.open(fd) returns.
+    else if (createOptions.fd !== undefined) throw err;
     self.emit("error", err);
   }
 }
@@ -1347,17 +1342,20 @@ Socket.prototype[SymbolAsyncDispose] = async function (this: $Node.DgramSocket) 
     return;
   }
   const promise = $newPromise();
-  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
+  this.close(createAsyncDisposeClosedCallback(promise));
 
   return promise;
 };
 
-function onAsyncDisposeClosed(promise: Promise<unknown>, err?: unknown) {
-  if (err) {
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-  } else {
-    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-  }
+// A closure, not bind(). A patched Function.prototype.bind would receive a function that settles any argument without a type check.
+function createAsyncDisposeClosedCallback(promise: Promise<unknown>) {
+  return (err?: unknown) => {
+    if (err) {
+      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+    } else {
+      $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+    }
+  };
 }
 
 function socketCloseNT(self: $Node.DgramSocket) {

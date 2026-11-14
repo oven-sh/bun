@@ -106,6 +106,7 @@ declare module "bun" {
 
     interface BunRequestOverride extends LibOrFallbackRequest {
       headers: BunHeadersOverride;
+      clone(): Request;
       /**
        * Returns a {@link ReadableStream} of the body decoded as UTF-8 text.
        *
@@ -118,6 +119,7 @@ declare module "bun" {
 
     interface BunResponseOverride extends LibOrFallbackResponse {
       headers: BunHeadersOverride;
+      clone(): Response;
       /**
        * Returns a {@link ReadableStream} of the body decoded as UTF-8 text.
        *

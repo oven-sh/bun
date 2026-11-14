@@ -227,6 +227,7 @@ NativeFunctionsNode_fs_bindingBindTsCreateMemfdForTesting/0: it is not called: a
 NativeFunctionsNode_net_bindingBindTsDoConnect/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeFunctionsNode_osBindTsGetPriority/1: no set of operands selects it
 NativeFunctionsNode_osBindTsSetPriority/1: no set of operands selects it
+NativeFunctionsNode_tls_bindingBindTsSetDefaultCA/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsNpm_jscBindTsArchitectureIsMatch/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsNpm_jscBindTsOperatingSystemIsMatch/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsPack_commandBindTsReadTarball/0: it is not called: it works on files that its operands name outside the folder of the test
@@ -237,7 +238,6 @@ NativeFunctionsShell_bodyBindTsShellLex/0: it is not called: a helper of Bun's o
 NativeFunctionsShell_bodyBindTsShellParse/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsSocket_bodyBindTsClearSocketFaults/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsSocket_bodyBindTsSetSocketFault/0: it is not called: it changes how the rest of the process behaves
-NativeFunctionsSocket_bodyBindTsUpgradeDuplexToTLS/0: no set of operands selects it
 NativeFunctionsStatBindTsCreateStatsForIno/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
 NativeFunctionsSubprocessBindTsInjectStdioReadError/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsTrim_testingBindTsReadTrimTable/0: it is not called: it works on files that its operands name outside the folder of the test

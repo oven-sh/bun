@@ -13,10 +13,15 @@ test.skipIf(isWindows || isASAN)("a program that holds far more compiled than un
     "tsconfig.json": "{}",
     // Only an executable fills this room: it stands for compiled code that lays room in store.
     "holds-more.js": fills(`Bun.main.startsWith("/$bunfs/") ? 600 * 2 ** 20 : 1`),
+    "holds-more-and-has-no-interpreter.js":
+      "// Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1\n" +
+      fills(`Bun.main.startsWith("/$bunfs/") ? 600 * 2 ** 20 : 1`),
     "holds-the-same.js": fills("600 * 2 ** 20"),
   });
   const root = String(dir);
-  const files = ["holds-more.js", "holds-the-same.js"].map(name => join(root, name));
+  const files = ["holds-more.js", "holds-more-and-has-no-interpreter.js", "holds-the-same.js"].map(name =>
+    join(root, name),
+  );
   const driver = join(import.meta.dir, "run-parallel.ts");
   const { stdout, exitCode } = await run(
     [bunExe(), driver, `--root=${root}`, "--jobs=2", "--no-erased", ...files],
@@ -35,8 +40,10 @@ test.skipIf(isWindows || isASAN)("a program that holds far more compiled than un
       message: message?.replace(/\d+/g, "N"),
     }))
     .sort((a, b) => a.file.localeCompare(b.file));
+  const message = "it held N MB at most, and plain Bun N MB";
   expect(verdicts).toEqual([
-    { file: "holds-more.js", state: "fail", stage: "memory", message: "it held N MB at most, and plain Bun N MB" },
+    { file: "holds-more-and-has-no-interpreter.js", state: "fail", stage: "memory", message },
+    { file: "holds-more.js", state: "fail", stage: "memory", message },
     { file: "holds-the-same.js", state: "pass", stage: undefined, message: undefined },
   ]);
   expect(exitCode).toBe(1);

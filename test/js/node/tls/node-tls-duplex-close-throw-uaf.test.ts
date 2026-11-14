@@ -1,6 +1,6 @@
-// DuplexUpgradeContext holds a TLSSocket whose Handlers allocation is freed
+// UpgradedDuplex holds a TLSSocket whose Handlers allocation is freed
 // (via Handlers.markInactive → vm.allocator.destroy) the first time
-// active_connections hits 0. Several callbacks in DuplexUpgradeContext kept
+// active_connections hits 0. Several callbacks in UpgradedDuplex kept
 // dispatching into the TLSSocket after that point, reading tls.handlers on
 // freed memory. Each case below used to abort under ASAN; the fix nulls
 // `this.tls` before the freeing call so subsequent callbacks short-circuit
@@ -37,7 +37,7 @@ async function run(script: string | string[], expected = "ok", env: Record<strin
 // test spawns an independent subprocess so they can run concurrently.
 describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) does not read freed Handlers", () => {
   test("when duplex.end() throws after close", async () => {
-    // UpgradedDuplex.onClose → DuplexUpgradeContext.onClose → TLSSocket.onClose
+    // UpgradedDuplex.onClose → TLSSocket.onClose
     // frees the Handlers; UpgradedDuplex.onClose then calls duplex.end(). If
     // that throws, onError → tls.handleError → getHandlers() read the freed
     // allocation.
@@ -72,7 +72,7 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
 
       // startTLS runs on the next tick; once onOpen has fired (is_open=true),
       // emitting "close" on the duplex triggers the SSL wrapper's fast
-      // shutdown → UpgradedDuplex.onClose → DuplexUpgradeContext.onClose →
+      // shutdown → UpgradedDuplex.onClose →
       // TLSSocket.onClose (frees handlers) → callWriteOrEnd → duplex.end()
       // throws → onError.
       setImmediate(() => {
@@ -91,7 +91,7 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
 
   test("when a pre-open duplex error races StartTLS", async () => {
     // An error on the duplex before the queued .StartTLS task runs
-    // (is_open == false) routed to DuplexUpgradeContext.onError →
+    // (is_open == false) routed to UpgradedDuplex.onError →
     // tls.handleConnectError(), freeing the Handlers. The .StartTLS task
     // then fired onOpen → tls.onOpen → isServer() → getHandlers() on the
     // freed allocation.
@@ -113,7 +113,7 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
       sock.on("close", () => {});
 
       // Non-Buffer data triggers UpgradedDuplex.onReceivedData's error branch
-      // → DuplexUpgradeContext.onError with is_open == false, before the
+      // → UpgradedDuplex.onError with is_open == false, before the
       // queued .StartTLS task has run.
       queueMicrotask(() => {
         duplex.emit("data", "string, not a buffer");

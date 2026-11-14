@@ -7,10 +7,37 @@
 // so the socket-close abort callback then fired with the *sink* pointer
 // instead of the RequestContext it was registered with — a type-confused
 // read that segfaulted (ASAN: heap-buffer-overflow in onAbort).
+//
+// The sink only uses tryEnd() before the response head is sent, and the server
+// sends the head of a stream that is still pending after the handler's
+// microtasks. So the requests alternate between two bodies:
+//   most of them:  pull() waits for a task, then ends. The stream is pending
+//                  when the abort arrives, and the sink ends a chunked body
+//                  on the dying socket.
+//   every tenth:   pull() ends a body too big for the socket, then waits for a
+//                  task. Its tryEnd() is waiting for the drain when the abort
+//                  arrives.
+
+const large = new Uint8Array(8 * 1024 * 1024);
+let requests = 0;
 
 const server = Bun.serve({
   port: 0,
   fetch() {
+    if (++requests % 10 === 0) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller: any) {
+            // Above the payload, so write() only buffers and end() sends it all.
+            controller.start({ highWaterMark: large.length + 1 });
+            controller.write(large);
+            controller.end();
+            await Bun.sleep(0);
+          },
+        } as any),
+      );
+    }
     return new Response(
       new ReadableStream({
         async pull(controller) {

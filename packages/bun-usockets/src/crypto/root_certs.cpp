@@ -1,6 +1,9 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <array>
+#include <memory>
 #include <mutex>
+#include <set>
 #include <string.h>
 #include <string_view>
 #include <unordered_set>
@@ -25,6 +28,7 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
 extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
 extern "C" void Bun__readOpenSSLDefaultCertFile(const char *default_path, void *ctx, us_on_cert_file on_file);
+extern "C" void Bun__readOpenSSLDefaultCertDir(const char *default_path, void *ctx, us_on_cert_file on_file);
 
 // A read-only memory BIO over an owned copy of the file. (A writable BIO_s_mem() would memmove the rest of the buffer
 // on every line PEM reads.)
@@ -48,18 +52,12 @@ static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// bun_core::Global::CAStore, from --use-system-ca, --use-openssl-ca and --use-bundled-ca.
-enum class us_ca_store_t : uint8_t { bundled = 0, system = 1, openssl = 2 };
-extern "C" us_ca_store_t Bun__Node__CAStore;
-
-static us_ca_store_t us_ca_store() {
-  if (Bun__Node__CAStore != us_ca_store_t::bundled) {
-    return Bun__Node__CAStore;
-  }
-  // Not every command parses the flags.
-  const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
-  return use_system_ca && strcmp(use_system_ca, "1") == 0 ? us_ca_store_t::system : us_ca_store_t::bundled;
-}
+// bun_core::Global decides from --use-*-ca and NODE_USE_SYSTEM_CA. tls.getCACertificates("default") lists the same sources.
+struct us_default_ca_sources_t {
+  bool bundled;
+  bool system;
+};
+extern "C" us_default_ca_sources_t Bun__defaultCASources();
 
 // Platform-specific system certificate loading implementations are separated:
 // - macOS: root_certs_darwin.cpp (Security framework with dynamic loading)
@@ -207,7 +205,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     const uint8_t *const *bundled_certs = nullptr;
     const size_t *bundled_lens = nullptr;
     size_t bundled_count =
-        us_ca_store() == us_ca_store_t::openssl ? 0 : us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
+        Bun__defaultCASources().bundled ? us_bundled_root_certs_der(&bundled_certs, &bundled_lens) : 0;
     std::unordered_set<std::string_view> bundled;
     bundled.reserve(bundled_count);
     for (size_t i = 0; i < bundled_count; i++) {
@@ -290,16 +288,17 @@ const us_system_certs_t &us_get_root_system_certs() {
   return system_certs;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+// The default store but for the hashed directory, which a lookup only reads for a subject that the rest doesn't have.
+static X509_STORE *us_new_store_of_loaded_roots() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }
   X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
-  us_ca_store_t ca_store = us_ca_store();
+  us_default_ca_sources_t sources = Bun__defaultCASources();
 
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099
-  if (ca_store != us_ca_store_t::openssl) {
+  if (sources.bundled) {
     X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
     if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
       X509_STORE_free(store);
@@ -307,8 +306,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  // What X509_STORE_set_default_paths(store) trusts: the default certificate file (above) and the default hashed
-  // certificate directory, which BoringSSL already consults lazily per lookup.
   const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
   if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store, file.certs)) {
     X509_STORE_free(store);
@@ -320,12 +317,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   for (size_t i = 0; file.crls != nullptr && i < sk_X509_CRL_num(file.crls); i++) {
     X509_STORE_add_crl(store, sk_X509_CRL_value(file.crls, i));
   }
-  X509_LOOKUP *hash_dir = X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir());
-  if (hash_dir == NULL) {
-    X509_STORE_free(store);
-    return NULL;
-  }
-  X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
   ERR_clear_error();
 
   STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
@@ -335,7 +326,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (ca_store == us_ca_store_t::system) {
+  if (sources.system) {
     const us_system_certs_t &system = us_get_root_system_certs();
     if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store, system.lazy)) {
       X509_STORE_free(store);
@@ -347,6 +338,136 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   return store;
+}
+
+// The directory half of X509_STORE_set_default_paths. Frees `store` if it fails.
+static X509_STORE *us_add_openssl_default_cert_dir(X509_STORE *store) {
+  X509_LOOKUP *hash_dir = store ? X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir()) : NULL;
+  if (hash_dir == NULL) {
+    X509_STORE_free(store);
+    return NULL;
+  }
+  X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
+  ERR_clear_error();
+  return store;
+}
+
+extern "C" X509_STORE *us_get_default_ca_store() {
+  return us_add_openssl_default_cert_dir(us_new_store_of_loaded_roots());
+}
+
+// Windows builds BoringSSL's headers without bssl::UniquePtr.
+template <auto free_fn> struct us_free_with {
+  template <typename T> void operator()(T *ptr) const { free_fn(ptr); }
+};
+template <typename T, auto free_fn> using us_owned = std::unique_ptr<T, us_free_with<free_fn>>;
+static void us_free_certs(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
+
+// What lookups in the default store find in the hashed directory, as of the first call. The files only say which
+// subjects to ask for: BoringSSL's own lookup decides which of them it opens.
+static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
+  static std::vector<X509 *> result;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    struct lookups_t {
+      us_owned<X509_STORE, X509_STORE_free> loaded{us_new_store_of_loaded_roots()};
+      us_owned<X509_STORE, X509_STORE_free> hashed{us_add_openssl_default_cert_dir(X509_STORE_new())};
+      us_owned<X509_STORE_CTX, X509_STORE_CTX_free> in_loaded{X509_STORE_CTX_new()};
+      us_owned<X509_STORE_CTX, X509_STORE_CTX_free> in_hashed{X509_STORE_CTX_new()};
+      std::unordered_set<X509 *> seen;
+    } lookups;
+    if (!lookups.loaded || !lookups.hashed || !lookups.in_loaded || !lookups.in_hashed ||
+        !X509_STORE_CTX_init(lookups.in_loaded.get(), lookups.loaded.get(), nullptr, nullptr) ||
+        !X509_STORE_CTX_init(lookups.in_hashed.get(), lookups.hashed.get(), nullptr, nullptr)) {
+      Bun__outOfMemory();
+    }
+    Bun__readOpenSSLDefaultCertDir(X509_get_default_cert_dir(), &lookups, [](void *ctx, const uint8_t *data, size_t len) {
+      lookups_t *lookups = static_cast<lookups_t *>(ctx);
+      us_owned<BIO, BIO_free> in(BIO_new_mem_buf(data, len));
+      while (us_owned<X509, X509_free> cert{PEM_read_bio_X509_AUX(in.get(), nullptr, us_no_password_callback, nullptr)}) {
+        const auto *subject = X509_get_subject_name(cert.get());
+        us_owned<STACK_OF(X509), us_free_certs> found(X509_STORE_CTX_get1_certs(lookups->in_loaded.get(), subject));
+        if (found) continue;
+        found.reset(X509_STORE_CTX_get1_certs(lookups->in_hashed.get(), subject));
+        for (size_t i = 0; i < sk_X509_num(found.get()); i++) {
+          X509 *root = sk_X509_value(found.get(), i);
+          if (!lookups->seen.insert(root).second) continue;
+          X509_up_ref(root);
+          result.push_back(root);
+        }
+      }
+    });
+    ERR_clear_error();
+  });
+  return result;
+}
+
+std::vector<X509 *> us_get_openssl_default_certs() {
+  const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
+  std::vector<X509 *> certs;
+  for (size_t i = 0; file.certs != nullptr && i < X509_LAZY_CERT_SET_num(file.certs); i++) {
+    if (X509 *cert = X509_LAZY_CERT_SET_get0(file.certs, i)) certs.push_back(cert);
+  }
+  // A list has no place for the trust settings of a TRUSTED CERTIFICATE, so it must not hold one that they rule out.
+  auto add = [&](X509 *cert) {
+    if (i2d_X509_AUX(cert, nullptr) == i2d_X509(cert, nullptr) ||
+        X509_check_trust(cert, X509_TRUST_SSL_SERVER, 0) == X509_TRUST_TRUSTED) {
+      certs.push_back(cert);
+    }
+  };
+  for (size_t i = 0; i < sk_X509_num(file.trusted); i++) add(sk_X509_value(file.trusted, i));
+  for (X509 *cert : us_get_openssl_default_cert_dir()) add(cert);
+  ERR_clear_error();
+  return certs;
+}
+
+extern "C" const uint8_t *us_get_default_ca_store_digest() {
+  using digest_t = std::array<uint8_t, SHA256_DIGEST_LENGTH>;
+  static digest_t result;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    std::set<digest_t> digests;
+    auto add = [&](const uint8_t *der, size_t len) {
+      digest_t digest;
+      SHA256(der, len, digest.data());
+      digests.insert(digest);
+    };
+    auto add_lazy = [&](const X509_LAZY_CERT_SET *set) {
+      for (size_t i = 0; set != nullptr && i < X509_LAZY_CERT_SET_num(set); i++) {
+        const CRYPTO_BUFFER *der = X509_LAZY_CERT_SET_get0_der(set, i);
+        add(CRYPTO_BUFFER_data(der), CRYPTO_BUFFER_len(der));
+      }
+    };
+    auto add_parsed = [&](auto *object, auto i2d) {
+      uint8_t *der = nullptr;
+      int len = i2d(object, &der);
+      if (len < 0) Bun__outOfMemory();
+      add(der, len);
+      OPENSSL_free(der);
+    };
+    auto add_certs = [&](const STACK_OF(X509) *certs) {
+      for (size_t i = 0; i < sk_X509_num(certs); i++) add_parsed(sk_X509_value(certs, i), i2d_X509_AUX);
+    };
+
+    us_default_ca_sources_t sources = Bun__defaultCASources();
+    if (sources.bundled) add_lazy(us_get_bundled_root_cert_set());
+    const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
+    add_lazy(file.certs);
+    add_certs(file.trusted);
+    for (size_t i = 0; i < sk_X509_CRL_num(file.crls); i++) add_parsed(sk_X509_CRL_value(file.crls, i), i2d_X509_CRL);
+    for (X509 *cert : us_get_openssl_default_cert_dir()) add_parsed(cert, i2d_X509_AUX);
+    add_certs(us_get_root_extra_cert_instances());
+    if (sources.system) {
+      add_lazy(us_get_root_system_certs().lazy);
+      add_certs(us_get_root_system_certs().parsed);
+    }
+
+    SHA256_CTX all;
+    SHA256_Init(&all);
+    for (const digest_t &digest : digests) SHA256_Update(&all, digest.data(), digest.size());
+    SHA256_Final(result.data(), &all);
+  });
+  return result.data();
 }
 
 // Process-wide immutable default store. Safe to share across SSL_CTXs that

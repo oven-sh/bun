@@ -3,10 +3,15 @@
  */
 import { describe, expect, it } from "bun:test";
 import { once, type EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { Agent, createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createSecureServer as createHttp2SecureServer } from "node:http2";
+import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Socket } from "node:net";
-import { connect } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
+import path from "node:path";
 import type { Duplex } from "node:stream";
+import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 
 it("req.socket emits 'pause' once an unread request body fills the IncomingMessage buffer", async () => {
   // Node's test-http-no-read-no-dump: a handler that never reads the body sees
@@ -181,6 +186,20 @@ async function disconnectAndClose(socket: Socket, server: Server) {
   // ever firing.
   server.close();
   await once(server, "close");
+}
+
+/** `orFail(p)` settles like `p`, or rejects when a watched socket errors or closes first, or when `fail` is called. */
+function failureWatcher() {
+  const { promise: failed, reject } = Promise.withResolvers<never>();
+  failed.catch(() => {}); // the teardown closes the sockets after the last race
+  return {
+    watch(what: string, socket: EventEmitter) {
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error(`${what} closed`)));
+    },
+    fail: reject,
+    orFail: <T>(promise: Promise<T>) => Promise.race([promise, failed]),
+  };
 }
 
 describe("request whose whole body arrived while it was paused, answered later on a keep-alive connection", () => {
@@ -449,6 +468,62 @@ describe("request that its handler pause()d, with a body below the highWaterMark
   });
 });
 
+// Both requests arrive in one segment. The second request's listener resumes
+// the first one from a microtask, and the first response stays pending until
+// both requests have ended.
+describe("a request pipelined behind a paused request", () => {
+  const chunked = "POST /first HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+  const contentLength = "POST /first HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nabc";
+
+  it.each([
+    ["in 'data', chunked body", chunked, "data"],
+    ["in 'data', Content-Length body", contentLength, "data"],
+    ["in the request listener", contentLength, "listener"],
+  ])("gets its body when its listener resumes the paused request (paused %s)", async (_name, first, pauseIn) => {
+    const bodies: Record<string, string> = {};
+    const responses: Record<string, ServerResponse> = {};
+    const { promise: bothEnded, resolve: onBothEnded } = Promise.withResolvers<void>();
+    const { watch, fail, orFail } = failureWatcher();
+    let resumeFirst = () => {};
+    const server = createServer((req, res) => {
+      responses[req.url!] = res;
+      req.on("error", fail);
+      let received = "";
+      const pause = () => {
+        req.pause();
+        resumeFirst = () => req.resume();
+      };
+      req.on("data", chunk => {
+        received += chunk;
+        if (req.url === "/first" && pauseIn === "data") pause();
+      });
+      req.on("end", () => {
+        bodies[req.url!] = received;
+        if (Object.keys(bodies).length < 2) return;
+        responses["/first"].end("alpha");
+        responses["/second"].end("bravo");
+        onBothEnded();
+      });
+      if (req.url === "/first" && pauseIn === "listener") pause();
+      if (req.url === "/second") queueMicrotask(() => resumeFirst());
+    });
+    server.on("clientError", fail);
+    try {
+      const client = await connectTo(server);
+      watch("the client socket", client.socket);
+      client.socket.write(first + "POST /second HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nxyz");
+      await orFail(bothEnded);
+      expect(bodies).toEqual({ "/first": "abc", "/second": "xyz" });
+      await orFail(client.receive("alpha"));
+      await orFail(client.receive("bravo"));
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+});
+
 it("reading a request body does not reopen the read gate that queued pipelined responses closed", async () => {
   // Node's readStart() is a no-op while socket._paused, so only the drain of
   // the queued response bytes lets the parser reach the next pipelined request.
@@ -533,19 +608,6 @@ describe("upgrade request whose whole body arrived with its head", () => {
           await promise;
         }
       },
-    };
-  }
-
-  /** `orFail(p)` settles like `p`, or rejects when a watched socket errors or closes first. */
-  function failureWatcher() {
-    const { promise: failed, reject } = Promise.withResolvers<never>();
-    failed.catch(() => {}); // the teardown closes the sockets after the last race
-    return {
-      watch(what: string, socket: EventEmitter) {
-        socket.on("error", reject);
-        socket.on("close", () => reject(new Error(`${what} closed`)));
-      },
-      orFail: <T>(promise: Promise<T>) => Promise.race([promise, failed]),
     };
   }
 
@@ -924,3 +986,236 @@ describe("request whose whole body is in the segment that paused the connection"
     }
   });
 });
+
+const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+const tlsOptions = {
+  key: readFileSync(path.join(keys, "agent1-key.pem")),
+  cert: readFileSync(path.join(keys, "agent1-cert.pem")),
+};
+
+describe.each(["http", "https", "emit('connection')", "http2 with allowHTTP1"] as const)("%s: socket.pause()", kind => {
+  const secure = kind === "https" || kind === "http2 with allowHTTP1";
+  const get = (url: string) => `GET ${url} HTTP/1.1\r\nHost: a\r\n\r\n`;
+
+  async function start(
+    listener: (req: IncomingMessage, res: ServerResponse) => void,
+    onConnection?: (socket: Socket) => void,
+  ) {
+    const urls: string[] = [];
+    let onRequest: (() => void) | undefined;
+    const counting = (req: IncomingMessage, res: ServerResponse) => {
+      if (req.url === "/ping") return void res.end("pong");
+      urls.push(req.url!);
+      listener(req, res);
+      onRequest?.();
+    };
+    const server =
+      kind === "https"
+        ? createHttpsServer(tlsOptions, counting)
+        : kind === "http2 with allowHTTP1"
+          ? createHttp2SecureServer({ ...tlsOptions, allowHTTP1: true }, counting as any)
+          : createServer(counting);
+    if (onConnection) server.on(secure ? "secureConnection" : "connection", onConnection);
+    const listening =
+      kind === "emit('connection')" ? createNetServer(socket => server.emit("connection", socket)) : server;
+    await once(listening.listen(0, "127.0.0.1"), "listening");
+    const { port } = listening.address() as AddressInfo;
+    const open = async () => {
+      const socket = secure
+        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
+        : connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, secure ? "secureConnect" : "connect");
+      return socket;
+    };
+    const client = await open();
+    return {
+      urls,
+      client: client.resume(),
+      listening,
+      async dispatched(count: number) {
+        while (urls.length < count) await new Promise<void>(resolve => (onRequest = resolve));
+      },
+      // Like roundTrip(): once it is over, the server has seen, or put off, all that was written before.
+      async ping() {
+        const socket = await open();
+        socket.resume().write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+        await once(socket, "close");
+      },
+      [Symbol.dispose]() {
+        client.destroy();
+        (server as Server).closeAllConnections?.();
+        listening.close();
+      },
+    };
+  }
+
+  it.each(["req.socket", "res.socket"] as const)(
+    "inside a request listener lasts until the request is complete: the next request is dispatched (%s)",
+    async which => {
+      using connection = await start((req, res) => {
+        if (req.url === "/held") (which === "req.socket" ? req : res).socket!.pause();
+        else res.end("ok");
+      });
+      connection.client.write(get("/held"));
+      await connection.dispatched(1);
+      connection.client.write(get("/next"));
+      await connection.dispatched(2);
+      expect(connection.urls).toEqual(["/held", "/next"]);
+    },
+  );
+
+  it("inside a request listener lasts until the request is complete: the request closes when the client leaves", async () => {
+    const closed = Promise.withResolvers<void>();
+    using connection = await start(req => {
+      req.socket.pause();
+      req.on("error", () => {}).on("close", closed.resolve);
+    });
+    connection.client.write(get("/held"));
+    await connection.dispatched(1);
+    connection.client.destroy();
+    await closed.promise;
+  });
+
+  it("in a 'connection' listener doesn't hold back the first request", async () => {
+    using connection = await start(
+      (req, res) => void res.end("ok"),
+      socket => void socket.pause(),
+    );
+    connection.client.write(get("/first"));
+    await connection.dispatched(1);
+    expect(connection.urls).toEqual(["/first"]);
+  });
+
+  it("a tick after the request listener stays", async () => {
+    using connection = await start((req, res) => {
+      if (req.url === "/held") process.nextTick(() => req.socket.pause());
+      else res.end("ok");
+    });
+    connection.client.write(get("/held"));
+    await connection.dispatched(1);
+    connection.client.write(get("/next"));
+    await connection.ping();
+    expect(connection.urls).toEqual(["/held"]);
+  });
+
+  it("by http itself, for responses that wait with more than the high water mark, outlasts the requests", async () => {
+    let held: ServerResponse | undefined;
+    let resumes = 0;
+    using connection = await start((req, res) => {
+      if (req.url !== "/held") return void res.end(req.url === "/big" ? Buffer.alloc(65536, "x") : "ok");
+      held = res;
+      req.socket.on("resume", () => resumes++);
+    });
+    connection.client.write(get("/held") + get("/big") + get("/big"));
+    await connection.dispatched(3);
+    connection.client.write(get("/next"));
+    await connection.ping();
+    const early = { urls: [...connection.urls], resumes };
+    held!.end("ok");
+    await connection.dispatched(4);
+    expect({ early, urls: connection.urls }).toEqual({
+      early: { urls: ["/held", "/big", "/big"], resumes: 0 },
+      urls: ["/held", "/big", "/big", "/next"],
+    });
+  });
+});
+
+it.each(["upgrade", "connect"] as const)(
+  "a pause by the '%s' listener stays when a front server put the request back and emitted 'connection'",
+  async event => {
+    const server = createServer();
+    const handedOff = Promise.withResolvers<Duplex>();
+    server.on(event, (req, socket) => {
+      socket.pause();
+      handedOff.resolve(socket);
+    });
+    const front = createNetServer(socket => {
+      socket.once("data", chunk => {
+        socket.unshift(chunk);
+        server.emit("connection", socket);
+      });
+    });
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write(
+        event === "upgrade"
+          ? "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"
+          : "CONNECT a:1 HTTP/1.1\r\nHost: a:1\r\n\r\n",
+      );
+      const tunnel = await handedOff.promise;
+      tunnel.on("error", () => {});
+      await new Promise(resolve => setImmediate(resolve));
+      expect(tunnel.isPaused()).toBe(true);
+      client.write("tunnel");
+      const [chunk] = await once(tunnel.resume(), "data");
+      expect(String(chunk)).toBe("tunnel");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      front.close();
+    }
+  },
+);
+
+it.each(["emit('connection')", "http2 with allowHTTP1"] as const)(
+  "%s: a pause by the request listener holds the body back when a front server put the head back",
+  async kind => {
+    const secure = kind === "http2 with allowHTTP1";
+    const dispatched = Promise.withResolvers<[IncomingMessage, ServerResponse]>();
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      if (req.url === "/ping") return void res.end("pong");
+      req.socket.pause();
+      dispatched.resolve([req, res]);
+    };
+    const server = secure
+      ? createHttp2SecureServer({ ...tlsOptions, allowHTTP1: true }, listener as any)
+      : createServer(listener);
+    const putBack = (socket: Socket) => {
+      socket.on("error", () => {});
+      socket.once("data", chunk => {
+        socket.unshift(chunk);
+        server.emit(secure ? "secureConnection" : "connection", socket);
+      });
+    };
+    const front = secure
+      ? createTlsServer({ ...tlsOptions, ALPNProtocols: ["http/1.1"] }, putBack)
+      : createNetServer(putBack);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const { port } = front.address() as AddressInfo;
+    const open = async () => {
+      const socket = secure
+        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
+        : connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, secure ? "secureConnect" : "connect");
+      return socket;
+    };
+    const client = await open();
+    try {
+      client.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n");
+      const [req, res] = await dispatched.promise;
+      client.write("hello");
+      // Like roundTrip(): once it is over, the server has seen, or put off, all that was written before.
+      const ping = await open();
+      ping.resume().write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+      await once(ping, "close");
+      expect({ paused: req.socket.isPaused(), buffered: req.readableLength, complete: req.complete }).toEqual({
+        paused: true,
+        buffered: 0,
+        complete: false,
+      });
+      req.socket.resume();
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      expect(body).toBe("hello");
+      res.end();
+    } finally {
+      client.destroy();
+      (server as Server).closeAllConnections?.();
+      front.close();
+    }
+  },
+);

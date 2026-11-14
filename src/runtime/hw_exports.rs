@@ -178,17 +178,14 @@ mod sql_hooks {
     use super::*;
     use bun_sql_jsc::jsc::SqlRuntimeHooks;
 
-    fn ssl_ctx_get_or_create(
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        crate::jsc_hooks::ssl_ctx_cache().get_or_create_opts(opts, err)
-    }
     fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
-        use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
-            Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
-            Ok(None) => core::ptr::null_mut(),
+        use crate::socket::ssl_config::ParsedTls;
+        let vm = global.bun_vm_ref();
+        match ParsedTls::from_js(vm, global, value, false) {
+            // `sslmode` already asked for TLS, so `tls: {}` is `tls: true`.
+            Ok(parsed) => {
+                bun_core::heap::into_raw(Box::new(parsed.or_defaults(vm, false))).cast::<c_void>()
+            }
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
                 core::ptr::null_mut()
@@ -221,7 +218,6 @@ mod sql_hooks {
     #[unsafe(no_mangle)]
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare: crate::jsc_hooks::sql_rare,
-        ssl_ctx_get_or_create,
         ssl_config_from_js,
         ssl_config_free,
         ssl_config_as_usockets_client,

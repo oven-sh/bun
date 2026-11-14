@@ -61,6 +61,7 @@ const {
   IDX_STATE_STREAM_WANTS_HEADERS,
   IDX_STATE_STREAM_WANTS_RESET,
   IDX_STATE_STREAM_WANTS_TRAILERS,
+  IDX_STATE_STREAM_WANTS_STOP_SENDING,
   IDX_STATE_STREAM_RECEIVED_EARLY_DATA,
   IDX_STATE_STREAM_WRITE_DESIRED_SIZE,
   IDX_STATE_STREAM_HIGH_WATER_MARK,
@@ -72,6 +73,7 @@ const kEmptyObject = { __proto__: null };
 class QuicEndpointState {
   /** @type {DataView} */
   #handle;
+  #hasMaxConnectionsPerHost = false;
 
   /**
    * @param {symbol} privateSymbol
@@ -126,12 +128,15 @@ class QuicEndpointState {
   get maxConnectionsPerHost() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
+    // Node's default is reported and not enforced: the native side reads 0 until a limit is set.
+    if (!this.#hasMaxConnectionsPerHost) return 100;
     return DataViewPrototypeGetUint16(handle, IDX_STATE_ENDPOINT_MAX_CONNECTIONS_PER_HOST, kIsLittleEndian);
   }
 
   set maxConnectionsPerHost(val) {
     const handle = this.#handle;
     if (handle === undefined) return;
+    this.#hasMaxConnectionsPerHost = true;
     DataViewPrototypeSetUint16(handle, IDX_STATE_ENDPOINT_MAX_CONNECTIONS_PER_HOST, val, kIsLittleEndian);
   }
 
@@ -728,6 +733,20 @@ class QuicStreamState {
   }
 
   /** @type {boolean} */
+  get wantsStopSending() {
+    const handle = this.#handle;
+    if (handle === undefined) return undefined;
+    return DataViewPrototypeGetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_STOP_SENDING) !== 0;
+  }
+
+  /** @type {boolean} */
+  set wantsStopSending(val) {
+    const handle = this.#handle;
+    if (handle === undefined) return;
+    DataViewPrototypeSetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_STOP_SENDING, val ? 1 : 0);
+  }
+
+  /** @type {boolean} */
   get early() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
@@ -787,6 +806,7 @@ class QuicStreamState {
       wantsReset,
       wantsHeaders,
       wantsTrailers,
+      wantsStopSending,
       early,
       resetCode,
       writeDesiredSize,
@@ -807,6 +827,7 @@ class QuicStreamState {
       wantsReset,
       wantsHeaders,
       wantsTrailers,
+      wantsStopSending,
       early,
       resetCode: `${resetCode}`,
       writeDesiredSize,
@@ -843,6 +864,7 @@ class QuicStreamState {
       wantsReset,
       wantsHeaders,
       wantsTrailers,
+      wantsStopSending,
       early,
       resetCode,
       writeDesiredSize,
@@ -864,6 +886,7 @@ class QuicStreamState {
         wantsReset,
         wantsHeaders,
         wantsTrailers,
+        wantsStopSending,
         early,
         resetCode,
         writeDesiredSize,

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("destroying a frozen server socket emits the TypeError of the store that fails, then 'close'", async () => {
+test("destroying a frozen server socket emits the TypeError of the store that fails and no 'close', like Node.js", async () => {
   const script = `
     const { once } = require("node:events");
     const http = require("node:http");
@@ -36,7 +36,6 @@ test("destroying a frozen server socket emits the TypeError of the store that fa
     '200 "done"',
     '200 ""',
     "error TypeError Attempted to assign to readonly property.",
-    "close",
   ]);
   expect(exitCode).toBe(0);
 });

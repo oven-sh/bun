@@ -14,12 +14,7 @@
 //!   fn on_writable(ext, *us_socket_t)
 //!   fn on_close(ext, *us_socket_t, code: i32, reason: Option<*mut c_void>)
 //!
-//! `Ext` may be omitted entirely (HAS_EXT = false); handlers then take
-//! `(*us_socket_t, …)` and recover their owner from `s.group().owner::<T>()`
-//! instead.
-//!
 //!   fn on_timeout(ext, *us_socket_t)
-//!   fn on_long_timeout(ext, *us_socket_t)
 //!   fn on_end(ext, *us_socket_t)
 //!   fn on_fd(ext, *us_socket_t, fd: c_int)
 //!   fn on_connect_error(ext, *us_socket_t, code: i32)
@@ -36,11 +31,8 @@ use crate::{ConnectingSocket, us_bun_verify_error_t, us_socket_t};
 // each method they actually provide. Default impls are `unreachable!()` and
 // the corresponding vtable slot is left `None` when the const is `false`.
 pub trait Handler: 'static {
-    /// What `us_socket_ext` holds. Ignored when `HAS_EXT == false`.
+    /// What `us_socket_ext` holds.
     type Ext;
-    /// When false, handlers take `(s, …)` instead
-    /// of `(ext, s, …)` and recover their owner from `s.group().owner::<T>()`.
-    const HAS_EXT: bool = true;
 
     const HAS_ON_OPEN: bool = false;
     const HAS_ON_DATA: bool = false;
@@ -48,7 +40,6 @@ pub trait Handler: 'static {
     const HAS_ON_WRITABLE: bool = false;
     const HAS_ON_CLOSE: bool = false;
     const HAS_ON_TIMEOUT: bool = false;
-    const HAS_ON_LONG_TIMEOUT: bool = false;
     const HAS_ON_END: bool = false;
     const HAS_ON_CONNECT_ERROR: bool = false;
     const HAS_ON_CONNECTING_ERROR: bool = false;
@@ -77,9 +68,6 @@ pub trait Handler: 'static {
     fn on_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
-    fn on_long_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
-        unreachable!()
-    }
     fn on_end(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
@@ -95,40 +83,6 @@ pub trait Handler: 'static {
         _ok: bool,
         _err: us_bun_verify_error_t,
     ) {
-        unreachable!()
-    }
-
-    // When `HAS_EXT == false`, handlers take `(s, …)`. Rust can't change a
-    // trait method's arity by a const, so the no-ext variants are separate
-    // methods. Only called when `HAS_EXT == false`.
-    fn on_open_no_ext(_s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        unreachable!()
-    }
-    fn on_data_no_ext(_s: *mut us_socket_t, _data: &[u8]) {
-        unreachable!()
-    }
-    fn on_fd_no_ext(_s: *mut us_socket_t, _fd: c_int) {
-        unreachable!()
-    }
-    fn on_writable_no_ext(_s: *mut us_socket_t) {
-        unreachable!()
-    }
-    fn on_close_no_ext(_s: *mut us_socket_t, _code: i32, _reason: Option<*mut c_void>) {
-        unreachable!()
-    }
-    fn on_timeout_no_ext(_s: *mut us_socket_t) {
-        unreachable!()
-    }
-    fn on_long_timeout_no_ext(_s: *mut us_socket_t) {
-        unreachable!()
-    }
-    fn on_end_no_ext(_s: *mut us_socket_t) {
-        unreachable!()
-    }
-    fn on_connect_error_no_ext(_s: *mut us_socket_t, _code: i32) {
-        unreachable!()
-    }
-    fn on_handshake_no_ext(_s: *mut us_socket_t, _ok: bool, _err: us_bun_verify_error_t) {
         unreachable!()
     }
 }
@@ -173,11 +127,6 @@ impl<H: Handler> Make<H> {
         } else {
             None
         },
-        on_long_timeout: if H::HAS_ON_LONG_TIMEOUT {
-            Some(Trampolines::<H>::on_long_timeout)
-        } else {
-            None
-        },
         on_end: if H::HAS_ON_END {
             Some(Trampolines::<H>::on_end)
         } else {
@@ -206,8 +155,6 @@ impl<H: Handler> Make<H> {
 struct Trampolines<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Trampolines<H> {
-    // Rust can't splat tuples into a call, so each trampoline inlines the
-    // HAS_EXT branch.
     #[inline(always)]
     fn ext(s: *mut us_socket_t) -> &'static mut H::Ext {
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the
@@ -227,40 +174,24 @@ impl<H: Handler> Trampolines<H> {
         // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null.
         let ip_slice: &[u8] =
             unsafe { thunk::c_slice(ip, usize::try_from(ip_len).expect("int cast")) };
-        if H::HAS_EXT {
-            H::on_open(Self::ext(s), s, is_client != 0, ip_slice);
-        } else {
-            H::on_open_no_ext(s, is_client != 0, ip_slice);
-        }
+        H::on_open(Self::ext(s), s, is_client != 0, ip_slice);
         s
     }
 
     extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid.
         let data_slice = unsafe { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
-        if H::HAS_EXT {
-            H::on_data(Self::ext(s), s, data_slice);
-        } else {
-            H::on_data_no_ext(s, data_slice);
-        }
+        H::on_data(Self::ext(s), s, data_slice);
         s
     }
 
     extern "C" fn on_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_fd(Self::ext(s), s, fd);
-        } else {
-            H::on_fd_no_ext(s, fd);
-        }
+        H::on_fd(Self::ext(s), s, fd);
         s
     }
 
     extern "C" fn on_writable(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_writable(Self::ext(s), s);
-        } else {
-            H::on_writable_no_ext(s);
-        }
+        H::on_writable(Self::ext(s), s);
         s
     }
 
@@ -270,47 +201,22 @@ impl<H: Handler> Trampolines<H> {
         reason: *mut c_void,
     ) -> *mut us_socket_t {
         let reason = if reason.is_null() { None } else { Some(reason) };
-        if H::HAS_EXT {
-            H::on_close(Self::ext(s), s, code, reason);
-        } else {
-            H::on_close_no_ext(s, code, reason);
-        }
+        H::on_close(Self::ext(s), s, code, reason);
         s
     }
 
     extern "C" fn on_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_timeout(Self::ext(s), s);
-        } else {
-            H::on_timeout_no_ext(s);
-        }
-        s
-    }
-
-    extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_long_timeout(Self::ext(s), s);
-        } else {
-            H::on_long_timeout_no_ext(s);
-        }
+        H::on_timeout(Self::ext(s), s);
         s
     }
 
     extern "C" fn on_end(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_end(Self::ext(s), s);
-        } else {
-            H::on_end_no_ext(s);
-        }
+        H::on_end(Self::ext(s), s);
         s
     }
 
     extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_connect_error(Self::ext(s), s, code);
-        } else {
-            H::on_connect_error_no_ext(s, code);
-        }
+        H::on_connect_error(Self::ext(s), s, code);
         s
     }
 
@@ -328,10 +234,6 @@ impl<H: Handler> Trampolines<H> {
         err: us_bun_verify_error_t,
         _user: *mut c_void,
     ) {
-        if H::HAS_EXT {
-            H::on_handshake(Self::ext(s), s, ok != 0, err);
-        } else {
-            H::on_handshake_no_ext(s, ok != 0, err);
-        }
+        H::on_handshake(Self::ext(s), s, ok != 0, err);
     }
 }

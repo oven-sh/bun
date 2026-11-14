@@ -1,10 +1,12 @@
 const EventEmitter = require("node:events");
 const dc = require("node:diagnostics_channel");
 const { isArrayBuffer } = require("node:util/types");
+const { checkIsHttpToken } = require("internal/validators");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
+const noop = () => {};
 
 var fetch: (input: string | URL | Request, init?: object) => Promise<Response> = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
@@ -105,6 +107,43 @@ class BodyReadable extends ReadableFromWeb {
     this.#consume();
     return await this.#response.text();
   }
+
+  async bytes() {
+    this.#consume();
+    return await this.#response.bytes();
+  }
+
+  // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/readable.js#L158-L199
+  async dump(opts?: { limit?: number; signal?: AbortSignal | null }) {
+    const signal = opts?.signal;
+    if (signal != null && (typeof signal !== "object" || !("aborted" in signal))) {
+      throw new InvalidArgumentError("signal must be an AbortSignal");
+    }
+    const limit = Number.isFinite(opts?.limit) ? opts!.limit! : 128 * 1024;
+    signal?.throwIfAborted();
+    this.#bodyUsed = true;
+    if (this._readableState.closeEmitted) return null;
+
+    const { promise, resolve, reject } = Promise.withResolvers<null>();
+    if (Number(this.#response.headers.get("content-length")) > limit) this.destroy(new AbortError());
+
+    const onAbort = () => this.destroy((signal!.reason ?? new AbortError()) as Error);
+    signal?.addEventListener("abort", onAbort);
+
+    let bytesRead = 0;
+    this.on("close", () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) reject(signal.reason ?? new AbortError());
+      else resolve(null);
+    })
+      .on("error", noop)
+      .on("data", (chunk: Buffer) => {
+        bytesRead += chunk.length;
+        if (bytesRead >= limit) this.destroy();
+      })
+      .resume();
+    return await promise;
+  }
 }
 
 // NOT IMPLEMENTED
@@ -201,7 +240,12 @@ async function request(
   if (typeof url === "string" && query) url = new URL(url);
   if (typeof url === "object" && url !== null && query) if (query) url.search = new URLSearchParams(query).toString();
 
-  method = method && typeof method === "string" ? method.toUpperCase() : null;
+  // https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
+  if (!method) method = "GET";
+  else if (typeof method !== "string") throw new InvalidArgumentError("method must be a string");
+  else if (!checkIsHttpToken(method)) throw new InvalidArgumentError("invalid request method");
+  method = method.toUpperCase();
+  if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
   // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
@@ -319,29 +363,136 @@ const interceptors = {
   dump: () => {},
 };
 
-// Error classes
-class UndiciError extends Error {}
-class AbortError extends UndiciError {}
-class HTTPParserError extends Error {}
-class HeadersTimeoutError extends UndiciError {}
-class HeadersOverflowError extends UndiciError {}
-class BodyTimeoutError extends UndiciError {}
-class RequestContentLengthMismatchError extends UndiciError {}
-class ConnectTimeoutError extends UndiciError {}
-class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
-class InvalidReturnValueError extends UndiciError {}
-class RequestAbortedError extends AbortError {}
-class ClientDestroyedError extends UndiciError {}
-class ClientClosedError extends UndiciError {}
-class InformationalError extends UndiciError {}
-class SocketError extends UndiciError {}
-class NotSupportedError extends UndiciError {}
-class ResponseContentLengthMismatchError extends UndiciError {}
-class BalancedPoolMissingUpstreamError extends UndiciError {}
-class ResponseExceededMaxSizeError extends UndiciError {}
-class RequestRetryError extends UndiciError {}
-class SecureProxyConnectionError extends UndiciError {}
+// https://github.com/nodejs/undici/blob/v6.21.3/lib/core/errors.js
+class UndiciError extends Error {
+  constructor(message?: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "UndiciError";
+    this.code = "UND_ERR";
+  }
+}
+
+function defineError(className: string, code: string, defaultMessage: string, name = className, Base = UndiciError) {
+  const ErrorClass = class extends Base {
+    constructor(message?: string) {
+      super(message || defaultMessage);
+      this.name = name;
+      this.code = code;
+    }
+  };
+  Object.defineProperty(ErrorClass, "name", { value: className });
+  return ErrorClass;
+}
+
+const AbortError = defineError("AbortError", "UND_ERR_ABORT", "The operation was aborted");
+const HeadersTimeoutError = defineError("HeadersTimeoutError", "UND_ERR_HEADERS_TIMEOUT", "Headers Timeout Error");
+const HeadersOverflowError = defineError("HeadersOverflowError", "UND_ERR_HEADERS_OVERFLOW", "Headers Overflow Error");
+const BodyTimeoutError = defineError("BodyTimeoutError", "UND_ERR_BODY_TIMEOUT", "Body Timeout Error");
+const RequestContentLengthMismatchError = defineError(
+  "RequestContentLengthMismatchError",
+  "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH",
+  "Request body length does not match content-length header",
+);
+const ConnectTimeoutError = defineError("ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT", "Connect Timeout Error");
+const InvalidArgumentError = defineError("InvalidArgumentError", "UND_ERR_INVALID_ARG", "Invalid Argument Error");
+const InvalidReturnValueError = defineError(
+  "InvalidReturnValueError",
+  "UND_ERR_INVALID_RETURN_VALUE",
+  "Invalid Return Value Error",
+);
+const RequestAbortedError = defineError(
+  "RequestAbortedError",
+  "UND_ERR_ABORTED",
+  "Request aborted",
+  "AbortError",
+  AbortError,
+);
+const ClientDestroyedError = defineError("ClientDestroyedError", "UND_ERR_DESTROYED", "The client is destroyed");
+const ClientClosedError = defineError("ClientClosedError", "UND_ERR_CLOSED", "The client is closed");
+const InformationalError = defineError("InformationalError", "UND_ERR_INFO", "Request information");
+const NotSupportedError = defineError("NotSupportedError", "UND_ERR_NOT_SUPPORTED", "Not supported error");
+const ResponseContentLengthMismatchError = defineError(
+  "ResponseContentLengthMismatchError",
+  "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
+  "Response body length does not match content-length header",
+);
+const BalancedPoolMissingUpstreamError = defineError(
+  "BalancedPoolMissingUpstreamError",
+  "UND_ERR_BPL_MISSING_UPSTREAM",
+  "No upstream has been added to the BalancedPool",
+  "MissingUpstreamError",
+);
+const ResponseExceededMaxSizeError = defineError(
+  "ResponseExceededMaxSizeError",
+  "UND_ERR_RES_EXCEEDED_MAX_SIZE",
+  "Response content exceeded max size",
+);
+
+class HTTPParserError extends Error {
+  declare data: string | undefined;
+
+  constructor(message?: string, code?: string, data?: Buffer) {
+    super(message);
+    this.name = "HTTPParserError";
+    this.code = code ? `HPE_${code}` : undefined;
+    this.data = data ? data.toString() : undefined;
+  }
+}
+
+class ResponseStatusCodeError extends UndiciError {
+  declare body: unknown;
+  declare status: number | undefined;
+  declare statusCode: number | undefined;
+  declare headers: unknown;
+
+  constructor(message?: string, statusCode?: number, headers?: unknown, body?: unknown) {
+    super(message || "Response Status Code Error");
+    this.name = "ResponseStatusCodeError";
+    this.code = "UND_ERR_RESPONSE_STATUS_CODE";
+    this.body = body;
+    this.status = statusCode;
+    this.statusCode = statusCode;
+    this.headers = headers;
+  }
+}
+
+class SocketError extends UndiciError {
+  declare socket: unknown;
+
+  constructor(message?: string, socket?: unknown) {
+    super(message || "Socket error");
+    this.name = "SocketError";
+    this.code = "UND_ERR_SOCKET";
+    this.socket = socket;
+  }
+}
+
+class RequestRetryError extends UndiciError {
+  declare statusCode: number | undefined;
+  declare data: unknown;
+  declare headers: unknown;
+
+  constructor(
+    message?: string,
+    code?: number,
+    { headers, data }: { headers?: unknown; data?: unknown } = kEmptyObject,
+  ) {
+    super(message || "Request retry error");
+    this.name = "RequestRetryError";
+    this.code = "UND_ERR_REQ_RETRY";
+    this.statusCode = code;
+    this.data = data;
+    this.headers = headers;
+  }
+}
+
+class SecureProxyConnectionError extends UndiciError {
+  constructor(cause?: unknown, message?: string, options?: ErrorOptions) {
+    super(message || "Secure Proxy Connection failed", { cause, ...options });
+    this.name = "SecureProxyConnectionError";
+    this.code = "UND_ERR_PRX_TLS";
+  }
+}
 
 const errors = {
   AbortError,

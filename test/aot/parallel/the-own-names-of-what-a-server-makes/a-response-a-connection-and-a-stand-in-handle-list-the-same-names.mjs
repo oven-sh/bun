@@ -1,4 +1,4 @@
-// Whoever lists or prints what a server makes sees the same own names as without compilation, in the same order: a response at six moments of an answer, among them behind an empty chunk under a Content-Length; a connection that two requests were pipelined on; the handle that stands in for the native one on a connection handed over by server.emit("connection", socket).
+// Whoever lists or prints what a server makes sees the same own names as without compilation, in the same order: a response at six moments of an answer, among them behind an empty chunk under a Content-Length; a connection that two requests were pipelined on; a response on a connection handed over by server.emit("connection", socket), which has no native handle.
 import http from "node:http";
 import net from "node:net";
 const lines = [];
@@ -29,9 +29,10 @@ const server = http.createServer((req, res) => {
       if (req.url === "/b") setImmediate(() => note("the connection behind both", req.socket));
     }, 10);
   } else {
-    const handle = res[Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle")];
-    note("the stand-in handle", handle);
-    lines.push(`above it stands Object.prototype: ${Object.getPrototypeOf(handle) === Object.prototype}`);
+    const handle = Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle");
+    note("a response on a connection handed over", res);
+    note("the connection handed over", req.socket);
+    lines.push(`its handle: ${res[handle]}`);
     res.end("ok");
   }
 });
@@ -49,7 +50,7 @@ await new Promise(resolve => {
 const front = net.createServer(socket => server.emit("connection", socket));
 await new Promise(resolve => front.listen(0, "127.0.0.1", resolve));
 lines.push(
-  `over the stand-in: ${await new Promise(resolve =>
+  `over the connection handed over: ${await new Promise(resolve =>
     http.get({ host: "127.0.0.1", port: front.address().port, path: "/handed", agent: false }, got => {
       let text = "";
       got.on("data", chunk => (text += chunk)).on("end", () => resolve(`${got.statusCode} ${text}`));

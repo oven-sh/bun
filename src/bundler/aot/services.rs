@@ -896,7 +896,7 @@ impl SourceProvider for BundlerServices {
             Some(known) => known.value.into_owned(),
             None => written.to_ascii_lowercase(),
         };
-        let kept = MimeType::MimeType::init(&kept, false, None);
+        let kept = MimeType::MimeType::init(&kept, false);
         Some(Loader::from_mime_type(kept))
     }
 

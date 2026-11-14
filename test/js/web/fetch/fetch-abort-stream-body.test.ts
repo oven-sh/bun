@@ -76,7 +76,7 @@ test
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("AddressSanitizer");
-    expect(stdout).toBe("done 100\n");
+    expect(stdout).toBe("done 100 rejected=100\n");
     expect(exitCode).toBe(0);
   });
 
@@ -124,6 +124,70 @@ test.concurrent(
     expect(pulls).toBe(iterations);
   },
 );
+
+test.concurrent("aborting from inside a direct request body's pull() rejects with an AbortError", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await req.text().catch(() => {});
+      return new Response("ok");
+    },
+  });
+
+  const iterations = 100;
+  let pulls = 0;
+
+  for (let i = 0; i < iterations; i++) {
+    const controller = new AbortController();
+    const body = new ReadableStream({
+      type: "direct",
+      async pull(sink) {
+        pulls++;
+        controller.abort();
+        sink.close();
+      },
+    });
+    const request = new Request(server.url.href, { method: "POST", body, signal: controller.signal });
+    await expect(fetch(request)).rejects.toHaveProperty("name", "AbortError");
+  }
+
+  expect(pulls).toBe(iterations);
+});
+
+// The rejection is the same whether the upstream error reaches the body before or after the upload starts.
+test.concurrent("piping a truncated upstream body into fetch rejects with the upstream error", async () => {
+  const closed = Promise.withResolvers<void>();
+  using upstream = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open() {},
+      data(sock) {
+        // Closes before sending content-length bytes, so the client errors the response body.
+        sock.write("HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nconnection: close\r\n\r\npartial-body");
+        sock.end();
+        closed.resolve();
+      },
+    },
+  });
+  await using postServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await req.arrayBuffer().catch(() => {});
+      return new Response("ok");
+    },
+  });
+
+  const upRes = await fetch(`http://127.0.0.1:${upstream.port}/`);
+  await closed.promise;
+
+  const err = await fetch(postServer.url, { method: "POST", body: upRes.body }).then(
+    () => null,
+    e => e,
+  );
+  expect(err).toBeInstanceOf(TypeError);
+  expect(err).toMatchObject({ code: "ECONNRESET" });
+});
 
 test("aborting fetch with a ReadableStream request body does not double-cancel the sink", async () => {
   await using proc = Bun.spawn({

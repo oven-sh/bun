@@ -46,22 +46,6 @@ reason = "codegen-scraped host export"
 # Group A: enum variants whose discriminants form external code tables (kept on purpose).
 [[override]]
 lint = "hawk::dead_public"
-crate = "bun_http_types"
-item = "h2::FrameType::HTTP_FRAME_ALTSVC"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: HTTP/2 frame type numbering"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_http_types"
-item = "h2::FrameType::HTTP_FRAME_ORIGIN"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: HTTP/2 frame type numbering"
-
-[[override]]
-lint = "hawk::dead_public"
 crate = "bun_jsc"
 item = "js_error_code::DOMExceptionCode::IndexSizeError"
 kind = "enum_variant"

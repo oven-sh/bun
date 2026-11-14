@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_incoming.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 28181b2c5a22f824a8caebb17a1f5a3d65525df1d060b79b1a452932b3f20a1f.
+// Written against that file with the SHA-256 4f95665043e6f4f3d49e32817a7356b59d1a04ac2406fe4d7f29c9a945deca3a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_incoming"
@@ -39,18 +39,17 @@ const {
   emitEOFIncomingMessageOuter,
   clearServerParserIncoming,
   onDataIncomingMessage,
+  takeBodyDataInFull,
   takeRequestTrailers,
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kCapture: typeof shared.kCapture = shared.kCapture;
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
-const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
 const kAbortController: typeof http.kAbortController = http.kAbortController;
 const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kMadeOverHandle: typeof http.kMadeOverHandle = http.kMadeOverHandle;
-const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
 const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 const noBodySymbol: typeof http.noBodySymbol = http.noBodySymbol;
 const kReqShouldKeepAlive: typeof http.kReqShouldKeepAlive = http.kReqShouldKeepAlive;
@@ -202,7 +201,6 @@ declare global {
       _dumpAndCloseReadable(): void;
       _dump(): void;
       [kHeaders]: IncomingHttpHeaders | null;
-      [kAutoDestroyed]: boolean | undefined;
       [kHeadersDistinct]?: Dictionary<string[]>;
       [kHeadersCount]: number;
       [kRawHeaders]: string[] | null;
@@ -213,9 +211,7 @@ declare global {
     }
 
     /** A stream that a program passes to a response in place of a request, with the members that the response reads. */
-    interface SubstituteRequest extends Readable, Omit<IncomingMessage, keyof Readable> {
-      [kAutoDestroyed]: boolean | undefined;
-    }
+    interface SubstituteRequest extends Readable, Omit<IncomingMessage, keyof Readable> {}
 
     type IncomingMessageConstructor = typeof IncomingMessage;
   }
@@ -448,19 +444,18 @@ function readsRawHeadersThroughAccessor(message: $Node.IncomingMessage): boolean
   return parent !== null && ObjectPrototypeLookupGetter.$call(parent, "rawHeaders") === getRawHeaders;
 }
 
-// Whether a read of `message.readableEnded` reaches the accessor of Readable.prototype, which is not configurable.
-function readsReadableEndedThroughAccessor(message: $Node.IncomingMessage): boolean {
-  if (IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(message, "readableEnded", IncomingMessage)) {
+// Whether reads of `message.readableEnded` and `message.destroyed` reach the accessors of Readable.prototype, which are not configurable.
+function readsItsEndThroughAccessors(message: $Node.IncomingMessage): boolean {
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $findsDeclaredMember(message, "readableEnded", IncomingMessage) &&
+    $findsDeclaredMember(message, "destroyed", IncomingMessage)
+  ) {
     return true;
   }
-  if (ObjectHasOwn(message, "readableEnded")) return false;
-  let level: object | null = ObjectGetPrototypeOf(message);
-  if (level === IncomingMessagePrototype) {
-    if (ObjectHasOwn(IncomingMessagePrototype, "readableEnded")) return false;
-    level = ObjectGetPrototypeOf(IncomingMessagePrototype);
-  }
+  let level: object | null = message;
   while (level !== ReadablePrototype) {
-    if (level === null || ObjectHasOwn(level, "readableEnded")) return false;
+    if (level === null || ObjectHasOwn(level, "readableEnded") || ObjectHasOwn(level, "destroyed")) return false;
     level = ObjectGetPrototypeOf(level);
   }
   return true;
@@ -597,9 +592,9 @@ function resumeIfReadable(socket: $Node.HttpSocket) {
 }
 
 function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket) {
-  if (req.upgrade || socket[kHandoffResponse] !== undefined) {
+  if (req.upgrade || socket.parser === null) {
     ("unlikely");
-    // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
+    // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - raw bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
   } else if (!socket._paused) {
     if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, true);
@@ -684,9 +679,7 @@ const incomingMessageDestroy = function _destroy(
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
-    let connection: $Node.IncomingMessage["socket"];
-    if (!handle.finished && shouldEmitAborted && (connection = this.socket)) {
-      http.responseRoad.flushSocketHeldChunk?.(connection);
+    if (!handle.finished && shouldEmitAborted && this.socket) {
       handle.abort();
     }
     const socket = this.socket;
@@ -709,7 +702,11 @@ const incomingMessageDestroy = function _destroy(
     socket.destroy(err);
     const state = { cleanup: undefined as undefined | (() => void) };
     state.cleanup = finished(socket, onFinishedAfterDestroy.bind(this, state, err, cb));
+  } else if (err == null && !this.aborted) {
+    cb();
   } else {
+    // pipeline() and `for await` destroy a request but keep its connection (req.socket is null). The rest of the body is dropped, not held back.
+    if (!socket && !this.complete) readStart(this.client);
     process.nextTick(onError, this, err, cb);
   }
 };
@@ -1029,7 +1026,8 @@ const dump = function _dump(this: $Node.IncomingMessage) {
     this.removeAllListeners("data");
     if (endsUnwatched(this)) return;
     // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
-    this.resume();
+    if (this._readableState.ended && !this.destroyed && this.readableLength === 0) this.read(0);
+    else this.resume();
   }
 };
 IncomingMessage.prototype._dump = dump;
@@ -1229,7 +1227,7 @@ function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.Reada
       // destroy() reads it once more.
       (side === 1 && !!req._writableState) ||
       !readsItsSocketUnseen(req) ||
-      !readsReadableEndedThroughAccessor(req) ||
+      !readsItsEndThroughAccessors(req) ||
       !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
     ) {
       return undefined;
@@ -1246,7 +1244,6 @@ function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableStat
     ("unlikely");
     return endOnNextTick(state, req);
   }
-  req[kAutoDestroyed] = true;
   let unseen: boolean;
   try {
     req[kHandle] = undefined;
@@ -1291,7 +1288,7 @@ function mayDumpInPlace(req: $Node.IncomingMessage): boolean {
         findsWithoutAsking(req, "resume", resume)) &&
       ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "removeAllListeners", IncomingMessage)) ||
         findsWithoutAsking(req, "removeAllListeners", removeAllListeners)) &&
-      readsReadableEndedThroughAccessor(req)
+      readsItsEndThroughAccessors(req)
     );
   } catch {
     return false;
@@ -1447,6 +1444,10 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
       ("unlikely");
       emitEOFIncomingMessage(req);
     }
+    if (!handle.ondata) {
+      ("unlikely");
+      handle.ondata = onBodyData.bind(req);
+    }
   } catch (err) {
     errorOrDestroy(stream, err as Error);
   }
@@ -1470,46 +1471,39 @@ internals.onRequestBodyData = onBodyData;
 
 // `stream` and `chunk` as in addChunk(): a TypeError about a replaced emit() quotes the call.
 function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, isLast: boolean, aborted: number) {
-  // Behind the yes no read off the request runs code of the program: an accessor laid on one of its fields lies outside its slot.
-  if (
-    aborted !== NodeHTTPResponseAbortEvent.none ||
-    !(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(stream, IncomingMessage))
-  ) {
+  if (aborted !== NodeHTTPResponseAbortEvent.none) {
     ("unlikely");
     return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
   }
-  const state = stream._readableState;
-  if (!(IS_COMPILED_AHEAD_OF_TIME && isPlainReadableState(state))) {
-    ("unlikely");
-    return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
-  }
-  const flags = state[kState];
-  const word = flags & ~kDecoding;
   // Only the native server hands over a body this way.
   const socket: $Node.HttpServerSocket | null | undefined = stream.socket as any;
+  if (socket?.timeout) socket._unrefTimer?.();
+  // Behind the yes no read off the request runs code of the program: an accessor laid on one of its fields lies outside its slot.
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(stream, IncomingMessage))) {
+    ("unlikely");
+    return takeBodyDataInFull(stream, socket, bytes, isLast);
+  }
+  const state = stream._readableState;
+  if (!(IS_COMPILED_AHEAD_OF_TIME && isPlainReadableState(state)) || !ticksAreUnseen()) {
+    ("unlikely");
+    return takeBodyDataInFull(stream, socket, bytes, isLast);
+  }
+  if (isLast && bytes === undefined) return takeEndOfBody(stream, state, socket);
+  const flags = state[kState];
+  const word = flags & ~(kDecoding | kDataEmitted);
   if (
-    !isLast ||
+    isLast ||
     bytes === undefined ||
     (word !== kBodyReading &&
       (word !== kBodyAwaited || bytes.length * ((flags & kDecoder) !== 0 ? 2 : 1) >= state.highWaterMark)) ||
     state.length !== 0 ||
     stream._dumped ||
-    stream.upgrade ||
-    stream[eofInProgress] ||
     (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream, "push", IncomingMessage)) &&
-      !findsWithoutAsking(stream, "push", push)) ||
-    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream, "read", IncomingMessage)) &&
-      !findsWithoutAsking(stream, "read", read)) ||
-    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream, "_read", IncomingMessage)) &&
-      !findsWithoutAsking(stream, "_read", incomingMessageRead)) ||
-    (socket != null && !(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "_unrefTimer"))) ||
-    !ticksAreUnseen()
+      !findsWithoutAsking(stream, "push", push))
   ) {
     ("unlikely");
-    return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
+    return takeBodyDataInFull(stream, socket, bytes, isLast);
   }
-
-  socket?._unrefTimer();
 
   const decoding = flags & ~kReading;
   state[kState] = decoding;
@@ -1529,33 +1523,47 @@ function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, 
   if (isAsTested && length !== 0 && word === kBodyAwaited) {
     state.length = length;
     state.buffer.push(chunk);
-    state[kState] = (flags & kDecoding) | kBodyBuffered;
+    state[kState] = (flags & (kDecoding | kDataEmitted)) | kBodyBuffered;
     queueTick1(emitReadableNow, stream);
-    markEndInProgress(stream, state);
-    queueTick2(finishBufferedBody, stream, state);
+    queueTick2(readOn, stream, state);
   } else if (isAsTested && state[kState] === given && state.length === 0) {
     state[kState] = given | kReadingMore;
-    markEndInProgress(stream, state);
-    queueTick2(finishBody, stream, state);
+    queueTick2(readOn, stream, state);
   } else {
     ("unlikely");
     readMoreLater(stream, state);
     if ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) {
       const finSent = socket?.[kHandle]?.finSent === true;
+      if (stream.upgrade) stream[kHandle]?.pause();
       // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
-      if (finSent && !stream._consuming) socket![kHandle]!.stopParsing();
-      else if (socket && (finSent || !socket.writableEnded)) {
-        socket.pause();
-        stream[kHandle]?.pause();
-      }
+      else if (finSent && !stream._consuming) socket![kHandle]!.stopParsing();
+      else if (socket && (finSent || !socket.writableEnded)) socket.pause();
     }
-    emitEOFIncomingMessage(stream);
   }
-  if (!stream.upgrade && socket && !socket._paused && socket.readable) {
-    if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, false);
-    else {
-      ("unlikely");
-      socket.resume();
+}
+
+const queueEndOfBody = function emitEOFIncomingMessage(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  req[eofInProgress] = true;
+  queueTick2(endBody, req, state);
+};
+
+function takeEndOfBody(
+  req: $Node.IncomingMessage,
+  state: $Node.ReadableState,
+  socket: $Node.HttpServerSocket | null | undefined,
+) {
+  try {
+    queueEndOfBody(req, state);
+  } catch (err) {
+    req.destroy(err as Error);
+    throw err;
+  } finally {
+    if (!req.upgrade && socket && !socket._paused && socket.readable) {
+      if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, false);
+      else {
+        ("unlikely");
+        socket.resume();
+      }
     }
   }
 }
@@ -1584,90 +1592,31 @@ function addDecodedChunk(
   }
 }
 
-function markEndInProgress(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  try {
-    req[eofInProgress] = true;
-  } catch (error) {
-    queueTick2(readMoreOnNextTick, req, state);
-    throw error;
-  }
-}
-
-function readMoreThenEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  try {
-    readMoreOnNextTick(req, state);
-  } catch (error) {
-    queueTick1(emitEOFIncomingMessageOuter, req);
-    throw error;
-  }
-  emitEOFIncomingMessageOuter(req);
-}
-
 // A tick runs in a later turn than the one that queued it: what was asked there is asked again.
-function finishBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+const readOn = function maybeReadMore_(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(req, IncomingMessage) && isPlainReadableState(state))) {
     ("unlikely");
-    return readMoreThenEnd(req, state);
-  }
-  const flags = state[kState];
-  if (
-    req._readableState !== state ||
-    (flags & ~kDecoding) !== (kBodyGiven | kReadingMore) ||
-    state.length !== 0 ||
-    !req[kHandle] ||
-    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "read", IncomingMessage)) &&
-      !findsWithoutAsking(req, "read", read)) ||
-    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "_read", IncomingMessage)) &&
-      !findsWithoutAsking(req, "_read", incomingMessageRead))
-  ) {
-    ("unlikely");
-    return readMoreThenEnd(req, state);
-  }
-  const asked = flags | kReading | kSync;
-  state[kState] = asked;
-  try {
-    resumeConnection(req);
-  } catch (err) {
-    const stream: $Node.Readable = req;
-    errorOrDestroy(stream, err as Error);
-  }
-  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (state[kState] !== asked || state.length !== 0) {
-    ("unlikely");
-    finishReadOfNothing(state);
-    if (state.length !== 0) return readMoreThenEnd(req, state);
-    state[kState] &= ~kReadingMore;
-    return emitEOFIncomingMessageOuter(req);
-  }
-  state[kState] = (flags & kDecoding) | kBodyReadingOn;
-  endBody(req, state);
-}
-
-function finishBufferedBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(req, IncomingMessage) && isPlainReadableState(state))) {
-    ("unlikely");
-    return readMoreThenEnd(req, state);
+    return readMoreOnNextTick(req, state);
   }
   const flags = state[kState];
   const length = state.length;
   if (
     req._readableState !== state ||
-    (flags & ~kDecoding) !== kBodyAnnounced ||
-    length === 0 ||
-    length >= state.highWaterMark ||
-    !req[kHandle] ||
+    (length === 0
+      ? (flags & ~kDecoding) !== (kBodyGiven | kReadingMore)
+      : (flags & ~(kDecoding | kDataEmitted)) !== kBodyAnnounced || length >= state.highWaterMark) ||
     (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "read", IncomingMessage)) &&
       !findsWithoutAsking(req, "read", read)) ||
     (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "_read", IncomingMessage)) &&
       !findsWithoutAsking(req, "_read", incomingMessageRead))
   ) {
     ("unlikely");
-    return readMoreThenEnd(req, state);
+    return readMoreOnNextTick(req, state);
   }
   const asked = flags | kReading | kSync;
   state[kState] = asked;
   try {
-    resumeConnection(req);
+    incomingMessageRead.$call(req, state.highWaterMark);
   } catch (err) {
     const stream: $Node.Readable = req;
     errorOrDestroy(stream, err as Error);
@@ -1676,13 +1625,12 @@ function finishBufferedBody(req: $Node.IncomingMessage, state: $Node.ReadableSta
   if (state[kState] !== asked || state.length !== length) {
     ("unlikely");
     finishReadOfNothing(state);
-    if (state.length !== length) return readMoreThenEnd(req, state);
+    if (state.length !== length) return readMoreOnNextTick(req, state);
     state[kState] &= ~kReadingMore;
-    return emitEOFIncomingMessageOuter(req);
+    return;
   }
   state[kState] = (flags | kReading) & ~kReadingMore;
-  endBody(req, state);
-}
+};
 
 function releaseParserOnNextTick(req: $Node.IncomingMessage) {
   const socket = req.socket;
@@ -1699,9 +1647,9 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
     ("unlikely");
     return emitEOFIncomingMessageOuter(req);
   }
-  const handle = req[kHandle] as $Node.NodeHTTPResponse | undefined;
   if (
-    handle === undefined ||
+    req[kHandle] === undefined ||
+    req[noBodySymbol] ||
     req._readableState !== state ||
     (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "push", IncomingMessage)) &&
       !findsWithoutAsking(req, "push", push)) ||
@@ -1712,7 +1660,7 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
     return emitEOFIncomingMessageOuter(req);
   }
   req.complete = true;
-  const rawTrailers = takeRequestTrailers(req, handle);
+  const rawTrailers = takeRequestTrailers(req);
   if (rawTrailers !== undefined) {
     ("unlikely");
     req._addHeaderLines(rawTrailers, rawTrailers.length);
@@ -1720,6 +1668,12 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
     return releaseParserOnNextTick(req);
   }
   let flags = state[kState];
+  if ((flags & (kEnded | kSync)) !== 0) {
+    ("unlikely");
+    req.push(null);
+    return releaseParserOnNextTick(req);
+  }
+  const wasReadingOn = (flags & ~kDecoding) === kBodyReadingOn;
   let asked = flags;
   if ((flags & kDecoder) !== 0) {
     // The decoder's end() may be the program's: it finds the request no longer reading, as behind push(null).
@@ -1734,7 +1688,7 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   }
   flags = state[kState];
   let isUnheard = false;
-  if (flags === asked && state.length === 0 && (flags & kFlowing) !== 0) {
+  if (wasReadingOn && flags === asked && state.length === 0) {
     isUnheard = isReadableUnheard(req);
   }
   if (!isUnheard) {
@@ -1785,13 +1739,12 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
       req._readableState !== state ||
       // destroy() reads it once more.
       (side === 1 && !!req._writableState) ||
-      !readsReadableEndedThroughAccessor(req) ||
+      !readsItsEndThroughAccessors(req) ||
       !readsItsSocketUnseen(req)
     ) {
       ("unlikely");
       return false;
     }
-    req[kAutoDestroyed] = true;
   } catch {
     return false;
   }
@@ -1934,7 +1887,8 @@ function keepsItsMethods(req: $Node.IncomingMessage): boolean {
     $findsDeclaredMember(req, "push", IncomingMessage) &&
     $findsDeclaredMember(req, "destroy", IncomingMessage) &&
     $findsDeclaredMember(req, "listenerCount", IncomingMessage) &&
-    $findsDeclaredMember(req, "readableEnded", IncomingMessage)
+    $findsDeclaredMember(req, "readableEnded", IncomingMessage) &&
+    $findsDeclaredMember(req, "destroyed", IncomingMessage)
   )) {
     ("unlikely");
     return readsTheMethodsOfItsClass(req);
@@ -1967,7 +1921,7 @@ function readsTheMethodsOfItsClass(req: $Node.IncomingMessage): boolean {
     findsWithoutAsking(req, "destroy", destroy) &&
     findsWithoutAsking(req, "_destroy", incomingMessageDestroy) &&
     findsWithoutAsking(req, "listenerCount", listenerCount) &&
-    readsReadableEndedThroughAccessor(req) &&
+    readsItsEndThroughAccessors(req) &&
     hasNoListenerAndNoWritableSide(req)
   );
 }
@@ -1978,8 +1932,7 @@ function readsItsSocketUnseen(req: $Node.IncomingMessage): boolean {
 }
 
 function endUnseen(req: $Node.IncomingMessage): void {
-  // The one store that a request closed in any way refuses comes first, so that a request is ended whole or not at all.
-  req[kAutoDestroyed] = true;
+  // A frozen request refuses the first store, so that a request is ended whole or not at all.
   req._dumped = true;
   req[kShapeMode] = false;
   req._consuming = true;

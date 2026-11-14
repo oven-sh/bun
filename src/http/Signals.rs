@@ -9,6 +9,7 @@ pub struct Signals {
     pub response_body_streaming: Option<NonNull<AtomicBool>>,
     pub aborted: Option<NonNull<AtomicBool>>,
     pub cert_errors: Option<NonNull<AtomicBool>>,
+    pub body_unread: Option<NonNull<AtomicBool>>,
     pub body_receive_mode: Option<NonNull<AtomicU8>>,
 }
 
@@ -65,6 +66,7 @@ impl Signals {
             Field::ResponseBodyStreaming => self.response_body_streaming,
             Field::Aborted => self.aborted,
             Field::CertErrors => self.cert_errors,
+            Field::BodyUnread => self.body_unread,
         }?;
         Some(bun_ptr::BackRef::from(ptr))
     }
@@ -101,6 +103,14 @@ impl Signals {
             })
     }
 
+    /// `Abandoned`: nobody will read the body.
+    #[inline]
+    pub(crate) fn is_body_abandoned(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Abandoned as u8)
+    }
+
     /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.
     #[inline]
     pub(crate) fn hold_for_consumer(self) -> bool {
@@ -123,6 +133,8 @@ pub struct Store {
     pub response_body_streaming: AtomicBool,
     pub aborted: AtomicBool,
     pub cert_errors: AtomicBool,
+    /// The program has the response and isn't reading its body. Whoever changes it schedules a resume.
+    pub body_unread: AtomicBool,
     pub(crate) body_receive_mode: AtomicU8,
 }
 
@@ -133,6 +145,7 @@ impl Default for Store {
             response_body_streaming: AtomicBool::new(false),
             aborted: AtomicBool::new(false),
             cert_errors: AtomicBool::new(false),
+            body_unread: AtomicBool::new(false),
             body_receive_mode: AtomicU8::new(BodyReceiveMode::Flowing as u8),
         }
     }
@@ -153,6 +166,7 @@ impl Store {
             response_body_streaming: Some(NonNull::from(&self.response_body_streaming)),
             aborted: Some(NonNull::from(&self.aborted)),
             cert_errors: Some(NonNull::from(&self.cert_errors)),
+            body_unread: Some(NonNull::from(&self.body_unread)),
             body_receive_mode: None,
         }
     }
@@ -234,4 +248,5 @@ pub enum Field {
     ResponseBodyStreaming,
     Aborted,
     CertErrors,
+    BodyUnread,
 }

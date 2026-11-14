@@ -3600,7 +3600,7 @@
     "default": 60000,
     "asan": 240000
   },
-  "aot/the-socket-of-an-http-server-names-the-socket-of-net-as-its-base.test.ts": {
+  "aot/the-socket-of-an-http-server-has-the-layout-of-the-socket-of-net.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -10450,13 +10450,6 @@
     "musl": 24700,
     "windows": 26300,
     "windows-aarch64": 27000
-  },
-  "js/bun/http/server-url-invalid.test.ts": {
-    "default": 100,
-    "asan": 100,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "js/bun/http/tls-bunfile-leak.test.ts": {
     "default": 100,

@@ -695,6 +695,15 @@ Queries are lazy: they only start executing when awaited or run with `.execute()
 
 A query starts in the call to `.then()`, `.catch()`, `.finally()` or `.execute()`. `await query` calls `.then()`. A query that you never await or execute never runs. `query.active` is `true` while a connection runs the query.
 
+Bun reads parameters late too. It keeps a reference to each interpolated value and serializes it when it sends the query, not when the template literal is evaluated. Don't change a `TypedArray`, `Buffer`, `ArrayBuffer`, `Date` or `sql(object)` value until the query settles. To reuse a buffer right away, pass a copy: `typedArray.slice()`, `Buffer.from(buffer)` or `arrayBuffer.slice(0)`. `subarray()` and `Buffer#slice()` return views of the same memory, not copies.
+
+```ts
+const bytes = new Uint8Array([1, 2, 3, 4]);
+const query = sql`INSERT INTO files (data) VALUES (${bytes})`;
+bytes.fill(0); // the query hasn't read `bytes` yet
+await query; // stores 00000000, not 01020304
+```
+
 To cancel a query, call `cancel()` on the query object.
 
 ```ts

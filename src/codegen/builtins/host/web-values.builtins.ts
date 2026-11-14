@@ -173,14 +173,6 @@ const storesInForm = [
   ...takingStrings(["name", "value"], [], { ...stateChanged, throws: true }),
 ] satisfies b.FunctionField[];
 
-const otherReceiverIgnored = {
-  this: b.any,
-  returns: b.undefined,
-  capability: "none",
-  uses: { this: b.inspected },
-  implementation: b.hostCall,
-} satisfies b.FunctionField;
-
 const parsesURL = (returns: b.TableType, throws: boolean) => takingStrings(["url"], ["base"], { returns, throws });
 
 // Native code makes the object at the first read and keeps it for the later ones. It is nothing that the program has handed over.
@@ -376,14 +368,7 @@ export default b.declarations(
 
   b.construction("Headers", [
     { args: { init: b.undefined.optional }, returns: newHeaders, capability: "heap", implementation: b.hostCall },
-    {
-      args: { init: b.instance("Headers") },
-      returns: newHeaders,
-      capability: "heap",
-      uses: { init: readsState },
-      reads: externalState,
-      implementation: b.hostCall,
-    },
+    // Headers too: a Symbol.iterator that a subclass or the program has replaced is run.
     {
       ...operandCodeOnly,
       args: { init: b.any },
@@ -400,14 +385,8 @@ export default b.declarations(
     delete: takingStrings(["name"], [], { ...stateChanged, throws: true }),
     set: takingStrings(["name", "value"], [], { ...stateChanged, throws: true }),
     append: takingStrings(["name", "value"], [], { ...stateChanged, throws: true }),
-    getAll: [
-      ...takingStrings(["name"], [], { ...stateRead, returns: newArrayOfStrings, throws: true }),
-      otherReceiverIgnored,
-    ],
-    getSetCookie: [
-      { ...stateRead, returns: newArrayOfStrings, capability: "heap", implementation: b.hostCall },
-      otherReceiverIgnored,
-    ],
+    getAll: takingStrings(["name"], [], { ...stateRead, returns: newArrayOfStrings, throws: true }),
+    getSetCookie: { ...stateRead, returns: newArrayOfStrings, capability: "heap", implementation: b.hostCall },
     toJSON: { ...stateRead, returns: b.plainData, capability: "heap", implementation: b.hostCall },
     count: [
       { ...stateRead, getter: b.u32, capability: "none", implementation: b.hostCall },

@@ -33,12 +33,13 @@ pub struct InternalLoopData {
     #[cfg(not(windows))]
     sweep_next_tick_ns: Cell<i64>,
     sweep_timer_count: Cell<i32>,
+    sweep_tick: Cell<u32>,
+    sweep_time_ms: Cell<u64>,
     wakeup_async: Cell<*mut us_internal_async>,
     head: Cell<*mut SocketGroup>,
     quic_head: Cell<*mut c_void>,
+    quic_walk_depth: Cell<c_int>,
     quic_next_tick_us: Cell<i64>,
-    /// `us_nq_driver_s *` — node:quic's loop driver list.
-    pub(crate) nq_head: Cell<*mut c_void>,
     #[cfg(windows)]
     quic_timer: Cell<*mut Timer>,
     pub iterator: Cell<*mut SocketGroup>,
@@ -80,14 +81,10 @@ impl InternalLoopData {
         self.head.get()
     }
 
-    /// When the QUIC engines next need a tick, if the loop has any.
+    /// A tick is on the stack, so one of its handlers may be too.
     #[inline]
-    pub fn quic_next_tick_us(&self) -> Option<i64> {
-        if self.quic_head.get().is_null() {
-            None
-        } else {
-            Some(self.quic_next_tick_us.get())
-        }
+    pub fn is_ticking(&self) -> bool {
+        self.tick_depth.get() > 0
     }
 
     #[inline]
@@ -97,6 +94,22 @@ impl InternalLoopData {
 
     pub(crate) fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count.get() > 0
+    }
+
+    /// How many sockets the timeout sweep visits.
+    pub fn sweep_timer_count(&self) -> i32 {
+        self.sweep_timer_count.get()
+    }
+
+    /// When the next timeout sweep is due.
+    #[cfg(not(windows))]
+    pub fn sweep_next_tick_ns(&self) -> i64 {
+        self.sweep_next_tick_ns.get()
+    }
+
+    /// Whether a pass over the loop's sockets is on the stack.
+    pub fn is_iterating(&self) -> bool {
+        !self.iterator.get().is_null() || !self.low_prio_iterator.get().is_null()
     }
 
     /// Tag values for `parent_tag`: 1 = `jsc::EventLoop`, 2 = `jsc::MiniEventLoop`.

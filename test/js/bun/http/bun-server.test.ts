@@ -408,6 +408,35 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch should work with a URL object", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(`${req.method} ${req.url}`),
+    });
+    const url = new URL("/from-url?x=1", server.url);
+    expect(await (await server.fetch(url)).text()).toBe(`GET ${url.href}`);
+    expect(await (await server.fetch(url, { method: "POST", body: "b" })).text()).toBe(`POST ${url.href}`);
+    expect(await (await server.fetch(url, { method: "LIST" })).text()).toBe(`LIST ${url.href}`);
+    expect(await (await server.fetch(new Request(url, { method: "LIST" }))).text()).toBe(`LIST ${url.href}`);
+    // @ts-expect-error
+    await expect(server.fetch({})).rejects.toThrow("fetch() expects a string, but received Object");
+  });
+
+  test("server.fetch passes the server as the handler's second argument", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        return Response.json({
+          isServer: srv === server,
+          upgrade: srv.upgrade(req),
+          requestIP: srv.requestIP(req),
+        });
+      },
+      websocket: { message() {} },
+    });
+    expect(await (await server.fetch("/")).json()).toEqual({ isServer: true, upgrade: false, requestIP: null });
+  });
+
   test("server.fetch(url, { headers }) copies a Headers object", async () => {
     using server = Bun.serve({
       port: 0,
@@ -427,6 +456,23 @@ describe.concurrent("Server", () => {
     Bun.gc(true);
     // The Requests that server.fetch() created have been collected.
     expect(kept.map(h => h.get("x-i"))).toEqual(kept.map((_, i) => String(i * 2)));
+  });
+
+  test.each([
+    ["the default hostname", {}, "http://0.0.0.0"],
+    ["tls", { hostname: "127.0.0.1", tls }, "https://127.0.0.1"],
+    ["only an http3 listener", { hostname: "127.0.0.1", tls, http3: true, http1: false }, "https://127.0.0.1"],
+  ])("server.fetch() joins a relative URL onto the bound port with %s", async (_, options, origin) => {
+    using server = Bun.serve({ ...options, port: 0, fetch: req => new Response(req.url) });
+    const response = await server.fetch("/relative");
+    expect(await response.text()).toBe(`${origin}:${server.port}/relative`);
+  });
+
+  test("server.fetch() joins a relative URL onto a baseURI that has no port", async () => {
+    // @ts-expect-error baseURI is undocumented
+    using server = Bun.serve({ port: 0, baseURI: "https://example.com/api/", fetch: req => new Response(req.url) });
+    const response = await server.fetch("/relative");
+    expect(await response.text()).toBe("https://example.com/api/relative");
   });
 
   test("server should return a body for a OPTIONS Request", async () => {
@@ -851,6 +897,50 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("stop() and the process don't wait for a client that keeps its side open after the last response", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const inflight = Promise.withResolvers();
+          const release = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            async fetch() {
+              inflight.resolve();
+              await release.promise;
+              return new Response("ok");
+            },
+          });
+          // With allowHalfOpen the client sees the server's FIN and doesn't answer it.
+          const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+          const ended = new Promise(resolve => client.on("end", resolve));
+          client.on("error", () => {});
+          client.resume();
+          client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          await inflight.promise;
+          let resolved = false;
+          const stopped = server.stop().then(() => { resolved = true; });
+          release.resolve();
+          // The server lets the connection go when it sends its FIN, a loop turn before the client reads it.
+          await ended;
+          console.log(JSON.stringify({ resolved, clientDestroyed: client.destroyed }));
+          await stopped;
+          client.unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: '{"resolved":true,"clientDestroyed":false}\n', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("in-flight HEAD request completes across stop(), then its connection is closed", async () => {
     expect(await runDrainFixture("inflightHead")).toEqual({
       stderr: "",
@@ -1235,6 +1325,50 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  describe("an idle TLS peer that doesn't answer the close_notify", () => {
+    async function idlePeer() {
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("hello") });
+      const responded = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<void>();
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port!,
+        tls: { ca: tls.cert },
+        allowHalfOpen: true,
+        socket: {
+          handshake: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+          data: (_socket, chunk) => void (chunk.toString().endsWith("hello") && responded.resolve()),
+          end: () => ended.resolve(),
+          close: () => responded.reject(new Error("closed before the response")),
+        },
+      });
+      await responded.promise;
+      const dispose = () => (client.terminate(), void server.stop(true));
+      return { server, client, ended: ended.promise, [Symbol.dispose]: dispose };
+    }
+
+    test("holds stop() until it does", async () => {
+      using peer = await idlePeer();
+      const stopped = peer.server.stop();
+      await peer.ended;
+      await new Promise(setImmediate);
+      expect(Bun.peek.status(stopped)).toBe("pending");
+      peer.client.end();
+      await stopped;
+    });
+
+    // The deadline is 8 s away or more.
+    test.each([
+      ["before", (server: Server) => (server.closeIdleConnections(), server.stop())],
+      ["after", (server: Server) => Promise.all([server.stop(), server.closeIdleConnections()])],
+    ])("doesn't hold stop() with closeIdleConnections() %s it", async (_label, stop) => {
+      using peer = await idlePeer();
+      const startedAt = performance.now();
+      await Promise.all([stop(peer.server), peer.ended]);
+      expect(performance.now() - startedAt).toBeLessThan(5_000);
+    });
+  });
+
   test("closeIdleConnections() is a one-shot sweep that spares busy connections and keeps listening", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1324,8 +1458,8 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
 
   test("websocket-only server: a second stop() returns the still-pending promise", async () => {
     // After upgrade() the filter fires -1, so a websocket-only server has
-    // active_connection_count == 0 and only the has_active_web_sockets() term
-    // in get_all_closed_promise's early-return keeps a repeat stop() call from
+    // active_connection_count == 0 and only the active_websocket_count term
+    // of the server's phase keeps a repeat stop() call from
     // handing back a fresh resolved promise while the first one is pending.
     await using proc = Bun.spawn({
       cmd: [
@@ -1624,7 +1758,7 @@ test("should be able to await server.stop(true) with keep alive", async () => {
 // so a (former) panic in the dispatch trampoline surfaces as a non-zero exit
 // instead of taking down the runner.
 //
-// `deinit_if_we_can` defers the wrapper downgrade while the connection is
+// `apply_phase` defers the wrapper downgrade while the connection is
 // still open, so the held request always dispatches and completes against a
 // live wrapper. What happens to the pipelined request depends on the server:
 // a Bun.serve graceful stop marks the busy connection close-when-idle, so the
@@ -2056,7 +2190,7 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   // stays alive (active_websockets > 0), but stop() previously downgraded
   // js_value immediately, so GC could finalize the JS wrapper — and with it
   // m_routeList — while the connection was still in use. With the downgrade
-  // deferred into deinit_if_we_can's idle predicate, the wrapper must outlive
+  // deferred into apply_phase's idle predicate, the wrapper must outlive
   // the websocket and become collectable only after the last close.
   await using proc = Bun.spawn({
     cmd: [
@@ -2135,6 +2269,9 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
 
         await drain(baseline);
         const afterCloseGC = serverCount();
+        if (afterCloseGC !== baseline) {
+          console.error(await require(${JSON.stringify(path.join(import.meta.dir, "what-keeps-a-server.ts"))}).whatKeepsAServer());
+        }
 
         console.log(JSON.stringify({ baseline, afterStopGC, afterCloseGC }));
         process.exit(0);
@@ -2152,7 +2289,7 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   // collect the wrapper. baseline already includes the prototype(s), so the
   // live instance shows as baseline+1.
   expect(afterStopGC).toBeGreaterThan(baseline);
-  // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
+  // Last websocket closing triggers apply_phase → downgrade → wrapper
   // becomes collectable again (no leak).
   expect(afterCloseGC).toBe(baseline);
 }, 15_000);
@@ -2791,9 +2928,10 @@ describe.concurrent("HEAD requests #15355", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // "1, 2" is not a valid integer so Content-Length parses as 0; what we
-      // care about is that parsing it does not read freed memory.
+      // care about is that parsing it does not read freed memory. A Transfer-Encoding
+      // says that GET would stream, and "chunked" is the only coding GET sends.
       expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
-        stdout: JSON.stringify({ te: "gzip, chunked", cl: "0" }),
+        stdout: JSON.stringify({ te: "chunked", cl: "0" }),
         stderr: "",
       });
       expect(exitCode).toBe(0);
@@ -2854,6 +2992,47 @@ describe.concurrent("HEAD requests #15355", () => {
       contentLength: "11",
       text: "Hello World",
     });
+  });
+});
+
+// Bun.serve can't tunnel, so the bytes after a CONNECT head are never answered.
+describe.concurrent("closes the connection after the response to a CONNECT request", () => {
+  const head = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+  const next = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+  const immediate = () => new Promise<void>(resolve => setImmediate(resolve));
+  const notAProxy = () => new Response("not a proxy", { status: 405 });
+
+  test.each([
+    ["head in one read", [head + next], notAProxy],
+    ["head split across reads", [head.slice(0, 40), head.slice(40) + next], notAProxy],
+    ["handler responds later", [head + next], () => immediate().then(notAProxy)],
+    ["origin-form target", [head.replace("example.com:443", "/a") + next], notAProxy],
+  ] as const)("%s", async (_, writes, fetch) => {
+    // The idle timeout must not be what closes the connection.
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 255, fetch });
+    let received = "";
+    const closed = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port!,
+      socket: {
+        data(_socket, data) {
+          received += data.toString("latin1");
+        },
+        close: () => closed.resolve(),
+        error: (_socket, error) => closed.reject(error),
+      },
+    });
+    for (const write of writes) {
+      socket.write(write);
+      socket.flush();
+      // The server shares this event loop and reads the write before the second immediate runs.
+      await immediate();
+      await immediate();
+    }
+    await closed.promise;
+    expect(received.match(/^HTTP\/1\.1 .*$/gm)).toEqual(["HTTP/1.1 405 Method Not Allowed"]);
+    expect(received).toEndWith("\r\n\r\nnot a proxy");
   });
 });
 
@@ -3579,7 +3758,7 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
         client.close();
         await closed.promise;
         client = null;
-        // The last ws closing triggers on_websocket_closed → deinit_if_we_can,
+        // The last ws closing triggers on_websocket_closed → apply_phase,
         // which downgrades the wrapper without an explicit stop(true) — that's
         // the path under test, so no force-finish here.
         const afterClose = await gcUntilCountAtMost(baseline);
@@ -3869,7 +4048,7 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
     expect({ body, msgs }).toEqual({ body: "ok-fetch", msgs: ["ws-open", "m:hi"] });
   }, 30_000);
 
-  // Sibling of the above for server.reload(): on_reload_from_zig moves the
+  // Sibling of the above for server.reload(): apply_reload moves the
   // websocket handler shadows into the heap-boxed self.config before
   // write_ws_handler_slots roots them, and each wrap_handler_slot allocates
   // via with_async_context_if_needed. Pre-PR on_create's server.protect()

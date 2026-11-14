@@ -1,7 +1,7 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
 import { fsOperandUses, heapsOfViews } from "./fs-operands.ts";
-import { answering, constructing, retainedByNativeCode } from "./native-code.ts";
+import { answering, constructing } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
@@ -38,19 +38,6 @@ const convertsDomain = {
   returns: b.string,
   implementation: b.generic,
 } satisfies b.FunctionField;
-
-// Native code keeps the server's flags and limits. It finds the server behind the wrapper, and throws for anything else.
-// It reads its operands without asking how many were passed.
-const configuresServer = (operands: Readonly<Record<string, readonly b.UseSpec[]>>) =>
-  ({
-    args: Object.fromEntries(Object.keys(operands).map(name => [name, b.any])),
-    returns: b.undefined,
-    capability: "js",
-    throws: true,
-    uses: operands,
-    writes: externalState,
-    implementation: b.generic,
-  }) satisfies b.FunctionField;
 
 // The options of a node:fs operation decide the type of its result (args::*::from_js in node_fs.rs).
 const parsesFsOptions = (args: Readonly<Record<string, b.TableType>>, returns: b.TableType) =>
@@ -142,25 +129,6 @@ export default b.declarations(
     length: 0,
   }),
   bagOfFunctions(httpFunctions, {
-    // The two callbacks are called for each client error and each connection.
-    setServerCustomOptions: configuresServer({
-      server: retainedByNativeCode,
-      requireHostHeader: b.inspected,
-      useStrictMethodValidation: b.inspected,
-      lenientHttpFlags: converted,
-      maxHeaderSize: converted,
-      onClientError: retainedByNativeCode,
-      onConnection: retainedByNativeCode,
-      httpAllowHalfOpen: b.inspected,
-    }),
-    setServerAppFlags: configuresServer({
-      server: retainedByNativeCode,
-      requireHostHeader: b.inspected,
-      useStrictMethodValidation: b.inspected,
-      lenientHttpFlags: converted,
-      httpAllowHalfOpen: b.inspected,
-    }),
-    setServerMaxHeadersCount: configuresServer({ server: retainedByNativeCode, maxHeadersCount: converted }),
     drainMicrotasks: { returns: b.undefined, capability: "js", throws: true, implementation: b.generic },
   }),
   answers("native:Cpp:NodeHTTP.cpp:createNodeHTTPInternalBinding", b.builtin(httpFunctions)),

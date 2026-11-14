@@ -201,24 +201,6 @@ impl JSPromise {
         Ok(promise)
     }
 
-    pub fn wrap_value(global: &JSGlobalObject, value: JSValue) -> JSValue {
-        if value.is_empty() {
-            return Self::resolved_promise_value(global, JSValue::UNDEFINED);
-        } else if value.is_empty_or_undefined_or_null() || !value.is_cell() {
-            return Self::resolved_promise_value(global, value);
-        }
-
-        if value.js_type() == crate::JSType::JSPromise {
-            return value;
-        }
-
-        if let Some(err) = value.to_error() {
-            return Self::rejected_promise(global, err).to_js();
-        }
-
-        Self::resolved_promise_value(global, value)
-    }
-
     pub fn status(&self) -> Status {
         match JSC__JSPromise__status(self) {
             0 => Status::Pending,

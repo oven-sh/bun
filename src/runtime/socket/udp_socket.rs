@@ -151,6 +151,25 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     event_loop.exit();
 }
 
+/// `address%scope`. The scope is the interface's name where the platform has one for the index.
+fn scoped_address(address: &[u8], scope_id: u32) -> BunString {
+    #[cfg(not(windows))]
+    {
+        let mut buffer = [0u8; IF_NAMESIZE + 1];
+        // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
+        if !unsafe { if_indextoname(scope_id, buffer.as_mut_ptr().cast::<c_char>()) }.is_null() {
+            // SAFETY: if_indextoname wrote a NUL-terminated string.
+            let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }.to_bytes();
+            return BunString::create_format(format_args!(
+                "{}%{}",
+                bstr::BStr::new(address),
+                bstr::BStr::new(name)
+            ));
+        }
+    }
+    BunString::create_format(format_args!("{}%{}", bstr::BStr::new(address), scope_id))
+}
+
 extern "C" fn on_data(
     socket: *mut uws::udp::Socket,
     buf: *mut uws::udp::PacketBuffer,
@@ -235,31 +254,9 @@ extern "C" fn on_data(
         let slice = unsafe { (*buf).get_payload(i) };
 
         let span = hostname.unwrap();
-        #[allow(unused_labels)]
-        let hostname_string = if let Some(id) = scope_id {
-            'blk: {
-                #[cfg(not(windows))]
-                {
-                    let mut buffer = [0u8; IF_NAMESIZE + 1];
-                    // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
-                        .is_null()
-                    {
-                        // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
-                            .to_bytes();
-                        break 'blk BunString::create_format(format_args!(
-                            "{}%{}",
-                            bstr::BStr::new(span),
-                            bstr::BStr::new(name)
-                        ));
-                    }
-                }
-
-                BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
-            }
-        } else {
-            BunString::clone_utf8(span)
+        let hostname_string = match scope_id {
+            Some(id) => scoped_address(span, id),
+            None => BunString::clone_utf8(span),
         };
 
         let loop_ = VirtualMachine::get().event_loop();
@@ -681,7 +678,7 @@ impl UDPSocket {
                 on_recv_error,
                 hostname_z.as_ptr(),
                 config.port,
-                config.flags,
+                config.flags | uws::LIBUS_UDP_LINUX_RECVERR,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )
@@ -724,7 +721,7 @@ impl UDPSocket {
                     ))
                 };
                 let sys_err = SystemError {
-                    errno: err,
+                    errno: if is_fd { -err } else { err },
                     code: BunString::static_(code),
                     message,
                     syscall: BunString::static_(syscall),
@@ -1917,9 +1914,7 @@ fn dgram_not_supported() -> bun_sys::Error {
     bun_sys::Error::from_code_int(SystemErrno::ENOTSUP as c_int, bun_sys::Tag::open)
 }
 
-/// `(fd)` → whether a live `UDPSocket` already owns this descriptor. Backs
-/// node:dgram's synchronous EEXIST check on `bind({ fd })` so it does not have
-/// to keep a second, per-VM copy of DGRAM_FDS.
+/// `(fd)` → whether a live `UDPSocket` already owns this descriptor.
 pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
     #[cfg(not(windows))]
     {
@@ -1927,8 +1922,7 @@ pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
     }
     #[cfg(windows)]
     {
-        // The registry is POSIX-only; on Windows the async adoption path
-        // reports EEXIST itself and Node skips the sync-throw test.
+        // The registry is POSIX-only.
         let _ = fd;
         false
     }

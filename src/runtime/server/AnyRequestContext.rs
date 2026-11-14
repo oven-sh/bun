@@ -9,18 +9,17 @@ use crate::webcore::CookieMap;
 
 pub(crate) use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
-use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
 // The eight monomorphizations of `NewRequestContext` (ssl × debug × mux),
 // where mux = HTTP/2 or HTTP/3 (see `request_context::Req`).
-type HttpCtx = RequestContext<HTTPServer, false, false, false>;
-type HttpsCtx = RequestContext<HTTPSServer, true, false, false>;
-type DebugHttpCtx = RequestContext<DebugHTTPServer, false, true, false>;
-type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
-type HttpMuxCtx = RequestContext<HTTPServer, false, false, true>;
-type HttpsMuxCtx = RequestContext<HTTPSServer, true, false, true>;
-type DebugHttpMuxCtx = RequestContext<DebugHTTPServer, false, true, true>;
-type DebugHttpsMuxCtx = RequestContext<DebugHTTPSServer, true, true, true>;
+type HttpCtx = RequestContext<false, false, false>;
+type HttpsCtx = RequestContext<true, false, false>;
+type DebugHttpCtx = RequestContext<false, true, false>;
+type DebugHttpsCtx = RequestContext<true, true, false>;
+type HttpMuxCtx = RequestContext<false, false, true>;
+type HttpsMuxCtx = RequestContext<true, false, true>;
+type DebugHttpMuxCtx = RequestContext<false, true, true>;
+type DebugHttpsMuxCtx = RequestContext<true, true, true>;
 
 // The `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from
 // outside `bun_ptr`, so store `(tag: u8, ptr: *mut ())` as two fields.
@@ -74,12 +73,8 @@ const fn ctx_tag_for(ssl: bool, dbg: bool, mux: bool) -> CtxTag {
     }
 }
 
-// Blanket impl over the const-generic params so any `Ctx: RequestCtx` (which
-// is always a `RequestContext<_, SSL, DBG, MUX>`) also satisfies `CtxKind`
-// without callers having to spell the eight concrete types.
-impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> CtxKind
-    for RequestContext<ThisServer, SSL, DBG, MUX>
-{
+// One impl over the const parameters, so that no caller spells the eight concrete types.
+impl<const SSL: bool, const DBG: bool, const MUX: bool> CtxKind for RequestContext<SSL, DBG, MUX> {
     const TAG: CtxTag = ctx_tag_for(SSL, DBG, MUX);
 }
 

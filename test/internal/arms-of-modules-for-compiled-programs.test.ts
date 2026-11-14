@@ -332,7 +332,6 @@ const owed: Record<string, number> = {
   "ahead-of-time/internal/streams/utils.ts": 1,
   "node/async_hooks.ts": 6,
   "ahead-of-time/node/events.ts": 9,
-  "ahead-of-time/node/http2.ts": 2,
 };
 
 test("every arm for compiled programs names a program that reaches it", () => {

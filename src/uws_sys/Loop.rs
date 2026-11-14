@@ -232,12 +232,6 @@ impl PosixLoop {
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&self) {
-        if !self.internal_loop_data.nq_head.get().is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: `self` is this thread's live loop. The walk holds its successor while JS
-            // runs, and relies on an endpoint staying rooted until its close is delivered.
-            unsafe { c::us_nq_loop_drain(self) };
-        }
         if !self.internal_loop_data.has_quic() {
             return;
         }
@@ -303,6 +297,11 @@ impl PosixLoop {
         // handlers ran, so none may free another group. The one caller runs at teardown, with the
         // owners of the groups stopped and script forbidden.
         unsafe { c::us_loop_close_all_groups(self) != 0 }
+    }
+
+    /// Whether `fd` is the descriptor of a listen socket of this loop.
+    pub fn listens_on(&self, fd: c_int) -> bool {
+        c::us_loop_listens_on(self, fd) != 0
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {
@@ -408,12 +407,6 @@ impl WindowsLoop {
     }
 
     pub fn drain_quic_if_necessary(&self) {
-        if !self.internal_loop_data.nq_head.get().is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: `self` is this thread's live loop. The walk holds its successor while JS
-            // runs, and relies on an endpoint staying rooted until its close is delivered.
-            unsafe { c::us_nq_loop_drain(self) };
-        }
         if !self.internal_loop_data.has_quic() {
             return;
         }
@@ -540,7 +533,6 @@ mod c {
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: &Loop);
-        pub(super) fn us_nq_loop_drain(loop_: &Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_run(loop_: &Loop);
         #[cfg(windows)]
@@ -553,7 +545,11 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: &Loop);
+        /// One pass of the socket timeout sweep. Must not run recursively.
+        pub fn us_internal_timer_sweep(loop_: &Loop);
         pub(super) fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
+        #[cfg(not(windows))]
+        pub(super) safe fn us_loop_listens_on(loop_: &Loop, fd: c_int) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut ThreadLoop;
         #[cfg(windows)]
@@ -565,6 +561,9 @@ mod c {
 // Raw, for callers on another thread that hold only a pointer (e.g. bun_http's
 // `HTTPThread::wakeup`, bun_io's `WindowsWaker`): `Loop` is `!Sync`.
 pub use c::us_wakeup_loop;
+
+/// For `bun:internal-for-testing` only.
+pub use c::us_internal_timer_sweep;
 
 unsafe extern "C" {
     fn bun_free_loop_at_thread_exit();

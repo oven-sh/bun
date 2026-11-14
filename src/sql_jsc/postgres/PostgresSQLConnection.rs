@@ -1125,7 +1125,6 @@ fn open(
                 None,
                 path_slice,
                 ptr,
-                false,
             )
         } else {
             uws::SocketTCP::connect_group(
@@ -1135,7 +1134,6 @@ fn open(
                 params.hostname,
                 params.port,
                 ptr,
-                false,
             )
         };
 

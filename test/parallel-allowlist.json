@@ -1536,7 +1536,7 @@
     "aot/quoted-source-in-compressed-blocks.test.ts",
     "aot/a-graph-that-is-left-to-the-loader-costs-the-same-a-module-on-a-larger-graph.test.ts",
     "aot/a-store-between-two-reads-of-one-list-is-seen-by-the-second-read.test.ts",
-    "aot/the-socket-of-an-http-server-names-the-socket-of-net-as-its-base.test.ts",
+    "aot/the-socket-of-an-http-server-has-the-layout-of-the-socket-of-net.test.ts",
     "aot/a-server-exported-by-default-keeps-what-its-literal-names.test.ts",
     "aot/a-test-run-is-not-warned-of-workers-that-only-an-executable-could-not-load.test.ts",
     "aot/a-program-that-holds-far-more-compiled-than-under-plain-bun-fails.test.ts",

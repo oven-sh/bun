@@ -27,5 +27,5 @@ server.listen(0, () => {
   });
 });
 /* Output:
-connections 1 answers 4 resume 4
+connections 1 answers 4 resume 5
 */

@@ -2,7 +2,7 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -14,9 +14,9 @@ use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
-use crate::HTTPClient;
 use crate::h3_client as H3;
-use crate::http_thread::WriteMessageType;
+use crate::ssl_config::SSLConfig;
+use crate::{Carrier, HTTPClient};
 
 use crate::h3_client::h3_client;
 
@@ -38,7 +38,6 @@ pub(crate) struct ClientContext {
 // uncontended atomic op is free on the single HTTP client thread.
 static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
     bun_core::AtomicCell::new(None);
-static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
     /// Mutable access to the lsquic client engine.
@@ -75,16 +74,12 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        LSQUIC_INIT_ONCE.call_once(quic::global_init);
-        // SAFETY: `global_init` ran above.
-        let qctx = unsafe {
-            quic::Context::create_client(
-                UwsLoop::get(),
-                0,
-                core::mem::size_of::<*mut ClientSession>() as c_uint,
-                core::mem::size_of::<*mut Stream>() as c_uint,
-            )
-        }?;
+        let qctx = quic::Context::create_client(
+            UwsLoop::get(),
+            0,
+            core::mem::size_of::<*mut ClientSession>() as c_uint,
+            core::mem::size_of::<*mut Stream>() as c_uint,
+        )?;
         let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
 
         // Process-lifetime singleton — published into `INSTANCE` below and
@@ -105,15 +100,27 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    /// `false` leaves `client` on no session, for the caller to fail.
-    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    /// An error leaves `client` on no session, for the caller to fail.
+    pub(crate) fn connect(
+        &mut self,
+        client: &mut HTTPClient,
+        hostname: &[u8],
+        port: u16,
+    ) -> crate::Result<()> {
         let reject = client.flags.reject_unauthorized;
+        // Same gate as `HTTPThread::connect`: `rejectUnauthorized` alone stays on the default context.
+        let tls_props = client
+            .tls_props
+            .clone()
+            .filter(|tls| tls.get().requires_custom_request_ctx);
+        let tls_props_ptr = SSLConfig::raw_ptr(tls_props.as_ref());
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
             let s = session_mut(s);
-            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
+            if s.matches(hostname, port, reject, tls_props_ptr, client.pool.id) && s.has_headroom()
+            {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
@@ -121,7 +128,7 @@ impl ClientContext {
                     port,
                 );
                 s.enqueue(client);
-                return true;
+                return Ok(());
             }
         }
 
@@ -129,12 +136,27 @@ impl ClientContext {
         // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
         // it as a C string so an interior NUL truncates on the C side. This is
         // deliberately not `CString::new`, which would reject interior NUL
-        // and diverge by returning `false`.
+        // and diverge by failing.
         // Resolution and certificate verification name an IPv6 literal without its brackets.
         let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let session = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
+        let ssl_ctx = tls_props
+            .as_ref()
+            .map(|tls| crate::http_thread().quic_ssl_ctx(tls))
+            .transpose()?;
+        let sni = tls_props
+            .as_ref()
+            .and_then(|tls| tls.get().server_name_cstr())
+            .filter(|name| !name.to_bytes().is_empty())
+            .unwrap_or(host_z);
+        let session = ClientSession::new(
+            hostname.to_vec(),
+            port,
+            reject,
+            tls_props.clone(),
+            client.pool.id,
+        );
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
@@ -142,9 +164,9 @@ impl ClientContext {
         self.sessions.push(session);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+        let result = self
+            .qctx_mut()
+            .connect(host_z, port, sni, reject, ssl_ctx.as_ref());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
@@ -179,15 +201,15 @@ impl ClientContext {
                 );
                 // `fail_session` fails what is queued, and that dispatch frees
                 // the `AsyncHTTP` the caller still holds. Queue nothing.
-                if let Some(stream) = client.h3 {
+                if let Carrier::H3(stream) = client.carrier {
                     session_mut(session).detach(stream.as_ptr());
                 }
                 self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-                return false;
+                return Err(crate::Error::ConnectionRefused);
             }
         }
-        true
+        Ok(())
     }
 
     pub(crate) fn unregister(&mut self, session: &mut ClientSession) {
@@ -203,59 +225,15 @@ impl ClientContext {
         session.registry_index = u32::MAX;
     }
 
-    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
-        let Some(this) = Self::get() else {
-            return false;
-        };
-        // Leaked Box, process-lifetime; HTTP-thread only — `BackRef` (immortal
-        // referent) gives `&ClientContext` for the Vec iter. Each session is a
-        // disjoint heap allocation, and `ClientSession::abort_by_http_id` never
-        // calls back into `unregister`, so `sessions` is stable across the loop.
-        let ctx = bun_ptr::BackRef::from(this);
-        for &s in ctx.sessions.iter() {
-            // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).abort_by_http_id(async_http_id) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {
             return;
         };
-        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        // Leaked Box, process-lifetime, HTTP-thread only. `close_if_idle` doesn't unregister, so `sessions` is stable.
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             session_mut(s).close_if_idle(pool_id);
-        }
-    }
-
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
-        let Some(this) = Self::get() else {
-            return;
-        };
-        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
-        let ctx = bun_ptr::BackRef::from(this);
-        for &s in ctx.sessions.iter() {
-            // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
-                return;
-            }
-        }
-    }
-
-    pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
-        let Some(this) = Self::get() else {
-            return;
-        };
-        let ctx = bun_ptr::BackRef::from(this);
-        for &s in ctx.sessions.iter() {
-            if session_mut(s).resume_receive_by_http_id(async_http_id) {
-                return;
-            }
         }
     }
 }

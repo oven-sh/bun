@@ -341,11 +341,12 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // Answers the handle of the native source that the stream holds, if it has one that nothing has read from.
   b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionTransferToNativeReadableStream"), {
     args: { stream: b.any.optional },
-    returns: b.undefined,
-    capability: "none",
-    uses: { stream: b.inspected },
+    returns: b.any,
+    capability: "heap",
+    uses: { stream: b.retainedByNativeCode },
     writes: externalState,
     implementation: b.hostCall,
   }),
@@ -381,6 +382,7 @@ export default b.declarations(
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getExtraCACertificates"), listsCertificates),
+  b.static(cpp("NodeTLS.cpp", "getOpenSSLDefaultCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getSystemCACertificates"), listsCertificates),
   // The value under the name that fits best, of a Map that is walked without its iterator.
   b.static(cpp("NodeTLS.cpp", "selectServerName"), [

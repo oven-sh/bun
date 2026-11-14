@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_agent.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9161c607d9c8f981ce072e148aa617473a8be3f076599f05727c3c23a97b8aff.
+// Written against that file with the SHA-256 60c5e9732a6b2278590ae78ce23c9a84db6ed5ff26b24f7bc1c7aa4923626f5d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_agent.js
@@ -154,7 +154,7 @@ function Agent(this: $Node.Agent, options?: $Node.AgentOptions): void {
 
   const proxyEnv = this.options.proxyEnv;
   if (typeof proxyEnv === "object" && proxyEnv !== null) {
-    this[kProxyConfig] = parseProxyConfigFromEnv(proxyEnv, this.protocol, this.keepAlive);
+    this[kProxyConfig] = parseProxyConfigFromEnv(proxyEnv, this.protocol);
     $debug(`new ${this.protocol} agent with proxy config`, this[kProxyConfig]);
   }
 

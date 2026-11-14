@@ -155,14 +155,14 @@ impl ScriptExecutionContext {
         self.stopped.set(true);
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
-        self.close_sockets();
+        self.close_sockets(reason);
         result
     }
 
     /// Close every client socket of a graph's context (its script is told nothing).
-    fn close_sockets(&self) {
+    fn close_sockets(&self, reason: StopReason) {
         if let Some(groups) = self.socket_groups.get() {
-            groups.close_all();
+            groups.close_all(reason);
         }
     }
 

@@ -205,6 +205,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
 }
 
 // EOF is pushed a tick after the last chunk. After a destroy() in between, Node emits 'close' without 'end'.
+// Node's fromWeb() also ends a stream when destroy() cancels a read that waits. This adapter does not: _read() pushes synchronously, so a pull can wait where Node has no read in flight.
 function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }

@@ -1381,7 +1381,7 @@ impl Default for WindowsStdioResult {
 
 #[cfg(windows)]
 impl WindowsStdioResult {
-    /// Mirrors `Option::<Fd>::take()` on the POSIX `SpawnedStdio` so callers
+    /// Mirrors `Option::take()` on the POSIX `StdioResult` so callers
     /// (`shell::subproc`, `bun_spawn` JS bindings) can pull the handle out by
     /// value without per-platform `mem::replace` at every call site.
     #[inline]
@@ -3013,16 +3013,15 @@ mod spawn_process_body {
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let _pidfd = process.pidfd.map(|fd| File::from_fd(Fd::from_native(fd)));
-            let mut out_files = [process.stdout, process.stderr].map(|fd| fd.map(File::from_fd));
+            let mut out_files = [process.stdout, process.stderr];
             let kill_and_fail = |err| {
                 let _ = kill(process.pid, 1);
                 Ok(Err(err))
             };
 
-            let mut out_fds_to_wait_for: [Fd; 2] = [
-                process.stdout.unwrap_or(Fd::INVALID),
-                process.stderr.unwrap_or(Fd::INVALID),
-            ];
+            let mut out_fds_to_wait_for = out_files
+                .each_ref()
+                .map(|file| file.as_ref().map_or(Fd::INVALID, File::fd));
 
             if process.memfds[1] {
                 out_fds_to_wait_for[0] = Fd::INVALID;

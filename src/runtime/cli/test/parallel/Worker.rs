@@ -196,21 +196,21 @@ impl Worker {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 crate::Error::SpawnFailed
             })?;
-            let stdout = spawned.stdout;
-            let stderr = spawned.stderr;
+            let stdout = spawned.stdout.take();
+            let stderr = spawned.stderr.take();
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(
                 spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
                     coord.vm.event_loop_ptr(),
                 )),
             );
-            if let Some(fd) = stdout {
+            if let Some(fd) = stdout.map(bun_sys::File::into_raw) {
                 this.out
                     .reader
                     .start(fd, true)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
-            if let Some(fd) = stderr {
+            if let Some(fd) = stderr.map(bun_sys::File::into_raw) {
                 this.err
                     .reader
                     .start(fd, true)

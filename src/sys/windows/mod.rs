@@ -424,7 +424,7 @@ pub use bun_libuv_sys as libuv;
 /// This process's access token, opened for `TOKEN_QUERY`.
 pub(crate) fn process_token() -> Option<OwnedHandle> {
     let mut token: HANDLE = ptr::null_mut();
-    // SAFETY: the pseudo-handle of this process and a valid out-param, which success fills with a new handle.
+    // SAFETY: this process's pseudo-handle, and an out-param that success fills with a new handle.
     unsafe {
         (win32::OpenProcessToken(
             win32::GetCurrentProcess(),

@@ -2049,7 +2049,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     #[cfg(windows)]
     let mut spawn_options = spawn_options;
 
-    let spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
+    let mut spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
             // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
@@ -2071,12 +2071,10 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             return Err(());
         }
     };
-    #[cfg(windows)]
-    let mut spawned = spawned;
 
     #[cfg(unix)]
     {
-        if let Some(stdout) = spawned.stdout {
+        if let Some(stdout) = spawned.stdout.take().map(sys::File::into_raw) {
             if !spawned.memfds[1] {
                 this.stdout_reader().with_mut(|r| r.set_parent(this_ptr));
                 let _ = sys::set_nonblocking(stdout);

@@ -131,23 +131,13 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
-    #[cfg(not(windows))]
-    use bun_sys::Fd;
-
     pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
 
-    /// On POSIX this is `Option<Fd>`; on Windows it is the `WindowsStdioResult` union.
     #[cfg(not(windows))]
-    pub type StdioResult = Option<Fd>;
+    pub type StdioResult = Option<bun_sys::File>;
     #[cfg(windows)]
     pub type StdioResult = crate::process::WindowsStdioResult;
-
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        Some(fd)
-    }
 
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.

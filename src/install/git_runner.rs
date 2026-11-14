@@ -1233,7 +1233,7 @@ impl GitSubprocess {
         #[cfg(windows)]
         let mut spawn_options = spawn_options;
 
-        let spawned =
+        let mut spawned =
             match bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp)) {
                 Ok(Ok(spawned)) => spawned,
                 res => {
@@ -1249,17 +1249,17 @@ impl GitSubprocess {
         // `envp` borrows from `git_env`. The exit handler, which may run below, replaces `git_env`
         // after `Step::Config`.
         drop(envp);
-        #[cfg(windows)]
-        let mut spawned = spawned;
 
         // A reader that fails to start reports through `on_reader_error`, which only
         // touches `remaining_fds` / `read_error`, never the reader cell being borrowed.
         #[cfg(unix)]
-        for (reader, fd, is_memfd) in [
-            (&this.stdout, spawned.stdout, spawned.memfds[1]),
-            (&this.stderr, spawned.stderr, spawned.memfds[2]),
+        for (reader, file, is_memfd) in [
+            (&this.stdout, spawned.stdout.take(), spawned.memfds[1]),
+            (&this.stderr, spawned.stderr.take(), spawned.memfds[2]),
         ] {
-            let Some(fd) = fd else { continue };
+            let Some(fd) = file.map(bun_sys::File::into_raw) else {
+                continue;
+            };
             reader.with_mut(|r| r.set_parent(this_ptr));
             if is_memfd {
                 reader.with_mut(|r| r.start_memfd(fd));

@@ -298,11 +298,6 @@ impl Stdio {
         }
     }
 
-    #[cfg(not(windows))]
-    pub(crate) fn borrows_caller_fd(&self) -> bool {
-        matches!(self, Self::Fd(_))
-    }
-
     fn extract_body_value(
         out_stdio: &mut Stdio,
         cx: &bun_jsc::JsThread<'_>,

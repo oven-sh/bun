@@ -3,9 +3,9 @@ use std::rc::Rc;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
 #[cfg(windows)]
-use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
+use crate::api::bun::process::WindowsOptions;
+use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
@@ -19,7 +19,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, SystemError};
 use enumset::EnumSet;
@@ -94,10 +94,7 @@ pub(crate) use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
 
-#[cfg(windows)]
-pub(crate) type StdioResult = WindowsStdioResult;
-#[cfg(not(windows))]
-pub(crate) type StdioResult = Option<Fd>;
+pub(crate) use JscSubprocess::StdioResult;
 
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
@@ -928,8 +925,6 @@ impl Writable {
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Result<Writable, WritableInitError> {
-        assert_stdio_result!(result);
-
         // Note: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
         // non-Copy payloads.
@@ -1044,7 +1039,7 @@ impl Writable {
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Ok(Writable::Memfd(fd))
                 }
-                Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+                Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
@@ -1181,8 +1176,6 @@ impl Readable {
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
-        assert_stdio_result!(result);
-
         debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
         let buffered_output = match redirect_buf {
             Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
@@ -1729,9 +1722,11 @@ impl PipeReader {
             return self.reader.start_with_current_pipe();
         }
 
-        // `reader` owns the fd from here; `Drop` closes an un-started one.
+        // `reader` owns the fd from here.
         #[cfg(not(windows))]
-        match self.reader.start(self.stdio_result.take().unwrap(), true) {
+        let fd = self.stdio_result.take().unwrap().into_raw();
+        #[cfg(not(windows))]
+        match self.reader.start(fd, true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
                 // `reader.start` reports a poll-registration failure through
@@ -2056,13 +2051,7 @@ impl Drop for PipeReader {
             out_kind_str(self.out_type)
         );
         #[cfg(unix)]
-        {
-            debug_assert!(self.reader.is_done() || matches!(self.state, PipeReaderState::Err(_)));
-            // Never started: the parent end is still ours to close.
-            if let Some(fd) = self.stdio_result.take() {
-                fd.close();
-            }
-        }
+        debug_assert!(self.reader.is_done() || matches!(self.state, PipeReaderState::Err(_)));
 
         #[cfg(windows)]
         {
@@ -2108,19 +2097,6 @@ bun_io::impl_buffered_reader_parent! {
 // `StdioKind` is re-exported from `crate::api::bun_subprocess` at the top of
 // this file so the `StaticPipeWriterProcess` trait impl uses the exact same
 // enum the trait was declared with.
-
-// `StdioResult` is `Option<Fd>` (8-byte Copy) on unix but a non-Copy enum
-// (`Buffer(Box<uv::Pipe>)`) on windows; a fn would have to pick by-value
-// (moves on windows) or by-ref (clippy::trivially_copy_pass_by_ref on unix).
-macro_rules! assert_stdio_result {
-    ($result:expr) => {{
-        #[cfg(all(debug_assertions, unix))]
-        if let Some(fd) = &$result {
-            debug_assert!(fd.is_valid());
-        }
-    }};
-}
-pub(crate) use assert_stdio_result;
 
 unsafe extern "C" {
     // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time

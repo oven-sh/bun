@@ -213,19 +213,6 @@ bitflags::bitflags! {
     }
 }
 
-// `StdioResult` is `Option<Fd>` (Copy) on unix but a non-Copy enum on windows;
-// a fn would have to pick by-value (moves on windows) or by-ref
-// (clippy::trivially_copy_pass_by_ref on unix).
-macro_rules! assert_stdio_result {
-    ($result:expr) => {{
-        #[cfg(all(debug_assertions, unix))]
-        if let Some(fd) = &$result {
-            debug_assert!(fd.is_valid());
-        }
-    }};
-}
-pub(crate) use assert_stdio_result;
-
 bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live.
     let this = unsafe { &*this };

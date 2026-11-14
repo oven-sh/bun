@@ -932,7 +932,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let json_pipe = spawned.extra_pipes.swap_remove(1);
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
-            subprocess::stdio_result_from_fd(json_pipe.into_raw())
+            json_pipe.into_owned()
         })
     }
 

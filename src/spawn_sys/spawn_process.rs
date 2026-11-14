@@ -414,9 +414,7 @@ pub enum PosixStdio {
     Inherit,
     Ignore,
     Buffer,
-    /// Like `Buffer` at indices >= 3 (creates a socketpair) but the parent
-    /// end is returned as `ExtraPipe::OwnedFd`: the caller owns and closes
-    /// it. Only valid in `extra_fds`.
+    /// Like `Buffer`, and only valid in `extra_fds`.
     SocketFd,
     Ipc,
     Pipe(Fd),
@@ -446,9 +444,10 @@ pub struct PosixSpawnResult {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub pidfd: Option<PidFdType>,
-    pub stdin: Option<Fd>,
-    pub stdout: Option<Fd>,
-    pub stderr: Option<Fd>,
+    /// The parent's end of a [`PosixStdio::Buffer`].
+    pub stdin: Option<File>,
+    pub stdout: Option<File>,
+    pub stderr: Option<File>,
     #[cfg(not(windows))]
     pub(crate) ipc: Option<Fd>,
     pub extra_pipes: Vec<ExtraPipe>,
@@ -482,6 +481,13 @@ impl ExtraPipe {
         match self {
             ExtraPipe::OwnedFd(file) => file.into_raw(),
             other => other.fd(),
+        }
+    }
+
+    pub fn into_owned(self) -> Option<File> {
+        match self {
+            ExtraPipe::OwnedFd(file) => Some(file),
+            _ => None,
         }
     }
 
@@ -572,12 +578,10 @@ const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
 const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// The descriptors that `spawn_process_posix` opens.
+/// What `spawn_process_posix` does to descriptors once the child has them.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
-    /// The parent's ends of stdin, stdout and stderr, until the result takes them.
-    to_close_on_error: Vec<File>,
     to_close_at_end: Vec<File>,
 }
 
@@ -694,9 +698,9 @@ pub unsafe fn spawn_process_posix(
     }
     let mut spawned = PosixSpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
+    // Declared after `spawned`, so that it drops while the memfds are open.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
-        to_close_on_error: Vec::new(),
         to_close_at_end: Vec::new(),
     };
 
@@ -800,14 +804,13 @@ pub unsafe fn spawn_process_posix(
                                 Err(_) => break 'use_memfd,
                             };
 
-                        cleanup.to_close_on_error.push(File::from_fd(fd));
+                        set_spawned_stdio(&mut spawned, i, fd);
                         cleanup.to_set_cloexec.push(fd);
                         let src = match cleanup.source_above_slots(max_slot, fd) {
                             Ok(src) => src,
                             Err(e) => return Ok(Err(e)),
                         };
                         actions.dup2(src, fileno)?;
-                        set_spawned_stdio(&mut spawned, i, fd);
                         spawned.memfds[i] = true;
                         continue 'stdio;
                     }
@@ -879,7 +882,7 @@ pub unsafe fn spawn_process_posix(
                 }
 
                 cleanup.to_close_at_end.push(File::from_fd(fds[1]));
-                cleanup.to_close_on_error.push(File::from_fd(fds[0]));
+                set_spawned_stdio(&mut spawned, i, fds[0]);
 
                 if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
@@ -895,8 +898,6 @@ pub unsafe fn spawn_process_posix(
                 if src == fds[1] {
                     actions.close(fds[1])?;
                 }
-
-                set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
                 let _ = bun_sys::update_nonblocking(*fd, false);
@@ -905,7 +906,6 @@ pub unsafe fn spawn_process_posix(
                     Err(e) => return Ok(Err(e)),
                 };
                 actions.dup2(src, fileno)?;
-                set_spawned_stdio(&mut spawned, i, *fd);
             }
             PosixStdio::SocketFd => {
                 // Rejected at i < 3 in Stdio::extract(); unreachable here.
@@ -1024,9 +1024,6 @@ pub unsafe fn spawn_process_posix(
                 }
             }
 
-            for file in core::mem::take(&mut cleanup.to_close_on_error) {
-                file.into_raw();
-            }
             return Ok(Ok(spawned));
         }
     }
@@ -1034,10 +1031,11 @@ pub unsafe fn spawn_process_posix(
 
 #[cfg(unix)]
 fn set_spawned_stdio(spawned: &mut PosixSpawnResult, i: usize, fd: Fd) {
+    let file = Some(File::from_fd(fd));
     match i {
-        0 => spawned.stdin = Some(fd),
-        1 => spawned.stdout = Some(fd),
-        2 => spawned.stderr = Some(fd),
+        0 => spawned.stdin = file,
+        1 => spawned.stdout = file,
+        2 => spawned.stderr = file,
         _ => unreachable!(),
     }
 }

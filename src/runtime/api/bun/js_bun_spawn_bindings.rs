@@ -19,7 +19,7 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, FdExt as _, SignalCode};
+use bun_sys::{self as sys, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -1245,10 +1245,7 @@ fn spawn_maybe_sync(
 
     // Use the isolated loop for spawnSync operations
     //
-    // Note: `PosixSpawnResult::to_process` consumes `self` but only reads
-    // `pid`/`pidfd`/`has_exited`. `stdin/stdout/stderr/extra_pipes` are still
-    // needed afterward, so take those fields out first so the partial move is
-    // explicit.
+    // `to_process` closes what is left in the result.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
@@ -1363,21 +1360,11 @@ fn spawn_maybe_sync(
             // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
             // no-op.
             #[cfg(unix)]
-            {
-                if let Some(fd) = spawned_stdout {
-                    if !stdio[1].borrows_caller_fd() {
-                        fd.close();
-                    }
-                }
-                if let Some(fd) = spawned_stderr {
-                    if !stdio[2].borrows_caller_fd() {
-                        fd.close();
-                    }
-                }
-            }
+            drop((spawned_stdout, spawned_stderr));
             #[cfg(not(unix))]
             {
                 use bun_libuv_sys::UvHandle as _;
+                use bun_sys::FdExt as _;
                 for r in [spawned_stdout, spawned_stderr] {
                     match r {
                         spawn::WindowsStdioResult::Buffer(pipe) => {

@@ -180,14 +180,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
         #[cfg(not(windows))]
         {
-            use bun_sys::FdExt as _;
-            // On POSIX `StdioResult` is an `Option<Fd>`.
-            let fd = self.stdio_result.unwrap();
-            match self.writer.start(fd, true) {
+            let file = self.stdio_result.take().unwrap();
+            match self.writer.start(file.fd(), true) {
                 bun_sys::Result::Err(err) => {
-                    // The writer did not take `fd`; nothing else closes it.
-                    self.stdio_result = None;
-                    fd.close();
                     // start() failed: `started` stays false so no release
                     // site fires — release start()'s `+1` here.
                     // SAFETY: `self` is the live `Self` we ref'd at the top
@@ -197,6 +192,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                     bun_sys::Result::Err(err)
                 }
                 bun_sys::Result::Ok(()) => {
+                    // The writer closes it from now on.
+                    file.into_raw();
                     self.started = true;
                     #[cfg(unix)]
                     {

@@ -97,7 +97,7 @@ impl<'a> ProcessHandle<'a> {
 
         let argv = ScriptArgv::new(state.shell_bin, handle.config.combined)?;
         let start_time = Instant::now();
-        let spawned: spawn::SpawnProcessResult = 'brk: {
+        let mut spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -132,17 +132,12 @@ impl<'a> ProcessHandle<'a> {
             }??;
             // `env` drops here (or on `?` above), restoring PATH.
         };
-        #[cfg(unix)]
-        let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
         // Windows: `spawn_process_windows` has already moved the heap pipe out of
         // `options.stdout/stderr` (via `heap::take`) into `spawned.stdout/stderr`
         // as `WindowsStdioResult::Buffer(Box<Pipe>)`. The raw `*mut Pipe` left in
         // `options` is dangling-by-design — re-`heap::take`ing it here would be a
         // double `Box::from_raw` (UAF + double-free). Take the Box from the
         // *result* instead, before `to_process` consumes `spawned`.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
@@ -162,12 +157,12 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout) = stdout_fd {
+            if let Some(stdout) = stdout_pipe.map(sys::File::into_raw) {
                 let _ = sys::set_nonblocking(stdout);
                 handle.remaining_fds += 1;
                 handle.stdout.start(stdout, true)?;
             }
-            if let Some(stderr) = stderr_fd {
+            if let Some(stderr) = stderr_pipe.map(sys::File::into_raw) {
                 let _ = sys::set_nonblocking(stderr);
                 handle.remaining_fds += 1;
                 handle.stderr.start(stderr, true)?;

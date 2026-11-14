@@ -699,10 +699,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
-    fn watch(self: Box<Self>, spawned: SpawnProcessResult) {
-        #[cfg(windows)]
-        let mut spawned = spawned;
-
+    fn watch(self: Box<Self>, mut spawned: SpawnProcessResult) {
         debug_assert!(self.process.is_none(), "forgot to call `reset_polls`");
         let this = bun_core::heap::into_raw(self);
         // SAFETY: `this` is live until the process has reported, which only the last statement can
@@ -716,7 +713,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             #[cfg(unix)]
             {
-                if let Some(stdout) = spawned.stdout {
+                if let Some(stdout) = spawned.stdout.take().map(bun_sys::File::into_raw) {
                     if !spawned.memfds[1] {
                         let _ = bun_sys::set_nonblocking(stdout);
                         (*this).remaining_fds += 1;
@@ -732,7 +729,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         (*this).stdout.start_memfd(stdout);
                     }
                 }
-                if let Some(stderr) = spawned.stderr {
+                if let Some(stderr) = spawned.stderr.take().map(bun_sys::File::into_raw) {
                     if !spawned.memfds[2] {
                         let _ = bun_sys::set_nonblocking(stderr);
                         (*this).remaining_fds += 1;

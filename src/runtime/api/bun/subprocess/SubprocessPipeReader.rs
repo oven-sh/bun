@@ -157,7 +157,8 @@ impl PipeReader {
             }
             // PosixBufferedReader.start() always returns Ok(()); if poll
             // registration fails it synchronously invokes onReaderError() first.
-            let _ = this.reader.start(this.stdio_result.unwrap(), true);
+            let fd = this.stdio_result.take().unwrap().into_raw();
+            let _ = this.reader.start(fd, true);
 
             #[cfg(unix)]
             {

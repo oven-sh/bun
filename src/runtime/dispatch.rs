@@ -503,17 +503,17 @@ pub(crate) fn run_task(
         #[cfg(windows)]
         task_tag::CopyFileWindowsMkdirp => feature_arm!(
             [Bodies],
-            |copy: crate::webcore::blob::copy_file::CopyFileWindowsMkdirp| {
-                // SAFETY: the live copy `on_mkdirp_complete_concurrent` posted.
-                unsafe { crate::webcore::blob::copy_file::CopyFileWindowsMkdirp::run(copy) };
+            |copy: crate::webcore::blob::copy_file::CopyFileWindows| {
+                // SAFETY: the box that `on_mkdirp_complete_concurrent` posted.
+                unsafe { bun_core::heap::take(copy) }.on_mkdirp_complete();
             }
         ),
         #[cfg(windows)]
         task_tag::WriteFileWindowsMkdirp => feature_arm!(
             [Bodies],
-            |write: crate::webcore::blob::write_file::WriteFileWindowsMkdirp| {
-                // SAFETY: the live write `on_mkdirp_complete_concurrent` posted.
-                unsafe { crate::webcore::blob::write_file::WriteFileWindowsMkdirp::run(write) };
+            |write: crate::webcore::blob::write_file::WriteFileWindows| {
+                // SAFETY: the box that `on_mkdirp_complete_concurrent` posted.
+                unsafe { bun_core::heap::take(write) }.on_mkdirp_complete();
             }
         ),
         #[cfg(windows)]
@@ -1098,7 +1098,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
 // io::Poll dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
+#[cfg(not(windows))]
 use crate::webcore::blob::read_file::ReadFile;
+#[cfg(not(windows))]
 use crate::webcore::blob::write_file::WriteFile;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
@@ -1106,6 +1108,7 @@ use crate::webcore::blob::write_file::WriteFile;
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
@@ -1131,6 +1134,7 @@ unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 unsafe fn __bun_io_pollable_on_io_error(
     tag: bun_io::PollableTag,
@@ -1801,19 +1805,13 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::CopyFileWindowsMkdirp => {
             #[cfg(windows)]
-            release_in!(
-                [Bodies],
-                crate::webcore::blob::copy_file::CopyFileWindowsMkdirp
-            );
+            release_in!([Bodies], crate::webcore::blob::copy_file::CopyFileWindows);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
         task_tag::WriteFileWindowsMkdirp => {
             #[cfg(windows)]
-            release_in!(
-                [Bodies],
-                crate::webcore::blob::write_file::WriteFileWindowsMkdirp
-            );
+            release_in!([Bodies], crate::webcore::blob::write_file::WriteFileWindows);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

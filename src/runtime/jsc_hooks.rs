@@ -1240,11 +1240,9 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
 
 fn name_text_of_blob_url(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>> {
     let registry = crate::webcore::object_url_registry::ObjectURLRegistry::singleton();
-    let mut blob = registry.resolve_and_dupe(blob_id, vm.global())?;
+    let blob = registry.resolve_and_dupe(blob_id, vm.global())?;
     let loader = blob.get_loader(vm).filter(|_| !blob.needs_to_read_file());
-    let name = loader.map(|it| bun_aot::module_keys::name_of_text(it, blob.shared_view()));
-    blob.deinit();
-    name
+    loader.map(|it| bun_aot::module_keys::name_of_text(it, blob.shared_view()))
 }
 
 /// `Response::get_blob_without_call_frame` /
@@ -3776,7 +3774,7 @@ fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VirtualMachine,
     virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
-    blob_to_deinit: &'a mut Option<crate::webcore::Blob>,
+    source_blob: &'a mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
@@ -3822,7 +3820,7 @@ fn get_loader_and_virtual_source<'a>(
         {
             Some(blob) => {
                 // The caller's slot keeps the blob alive for `'a`.
-                let blob: &'a crate::webcore::Blob = blob_to_deinit.insert(blob);
+                let blob: &'a crate::webcore::Blob = source_blob.insert(blob);
                 loader = blob.get_loader(jsc_vm);
 
                 // "file:" loader makes no sense for blobs, so default to tsx.
@@ -4265,17 +4263,12 @@ fn transpile_file<const DATA_ONLY: bool>(
     let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
-    // Deinit the blob (if any) on scope exit.
-    let mut blob_to_deinit = scopeguard::guard(None::<crate::webcore::Blob>, |mut slot| {
-        if let Some(mut blob) = slot.take() {
-            blob.deinit();
-        }
-    });
+    let mut source_blob: Option<crate::webcore::Blob> = None;
     let mut lr = match get_loader_and_virtual_source(
         _specifier.slice(),
         jsc_vm,
         &mut virtual_source_to_use,
-        &mut blob_to_deinit,
+        &mut source_blob,
         type_attribute_str,
     ) {
         Ok(lr) => lr,

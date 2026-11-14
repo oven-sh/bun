@@ -361,15 +361,26 @@ pub(crate) fn lint(
         let Status::Matched(config) = &target.status else {
             continue;
         };
-        match target.route() {
+        // A processor's output is linted as the file would be without the processor.
+        let route = match target.route() {
+            Route::Processor => {
+                // `bun lint` fails on the error before the processor runs.
+                if let Some(error) = &config.error {
+                    return Err(Fatal(error.clone()));
+                }
+                target.loaded.routes_without_processor(config, &target.path)
+            }
+            route => route,
+        };
+        match route {
             Route::Eslint => {
                 files += 1;
                 by_eslint.add(&target.path);
             }
             Route::Unsupported => {
                 not_linted.add(&target.path);
-                lacks_eslint |= target.loaded.flavor == Flavor::Eslint
-                    && config.route_without_processor(&target.path) == Route::Eslint;
+                lacks_eslint |=
+                    target.loaded.flavor == Flavor::Eslint && config.routes_to_eslint(&target.path);
             }
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;

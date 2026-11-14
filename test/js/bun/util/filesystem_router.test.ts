@@ -163,6 +163,10 @@ it(".params works on dynamic routes", () => {
   } = router.match("/posts/hello-world")!;
 
   expect(id).toBe("hello-world");
+
+  for (const input of ["//posts/1", "///posts/1?a=b", "/%2Fposts/1", "/posts/1/index", "/posts/1//"]) {
+    expect({ input, params: router.match(input)!.params }).toEqual({ input, params: { id: "1" } });
+  }
 });
 
 it("should support static routes", () => {
@@ -423,7 +427,7 @@ it(".query skips empty-key pairs instead of terminating the parse", () => {
     expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
   }
 
-  // Same scanner is used when path params are present (init_with_scanner path).
+  // Same scanner is used when path params are present (init_with_route_params path).
   for (const [current, expected] of [
     ["/posts/123?=v&x=1&y=2", { id: "123", x: "1", y: "2" }],
     ["/posts/123?x=1&=v&y=2", { id: "123", x: "1", y: "2" }],

@@ -124,6 +124,11 @@ impl Socket {
         us_udp_socket_close(self)
     }
 
+    /// Another process reads the descriptor from now on: one datagram per receive call.
+    pub fn mark_shared(&mut self) {
+        us_udp_socket_mark_shared(self)
+    }
+
     pub fn connect(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
         // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
         unsafe { us_udp_socket_connect(self, hostname, port) }
@@ -222,6 +227,7 @@ unsafe extern "C" {
     fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     safe fn us_udp_socket_close(socket: &mut Socket);
+    safe fn us_udp_socket_mark_shared(socket: &mut Socket);
     safe fn us_udp_socket_set_broadcast(socket: &mut Socket, enabled: c_int) -> c_int;
     safe fn us_udp_socket_buffer_size(
         socket: &mut Socket,

@@ -1642,12 +1642,13 @@ impl UDPSocket {
         })
     }
 
-    /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
-    pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
+    /// Descriptor that an IPC send dups/exports for a `dgram.Socket` handle, or `None` once closed. The receiver reads it too.
+    pub(crate) fn share_fd_for_ipc(&self) -> Option<bun_sys::Fd> {
         let raw = self.get_fd();
         if raw < 0 {
             return None;
         }
+        uws::udp::Socket::opaque_mut(self.socket.get()?).mark_shared();
         #[cfg(windows)]
         {
             Some(bun_sys::Fd::from_system(

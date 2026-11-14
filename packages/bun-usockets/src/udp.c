@@ -119,6 +119,10 @@ void us_udp_socket_close(struct us_udp_socket_t *s) {
     s->on_close(s);
 }
 
+void us_udp_socket_mark_shared(struct us_udp_socket_t *s) {
+    s->shared_fd = 1;
+}
+
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
     return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }

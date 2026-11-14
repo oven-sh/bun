@@ -854,8 +854,8 @@ impl HiddenFromDiff {
             if entry.kind != sys::EntryKind::Directory
                 && strings::has_prefix(entry.name.slice_u8(), crate::bun_hash_tag)
             {
-                let name = ZBox::from_bytes(entry.name.slice_u8());
-                sys::renameat(self.folder.fd, &name, self.stash.fd, &name)?;
+                let name = entry.name.as_zstr();
+                sys::renameat(self.folder.fd, name, self.stash.fd, name)?;
             }
         }
 
@@ -918,14 +918,14 @@ fn move_entries_absent_from(
 ) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(from.fd);
     while let Some(entry) = iter.next()? {
-        let name = ZBox::from_bytes(entry.name.slice_u8());
+        let name = entry.name.as_zstr();
         let Some(reference) = reference else {
-            sys::renameat(from.fd, &name, to.fd, &name)?;
+            sys::renameat(from.fd, name, to.fd, name)?;
             continue;
         };
-        match sys::exists_at_type(reference.fd, &name) {
+        match sys::exists_at_type(reference.fd, name) {
             Err(e) if e.get_errno() == sys::E::ENOENT => {
-                sys::renameat(from.fd, &name, to.fd, &name)?;
+                sys::renameat(from.fd, name, to.fd, name)?;
             }
             Err(e) => return Err(e),
             Ok(sys::ExistsAtType::Directory)
@@ -1502,8 +1502,8 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
 fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(from.fd);
     while let Some(entry) = iter.next()? {
-        let name = ZBox::from_bytes(entry.name.slice_u8());
-        let Err(refused) = sys::renameat(from.fd, &name, to.fd, &name) else {
+        let name = entry.name.as_zstr();
+        let Err(refused) = sys::renameat(from.fd, name, to.fd, name) else {
             continue;
         };
         let kind = crate::prune::entry_kind(from, name.as_bytes(), entry.kind);
@@ -1514,7 +1514,7 @@ fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
             &from.open_dir(name.as_bytes(), ITERATE)?,
             &to.make_open_path(name.as_bytes(), Default::default())?,
         )?;
-        sys::rmdirat(from.fd, &name)?;
+        sys::rmdirat(from.fd, name)?;
     }
     Ok(())
 }

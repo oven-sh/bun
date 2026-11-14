@@ -479,7 +479,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                 }
                 Output::flush();
-                return Ok(());
+                Global::exit(1);
             }
             Ok(Err(err)) => {
                 if !silent {
@@ -490,7 +490,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     );
                 }
                 Output::flush();
-                return Ok(());
+                Global::exit(1);
             }
             Ok(Ok(result)) => result,
         };
@@ -571,7 +571,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
 
                 Output::flush();
-                return Ok(());
+                Global::exit(1);
             }
 
             _ => {}

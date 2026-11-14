@@ -857,12 +857,14 @@ describe("process.stdin pushes no chunk inside the nextTicks of the chunk before
     let output = "";
     const decoder = new TextDecoder();
     const ready = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
     await using terminal = new Bun.Terminal({
       cols: 80,
       rows: 24,
       data(_, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes("READY")) ready.resolve();
+        if (/END [^\n]*\n/.test(output)) ended.resolve();
       },
     });
     const reader = `
@@ -879,9 +881,10 @@ describe("process.stdin pushes no chunk inside the nextTicks of the chunk before
     ]);
     expect(await started).toBe("ready");
     terminal.write("abc\n\x04");
-    const exitCode = await proc.exited;
+    // The exit of the child can be reported before the terminal has read its last line.
+    await ended.promise;
     expect(output.replaceAll("\r", "")).toContain('END "abc\\n"');
-    expect(exitCode).toBe(0);
+    expect(await proc.exited).toBe(0);
   });
 
   // A writer that stays ahead of the loop. Without the fix the loop loses chunks in some runs, and not in all.

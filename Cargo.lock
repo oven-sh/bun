@@ -2080,7 +2080,6 @@ dependencies = [
  "bun_core",
  "bun_opaque",
  "bun_ptr",
- "scopeguard",
  "strum",
  "thiserror",
 ]

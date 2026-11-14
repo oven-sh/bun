@@ -215,6 +215,18 @@ public:
     };
     void finishDeferredClose(bool mayCallScript = true);
 
+    // Why script that SQLite called may not use this connection now. Null if it may.
+    ASCIILiteral reentryRefusal() const
+    {
+        if (!isBusy()) [[likely]]
+            return {};
+        return reentryRefusalSlow();
+    }
+    // "The authorizer callback must not do anything that will modify the database connection that invoked the
+    // authorizer callback. Note that sqlite3_prepare_v2() and sqlite3_step() both modify their database connections
+    // for the meaning of "modify" in this paragraph." https://sqlite.org/c3ref/set_authorizer.html
+    bool m_inAuthorizer = false;
+
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -222,6 +234,8 @@ private:
     }
 
     void finishCreation(JSC::VM& vm);
+
+    ASCIILiteral reentryRefusalSlow() const;
 
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};

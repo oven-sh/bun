@@ -250,10 +250,12 @@ void resolveStreamClosedPromise(JSC::VM&, JSWritableStream*); // userJS: no — 
 void rejectStreamClosedPromise(JSC::VM&, JSReadableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
 void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
 
-// `$webStreamControllerError` — node:stream's addAbortSignal() erroring a WHATWG stream, i.e.
-// what `controller.error(e)` does, including its no-op once the stream left readable/writable.
+// Errors a WHATWG stream from outside, like `controller.error(e)`: a no-op once it left readable/writable.
+// Unlike there, the readable of a TransformStream errors all of it, and a textStream() cancels its source.
 void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
 void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
+// `$webStreamControllerError`, node:stream's addAbortSignal(): also stops a native source. The Rust ReadableStream::error() does that itself.
+void webStreamControllerErrorAndStopSource(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — BunStreamSource.cpp
 
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
 // back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
@@ -511,6 +513,8 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
+// Errors the whole stream for an error that reached its readable side from outside (webStreamControllerError).
+void transformStreamReadableError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamErrorWritableAndUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamSetBackpressure(JSC::JSGlobalObject*, JSTransformStream*, bool backpressure); // userJS: no — TransformStreamOperations.cpp
 void transformStreamUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — TransformStreamOperations.cpp
@@ -576,7 +580,7 @@ JSC::JSPromise* decompressionStreamTransform(JSC::JSGlobalObject*, JSDecompressi
 JSC::JSPromise* decompressionStreamFlush(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStreamShared.cpp
 // A codec chunk whose output is still pending (stream->m_codecPromise set) is driven by its
 // consumer: the readable's pull algorithm / the native sink's onReady continue it; the writable
-// starting to error with the write in flight, a readable cancel, or a sink detach abandon it
+// starting to error with the write in flight, a readable cancel or error from outside, or a sink detach abandon it
 // (no-ops when nothing is pending).
 void nativeCodecContinue(JSC::JSGlobalObject*, JSTransformStream*); // userJS: yes (enqueues) — JSCompressionStreamShared.cpp
 void nativeCodecAbandon(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — JSCompressionStreamShared.cpp

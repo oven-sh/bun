@@ -209,11 +209,15 @@ impl InstallCompletionsCommand {
         };
         let cwd: &[u8] = &cwd_buf[..cwd_len];
 
-        let _ = Self::install_bunx_symlink(cwd);
+        // A file with a program is not a Bun install: it is `bunx` only while BUN_BE_BUN is set.
+        if !bun_standalone_graph::Graph::image_has_program() {
+            let _ = Self::install_bunx_symlink(cwd);
+            #[cfg(windows)]
+            let _ = Self::install_uninstaller_windows();
+        }
 
         #[cfg(windows)]
         {
-            let _ = Self::install_uninstaller_windows();
             Self::print_powershell_completions_unsupported();
             return Ok(());
         }

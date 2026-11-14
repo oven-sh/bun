@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, makeTree } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, makeTree } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -829,7 +829,7 @@ describe("@types/bun integration test", () => {
   });
 
   // tsc cannot check what the JSDoc of these two methods in wasm.d.ts says about
-  // the buffers. This check ties those sentences to the running binary.
+  // the buffers. These checks tie those sentences to the running binary.
   describe("WebAssembly.Memory", () => {
     test("toFixedLengthBuffer() and toResizableBuffer() do what their JSDoc says", () => {
       const page = 65536;
@@ -867,8 +867,11 @@ describe("@types/bun integration test", () => {
       expect(fixedAgain.resizable).toBe(false);
       expect(memory.buffer).toBe(fixedAgain);
       expect(resizable.detached).toBe(true);
+    });
 
-      // A shared memory returns a SharedArrayBuffer, which the declared type does not say.
+    // An ASAN build ignores `shared` unless ASAN_OPTIONS has allow_user_segv_handler=1.
+    test.skipIf(isASAN)("a shared memory returns a SharedArrayBuffer from both methods, as their JSDoc says", () => {
+      // The declared type is `ArrayBuffer`.
       const shared = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
       const sharedFixed = shared.toFixedLengthBuffer() as unknown as SharedArrayBuffer;
       expect(sharedFixed).toBeInstanceOf(SharedArrayBuffer);
@@ -879,7 +882,7 @@ describe("@types/bun integration test", () => {
       expect(sharedGrowable.growable).toBe(true);
       expect(shared.buffer as unknown).toBe(sharedGrowable);
 
-      // Neither call detaches a buffer of a shared memory: each earlier buffer still reads the memory.
+      // Neither call detaches a buffer: each earlier buffer still reads the memory.
       new Uint8Array(sharedGrowable)[0] = 7;
       expect(new Uint8Array(sharedFixed)[0]).toBe(7);
       shared.toFixedLengthBuffer();

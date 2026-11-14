@@ -241,6 +241,10 @@ impl ExecutionSequence {
         if let Some(fixtures) = self.test_entry.and_then(|test| unsafe { test.as_ref() }.fixtures.as_ref()) {
             test_context::js::fixtures_set_cached(context, global, fixtures.get());
         }
+        // This attempt timed out before anything asked for its context.
+        if self.result.is_timeout() {
+            TestContext::abort_signal(context, global);
+        }
         context
     }
 
@@ -1347,7 +1351,8 @@ fn step_sequence_one(
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
             if next_item.evaluate_timeout(sequence, now) {
-                if let Some(context) = context {
+                // Not `context`: the callback may have created the sequence's context.
+                if let Some(context) = sequence.context.as_ref().map(Strong::get) {
                     TestContext::abort_signal(context, global_this);
                 }
                 report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;

@@ -200,9 +200,7 @@ impl Impl {
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
         match crate::virtual_machine::VirtualMachine::get_or_null() {
             Some(vm) => {
-                // SAFETY: `get_or_null` returns the thread-local pointer set by
-                // `init()`; the allocation outlives the thread.
-                if unsafe { (*vm).is_shutting_down() } {
+                if vm.is_shutting_down() {
                     return;
                 }
             }

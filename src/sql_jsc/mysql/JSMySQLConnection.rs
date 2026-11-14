@@ -274,13 +274,12 @@ impl JSMySQLConnection {
         column_transform: Option<JsLocal<'a, Callable>>,
     ) -> JsResult<JSValue> {
         let global_object = cx.global();
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
         let port = port as i32;
         // The connection is the calling script's.
         let context = global_object.bun_vm().context_of_caller();
         let Some(args) = ConnectionCtorArgs::parse(
             global_object,
-            &mut *vm,
             hostname,
             ssl_mode,
             tls.to_js(),
@@ -316,9 +315,7 @@ impl JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
+            vm: BackRef::new(VirtualMachine::get()),
             poll_ref: JsCell::new(KeepAlive::default()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,

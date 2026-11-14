@@ -1308,22 +1308,13 @@ class ChildProcess extends EventEmitter {
             result.readable = false;
             result._handle = new StdioPipeHandle(() => sink._getFd());
             // Node's child.stdin is a net.Socket with ref/unref. The FileSink
-            // already keeps the loop alive while a write is queued, so unref
-            // only undoes a ref made here; a bare sink.unref() would drop
-            // queued bytes, where Node delivers them.
-            let refed = false;
+            // keeps the loop alive exactly while a write is queued, which is
+            // what Node does for a queued write, and it cannot ref an idle
+            // pipe. Forwarding these would only let unref drop queued bytes.
             result.ref = function ref() {
-              if (!refed) {
-                refed = true;
-                sink.ref();
-              }
               return this;
             };
             result.unref = function unref() {
-              if (refed) {
-                refed = false;
-                sink.unref();
-              }
               return this;
             };
             return result;
@@ -1598,9 +1589,8 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        // Not stdin: an idle child stdin pipe does not keep the loop alive.
-        for (let i = 1; i < this.stdio!.length; i++) {
-          this.stdio![i]?.ref?.();
+        for (let item of this.stdio!) {
+          item?.ref?.();
         }
       }
     } catch (ex) {

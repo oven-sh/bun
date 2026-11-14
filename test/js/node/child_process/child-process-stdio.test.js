@@ -263,9 +263,10 @@ describe.concurrent("stdio _handle", () => {
   });
 
   // Like Node: a queued write keeps the parent alive until the child has
-  // read it, however stdin is unref'd. Once drained the parent exits on its
-  // own, which closes the pipe and lets the child report the byte count.
-  it.skipIf(isWindows)("child.stdin.unref waits for queued writes, then releases the keep-alive", async () => {
+  // read it, however stdin is ref'd or unref'd. Once drained the parent
+  // exits on its own, which closes the pipe and lets the child report the
+  // byte count.
+  it.skipIf(isWindows)("a queued child.stdin write outlives ref/unref, then the parent exits", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -275,6 +276,7 @@ describe.concurrent("stdio _handle", () => {
         const child = spawn(process.execPath, ["-e", 'let n = 0; process.stdin.on("data", d => (n += d.length)); process.stdin.on("end", () => console.log(n))'], {
           stdio: ["pipe", "inherit", "inherit"],
         });
+        child.stdin.ref();
         child.stdin.write(Buffer.alloc(1 << 20, 10));
         child.stdin.unref();
         child.unref();

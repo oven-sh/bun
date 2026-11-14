@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd};
 
@@ -130,8 +130,6 @@ impl<'a> Writable<'a> {
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> JsResult<Writable<'a>> {
-        super::assert_stdio_result!(result);
-
         let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
@@ -150,11 +148,7 @@ impl<'a> Writable<'a> {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buffer) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (the sink takes over the heap
-                        // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
+                        let pipe_ref = FileSink::create_with_pipe(evtloop, buffer);
 
                         match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
@@ -224,7 +218,7 @@ impl<'a> Writable<'a> {
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
@@ -232,14 +226,14 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let fd = result.unwrap();
-                let pipe_ref = FileSink::create(evtloop, fd);
+                let file = result.unwrap();
+                let pipe_ref = FileSink::create(evtloop, file.fd());
 
-                match pipe_ref.writer.with_mut(|w| w.start(fd, true)) {
-                    bun_sys::Result::Ok(()) => {}
+                match pipe_ref.writer.with_mut(|w| w.start(file.fd(), true)) {
+                    // The writer closes it from now on.
+                    bun_sys::Result::Ok(()) => _ = file.into_raw(),
                     bun_sys::Result::Err(err) => {
-                        // The writer did not take `fd`; nothing else closes it.
-                        fd.close();
+                        drop(file);
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
@@ -299,7 +293,7 @@ impl<'a> Writable<'a> {
                 debug_assert!(*fd != Fd::INVALID);
                 Ok(Writable::Memfd(*fd))
             }
-            Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+            Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),

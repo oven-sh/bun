@@ -19,7 +19,7 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, FdExt as _, SignalCode};
+use bun_sys::{self as sys, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -647,10 +647,7 @@ fn spawn_maybe_sync(
                                     return Err(e.throw_js(cx.global()));
                                 }
                             };
-                            #[cfg(not(windows))]
                             let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
-                            #[cfg(windows)]
-                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
                             if is_ipc {
                                 ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                             }
@@ -1056,11 +1053,6 @@ fn spawn_maybe_sync(
     // and to avoid interfering with the main event loop.
     let sync_loop = if is_sync {
         let Some(sync_loop) = jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm) else {
-            // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
-            #[cfg(windows)]
-            for e in &mut extra_fds {
-                e.deinit();
-            }
             return Err(throw_spawn_sync_loop_init_failed(cx.global()));
         };
         Some(sync_loop.prepare(core::ptr::from_ref(jsc_vm).cast_mut().cast()))
@@ -1085,7 +1077,7 @@ fn spawn_maybe_sync(
         None => None,
     };
 
-    let mut spawn_options = SpawnOptions {
+    let spawn_options = SpawnOptions {
         // Empty means "inherit the parent's working directory". Only chdir
         // when the user asked for it: the stored cwd path string can be stale
         // if the directory was renamed out from under the process (#33819).
@@ -1160,12 +1152,6 @@ fn spawn_maybe_sync(
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
         {
-            // Windows: close+free the heap `uv::Pipe` handles that
-            // `as_spawn_option` allocated and `spawn_process_windows` may have
-            // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
-            // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
-            // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
-            spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
                 // string we built above (lives in `cstr_storage`).
@@ -1193,16 +1179,12 @@ fn spawn_maybe_sync(
                 .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
         }
         Err(err) => {
-            // See EMFILE arm above.
-            spawn_options.deinit();
             return Err(cx
                 .global()
                 .throw_error(crate::Error::from(err), ": failed to spawn process"));
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
-                // See EMFILE arm above.
-                spawn_options.deinit();
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 if let Some(c) = &cgroup_dir
                     && err.syscall == sys::Tag::clone3
@@ -1245,10 +1227,7 @@ fn spawn_maybe_sync(
 
     // Use the isolated loop for spawnSync operations
     //
-    // Note: `PosixSpawnResult::to_process` consumes `self` but only reads
-    // `pid`/`pidfd`/`has_exited`. `stdin/stdout/stderr/extra_pipes` are still
-    // needed afterward, so take those fields out first so the partial move is
-    // explicit.
+    // `to_process` closes what is left in the result.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
@@ -1362,38 +1341,7 @@ fn spawn_maybe_sync(
             // run. `finalizeStreams()` here only closes `stdio_pipes` and the
             // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
             // no-op.
-            #[cfg(unix)]
-            {
-                if let Some(fd) = spawned_stdout {
-                    if !stdio[1].borrows_caller_fd() {
-                        fd.close();
-                    }
-                }
-                if let Some(fd) = spawned_stderr {
-                    if !stdio[2].borrows_caller_fd() {
-                        fd.close();
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                use bun_libuv_sys::UvHandle as _;
-                for r in [spawned_stdout, spawned_stderr] {
-                    match r {
-                        spawn::WindowsStdioResult::Buffer(pipe) => {
-                            // `uv_close` is async — libuv keeps the raw handle pointer
-                            // until the next loop tick and then calls `on_pipe_close`,
-                            // which reclaims the allocation via `heap::take`. Leak the
-                            // Box so it outlives this scope; dropping it here would be
-                            // a use-after-free + double-free when the callback fires.
-                            Box::leak(pipe).close(Subprocess::on_pipe_close)
-                        }
-                        spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
-                        spawn::WindowsStdioResult::UnownedFd(_)
-                        | spawn::WindowsStdioResult::Unavailable => {}
-                    }
-                }
-            }
+            drop((spawned_stdout, spawned_stderr));
             subprocess.finalize_streams();
             #[cfg(unix)]
             let _ = Process::kill_and_reap(
@@ -1512,34 +1460,20 @@ fn spawn_maybe_sync(
                     ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
                 }
             }
-            // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
+            // uws owns the fd now (owns_fd=1).
             subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                let slot = &mut v[usize::try_from(ipc_channel).expect("int cast")];
+                core::mem::replace(slot, ExtraPipe::Unavailable).into_raw();
             });
         }
         #[cfg(not(unix))]
         {
             let idx = usize::try_from(ipc_channel).expect("int cast");
             // The IPC channel is always a `buffer` pipe on Windows.
-            // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
-            // neutralize the slot up front so `finalizeStreams` can't
-            // double-close it (the Box would otherwise drop on reassignment).
-            let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
-                match core::mem::take(&mut pipes[idx]) {
-                    spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
-                    other => {
-                        // Restore the slot before panicking so the
-                        // `Subprocess` finalizer still sees the original
-                        // variant. Use
-                        // `unreachable!` (NOT `debug_assert!` — that would
-                        // compile out in release and feed null to
-                        // `windows_configure_server`, which immediately
-                        // dereferences it).
-                        pipes[idx] = other;
-                        unreachable!("IPC channel stdio is not a buffer pipe");
-                    }
-                }
-            });
+            let ipc_pipe = subprocess.stdio_pipes.with_mut(|pipes| pipes[idx].take());
+            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
+                unreachable!("IPC channel stdio is not a buffer pipe");
+            };
             // `windows_configure_server` stores the pointer in `uv_handle_t.data`
             // for the pipe's lifetime, so it must be the allocation root
             // (write provenance), never one re-derived from `&SendQueue`.
@@ -1676,11 +1610,8 @@ fn spawn_maybe_sync(
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
-                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
-                    let ExtraPipe::OwnedFd(fd) = *slot else {
-                        unreachable!()
-                    };
-                    *slot = ExtraPipe::UnownedFd(fd);
+                if let Some(slot) = pipes.get_mut(*j) {
+                    slot.release_to_caller();
                 }
             }
         });

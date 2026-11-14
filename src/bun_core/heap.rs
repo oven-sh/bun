@@ -14,7 +14,7 @@
 //!
 //!   - `bun_threading::WorkPool::schedule_owned` / `OwnedTask`
 //!   - `bun_event_loop::Task::from_boxed` / `ConcurrentTask::create_boxed`
-//!   - `bun_libuv_sys::UvHandle::set_owned_data` / `take_owned_data`
+//!   - `bun_libuv_sys::Owned`
 //!
 //! New code should reach for one of those. Direct `heap::into_raw`/`heap::take`
 //! calls are for the residual cases that don't fit a typed scheduler
@@ -61,7 +61,7 @@ pub fn into_raw<T: ?Sized>(boxed: Box<T>) -> *mut T {
 ///
 /// Prefer a paired typed helper that owns *both* halves of the round-trip when
 /// one applies (`bun_threading::WorkPool::schedule_owned`,
-/// `bun_libuv_sys::UvHandle::set_owned_data`, …);
+/// `bun_libuv_sys::Owned`, …);
 /// `release` is for the residual cases (intrusive-refcount finalizers, FFI
 /// ownership protocols) where no such helper exists.
 #[inline(always)]

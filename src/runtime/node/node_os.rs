@@ -475,24 +475,8 @@ mod _impl {
 
     #[cfg(windows)]
     fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
-        if err != 0 {
-            return Err(OsError::Any);
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_cpu_info
-            unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
-        };
-
-        let values =
-            JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
-
-        // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-        let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
+        let infos = libuv::List::<libuv::uv_cpu_info_t>::get().map_err(|_| OsError::Any)?;
+        let values = JSValue::create_empty_array(global_this, infos.len())?;
         for (i, cpu_info) in infos.iter().enumerate() {
             let times = CPUTimes {
                 user: cpu_info.cpu_times.user,
@@ -1020,11 +1004,7 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) fn network_interfaces_windows(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
-        if err != 0 {
+        let iface_slice = libuv::List::<libuv::uv_interface_address_t>::get().map_err(|err| {
             let sys_err = SystemError {
                 message: BunString::static_("uv_interface_addresses failed").into(),
                 code: BunString::static_("ERR_SYSTEM_ERROR").into(),
@@ -1033,22 +1013,15 @@ mod _impl {
                 syscall: BunString::static_("uv_interface_addresses").into(),
                 ..Default::default()
             };
-            return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_interface_addresses
-            unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
-        };
+            global_this.throw_value(sys_err.to_error_instance(global_this))
+        })?;
 
         let ret = JSValue::create_empty_object(global_this, 8);
 
         // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
         let mut ip_buf = [0u8; 65];
 
-        // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-        let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
-        for iface in iface_slice {
+        for iface in iface_slice.iter() {
             let interface = JSValue::create_empty_object(global_this, 7);
 
             // address <string> The assigned IPv4 or IPv6 address

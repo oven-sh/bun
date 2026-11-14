@@ -156,16 +156,6 @@ impl Drop for Advancing<'_> {
     }
 }
 
-struct RowCells(SmallVec<[DataCell::SQLDataCell; 70]>);
-
-impl Drop for RowCells {
-    fn drop(&mut self) {
-        for cell in &mut self.0 {
-            cell.deinit();
-        }
-    }
-}
-
 bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
     from_timer_ptr => timers.timer,
     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
@@ -2014,25 +2004,14 @@ impl PostgresSQLConnection {
                     }
                 }
 
-                // Seeded with the field's column kind so a short DataRow still
-                // matches the Structure built from these fields.
-                let mut cells = RowCells(
-                    statement
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, field)| {
-                            DataCell::SQLDataCell::null_for_column(i as u32, &field.name_or_index)
-                        })
-                        .collect(),
-                );
                 let mut putter = DataCell::Putter {
-                    list: &mut cells.0,
+                    list: SmallVec::new(),
                     fields: &statement.fields,
                     formats: request_flags.formats,
                     bigint: request_flags.bigint,
                     global_object: self.global(),
                 };
+                putter.list.reserve_exact(statement.fields.len());
 
                 // Tells a cell the client cannot decode from a framing error of `decode` itself.
                 let mut cell_failed = false;

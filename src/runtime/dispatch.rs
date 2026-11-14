@@ -312,8 +312,8 @@ pub(crate) fn run_task(
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
-            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
-            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
+            // SAFETY: the box `on_raw_libuv_complete` queued; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvRequest)) }.run();
         }
         #[cfg(windows)]
         task_tag::UvDnsPollFree => {
@@ -1779,7 +1779,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         // ── Windows-only producers ───────────────────────────────────────
         task_tag::GetAddrInfoLibuvComplete => {
             #[cfg(windows)]
-            release!(crate::dns_jsc::LibuvCompleteHolder);
+            release!(crate::dns_jsc::LibuvRequest);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

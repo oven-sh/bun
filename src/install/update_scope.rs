@@ -93,7 +93,7 @@ impl UpdateScope<'_> {
         let pkg_res = lockfile.packages.items_resolution();
         if self.whole_workspace {
             let mut all = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
-            all.unmanaged.set_all(true);
+            all.set_all(true);
             return all;
         }
         let name_hashes = lockfile.packages.items_name_hash();

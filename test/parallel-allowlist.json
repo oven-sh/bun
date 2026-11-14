@@ -280,6 +280,11 @@
     "snippets"
   ],
   "excludeFiles": [
+    "aot/executables-leave-out-the-command-line.test.ts",
+    "aot/global-code-gets-the-runner-only-where-the-build-sees-it.test.ts",
+    "aot/perf/measure-idioms.test.ts",
+    "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts",
+    "aot/two-builds-give-the-same-bytes.test.ts",
     "aot/mock-commonjs-sites.test.ts",
     "aot/plain-bun.test.ts",
     "bundler/bundler_compile_aot.test.ts",

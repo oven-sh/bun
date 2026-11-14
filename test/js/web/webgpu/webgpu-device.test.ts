@@ -33,6 +33,11 @@ describe.skipIf(!hasAdapter)("GPUAdapter", () => {
     expect(limits.minStorageBufferOffsetAlignment).toBeGreaterThanOrEqual(32);
   });
 
+  test("is a fallback adapter if it runs on the CPU", async () => {
+    const { architecture, isFallbackAdapter } = (await navigator.gpu.requestAdapter())!.info;
+    expect(isFallbackAdapter).toBe(["software", "swiftshader", "warp"].includes(architecture));
+  });
+
   test("forceFallbackAdapter gives none that is not one", async () => {
     const adapter = await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
     expect(adapter?.info.isFallbackAdapter ?? true).toBe(true);

@@ -3,7 +3,10 @@ import { bunEnv, bunExe, isLinux } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-export const hasAdapter = (await navigator.gpu.requestAdapter()) !== null;
+const info = (await navigator.gpu.requestAdapter())?.info;
+export const hasAdapter = info !== undefined;
+// For the report of a failure.
+if (info) console.log(`${info.device}, ${info.description}`);
 
 export async function requestDevice(descriptor?: GPUDeviceDescriptor) {
   return (await navigator.gpu.requestAdapter())!.requestDevice(descriptor);

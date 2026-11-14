@@ -1010,7 +1010,7 @@ impl WebWorker {
             return Ok(Some(vm));
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         Ok(Some(vm))
     }
 

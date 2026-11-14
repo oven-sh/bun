@@ -489,6 +489,104 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  // The module that the bundler writes for a "use client" file imports
+  // `serverRegisterClientReferenceExport` from `serverRuntimeImportSource`. For a
+  // CommonJS runtime, "default" is `module.exports` and any other name is a
+  // property of it.
+  test.concurrent.each(["default", "registerClientReference"])(
+    "a client reference is registered through the %s export of a CommonJS runtime",
+    async registerExport => {
+      const serverComponents = {
+        separateSSRGraph: true,
+        serverRuntimeImportSource: "./runtime.cjs",
+        serverRegisterClientReferenceExport: registerExport,
+      };
+      using dir = tempDir("bake-production-cjs-server-runtime", {
+        "client.ts": `console.log("client loaded");`,
+        "server.ts": `
+          export function render(req, meta) {
+            return new Response(String(meta.pageModule.default()));
+          }
+          export async function prerender(meta) {
+            return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+          }
+        `,
+        "runtime.cjs": `
+          function registerClientReference(value, file, uid) {
+            return { tag: "REGISTERED", uid };
+          }
+          module.exports = registerClientReference;
+          module.exports.registerClientReference = registerClientReference;
+        `,
+        "components/Button.ts": `"use client";\nexport function Button() {}\n`,
+        "routes/index.ts": `
+          import { Button } from "../components/Button";
+          export default () => "homepage Button=" + JSON.stringify(Button);
+        `,
+        "app.ts": `
+          const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+          export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents: ${JSON.stringify(serverComponents)} } } };
+        `,
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+        .cwd(String(dir))
+        .env(bunEnv)
+        .throws(false);
+      const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+        .text()
+        .catch(() => stderr.toString());
+      expect(html).toBe(`<body>homepage Button={"tag":"REGISTERED","uid":"Button"}</body>`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // `add.cjs` sets `late` on the exports of `core.cjs` after `first.ts` imported
+  // that file. A named import reads the name from `module.exports` where it is
+  // used.
+  test("a page reads a named import of a CommonJS file where the name is used", async () => {
+    using dir = tempDir("bake-production-cjs-named-import", {
+      "client.ts": `console.log("client loaded");`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+        }
+      `,
+      "core.cjs": `
+        const e = exports;
+        e.early = 1;
+      `,
+      "add.cjs": `require("./core.cjs").late = 2;`,
+      "first.ts": `
+        import { early } from "./core.cjs";
+        export const first = early;
+      `,
+      "routes/index.ts": `
+        import { first } from "../first.ts";
+        import "../add.cjs";
+        import { late } from "../core.cjs";
+        export default () => "homepage " + first + " " + late;
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr.toString());
+    expect(html).toBe("<body>homepage 1 2</body>");
+    expect(exitCode).toBe(0);
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

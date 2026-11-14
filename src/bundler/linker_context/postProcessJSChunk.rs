@@ -991,7 +991,7 @@ pub(crate) fn generate_entry_point_tail_js(
                                 //   });
                                 //
                                 //   // entry_point.js
-                                //   var cjs_format = __toESM(require_cjs_format());
+                                //   var cjs_format = require_cjs_format();
                                 //   var export_foo = cjs_format.foo;
                                 //   export {
                                 //     export_foo as foo

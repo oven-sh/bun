@@ -371,7 +371,7 @@ _What happens_:
 _Runtime helper usage examples_:
 
 ```javascript
-// __toESM: Used when importing CommonJS with ES6 syntax
+// __toESM: Used for a default or `* as` import of CommonJS
 import utils from "./commonjs-module.js";
 // Generates: __toESM(require('./commonjs-module.js'))
 
@@ -415,8 +415,13 @@ if (targetModule.needsWrapper) {
     ref: targetModule.wrapperRef, // Points to require_moduleName() function
   });
 
-  // For ES6 imports of CommonJS, add __toESM wrapper
-  if (importKind !== "require" && targetModule.isCommonJS) {
+  // For ES6 imports of CommonJS that need the namespace object, add __toESM wrapper.
+  // A named-only or bare import and `export ... from` read `module.exports` directly.
+  if (
+    importKind !== "require" &&
+    targetModule.isCommonJS &&
+    needsNamespace(record)
+  ) {
     record.wrapWithToESM = true;
     generateRuntimeSymbolImport("__toESM");
   }

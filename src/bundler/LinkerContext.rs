@@ -13,7 +13,7 @@ use bun_sourcemap::{
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use crate::bake_types as bake;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::BundledAst as JSAst;
@@ -2990,7 +2990,7 @@ impl<'a> LinkerContext<'a> {
             // would bundle (or externally import) React for JSX that was
             // entirely dead code. Liveness of the JSX import source, when it is
             // actually needed, is established via part.dependencies (step 6
-            // wires the wrapper_ref/__toESM dependency onto this part), so
+            // wires the wrapper_ref dependency onto this part), so
             // skipping the side-effect scan here is safe.
             if part.tag == bun_ast::PartTag::JsxImport {
                 if !can_be_removed_if_unused
@@ -3843,6 +3843,29 @@ impl<'a> LinkerContext<'a> {
                         .unwrap();
 
                     if named_import.namespace_ref.is_valid() {
+                        // `scan_imports_and_exports` keeps the "__toESM" namespace only for a record with one of these flags.
+                        debug_assert!(
+                            !matches!(
+                                status,
+                                ImportTrackerStatus::Cjs | ImportTrackerStatus::CjsWithoutExports
+                            ) || self.options.output_format == Format::InternalBakeDev
+                                || {
+                                    let record = &self.graph.ast.items_import_records()
+                                        [prev_source_index as usize]
+                                        .as_slice()
+                                        [named_import.import_record_index as usize];
+                                    let alias =
+                                        named_import.alias.map_or(&b""[..], |alias| alias.slice());
+                                    record.kind != ImportKind::Stmt
+                                        || (alias != b"default" && alias != b"__esModule")
+                                        || record.flags.intersects(
+                                            ImportRecordFlags::CONTAINS_IMPORT_STAR
+                                                | ImportRecordFlags::CONTAINS_DEFAULT_ALIAS
+                                                | ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS,
+                                        )
+                                },
+                            "an import of \"default\" or \"__esModule\" from CommonJS has no CONTAINS_* flag on its record"
+                        );
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
                             result.namespace_ref = named_import.namespace_ref;

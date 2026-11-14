@@ -1107,6 +1107,14 @@ pub(crate) fn scan_imports_and_exports(
                     };
                     let other_id = rec_source_index.value() as usize;
 
+                    // Only these read the "__toESM" namespace. Any other statement reads "module.exports".
+                    let needs_namespace = kind != ImportKind::Stmt
+                        || rec_flags.intersects(
+                            ImportRecordFlags::CONTAINS_IMPORT_STAR
+                                | ImportRecordFlags::CONTAINS_DEFAULT_ALIAS
+                                | ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS,
+                        );
+
                     // Don't follow external imports (this includes import() expressions)
                     // Short-circuit: `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
@@ -1169,14 +1177,7 @@ pub(crate) fn scan_imports_and_exports(
                             // - The ES module namespace object must not be captured
                             // - The "default" and "__esModule" exports must not be accessed
                             //
-                            if kind != ImportKind::Require
-                                && (kind != ImportKind::Stmt
-                                    || rec_flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                                    || rec_flags
-                                        .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
-                                    || rec_flags
-                                        .contains(ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS))
-                            {
+                            if kind != ImportKind::Require && needs_namespace {
                                 // For dynamic imports to cross-chunk CJS modules, we need extra
                                 // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
                                 // For other cases (static imports, truly external), use standard wrapping.
@@ -1223,11 +1224,25 @@ pub(crate) fn scan_imports_and_exports(
                             )?;
                         }
 
+                        // The bundler wrote the "module.exports" of a lazy export. It can be null or undefined.
+                        let is_lazy_export =
+                            col_ref!(ast_flags_list)[other_id].contains(AstFlags::HAS_LAZY_EXPORT);
+                        // `convert_stmts_for_chunk` prints this export star as `module.exports = <value>`.
+                        let is_module_exports_of_wrapped_file = wrap == WrapKind::Cjs
+                            && col_ref!(ast_flags_list)[id]
+                                .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                            && other_id != id
+                            && col_ref!(export_star_import_records)[id]
+                                .contains(&import_record_index);
+
                         // This is an ES6 import of a CommonJS module, so it needs the
-                        // "__toESM" wrapper as long as it's not a bare "require()".
+                        // "__toESM" wrapper unless it's a bare "require()" or reads only names (esbuild wraps those too).
                         // A same-chunk `import()` of a lifted CommonJS module needs it
                         // too, so that `default` is `module.exports` (the namespace).
                         if kind != ImportKind::Require
+                            && (needs_namespace
+                                || is_lazy_export
+                                || is_module_exports_of_wrapped_file)
                             && (other_export_kind == ExportsKind::Cjs
                                 || (kind == ImportKind::Dynamic
                                     && other_flags.wrap == WrapKind::Esm

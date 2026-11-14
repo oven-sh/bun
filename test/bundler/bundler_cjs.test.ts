@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1234,5 +1234,477 @@ describe("bundler", () => {
     run: {
       stdout: "function/undefined",
     },
+  });
+
+  // ============================================================================
+  // An import statement that reads only named exports of a CommonJS file has no
+  // `__toESM` namespace. It reads each name from `module.exports` where the
+  // name is used, so it has no list of names from the time of the import.
+  // ============================================================================
+
+  // `index.js` requires a plugin in the middle of its own load. The plugin is
+  // an ES module that imports `index.js` back through `api.js`.
+  const pluginHost = (plugin: string) => ({
+    "/index.js": /* js */ `
+      exports.helper = s => "h:" + s;
+      exports.plugins = [require("./${plugin}").default];
+      exports.version = "1.0";
+    `,
+    "/api.js": /* js */ `module.exports = require("./index.js");`,
+    ["/" + plugin]: /* js */ `
+      import { helper } from "./api.js";
+      export default { name: helper("a") };
+    `,
+  });
+  const logIndex = /* js */ `console.log(typeof ns.helper, typeof ns.plugins, String(ns.version), String(ns.default.version), Object.keys(ns).join(","));`;
+  const importIndexLater = /* js */ `
+    export const handle = async () => {
+      const ns = await import("./index.js");
+      ${logIndex}
+    };
+  `;
+  const requireHostThen = (route: string) => /* js */ `
+    require("./index.js");
+    require("./${route}").handle();
+  `;
+  const allOfIndex = "function object 1.0 1.0 default,helper,plugins,version";
+
+  // Test 63: a `.ts` file imports a name while `index.js` is loading. A later
+  // `import()` in a CommonJS file gets a namespace with every name.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`cjs/named_import_while_loading_then_dynamic_import_cjs_importer_format_${format}`, {
+      files: {
+        "/entry.js": requireHostThen("route.cjs"),
+        ...pluginHost("plugin.ts"),
+        "/route.cjs": /* js */ `
+          exports.handle = async () => {
+            const ns = await import("./index.js");
+            ${logIndex}
+          };
+        `,
+      },
+      target: "node",
+      format,
+      run: { stdout: allOfIndex },
+    });
+  }
+
+  // Test 64: then `import()` in a `.ts` file
+  itBundled("cjs/named_import_while_loading_then_dynamic_import_ts_importer", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost("plugin.ts"),
+      "/route.ts": importIndexLater,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 65: then `import *` in a `.ts` file
+  itBundled("cjs/named_import_while_loading_then_static_import_ts_importer", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./index.js");
+        require("./route.ts");
+      `,
+      ...pluginHost("plugin.ts"),
+      "/route.ts": /* js */ `
+        import * as ns from "./index.js";
+        ${logIndex}
+      `,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 66: the same pair in node mode, an `.mjs` file then an `.mjs` file
+  itBundled("cjs/named_import_while_loading_mjs_importers", {
+    files: {
+      "/entry.js": requireHostThen("route.mjs"),
+      ...pluginHost("plugin.mjs"),
+      "/route.mjs": importIndexLater,
+    },
+    target: "node",
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 67: minified, through `Bun.build`
+  itBundled("cjs/named_import_while_loading_minified", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost("plugin.ts"),
+      "/route.ts": importIndexLater,
+    },
+    backend: "api",
+    target: "bun",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: allOfIndex },
+  });
+
+  // Test 68: `import()` of a chunk
+  itBundled("cjs/named_import_while_loading_splitting", {
+    files: {
+      "/entry.js": requireHostThen("route.ts"),
+      ...pluginHost("plugin.ts"),
+      "/route.ts": importIndexLater,
+    },
+    target: "node",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: allOfIndex },
+  });
+
+  // Test 69: the plugin takes the default export, so the cache has a namespace
+  // without `plugins` and `version`. A named import does not read it.
+  itBundled("cjs/named_import_after_default_import_while_loading", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./index.js");
+        require("./later.ts");
+      `,
+      ...pluginHost("plugin.ts"),
+      "/plugin.ts": /* js */ `
+        import index from "./api.js";
+        export default { name: index.helper("a") };
+      `,
+      "/later.ts": /* js */ `
+        import { helper, plugins, version } from "./index.js";
+        console.log(typeof helper, typeof plugins, String(version));
+      `,
+    },
+    target: "node",
+    run: { stdout: "function object 1.0" },
+  });
+
+  // Test 70: a CommonJS entry point in a cycle with itself through `export from`
+  itBundled("cjs/export_from_while_loading_entry", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./reexport.ts");
+        import("./entry.js").then(ns => console.log(String(ns.late), String(ns.default.late), Object.keys(ns).join(",")));
+        exports.late = "late";
+      `,
+      "/reexport.ts": /* js */ `export { early } from "./entry.js";`,
+    },
+    target: "node",
+    run: { stdout: "late late default,late" },
+  });
+
+  // `const e = exports` keeps the bundler from turning the assignments into ES
+  // exports, which have no CommonJS wrapper.
+  const setsEarlyAndLate = (importer: string) => /* js */ `
+    const e = exports;
+    e.early = 1;
+    require("./${importer}");
+    e.late = 2;
+  `;
+
+  // Test 71: the name is read where it is used, after the module has set it.
+  // esbuild and Bun 1.3.9 print `1 undefined` twice, Node refuses the cycle.
+  itBundled("cjs/named_import_while_loading_reads_name_set_later", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./a.cjs");
+        console.log(require("./b.ts").read().join(","));
+      `,
+      "/a.cjs": setsEarlyAndLate("b.ts"),
+      "/b.ts": /* js */ `
+        import { early, late } from "./a.cjs";
+        console.log(early, late);
+        export const read = () => [early, late];
+      `,
+    },
+    run: { stdout: "1 undefined\n1,2" },
+  });
+
+  // Test 72: `export *` copies the names set so far. It leaves no namespace
+  // for a later `import *`. Unbundled, Bun makes the namespace at the
+  // `export *` and prints `default,early` for the later import.
+  itBundled("cjs/export_star_while_loading", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./a.cjs");
+        const { a, b } = require("./later.ts");
+        console.log(Object.keys(a).join(","), Object.keys(b).join(","));
+      `,
+      "/a.cjs": setsEarlyAndLate("b.ts"),
+      "/b.ts": /* js */ `
+        export * from "./a.cjs";
+        export const own = 1;
+      `,
+      "/later.ts": /* js */ `
+        import * as a from "./a.cjs";
+        import * as b from "./b.ts";
+        export { a, b };
+      `,
+    },
+    run: { stdout: "default,early,late own,early" },
+  });
+
+  // The file that runs first has a named import, or an `import *` that puts a
+  // namespace without the later names into the cache.
+  for (const first of ["named", "star"] as const) {
+    // Test 73: a module takes the exports object of a loaded module as its own
+    // and adds names to it, as the entry points of protobufjs do
+    itBundled(`cjs/named_import_after_exports_are_taken_over_and_extended_first_${first}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { Writer } from "./generated.ts";
+          import { Root, Writer as same } from "./full.cjs";
+          console.log(typeof Writer, typeof Root, Writer === same);
+        `,
+        "/generated.ts":
+          first === "named"
+            ? /* js */ `
+                import { Writer } from "./minimal.cjs";
+                export { Writer };
+              `
+            : /* js */ `
+                import * as $protobuf from "./minimal.cjs";
+                export const Writer = $protobuf.Writer;
+              `,
+        "/minimal.cjs": /* js */ `
+          const e = exports;
+          e.Writer = function Writer() {};
+        `,
+        "/full.cjs": /* js */ `
+          const e = (module.exports = require("./minimal.cjs"));
+          e.Root = function Root() {};
+        `,
+      },
+      run: { stdout: "function function true" },
+    });
+
+    // Test 74: a third module adds a name to a loaded module, as the service
+    // files of aws-sdk v2 do
+    itBundled(`cjs/named_import_of_name_added_by_another_module_first_${first}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { region } from "./config.ts";
+          import { make } from "./s3.ts";
+          console.log(region, make());
+        `,
+        "/config.ts":
+          first === "named"
+            ? /* js */ `
+                import { config } from "./core.cjs";
+                export const region = config.region;
+              `
+            : /* js */ `
+                import * as AWS from "./core.cjs";
+                export const region = AWS.config.region;
+              `,
+        "/s3.ts": /* js */ `
+          import "./clients-s3.cjs";
+          import { S3, config } from "./core.cjs";
+          export const make = () => new S3().region;
+        `,
+        "/core.cjs": /* js */ `
+          const e = exports;
+          e.config = { region: "us-east-1" };
+        `,
+        "/clients-s3.cjs": /* js */ `
+          const AWS = require("./core.cjs");
+          AWS.S3 = function S3() {
+            this.region = AWS.config.region;
+          };
+          module.exports = AWS.S3;
+        `,
+      },
+      run: { stdout: "us-east-1 us-east-1" },
+    });
+  }
+
+  // Test 75: the same program with the CommonJS file in the bundle and
+  // external. In CommonJS output an external named import is a `require()`
+  // and always was read where it is used.
+  for (const where of ["bundled", "external"] as const) {
+    const lib = /* js */ `
+      const e = exports;
+      e.early = 1;
+      globalThis.setLate = () => {
+        e.late = 2;
+      };
+    `;
+    itBundled(`cjs/named_import_reads_name_set_later_${where}_format_cjs`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { early, late } from "lib";
+          console.log(early, late);
+          globalThis.setLate();
+          console.log(early, late);
+        `,
+        ...(where === "bundled" ? { "/node_modules/lib/index.js": lib } : {}),
+      },
+      ...(where === "external" ? { external: ["lib"], runtimeFiles: { "/node_modules/lib/index.js": lib } } : {}),
+      target: "node",
+      format: "cjs",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("__toESM");
+      },
+      run: { stdout: "1 undefined\n1 2" },
+    });
+  }
+
+  // Test 76: no import here needs a namespace, so the bundle has no `__toESM`
+  itBundled("cjs/named_and_bare_imports_and_export_star_print_no_toESM", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { a } from "./lib.cjs";
+        import "./side.cjs";
+        export * from "./star.cjs";
+        export { b } from "./lib.cjs";
+        console.log(a, globalThis.side);
+      `,
+      "/lib.cjs": /* js */ `
+        const e = exports;
+        e.a = 1;
+        e.b = 2;
+      `,
+      "/side.cjs": /* js */ `
+        const e = exports;
+        globalThis.side = "side";
+      `,
+      "/star.cjs": /* js */ `
+        const e = exports;
+        e.c = 3;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toESM");
+    },
+    run: { stdout: "1 side" },
+  });
+
+  // Test 77: the same holds for the imports that the bundler writes: the JSX
+  // runtime, and `import.meta.glob` with a named `import`
+  itBundled("cjs/jsx_runtime_and_eager_glob_imports_print_no_toESM", {
+    files: {
+      "/entry.jsx": /* js */ `
+        /** @jsxImportSource fakejsx */
+        const who = import.meta.glob("./mods/*.cjs", { eager: true, import: "who" });
+        console.log(JSON.stringify(<div id="a">hi</div>), JSON.stringify(who));
+      `,
+      "/mods/a.cjs": /* js */ `
+        const e = exports;
+        e.who = "a";
+      `,
+      "/node_modules/fakejsx/jsx-dev-runtime.js": /* js */ `
+        const e = exports;
+        e.jsxDEV = (type, props) => ({ type, props });
+      `,
+      "/node_modules/fakejsx/jsx-runtime.js": /* js */ `
+        const e = exports;
+        e.jsx = e.jsxs = (type, props) => ({ type, props });
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__toESM");
+    },
+    run: { stdout: `{"type":"div","props":{"id":"a","children":"hi"}} {"./mods/a.cjs":"a"}` },
+  });
+
+  // Test 78: the default export, the `__esModule` flag and `import *` still
+  // get the namespace
+  itBundled("cjs/default_esModule_and_star_imports_keep_toESM", {
+    files: {
+      "/entry.ts": /* js */ `
+        import d, { a } from "./lib.cjs";
+        import { default as d2 } from "./lib.cjs";
+        import { __esModule as flag } from "./lib.cjs";
+        import * as ns from "./lib.cjs";
+        console.log(d.a, a, d === d2, flag, ns.a, ns.default === d);
+      `,
+      "/lib.cjs": /* js */ `
+        const e = exports;
+        e.a = 1;
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").match(/__toESM\(require_lib\(\)\)/g)).toHaveLength(4);
+    },
+    run: { stdout: "1 1 true undefined 1 true" },
+  });
+
+  // Test 79: an empty file in a "type": "module" package and a JSON file can be
+  // a CommonJS module whose `module.exports` is undefined or null. The bundler
+  // wrote that value, and a named import of such a file keeps its namespace.
+  itBundled("cjs/named_import_of_empty_file_and_null_json_is_undefined", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { a } from "./empty.ts";
+        import { b } from "./null.json";
+        export { a as c } from "./empty.ts";
+        console.log(typeof a, typeof b, [require("./empty.ts"), require("./null.json")].join());
+      `,
+      "/package.json": `{ "type": "module" }`,
+      "/empty.ts": ``,
+      "/null.json": `null`,
+    },
+    run: { stdout: "undefined undefined ," },
+  });
+
+  // Test 80: a file whose own code sets `module.exports` to null has no
+  // object to read a name from. As for an external CommonJS module, a read of
+  // the name is a TypeError.
+  itBundled("cjs/named_import_of_null_module_exports_throws_where_read", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { a } from "./null.cjs";
+        try {
+          console.log(a);
+        } catch (e) {
+          console.log(e instanceof TypeError);
+        }
+      `,
+      "/null.cjs": /* js */ `module.exports = null;`,
+    },
+    run: { stdout: "true" },
+  });
+
+  // Test 81: in ES module output the bundle reads a name that the entry point
+  // exports again when the bundle loads
+  itBundled("cjs/named_export_from_null_module_exports_throws_at_load", {
+    files: {
+      "/entry.ts": /* js */ `
+        export { a } from "./null.cjs";
+        export const ok = 1;
+      `,
+      "/null.cjs": /* js */ `module.exports = null;`,
+    },
+    format: "esm",
+    runtimeFiles: {
+      "/run.mjs": /* js */ `
+        import("./out.js").then(
+          m => console.log("loaded", Object.keys(m).join(",")),
+          e => console.log(e instanceof TypeError),
+        );
+      `,
+    },
+    run: { file: "/run.mjs", stdout: "true" },
+  });
+
+  // Test 82: `require("react-dom")` is an import statement in ES module output.
+  // As a statement of its own in a `.ts` file it has no value that is read.
+  itBundled("cjs/unwrapped_require_statement_while_loading_makes_no_namespace", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as ns from "react-dom";
+        console.log(typeof ns.early, typeof ns.late);
+      `,
+      "/plugin.ts": /* js */ `
+        require("react-dom");
+        export const loaded = true;
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        const e = exports;
+        e.early = 1;
+        require("../../plugin.ts");
+        e.late = 2;
+      `,
+    },
+    run: { stdout: "number number" },
   });
 });

@@ -670,9 +670,12 @@ describe.concurrent("bundler", () => {
         console.log('2', JSON.stringify(require("./out.js")));
       `,
     },
+    // esbuild prints "1 undefined": its `__toESM` copy has the names from
+    // before `exports.foo = 123` ran. A named import is read from
+    // `module.exports` where it is used.
     run: {
       file: "/test.js",
-      stdout: '1 undefined\n2 {"foo":123}',
+      stdout: '1 123\n2 {"foo":123}',
     },
   });
   itBundled("importstar/ExportSelfAsNamespaceES6", {

@@ -10,7 +10,7 @@ use core::mem::MaybeUninit;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_ast::{Loc, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
@@ -154,6 +154,15 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             .zip(clauses.iter_mut())
         {
             let import_id: &[u8] = *import_id; // must be given '[N][]const u8'
+            if import_id == b"default" {
+                self.import_records[record as usize]
+                    .flags
+                    .insert(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS);
+            } else if import_id == b"__esModule" {
+                self.import_records[record as usize]
+                    .flags
+                    .insert(ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS);
+            }
             let ref_ = self.new_symbol(SymbolKind::Import, import_id)?;
             if self.hot_reloading {
                 self.get_symbol(ref_).namespace_alias =

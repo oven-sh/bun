@@ -25,7 +25,7 @@ function __accessProp(key) {
 // also copy the properties to "module.exports" in addition to our module's
 // internal ESM export object.
 export var __reExport = (target, mod, secondTarget) => {
-  // An external CommonJS re-export target may set "module.exports" to null,
+  // A CommonJS re-export target may set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
   var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [];
   for (let key of keys)

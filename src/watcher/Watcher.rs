@@ -55,16 +55,6 @@ const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
 // ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
 
-/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON` (T5).
-/// Watcher only stores `Option<&PackageJSON>` and passes it through; never
-/// dereferenced here. Real layout lives in `bun_resolver`.
-// SAFETY: erased PackageJSON — only ever held by reference / raw ptr.
-#[repr(C)]
-pub struct PackageJSON {
-    _opaque: [u8; 0],
-    _pinned: core::marker::PhantomPinned,
-}
-
 /// Manual vtable for resolver→watcher directory-watch callbacks.
 /// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
 /// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
@@ -107,8 +97,8 @@ pub struct Watcher {
     /// The platform-specific implementation of the watcher
     pub(crate) platform: Platform,
 
-    pub watchlist: WatchList,
-    pub mutex: Mutex,
+    pub(crate) watchlist: WatchList,
+    pub(crate) mutex: Mutex,
 
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
@@ -389,12 +379,11 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
-        // The close+swap_remove below must be serialized against the JS
-        // thread's watchlist lookups (`ImportWatcher::snapshot_package_json`)
-        // and `append_file_maybe_lock<true>` re-adds — both take `self.mutex`.
+        // The close+swap_remove below must be serialized against
+        // `append_file_maybe_lock<true>` re-adds, which take `self.mutex`.
         // The close in pass 1 is also why the watchlist's stored fd is never
         // handed out for reads: a reader that copied the number before this
-        // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
+        // ran would hit `EBADF`/`EISDIR` after.
         //
         // We do NOT lock here: the only callers run inside
         // `WatcherContext::on_file_update`, which is itself invoked from
@@ -525,7 +514,6 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
         parent_hash: HashType,
-        package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         #[cfg(windows)]
         {
@@ -585,7 +573,6 @@ impl Watcher {
             fd,
             hash,
             parent_hash,
-            package_json,
             kind: WatchItemKind::File,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
@@ -672,7 +659,6 @@ impl Watcher {
             hash,
             parent_hash,
             kind: WatchItemKind::Directory,
-            package_json: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
@@ -687,7 +673,6 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
         dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         // RAII guard: `lock_guard()` holds the
         // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
@@ -748,7 +733,6 @@ impl Watcher {
             file_path,
             hash,
             parent_dir_hash,
-            package_json,
         ) {
             Err(err) => {
                 return Err(err.with_path(file_path));
@@ -853,7 +837,7 @@ impl Watcher {
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         let fd: Fd = Fd::INVALID;
 
-        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, None);
+        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID);
         match res {
             Ok(ownership) => {
                 // Not adopted (another thread won the add race); close the
@@ -878,7 +862,6 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
         dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
         self.mutex.lock();
@@ -901,18 +884,12 @@ impl Watcher {
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
-            fd,
-            file_path,
-            hash,
-            dir_fd,
-            package_json,
-        );
+        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(fd, file_path, hash, dir_fd);
         self.mutex.unlock();
         r
     }
 
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
+    fn index_of(&self, hash: HashType) -> Option<u32> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {
                 return Some(i as u32);
@@ -1059,7 +1036,6 @@ pub struct WatchItem {
     pub fd: Fd,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
-    pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
 }

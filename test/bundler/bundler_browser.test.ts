@@ -422,6 +422,238 @@ describe("bundler", () => {
     },
   });
 
+  // No module is behind a disabled import, so `export *` of it re-exports
+  // nothing. A Node.js builtin with no polyfill is a stub function: its
+  // `length` and `name` must not become exports of the importing module.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled("browser/NodeBuiltinStubExportStar" + format.toUpperCase(), {
+      files: {
+        "/entry.js": /* js */ `
+          import * as star from "./re.js";
+          import { b, readFileSync } from "./re.js";
+          import { e, connect } from "./re-named.js";
+          import * as thenPkg from "./re-then-pkg.js";
+          const required = require("./re-required.js");
+          console.log(JSON.stringify(Object.keys(star)), b, typeof readFileSync);
+          console.log(e, typeof connect);
+          console.log(JSON.stringify(Object.keys(required)), typeof required.spawn);
+          console.log(JSON.stringify(Object.keys(thenPkg).sort()), thenPkg.name, thenPkg.length);
+          import("./re-imported.js").then(imported => {
+            console.log(JSON.stringify(Object.keys(imported)), typeof imported.lookup);
+          });
+        `,
+        "/re.js": /* js */ `
+          export * from "fs";
+          export const b = 1;
+        `,
+        // Nothing reads this file as a namespace: only names are imported.
+        "/re-named.js": /* js */ `
+          export * from "node:tls";
+          export const e = 4;
+        `,
+        "/re-required.js": /* js */ `
+          export * from "node:child_process";
+          export const c = 2;
+        `,
+        "/re-imported.js": /* js */ `
+          export * from "node:dns";
+          export const d = 3;
+        `,
+        // The stub must not shadow the "name" and "length" that "pkg" exports.
+        "/re-then-pkg.js": /* js */ `
+          export * from "node:fs";
+          export * from "pkg";
+        `,
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+        "/node_modules/pkg/index.js": /* js */ `
+          exports.name = "pkg";
+          exports.length = 42;
+        `,
+      },
+      target: "browser",
+      format,
+      run: {
+        stdout: [
+          '["b"] 1 undefined',
+          "4 undefined",
+          '["c"] undefined',
+          '["length","name"] pkg 42',
+          '["d"] undefined',
+        ].join("\n"),
+      },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+      },
+    });
+    // A file that a "browser" map sets to false, re-exported by another file
+    // of the package: the shape of @aws-sdk/credential-provider-web-identity 3.664.0.
+    itBundled("browser/BrowserFieldDisabledExportStar" + format.toUpperCase(), {
+      files: {
+        "/entry.js": /* js */ `
+          import * as sdk from "sdk";
+          import * as local from "./local.js";
+          console.log(JSON.stringify(Object.keys(sdk).sort()), JSON.stringify(Object.keys(local).sort()));
+        `,
+        "/node_modules/sdk/package.json": JSON.stringify({
+          name: "sdk",
+          version: "1.0.0",
+          main: "index.js",
+          browser: { "./from-file": false },
+        }),
+        "/node_modules/sdk/index.js": /* js */ `
+          export * from "./from-file";
+          export * from "./from-web";
+        `,
+        "/node_modules/sdk/from-file.js": /* js */ `
+          import { readFileSync } from "fs";
+          export const fromFile = () => readFileSync;
+        `,
+        "/node_modules/sdk/from-web.js": /* js */ `
+          export const fromWeb = () => "web";
+        `,
+        "/package.json": JSON.stringify({ name: "app", browser: { "./node-only.js": false } }),
+        "/local.js": /* js */ `
+          export * from "./node-only.js";
+          export const own = 1;
+        `,
+        "/node-only.js": /* js */ `
+          export const nodeOnly = 1;
+        `,
+      },
+      target: "browser",
+      format,
+      run: {
+        stdout: '["fromWeb"] ["own"]',
+      },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+      },
+    });
+    // Not a contract: this case pins a quirk of the path map. The bundler keys
+    // that map by path text alone, so it links an import of "fs" in a file to a
+    // plugin module whose path is "fs". While it does, this `export *` has a
+    // module behind it and stays. This case passes without the change.
+    itBundled("browser/PluginModuleWithBuiltinPathExportStar" + format.toUpperCase(), {
+      files: {
+        "/entry.js": /* js */ `
+          import "virtual-fs";
+          import * as star from "after-virtual-fs";
+          console.log(JSON.stringify(Object.keys(star).sort()), star.real);
+        `,
+        "/re.js": /* js */ `
+          export * from "fs";
+          export const own = 1;
+        `,
+      },
+      target: "browser",
+      format,
+      plugins(builder) {
+        const virtualFs = Promise.withResolvers<void>();
+        builder.onResolve({ filter: /^virtual-fs$/ }, () => ({ path: "fs", namespace: "virtual" }));
+        builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+          virtualFs.resolve();
+          return { contents: "module.exports = { real: 1 };", loader: "js" };
+        });
+        // The bundler finds "/re.js" only after the module above exists.
+        builder.onResolve({ filter: /^after-virtual-fs$/ }, async args => {
+          await virtualFs.promise;
+          return { path: args.importer.replace(/entry\.js$/, "re.js") };
+        });
+      },
+      run: {
+        stdout: '["own","real"] 1',
+      },
+    });
+  }
+  // Not a contract: this output is the same as before the change. For an
+  // unwrapped entry point of ESM output the linker plans no run-time
+  // re-export, and the statement prints as written.
+  itBundled("browser/NodeBuiltinStubExportStarEntryPointESM", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "fs";
+        export const b = 1;
+      `,
+    },
+    target: "browser",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([
+        { kind: "import-statement", path: "fs" },
+      ]);
+    },
+  });
+  itBundled("browser/NodeBuiltinStubExportStarEntryPointCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "fs";
+        export const b = 1;
+      `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(Object.keys(require("./out.js"))));
+      `,
+    },
+    target: "browser",
+    format: "cjs",
+    run: {
+      file: "/test.js",
+      stdout: '["b"]',
+    },
+  });
+  // An entry point that the bundle also requires is wrapped, and an `export`
+  // statement cannot stay inside the wrapper.
+  itBundled("browser/NodeBuiltinStubExportStarWrappedEntryPoint", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "fs";
+        export const b = 1;
+        export const self = () => require("./entry.js");
+      `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as entry from "./out.js";
+        console.log(JSON.stringify(Object.keys(entry).sort()), entry.self().b);
+      `,
+    },
+    target: "browser",
+    run: {
+      file: "/test.js",
+      stdout: '["b","self"] 1',
+    },
+  });
+  // In ESM output, `module.exports = require("fs")` after another statement in
+  // a file of `react-dom` 18 is an `export *` inside the bundler. It is not one
+  // to remove: the `__commonJS` wrapper still assigns the stub. This case passes
+  // without the change.
+  itBundled("browser/NodeBuiltinStubModuleExportsRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import reactDom from "react-dom";
+        console.log(typeof reactDom);
+      `,
+      "/node_modules/react-dom/package.json": JSON.stringify({
+        name: "react-dom",
+        version: "18.2.0",
+        main: "index.js",
+      }),
+      "/node_modules/react-dom/index.js": /* js */ `
+        function checkDCE() {}
+        checkDCE();
+        module.exports = require("fs");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "function",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("module.exports = fs;");
+    },
+  });
+
   // An entry point the "browser" field maps to false has nothing to bundle.
   // This used to reach the linker with zero entry points and crash
   // ("index out of bounds" in generateChunksInParallel); with a second, live

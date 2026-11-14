@@ -168,6 +168,18 @@ pub(crate) fn convert_stmts_for_chunk(
                         && !(record.source_index.is_valid()
                             && record.source_index.get() == source_index);
 
+                    // No module is behind this record, so its star re-exports nothing.
+                    if record.path.is_disabled
+                        && !record.source_index.is_valid()
+                        && !is_module_exports_of_wrapped_file
+                        && (wrap != WrapKind::None
+                            || record
+                                .flags
+                                .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN))
+                    {
+                        continue 'stmt_loop;
+                    }
+
                     // Is this export star evaluated at run time?
                     if !record.source_index.is_valid()
                         && c.options.output_format.keep_es6_import_export_syntax()

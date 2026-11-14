@@ -2,9 +2,10 @@
 // cross, when a test file loads. Each program is built alone, into an executable of its own: does the build end with an executable, and does that print what `bun <file>` prints and end as it ends?
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "../supported";
+import { built, told } from "./commands";
 import { run } from "./run";
 
 // With it the build stops where a stage hands on what the next one does not take. Without it only some builds of Bun look.
@@ -26,11 +27,12 @@ const asidesFromThese = new Set([
   "write-turn-sweep.ts",
 ]);
 
-// TypeScript refuses these too, so the build has to.
+// TypeScript refuses these too, so the build has to. Both add `true` to a number.
 const refused = new Set([
   "24062-an-exported-let-with-a-setter--another-file-imports-by-name--plus-true--no-helper--slice.ts",
   "37049-an-exported-constant--another-file-imports-it-at-run-time--plus-true--an-arrow--at.ts",
 ]);
+const refusal = "error: TS2365: Operator '+' cannot be applied to types 'number' and 'boolean'.";
 
 // One for each set of flags, and every program of a short sweep. The stride has no factor in common with 75 or 158.
 const more = new Map([
@@ -53,28 +55,48 @@ function laidOut(name: string, text: string) {
     else into.push(line);
   }
   return {
+    name,
     entry,
     flags,
     files: Object.fromEntries(Object.entries(files).map(([file, all]) => [file, all.join("\n")])),
   };
 }
 
-export function aFewOfEverySweepIn(part: number, parts: number) {
+/** The programs that a writer writes here, each laid out. */
+async function programsOf(writer: string) {
+  using dir = tempDir("aot-a-few-of-every-sweep", {});
+  const count = more.get(writer) ?? 12;
+  // The stride has no factor in common with the length of any cross.
+  const command = [bunExe(), join(writers, writer), String(dir), "1", String(count), "10007"];
+  const { exitCode, stderr } = await run(command);
+  const names = readdirSync(String(dir)).sort();
+  // Nothing else would miss the programs that a writer left out.
+  if (exitCode !== 0 || names.length !== count)
+    throw new Error(`${writer} ended with ${exitCode} and wrote ${names.length} programs of ${count}: ${stderr}`);
+  return names.map(name => laidOut(name, readFileSync(join(String(dir), name), "utf8")));
+}
+
+/**
+ * What the two runs of a program must agree on: all of stdout, how it ended and, of stderr, what told() keeps. Below an error that nothing caught stand frames, which an executable names otherwise.
+ * A run that ended otherwise and names no such error was ended by something else: the head of its stderr says by what.
+ */
+function ended(ran: { stdout: string; stderr: string; exitCode: number }) {
+  const { stderr, exitCode } = told(ran);
+  const death = exitCode !== 0 && stderr === "" ? { death: ran.stderr.slice(0, 2000) } : {};
+  return { stdout: ran.stdout, stderr, exitCode, ...death };
+}
+
+export async function aFewOfEverySweepIn(part: number, parts: number) {
   const mine = readdirSync(writers)
     .filter(name => /^write-.*-sweep\.ts$/.test(name) && !asidesFromThese.has(name))
     .sort()
     .filter((_, at) => at % parts === part - 1);
-  for (const writer of mine) {
-    using dir = tempDir("aot-a-few-of-every-sweep", {});
-    // The stride has no factor in common with the length of any cross.
-    const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), join(writers, writer), String(dir), "1", String(more.get(writer) ?? 12), "10007"],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    if (exitCode !== 0) throw new Error(`${writer} ended with ${exitCode}: ${stderr}`);
-    for (const name of readdirSync(String(dir)).sort()) {
-      const { entry, flags, files } = laidOut(name, readFileSync(join(String(dir), name), "utf8"));
+  // A writer is a process of its own, and with a sanitizer it holds a third of a gigabyte. Four at once hold less than two cases that run side by side, however many processors the machine has.
+  const written: Awaited<ReturnType<typeof programsOf>>[] = [];
+  for (let from = 0; from < mine.length; from += 4)
+    written.push(...(await Promise.all(mine.slice(from, from + 4).map(programsOf))));
+  for (const [at, writer] of mine.entries()) {
+    for (const { name, entry, flags, files } of written[at]) {
       test(`${writer.slice("write-".length, -"-sweep.ts".length)}: ${name}`, async () => {
         using home = tempDir("aot-one-of-a-sweep", files);
         const folder = String(home);
@@ -87,24 +109,23 @@ export function aFewOfEverySweepIn(part: number, parts: number) {
             bunEnv,
           ),
         ]);
-        // A program that said nothing and ended well would be the same as any other that did.
-        expect(plain.stdout !== "" || plain.exitCode !== 0).toBe(true);
+        const reference = ended(plain);
+        // A program that said nothing and ended well would be the same as any other that did. One that ended otherwise names the error that nothing caught: what a signal or a sanitizer ends names none.
+        expect(reference).toEqual(
+          reference.exitCode === 0
+            ? { ...reference, stdout: expect.stringMatching(/./s) }
+            : { ...reference, stderr: expect.stringMatching(/./s), exitCode: 1 },
+        );
         if (refused.has(name)) {
-          expect({ exitCode: build.exitCode, byTypeScript: /\bTS\d+\b/.test(build.stderr) }).toEqual({
-            exitCode: 1,
-            byTypeScript: true,
-          });
+          expect({
+            errors: build.stderr.split("\n").filter(line => line.startsWith("error: ")),
+            exitCode: build.exitCode,
+            hasWritten: existsSync(executable),
+          }).toEqual({ errors: [refusal], exitCode: 1, hasWritten: false });
           return;
         }
-        expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({
-          stderr: "",
-          exitCode: 0,
-        });
-        const compiled = await run([executable], folder, bunEnv);
-        expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-          stdout: plain.stdout,
-          exitCode: plain.exitCode,
-        });
+        built(build);
+        expect(ended(await run([executable], folder, bunEnv))).toEqual(reference);
       });
     }
   }

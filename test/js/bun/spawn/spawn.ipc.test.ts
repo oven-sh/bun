@@ -1,6 +1,8 @@
 import { spawn } from "bun";
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
+import { constants } from "node:os";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -511,6 +513,34 @@ describe.skipIf(isWindows).each(["advanced", "json"] as const)("a child's last m
     );
   });
 
+  // onExit runs before the channel closes, so a handle sent from it is accepted, and it fails: the child is gone.
+  it.skipIf(!isLinux)("arrive if onExit sends the child a handle", async () => {
+    await run(
+      `
+        const server = require("net").createServer(() => {});
+        await new Promise(resolve => server.listen(0, resolve));
+        disconnected.then(() => server.close());
+        child.onExit = subprocess => {
+          subprocess.send("take", server);
+        };
+        const proc = Bun.spawn(child);
+        const next = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+        const isReaped = ({ pid }) => {
+          try {
+            return !process.kill(pid, 0);
+          } catch {
+            return true;
+          }
+        };
+        until(() => isReaped(proc));
+        // The thread posts each exit before it waits for the next process.
+        next.kill("SIGKILL");
+        until(() => isReaped(next));
+      `,
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    );
+  });
+
   it("arrive if it exits before it is watched", async () => {
     // pull() runs inside of Bun.spawn(), after the process has started. macOS finds no zombie for getpriority() either.
     await run(`
@@ -536,6 +566,215 @@ describe.skipIf(isWindows).each(["advanced", "json"] as const)("a child's last m
     `);
   });
 });
+
+// A send that fails closes the channel. That close came on top of what the peer had sent before: a handle sent to a peer
+// that is gone fails, and the last messages of that peer were dropped. No exit has to be noticed for this.
+describe.skipIf(isWindows).each(["advanced", "json"] as const)(
+  "the last messages of a peer that a send of a handle finds gone (%s)",
+  serialization => {
+    it.concurrent("arrive in the parent of a child that has closed the channel", async () => {
+      using dir = tempDir("ipc-send-to-closed", {
+        "parent.js": `
+          const { readFileSync } = require("node:fs");
+          const events = [];
+          process.on("exit", () => console.log(JSON.stringify(events)));
+          const server = require("node:net").createServer(() => {});
+          server.listen(0, () => {
+            const child = Bun.spawn({
+              cmd: [process.execPath, "child.js"],
+              serialization: ${JSON.stringify(serialization)},
+              stdio: ["ignore", "inherit", "inherit"],
+              ipc(message) {
+                events.push("message " + message);
+              },
+              onExit(_, exitCode, signalCode) {
+                events.push("exit " + exitCode + " " + signalCode);
+              },
+              onDisconnect() {
+                events.push("disconnect");
+                server.close();
+                child.kill();
+              },
+            });
+            // Returns when the child has closed its end of the channel: its message is in the channel by then.
+            readFileSync("gone");
+            events.push("send() returned " + child.send("ping", server) + ", connected " + child.connected);
+          });
+        `,
+        "child.js": `
+          const { openSync, closeSync } = require("node:fs");
+          process.on("disconnect", () => closeSync(openSync("gone", "w")));
+          process.send("last", () => process.disconnect());
+          // It stays alive until its parent ends it.
+          setInterval(() => {}, 1000);
+        `,
+      });
+      expect(Bun.spawnSync({ cmd: ["mkfifo", path.join(String(dir), "gone")] }).exitCode).toBe(0);
+      await using proc = spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ events: stdout.trim(), stderr, exitCode }).toEqual({
+        events: JSON.stringify([
+          "send() returned true, connected false",
+          "message last",
+          "disconnect",
+          "exit null SIGTERM",
+        ]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The same from the other side, with process.send(). The child has unref'd all it has, so nothing but that close
+    // keeps it alive.
+    it.concurrent("arrive in a child whose parent has ended", async () => {
+      using dir = tempDir("ipc-child-send-to-gone", {
+        "parent.js": `
+          const child = Bun.spawn({
+            cmd: [process.execPath, "child.js"],
+            env: { ...process.env, PARENT_PID: String(process.pid) },
+            serialization: ${JSON.stringify(serialization)},
+            stdio: ["ignore", "inherit", "inherit"],
+            ipc() {},
+          });
+          // Returns when the child has opened its channel.
+          require("node:fs").readFileSync("ready");
+          child.send("last");
+          child.unref();
+          process.exit(0);
+        `,
+        "child.js": `
+          const { openSync, closeSync } = require("node:fs");
+          const events = [];
+          process.on("exit", code => console.log(JSON.stringify({ events, code })));
+          // Ends a child that nothing else would end. The timer does not keep the child alive.
+          setTimeout(() => process.exit(3), 10_000).unref();
+          const server = require("node:net").createServer(() => {});
+          server.listen(0, () => {
+            process.on("message", message => events.push("message " + message));
+            process.on("disconnect", () => {
+              events.push("disconnect");
+              server.close();
+            });
+            closeSync(openSync("ready", "w"));
+            // Off the loop until the parent is gone: its end of the channel is closed by then.
+            for (;;) {
+              try {
+                process.kill(Number(process.env.PARENT_PID), 0);
+              } catch {
+                break;
+              }
+              Bun.sleepSync(1);
+            }
+            events.push("send() returned " + process.send("take", server) + ", connected " + process.connected);
+            process.channel.unref();
+            server.unref();
+          });
+        `,
+      });
+      expect(Bun.spawnSync({ cmd: ["mkfifo", path.join(String(dir), "ready")] }).exitCode).toBe(0);
+      await using proc = spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        // The child has to outlive its parent. Where the runner sets this flag, a bun process ends its children with itself.
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // The child holds the stdout of its parent, so this reads until the child has ended too.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ report: stdout.trim(), stderr, exitCode }).toEqual({
+        report: JSON.stringify({
+          events: ["send() returned true, connected false", "message last", "disconnect"],
+          code: 0,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// bun's own sendmsg is told what to answer, with one message of the child unread in the channel. Whatever the error
+// is, and whether the send fails inside send() or when the socket is writable again, the close reads that message first.
+describe.skipIf(isWindows || !socketFaultInjection.available())(
+  "a send of a handle that fails with a message unread in the channel",
+  () => {
+    it.concurrent.each([
+      [
+        "with EPIPE while the child holds the channel",
+        { action: "errno", errno: constants.errno.EPIPE, repeat: -1 },
+        false,
+      ],
+      [
+        "with EBADF while the child holds the channel",
+        { action: "errno", errno: constants.errno.EBADF, repeat: -1 },
+        false,
+      ],
+      ["at its second try, after the child closed the channel", { action: "zero", repeat: 1 }, true],
+    ] as const)("%s", async (_, fault, connectedAfterSend) => {
+      // The second try needs a channel that the child closed. For an error of the fault's making the child keeps it.
+      const closesChannel = fault.action === "zero" ? `eval "exec $NODE_CHANNEL_FD>&-"; ` : "";
+      using dir = tempDir("ipc-send-fault", {
+        "parent.js": `
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const { readFileSync } = require("node:fs");
+          const events = [];
+          process.on("exit", () => console.log(JSON.stringify(events)));
+          const server = require("node:net").createServer(() => {});
+          server.listen(0, () => {
+            const child = Bun.spawn({
+              // One message, then it closes the fifo, and then it waits for its parent to end it.
+              cmd: ["sh", "-c", 'exec 9>gone; echo \\'"last"\\' >&$NODE_CHANNEL_FD; ${closesChannel}exec 9>&-; while kill -0 $PPID 2>/dev/null; do sleep 0.05; done'],
+              serialization: "json",
+              stdio: ["ignore", "inherit", "inherit"],
+              ipc(message) {
+                events.push("message " + message);
+              },
+              onExit(_, exitCode, signalCode) {
+                events.push("exit " + exitCode + " " + signalCode);
+              },
+              onDisconnect() {
+                events.push("disconnect");
+                fault.clear();
+                server.close();
+                child.kill();
+              },
+            });
+            // Returns when the child has closed the fifo: the message is in the channel by then.
+            readFileSync("gone");
+            fault.set(${JSON.stringify({ syscall: "sendmsg", ...fault })});
+            events.push("send() returned " + child.send("ping", server) + ", connected " + child.connected);
+          });
+        `,
+      });
+      expect(Bun.spawnSync({ cmd: ["mkfifo", path.join(String(dir), "gone")] }).exitCode).toBe(0);
+      await using proc = spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ events: stdout.trim(), stderr, exitCode }).toEqual({
+        events: JSON.stringify([
+          "send() returned true, connected " + connectedAfterSend,
+          "message last",
+          "disconnect",
+          "exit null SIGTERM",
+        ]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);
 
 // get_ipc_instance error path: on Windows, windows_configure_client can open
 // the pipe, mark the socket open, then fail read_start, at which point

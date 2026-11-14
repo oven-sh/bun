@@ -204,8 +204,6 @@ pub struct RuntimeTranspilerStore {
     /// JS thread only.
     pub jobs_scheduled: u64,
     pub jobs_completed: u64,
-    /// `Bun__tellWhenModuleFilesAreRead` was asked while a file was being read.
-    pub(crate) tells_when_files_are_read: bool,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -219,7 +217,6 @@ impl Default for RuntimeTranspilerStore {
             queue: Queue::new(),
             jobs_scheduled: 0,
             jobs_completed: 0,
-            tells_when_files_are_read: false,
         }
     }
 }
@@ -300,10 +297,6 @@ impl RuntimeTranspilerStore {
             // SAFETY: `job` is a live job popped from the intrusive queue.
             let fulfilled = unsafe { (*job).run_from_js_thread() };
             self.jobs_completed += 1;
-            if self.tells_when_files_are_read {
-                // SAFETY: JS thread; `vm` owns this store, and only its module queue is read.
-                self.tell_if_files_are_read(global, unsafe { &(*vm.as_ptr()).modules });
-            }
             job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
@@ -313,26 +306,6 @@ impl RuntimeTranspilerStore {
             }
         }
         // immediately after this is called, the microtasks will be drained again.
-    }
-
-    /// Whether a transpiler job is out, or a module waits for its packages to
-    /// be installed: the two ways a module's fetch waits for a file.
-    fn is_reading_files(&self, modules: &crate::async_module::Queue) -> bool {
-        self.jobs_scheduled != self.jobs_completed || modules.is_reading_files()
-    }
-
-    /// The other half of `Bun__tellWhenModuleFilesAreRead`: called when a file
-    /// has come, while someone waits to be told.
-    pub(crate) fn tell_if_files_are_read(
-        &mut self,
-        global: &JSGlobalObject,
-        modules: &crate::async_module::Queue,
-    ) {
-        if self.is_reading_files(modules) {
-            return;
-        }
-        self.tells_when_files_are_read = false;
-        crate::cpp::JSMock__didReadModuleFiles(global);
     }
 
     /// Put `job` and the rest of a popped batch back: each still has its posted
@@ -427,17 +400,6 @@ impl RuntimeTranspilerStore {
         unsafe { (*job).schedule() };
         promise.cast::<c_void>()
     }
-}
-
-/// BunPlugin.cpp: the module mocks of `bun test` take their turns once no file
-/// is being read. Returns whether one is. If so, `JSMock__didReadModuleFiles`
-/// is called once when none is anymore.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__tellWhenModuleFilesAreRead(global: &JSGlobalObject) -> bool {
-    let vm = global.bun_vm().as_mut();
-    let is_reading = vm.transpiler_store.is_reading_files(&vm.modules);
-    vm.transpiler_store.tells_when_files_are_read |= is_reading;
-    is_reading
 }
 
 // ──────────────────────────────────────────────────────────────────────────

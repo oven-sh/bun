@@ -131,21 +131,18 @@ public:
             String load;
         };
         Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
-        // The reaction that rankWaitingModuleMocks() leaves behind carries the number it had then, and does nothing if it has moved on.
+        // The reactions that rankWaitingModuleMocks() leaves behind carry the number it had then, and do nothing if it has moved on.
         unsigned timesRanked = 0;
-        // It left that reaction, for steps that the loader takes by itself, and the reaction has yet to rank again.
+        // It left a reaction for steps that the loader takes by itself, and that reaction has yet to rank again.
         bool willRankAgain = false;
         bool willGiveTurns = false;
         // Something has happened that the ranks don't know of: a mock or a factory asks for a module, or a module has left the registry.
         bool ranksAreStale = false;
-        // The fetches that wait for script (a callback of onLoad() or build.module()) with the loads of the last ranking that wait for them,
-        // and for each of those loads how many fetches it waits for. See didAnswerModuleFetch().
-        WTF::UncheckedKeyHashMap<String, Vector<unsigned, 1>> loadsBehindFetches = {};
-        Vector<unsigned> fetchesAheadOfLoads = {};
-        // The fetches that the last ranking found pending while no file was being read, and those that a callback has taken since, less those answered.
-        WTF::UncheckedKeyHashSet<String> fetchesSeenPending = {};
-        // The last ranking left a mock to a load that waits for script. These are its module and the modules that import it, through unfinished ones.
-        // Another load may come to import one of them, so moduleLoaderResolve() ranks again when it resolves to one.
+        // The fetches of this global's loader that script holds: a callback of onLoad() or build.module() returned a promise for the module
+        // and has yet to answer. Counted by key. Bun.plugin.clearAll() keeps them, because the callbacks still hold the fetches.
+        WTF::UncheckedKeyHashMap<String, unsigned> fetchesLeftToScript = {};
+        // The last ranking left a mock to a load that waits for such a fetch. These are its module and the modules that import it, through
+        // unfinished ones. Another load may come to import one of them, so moduleLoaderResolve() ranks again when it resolves to one.
         WTF::UncheckedKeyHashSet<String> modulesAboveMocksBehindScript = {};
         bool hasMockBehindScript = false;
         // The last ranking found that every load waits for script. Until another load starts, a mock that a fetch asks for is below those loads.
@@ -207,9 +204,7 @@ public:
             runningModuleMocks.clear();
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();
-            loadsBehindFetches.clear();
-            fetchesAheadOfLoads.clear();
-            fetchesSeenPending.clear();
+            willRankAgain = false;
             modulesAboveMocksBehindScript.clear();
             hasMockBehindScript = false;
             everyLoadIsBehindScript = false;
@@ -388,9 +383,9 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
-// A callback of onLoad() or build.module() has returned a promise for the fetch of `key`, so the fetch waits for script.
+// A callback of onLoad() or build.module() has returned a promise for the fetch of `key` by this global's loader: script holds the fetch.
 void didLeaveModuleFetchToScript(Zig::GlobalObject*, const String& key);
-// That callback has given its answer. The mocks of a load that waited only for such answers get their turns.
+// That callback has given its answer, so the loader settles the fetch by itself.
 void didAnswerModuleFetch(Zig::GlobalObject*, const String& key);
 // A fetch that waited for a factory goes on, so the mocks below it may have their turns.
 void rankWaitingModuleMocksSoon(Zig::GlobalObject*);

@@ -85,11 +85,6 @@ pub struct WakeContext {
 }
 
 impl Queue {
-    /// A module waits for its packages, or for the task that hands it to the loader.
-    pub(crate) fn is_reading_files(&self) -> bool {
-        !self.map.is_empty() || self.scheduled != 0
-    }
-
     /// Recover the owning VM.
     ///
     /// S017: dropped `container_of` recovery — provenance of `&mut self`
@@ -619,7 +614,7 @@ impl AsyncModule {
         let result = this.resume_loading_module(&mut log);
         let spec = StringView::borrow_utf8(this.specifier());
         let referrer = StringView::borrow_utf8(this.referrer());
-        let fulfilled = Self::fulfill(
+        Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
             // Only the global object's loader resolves packages asynchronously (`Bun__transpileFile`).
@@ -628,13 +623,7 @@ impl AsyncModule {
             &spec,
             &referrer,
             &mut log,
-        );
-        if jsc_vm.transpiler_store.tells_when_files_are_read {
-            jsc_vm
-                .transpiler_store
-                .tell_if_files_are_read(global_this, &jsc_vm.modules);
-        }
-        fulfilled
+        )
     }
 
     fn resolve_error(

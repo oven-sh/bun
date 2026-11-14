@@ -4454,10 +4454,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    // What the mocks' turn scheduler knows of an earlier fetch of the module doesn't hold for this one.
-    if (auto& fetchesSeenPending = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.fetchesSeenPending; !fetchesSeenPending.isEmpty()) [[unlikely]]
-        fetchesSeenPending.remove(moduleKey);
-
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());

@@ -96,7 +96,13 @@ export async function getBuild(): Promise<number> {
   return match ? 1 + parseInt(match[1]) : 1;
 }
 
-export async function getSemver(tag?: string, build?: number): Promise<string> {
+// For a canary version, `sha` names the commit the release's binaries were
+// built from. The publish scripts derive it from the binaries themselves
+// (src/sha.ts binaryRevision): the rolling canary release's tag never moves,
+// so git has no ref for what its assets contain. Without `sha` this falls
+// back to heads/main, which can be ahead of the assets when a canary upload
+// fails or lags (#40880).
+export async function getSemver(tag?: string, build?: number, sha?: string): Promise<string> {
   const { tag_name: latest_tag_name } = await getRelease();
   const version = latest_tag_name.replace("bun-v", "");
   const { tag_name } = await getRelease(tag);
@@ -106,9 +112,9 @@ export async function getSemver(tag?: string, build?: number): Promise<string> {
   if (build === undefined) {
     build = await getBuild();
   }
-  const sha = await getSha(tag_name, "short");
+  sha ??= await getSha(tag_name);
   const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  return `${version}-canary.${date}.${build}+${sha}`;
+  return `${version}-canary.${date}.${build}+${sha.substring(0, 7)}`;
 }
 
 export function formatTag(tag: string): string {

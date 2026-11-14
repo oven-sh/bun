@@ -54,7 +54,7 @@ interface NativePtr {
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
   setFlowing?: (flowing: boolean) => void;
-  setPollOnly?: () => void;
+  setPollOnly?: (enable: boolean) => void;
 }
 
 let debugId = 0;
@@ -88,7 +88,7 @@ function constructNativeReadable(
   stream[kCloseState] = [false];
   stream[kLibuvHandle] = nodeSource === "libuv-handle";
   // Readable emits a chunk pushed inside `_read()` ahead of the nextTicks and promise jobs of the chunk before.
-  bunNativePtr?.setPollOnly?.();
+  bunNativePtr?.setPollOnly?.(true);
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;

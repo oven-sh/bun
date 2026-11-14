@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
 import { join } from "node:path";
+import { patterned, runWithPrefilledStdin, socketHolds } from "./stdin/prefilled-stdin";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -726,4 +727,204 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// Node hands each read of a pipe, a socket or a terminal to JavaScript in a callback of its own
+// (https://github.com/nodejs/node/blob/v26.3.0/src/stream_base.cc#L474). The nextTicks and the promise jobs of that
+// callback run when it returns (https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L176-L206), so no
+// push() comes inside the nextTicks of the push before. process.stdin pushes what a reader of `Bun.stdin.stream()`
+// gets. A pull that found bytes after a full read was answered inside the call, and its push came inside those
+// nextTicks: a chunk that reached the stream while no 'data' listener was attached was emitted to no listener.
+describe("process.stdin pushes no chunk inside the nextTicks of the chunk before", () => {
+  // A loop of `await once(stream, "data")`, which has no 'data' listener between two chunks.
+  const fixture = join(import.meta.dir, "stdin", "once-data-fixture.js");
+  type Result = { stdout: string; stderr: string; exitCode: number };
+  const everyByte = (size: number) => ({
+    stdout: JSON.stringify({ bytes: size, firstWrongByte: -1, doneAtEnd: size }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+  // The EOF of a socket comes with its last bytes, so 'end' can come before the loop is done with the last chunk.
+  // These compare the bytes alone.
+  const bytesOf = (result: Result) => {
+    try {
+      const { bytes, firstWrongByte } = JSON.parse(result.stdout);
+      return { ...result, stdout: { bytes, firstWrongByte } };
+    } catch {
+      return result;
+    }
+  };
+  const everyByteOf = (size: number) => ({ stdout: { bytes: size, firstWrongByte: -1 }, stderr: "", exitCode: 0 });
+
+  // fd 0 holds every byte and the EOF before the reader exists, in more than one read of the source. Linux only: the
+  // capacity of the pipe or of the socket is raised with the constants of Linux.
+  describe.skipIf(!isLinux)("a descriptor that holds every chunk and the EOF", () => {
+    // One read of the source and 7,856 bytes more. A host with a net.core.wmem_max below the default of Linux cannot
+    // put that much into a socket that nothing reads.
+    const socketInput = patterned(270_000);
+    const noSuchSocket = !isLinux || !socketHolds(socketInput.length);
+
+    test.concurrent.each([
+      ["the next once('data') comes one nextTick behind the chunk", 1_000_000, "tick", "1"],
+      ["the next once('data') comes two nextTicks behind the chunk", 600_000, "tick", "2"],
+      ["stdin is paused for that nextTick", 600_000, "pause", "1"],
+      [
+        "stdin is paused for that nextTick, and the next once('data') comes one nextTick behind resume()",
+        600_000,
+        "late",
+        "1",
+      ],
+    ] as const)("a pipe: %s", async (_, size, form, ticks) => {
+      expect(await runWithPrefilledStdin([bunExe(), fixture, form, ticks], patterned(size))).toEqual(everyByte(size));
+    });
+
+    test.concurrent.skipIf(noSuchSocket).each([
+      ["the next once('data') comes two nextTicks behind the chunk", "tick", "2"],
+      ["stdin is paused for that nextTick, and the next once('data') comes one nextTick behind resume()", "late", "1"],
+    ] as const)("a socket: %s", async (_, form, ticks) => {
+      const result = await runWithPrefilledStdin([bunExe(), fixture, form, ticks], socketInput, { kind: "socket" });
+      expect(bytesOf(result)).toEqual(everyByteOf(socketInput.length));
+    });
+
+    // process.stdin lets go of `Bun.stdin.stream()` one nextTick after pause(). The source that it stopped still reads
+    // a descriptor that hung up to its EOF, which is what the next reader of that stream gets the end from.
+    test.concurrent.each([
+      ["a reader of Bun.stdin.stream()", "for await (const chunk of Bun.stdin.stream()) rest += chunk.length;"],
+      // The iterator gives one more line, an empty one, behind the last newline.
+      ["the console iterator", "for await (const line of console) if (line.length > 0) rest += line.length + 1;"],
+    ])("after pause(), %s gets the rest of a pipe and its end", async (_, readTheRest) => {
+      const input = Buffer.alloc(600_000, Buffer.alloc(999, "x").toString() + "\n");
+      const reader = `
+        process.stdin.once("data", async chunk => {
+          process.stdin.pause();
+          await new Promise(resolve => setImmediate(resolve));
+          let rest = 0;
+          ${readTheRest}
+          console.log(chunk.length + process.stdin.readableLength + rest);
+        });
+      `;
+      expect(await runWithPrefilledStdin([bunExe(), "-e", reader], input)).toEqual({
+        stdout: input.length + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // At a hang-up the source reads on while stdin is paused, and resume() pushes what it read inside one tick.
+    test.todo(
+      "a pipe: stdin is paused for a setImmediate, and the next once('data') comes one nextTick behind resume()",
+      async () => {
+        const input = patterned(600_000);
+        expect(await runWithPrefilledStdin([bunExe(), fixture, "immediate"], input)).toEqual(everyByte(input.length));
+      },
+    );
+
+    test.todo("a socket: 'end' comes when the loop is done with the last chunk", async () => {
+      const result = await runWithPrefilledStdin([bunExe(), fixture, "tick", "2"], socketInput, { kind: "socket" });
+      expect(result).toEqual(everyByte(socketInput.length));
+    });
+
+    // A chunk that came while nothing asked for it answers the next pull inside the call. ref() starts the source.
+    test.todo("a pipe: ref() comes first, and the loop two setImmediates later", async () => {
+      const input = patterned(600_000);
+      const reader = `
+        process.argv = [process.argv[0], ${JSON.stringify(fixture)}, "tick", "2"];
+        process.stdin.ref();
+        setImmediate(() => setImmediate(() => require(${JSON.stringify(fixture)})));
+      `;
+      expect(await runWithPrefilledStdin([bunExe(), "-e", reader], input)).toEqual(everyByte(input.length));
+    });
+
+    // A regular file has no poll: every read of it is made inside the pull, and every Bun version loses bytes here.
+    // Node loses none. On Linux the bytes that Bun.spawn() hands a child as its stdin are such a file (#41626 reads
+    // regular files on the work pool).
+    test.todo("a file: a loop with two nextTicks gets every byte", async () => {
+      const input = patterned(600_000);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, "tick", "2"],
+        stdin: input,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual(everyByte(input.length));
+    });
+  });
+
+  // A terminal in canonical mode gives the 0 of Ctrl-D to one read only.
+  test.skipIf(isWindows)("a terminal: a line and Ctrl-D give 'data', then 'end'", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const ready = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("READY")) ready.resolve();
+        if (/END [^\n]*\n/.test(output)) ended.resolve();
+      },
+    });
+    const reader = `
+      let text = "";
+      process.stdin.on("data", chunk => { text += chunk; });
+      process.stdin.on("end", () => console.log("END " + JSON.stringify(text)));
+      console.log("READY");
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", reader], env: bunEnv, terminal });
+    // A child that ends before it is ready fails here with what it printed, and not at the time limit of the test.
+    const started = Promise.race([
+      ready.promise.then(() => "ready"),
+      proc.exited.then(code => `exited with ${code}: ${output}`),
+    ]);
+    expect(await started).toBe("ready");
+    terminal.write("abc\n\x04");
+    // The exit of the child can be reported before the terminal has read its last line.
+    await ended.promise;
+    expect(output.replaceAll("\r", "")).toContain('END "abc\\n"');
+    expect(await proc.exited).toBe(0);
+  });
+
+  // A writer that stays ahead of the loop. Without the fix the loop loses chunks in some runs, and not in all.
+  describe("a writer that stays ahead", () => {
+    const input = patterned(2_000_000);
+    const forms = [
+      ["the next once('data') comes one nextTick behind the chunk", "tick"],
+      ["stdin is paused for that nextTick", "pause"],
+      ["stdin is paused for that nextTick, and the next once('data') comes one nextTick behind resume()", "late"],
+      ["stdin is paused for a setImmediate", "hold"],
+    ] as const;
+
+    // Bun.spawn's "pipe" is a socketpair on POSIX.
+    test.concurrent.each(forms)("a socket: %s", async (_, form) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, form],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      proc.stdin.write(input);
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(bytesOf({ stdout, stderr, exitCode })).toEqual(everyByteOf(input.length));
+    });
+
+    // On macOS a pull still reads a pipe that is not a socket, so the loop loses chunks there.
+    test.concurrent.todoIf(isMacOS).each(forms)("a pipe: %s", async (_, form) => {
+      using dir = tempDir("stdin-once-data-pipe", {
+        "input.bin": input,
+        "writer.js": `require("node:fs").createReadStream("input.bin").pipe(process.stdout);`,
+      });
+      const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+      exec(
+        `"${bunExe()}" writer.js | "${bunExe()}" "${fixture}" ${form}`,
+        { cwd: String(dir), env: bunEnv },
+        (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+      );
+      expect(await promise).toEqual({ err: null, stdout: everyByte(input.length).stdout, stderr: "" });
+    });
+  });
 });

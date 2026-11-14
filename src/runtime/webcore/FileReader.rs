@@ -1094,13 +1094,15 @@ impl Source {
         self.context.set_flowing(flag == JSValue::TRUE);
     }
 
-    /// A Node stream reads this source (`constructNativeReadable`): see `PosixFlags::POLL_ONLY`.
-    pub fn set_poll_only(&self) {
+    /// `true` while a Node stream reads this source (`constructNativeReadable`, and `process.stdin` while it holds the reader): see `PosixFlags::POLL_ONLY`.
+    pub fn set_poll_only(&self, enable: bool) {
         #[cfg(unix)]
         self.context
             .reader()
             .flags
-            .insert(bun_io::pipe_reader::PosixFlags::POLL_ONLY);
+            .set(bun_io::pipe_reader::PosixFlags::POLL_ONLY, enable);
+        #[cfg(not(unix))]
+        let _ = enable;
     }
 }
 

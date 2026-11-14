@@ -6,12 +6,15 @@
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_shutdown(us_socket_t*);
+extern "C" int us_socket_keepalive(us_socket_t*, int enabled, unsigned int delay);
 extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 
 namespace Bun {
@@ -51,6 +54,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseWhenDrained);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseIfIdle);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetKeepAlive);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -97,6 +101,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
     { "closeWhenDrained"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseWhenDrained, 0 } },
     { "closeIfIdle"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseIfIdle, 0 } },
+    { "setKeepAlive"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetKeepAlive, 2 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
@@ -263,6 +268,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseIfIdle, (JSC::JSGlob
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
     return JSValue::encode(JSC::jsBoolean(thisObject && thisObject->closeIfIdle()));
+}
+
+// The delay is in milliseconds, as for the handle of Bun.Socket. No `upgraded` check: the connection of a WebSocket keeps its keep-alive, as in Node.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetKeepAlive, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool enabled = callFrame->argument(0).toBoolean(globalObject);
+    double delayMs = callFrame->argument(1).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // After toNumber(): it can run JS that closes the connection.
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject || thisObject->isClosed()) [[unlikely]] {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    // TCP_KEEPIDLE is in seconds. 0, also for NaN and a negative delay, keeps the kernel's value.
+    unsigned delaySeconds = delayMs >= 1000 ? static_cast<unsigned>(std::min(delayMs / 1000, static_cast<double>(std::numeric_limits<unsigned>::max()))) : 0;
+    return JSValue::encode(JSC::jsBoolean(us_socket_keepalive(thisObject->socket, enabled, delaySeconds) == 0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

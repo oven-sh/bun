@@ -45,11 +45,11 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. The sockets of a server always have `TCP_NODELAY` on: the `noDelay` option and `socket.setNoDelay(false)` have no effect.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` is `http.Server` with TLS options rather than a `tls.Server`. Its request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported.
+🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` is `http.Server` with TLS options rather than a `tls.Server`. Its request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported. The `keepAlive` option takes effect when the TLS handshake completes, not when the connection is accepted.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

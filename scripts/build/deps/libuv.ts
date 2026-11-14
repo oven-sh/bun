@@ -88,7 +88,6 @@ export const libuv: Dependency = {
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
-    "patches/libuv/win-tty-read-stop-match-pending-req.patch",
   ],
 
   build: () => ({

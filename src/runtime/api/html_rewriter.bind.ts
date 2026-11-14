@@ -175,5 +175,7 @@ export const HTMLRewriterTransform = b.class({
     "handlers",
     /** The array of `element.onEndTag()` callbacks that have not run yet. */
     "endTagHandlers",
+    /** The async context of the `transform()` call. The handlers are called in it. */
+    "asyncContext",
   ],
 });

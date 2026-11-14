@@ -3,6 +3,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "ModuleGraph.h"
+#include <JavaScriptCore/AsyncContextSwapScope.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 #if ASSERT_ENABLED
@@ -143,6 +144,25 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(value))
         return JSValue::encode(wrapper->callback.get());
     return stored;
+}
+
+// The running script's async context for AsyncContextFrame__callInContext: empty until the VM tracks async contexts, undefined for no store.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__currentIfTracking(JSGlobalObject* globalObject)
+{
+    if (!globalObject->isAsyncContextTrackingEnabled())
+        return JSValue::encode(JSValue());
+    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSGlobalObject*, JSC::EncodedJSValue function, JSC::EncodedJSValue thisValue, size_t argumentCount, const JSC::EncodedJSValue* arguments);
+
+// Bun__JSValue__call in `asyncContext` (empty or undefined: no store); the caller's context is put back after the call, so the callee's enterWith() ends with it.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__callInContext(JSGlobalObject* globalObject, JSC::EncodedJSValue asyncContext, JSC::EncodedJSValue function, JSC::EncodedJSValue thisValue, size_t argumentCount, const JSC::EncodedJSValue* arguments)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::AsyncContextSwapScope asyncContextScope(vm, globalObject, JSValue::decode(asyncContext));
+    RELEASE_AND_RETURN(scope, Bun__JSValue__call(globalObject, function, thisValue, argumentCount, arguments));
 }
 
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \

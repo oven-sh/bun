@@ -17,3 +17,5 @@ Alternatively, use `process.dlopen`:
 let mod = { exports: {} };
 process.dlopen(mod, "./my-node-module.node");
 ```
+
+External strings created with `node_api_create_external_string_latin1` or `node_api_create_external_string_utf16` keep their finalizers until Bun releases the backing storage. If environment cleanup has already run, the finalizer receives a null `napi_env`, as in Node.js. Bun copies addon-owned external string storage before sharing strings with another Worker.

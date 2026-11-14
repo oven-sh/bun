@@ -421,5 +421,13 @@
             "defines": ["IMPORT_MISSING_FROM_HOST"],
             "win_delay_load_hook": "false",
         },
+        {
+            "target_name": "test_external_string_lifetime",
+            "sources": ["test_external_string_lifetime.cpp"],
+            "defines": ["NAPI_VERSION=10"],
+            "cflags!": ["-DNDEBUG"],
+            "cflags_cc!": ["-DNDEBUG"],
+            "xcode_settings": {"GCC_PREPROCESSOR_DEFINITIONS": ["NAPI_VERSION=10"]},
+        },
     ]
 }

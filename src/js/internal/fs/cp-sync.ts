@@ -6,10 +6,8 @@ const { validateObject, validateBoolean, validateFunction, validateInteger } = r
 const {
   chmodSync,
   copyFileSync,
-  existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readlinkSync,
   statSync,
   symlinkSync,
@@ -17,6 +15,8 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+// Node's cpSync never calls the fs.readdirSync and fs.existsSync exports, so here both come from the binding.
+const binding = require("internal/fs/binding");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -309,7 +309,7 @@ function treeContainsOnlyFilesAndDirsSync(root: string) {
     const dir = stack.pop()!;
     let entries: $Node.Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = binding.readdirSync(dir, { withFileTypes: true });
     } catch {
       return false;
     }
@@ -368,7 +368,7 @@ function cpSyncFn(src: string, dest: string, opts: CpOptions, checked?: CheckedP
 
 function checkParentDir(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
   const destParent = dirname(dest);
-  if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
+  if (!binding.existsSync(destParent)) mkdirSync(destParent, { recursive: true });
   return getStats(destStat, src, dest, opts);
 }
 
@@ -491,8 +491,10 @@ function mkDirAndCopy(srcMode: number, src: string, dest: string, opts: CpOption
 }
 
 function copyDir(src: string, dest: string, opts: CpOptions) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
-    const { name } = dirent;
+  const dirents = binding.readdirSync(src, { withFileTypes: true });
+  // By index: script can replace the array iterator.
+  for (let i = 0; i < dirents.length; i++) {
+    const { name } = dirents[i];
     const srcItem = join(src, name);
     const destItem = join(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);

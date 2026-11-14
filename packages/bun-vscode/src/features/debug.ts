@@ -1,4 +1,4 @@
-import { DebugSession, OutputEvent } from "@vscode/debugadapter";
+import { DebugSession } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { join } from "node:path";
@@ -73,28 +73,37 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
 }
 
 function runFileCommand(resource?: vscode.Uri): void {
-  const path = getActivePath(resource);
-  if (path) {
-    vscode.debug.startDebugging(undefined, {
-      ...RUN_CONFIGURATION,
-      noDebug: true,
-      program: path,
-      runtime: getRuntime(resource),
-    });
-  }
+  const file = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (file) launch(RUN_CONFIGURATION, file, file.fsPath);
 }
 
-export function debugCommand(command: string) {
-  vscode.debug.startDebugging(undefined, {
-    ...DEBUG_CONFIGURATION,
-    program: command,
-    runtime: getRuntime(),
+function debugFileCommand(resource?: vscode.Uri): void {
+  const file = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (file) launch(DEBUG_CONFIGURATION, file, file.fsPath);
+}
+
+// Debugs a script of the package.json shown in the active editor (the hover
+// link and the code lens in package.json files call this).
+export function debugCommand(script: string): void {
+  const packageJson = vscode.window.activeTextEditor?.document.uri;
+  if (packageJson) launch(DEBUG_CONFIGURATION, packageJson, script);
+}
+
+// `document` is the file to run, or the package.json that holds the script.
+// The configurations above set cwd to `${workspaceFolder}`, which VS Code
+// resolves only against the folder passed here, or the single folder of a
+// single-root window. With no such folder (multi-root window, or no folder at
+// all) the cwd is the document's own directory, as js-debug does for a file
+// without a folder. resolveDebugConfiguration below fills in `runtime`,
+// scoped to the same folder.
+function launch(configuration: vscode.DebugConfiguration, document: vscode.Uri, program: string): void {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const folder = vscode.workspace.getWorkspaceFolder(document) ?? (folders.length === 1 ? folders[0] : undefined);
+  vscode.debug.startDebugging(folder, {
+    ...configuration,
+    program,
+    cwd: folder?.uri.fsPath ?? path.dirname(document.fsPath),
   });
-}
-
-function debugFileCommand(resource?: vscode.Uri) {
-  const path = getActivePath(resource);
-  if (path) debugCommand(path);
 }
 
 async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
@@ -481,83 +490,12 @@ class TerminalDebugSession extends FileDebugSession {
   }
 }
 
-function getActivePath(target?: vscode.Uri): string | undefined {
-  return target?.fsPath ?? vscode.window.activeTextEditor?.document?.uri.fsPath;
-}
-
 function getRuntime(scope?: vscode.ConfigurationScope): string {
   const value = getConfig<string>("runtime", scope);
   if (typeof value === "string" && value.trim().length > 0) {
     return value;
   }
   return "bun";
-}
-
-export async function runUnsavedCode() {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor || !editor.document.isUntitled) return;
-
-  const code = editor.document.getText();
-  const startTime = performance.now();
-
-  try {
-    // Start debugging
-    await vscode.debug.startDebugging(undefined, {
-      ...DEBUG_CONFIGURATION,
-      program: "-",
-      __code: code,
-      __untitledName: editor.document.uri.toString(),
-      console: "debugConsole",
-      internalConsoleOptions: "openOnSessionStart",
-    });
-
-    // Find our debug session instance
-    const debugSession = Array.from(adapters.values()).find(
-      adapter => adapter.sessionId === vscode.debug.activeDebugSession?.id,
-    );
-
-    if (debugSession) {
-      // Wait for both the inspector to connect AND the adapter to be initialized
-      await new Promise<void>(resolve => {
-        let inspectorConnected = false;
-        let adapterInitialized = false;
-
-        const checkDone = () => {
-          if (inspectorConnected && adapterInitialized) {
-            resolve();
-          }
-        };
-
-        debugSession.adapter.once("Inspector.connected", () => {
-          inspectorConnected = true;
-          checkDone();
-        });
-
-        debugSession.adapter.once("Adapter.initialized", () => {
-          adapterInitialized = true;
-          checkDone();
-        });
-      });
-
-      // Now wait for debug session to complete
-      await new Promise<void>(resolve => {
-        const disposable = vscode.debug.onDidTerminateDebugSession(() => {
-          const duration = (performance.now() - startTime).toFixed(1);
-          debugSession.sendEvent(new OutputEvent(`✓ Code execution completed in ${duration}ms\n`));
-          disposable.dispose();
-          resolve();
-        });
-      });
-    }
-  } catch (err) {
-    if (vscode.debug.activeDebugSession) {
-      const duration = (performance.now() - startTime).toFixed(1);
-      const errorSession = adapters.get(vscode.debug.activeDebugSession.id);
-      errorSession?.sendEvent(
-        new OutputEvent(`✕ Error after ${duration}ms: ${err instanceof Error ? err.message : String(err)}\n`),
-      );
-    }
-  }
 }
 
 const languageIds = ["javascript", "typescript", "javascriptreact", "typescriptreact"];

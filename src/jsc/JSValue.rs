@@ -2809,6 +2809,21 @@ impl JSValue {
         })?;
         Ok((matched, shown))
     }
+    /// Asks the asymmetric matcher `self` about `received`. `None`: `self` is not a matcher, and nothing was called.
+    pub fn jest_asymmetric_match(
+        self,
+        received: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<bool>> {
+        let matched = host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestAsymmetricMatch(self, received, global)
+        })?;
+        Ok((matched >= 0).then_some(matched != 0))
+    }
+    /// Whether `self` is an object whose `asymmetricMatch()` deep equality calls. Runs no JS.
+    pub fn has_asymmetric_match_method(self, global: &JSGlobalObject) -> bool {
+        JSC__JSValue__hasAsymmetricMatchMethod(self, global)
+    }
 
     // ── BigInt ordering. ────────────────────────────────
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
@@ -2921,6 +2936,12 @@ unsafe extern "C" {
         replace_when: bool,
         shown: &mut JSValue,
     ) -> bool;
+    safe fn JSC__JSValue__jestAsymmetricMatch(
+        matcher: JSValue,
+        received: JSValue,
+        global: &JSGlobalObject,
+    ) -> i8;
+    safe fn JSC__JSValue__hasAsymmetricMatchMethod(this: JSValue, global: &JSGlobalObject) -> bool;
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;

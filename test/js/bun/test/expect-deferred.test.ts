@@ -1268,6 +1268,41 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
+  test("toThrow() applies expect.resolvesTo and expect.rejectsTo to the thrown value", async () => {
+    const source = `
+      const throwsLater = value => () => { throw later(value); };
+      const throwsError = () => { throw new TypeError("an error"); };
+      test("passes", async () => {
+        const matcher = expect(throwsLater("one")).toThrow(expect.resolvesTo.any(String));
+        console.log(matcher instanceof Promise, await matcher);
+        await expect(throwsLater("one")).not.toThrow(expect.resolvesTo.any(Number));
+        await expect(() => { throw laterReject(new TypeError("later")); }).toThrow(expect.rejectsTo.any(TypeError));
+        console.log(expect(throwsError).not.toThrow(expect.rejectsTo.any(TypeError)));
+      });
+      test("fails", async () => {
+        await expect(throwsLater("one")).not.toThrow(expect.resolvesTo.any(String));
+      });
+      test("fails, not awaited", () => {
+        expect(throwsLater(1)).not.toThrow(expect.resolvesTo.anything());
+      });
+      test("an error that is thrown is not a promise that rejects", () => {
+        expect(throwsError).toThrow(expect.rejectsTo.any(TypeError));
+      });
+    `;
+    const { stdout, report, exitCode, signalCode } = await runTests(source);
+    expect(stdout).toEqual(["true undefined", "undefined"]);
+    expect(report).toEqual([
+      "(pass) passes",
+      "error: expect(received).not.toThrow(expected)",
+      "(fail) fails",
+      "error: expect(received).not.toThrow(expected)",
+      "(fail) fails, not awaited",
+      "error: expect(received).toThrow(expected)",
+      "(fail) an error that is thrown is not a promise that rejects",
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
   test("a matcher that re-runs after a wait reuses the values from its first run", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       const calls = {};
@@ -1310,6 +1345,31 @@ describe.concurrent("matchers that have to wait for a promise", () => {
             count("function");
             throw Object.assign(new Error("x"), { code: 1 });
           }).toThrow(expect.objectContaining({ code: expect.toBeOdd() })),
+        "not.toThrow, asymmetric": () =>
+          expect(() => {
+            count("function");
+            throw new Error("x");
+          }).not.toThrow(expect.toHaveMessage("y")),
+        "toThrow, resolvesTo": () =>
+          expect(() => {
+            count("function");
+            throw later("x");
+          }).toThrow(expect.resolvesTo.any(String)),
+        "not.toThrow, resolvesTo": () =>
+          expect(() => {
+            count("function");
+            throw later("x");
+          }).not.toThrow(expect.resolvesTo.any(String)),
+        "toThrow, own asymmetricMatch()": () =>
+          expect(async () => {
+            count("function");
+            await later();
+            throw new Error("x");
+          }).toThrow({ asymmetricMatch: thrown => count("asymmetricMatch") === 1 && thrown.message === "x" }),
+        "rejects.toThrow, own asymmetricMatch()": () =>
+          expect(laterReject(new Error("x"))).rejects.toThrow({
+            asymmetricMatch: thrown => count("asymmetricMatch") === 1 && thrown.message === "x",
+          }),
         "toHaveProperty, getter": () => expect({ get p() { return { v: 1 }; } }).toHaveProperty("p", { v: expect.toBeOdd() }),
         "a synchronous matcher before an asynchronous one": () =>
           expect({ a: 1, b: 1, c: 3 }).toEqual({ a: expect.toBeCalledFirst(), b: expect.toBeOdd(), c: expect.toBeOdd() }),
@@ -1335,6 +1395,11 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       'toContainEqual, Set: passes {"toBeOdd":2}',
       'toThrow, asymmetric: passes {"function":1,"toHaveMessage":1}',
       'toThrow, objectContaining: passes {"function":1,"toBeOdd":1}',
+      'not.toThrow, asymmetric: passes {"function":1,"toHaveMessage":1}',
+      'toThrow, resolvesTo: passes {"function":1}',
+      'not.toThrow, resolvesTo: fails {"function":1}',
+      'toThrow, own asymmetricMatch(): passes {"function":1,"asymmetricMatch":1}',
+      'rejects.toThrow, own asymmetricMatch(): passes {"asymmetricMatch":1}',
       'toHaveProperty, getter: passes {"toBeOdd":1}',
       'a synchronous matcher before an asynchronous one: passes {"toBeCalledFirst":1,"toBeOdd":2}',
       'the same matcher twice: fails {"toBeOdd":2}',
@@ -1713,6 +1778,40 @@ describe.concurrent("expect.soft()", () => {
       'expect.soft(1).toBe("soft");',
       'expect(1).toBe("not soft");',
       'soft(1).toBe("on its own");',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("toThrow() with an object that has an asymmetricMatch() method", async () => {
+    const source = `
+      const isString = { asymmetricMatch: value => typeof value === "string" };
+      const isNumber = { asymmetricMatch: value => typeof value === "number" };
+      const throws = () => { throw "a string"; };
+      test("passes", () => {
+        expect.soft(throws).toThrow(isString);
+        expect.soft(throws).not.toThrow(isNumber);
+        expect.soft(() => {}).not.toThrow(isString);
+      });
+      test("fails", () => {
+        expect.soft(throws).not.toThrow(isString);
+        expect.soft(throws, "my label").toThrow(isNumber);
+        expect.soft(() => {}).toThrow(isString);
+        console.log("fails: end");
+      });
+    `;
+    const { stdout, stderr, report, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["fails: end"]);
+    expect(report).toEqual([
+      "(pass) passes",
+      "error: expect(received).not.toThrow(expected)",
+      "error: my label",
+      "error: expect(received).toThrow(expected)",
+      "(fail) fails",
+    ]);
+    expect(failingLines(stderr, source)).toEqual([
+      "expect.soft(throws).not.toThrow(isString);",
+      'expect.soft(throws, "my label").toThrow(isNumber);',
+      "expect.soft(() => {}).toThrow(isString);",
     ]);
     expect(exitCode).toBe(1);
   });

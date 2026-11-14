@@ -3,12 +3,9 @@ use bun_jsc::{JSValue, JsResult};
 use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
-use bun_jsc::JsClass;
 use bun_core::strings;
-use crate::generated_bindgen::expect::js_ExpectAny;
 
 use super::Expect;
-use super::ExpectAny;
 use super::Promise;
 use super::get_signature;
 use super::throw;
@@ -40,15 +37,7 @@ impl Expect {
                     value.to_fmt(&mut fmt),
                 )));
             }
-            if value.is_object() {
-                if ExpectAny::from_js_direct(value).is_some() {
-                    if let Some(inner_constructor_value) =
-                        js_ExpectAny::constructor_value_get_cached(value)
-                    {
-                        break 'brk inner_constructor_value;
-                    }
-                }
-            } else if value.is_string() {
+            if !value.is_object() {
                 // `.toThrow("")` behaves the same as `.toThrow()`
                 let s = value.to_js_string(global)?;
                 if s.length() == 0 {
@@ -74,13 +63,42 @@ impl Expect {
 
         let did_throw = result_.is_some();
 
+        if not && !did_throw {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Jest's and Vitest's order: a class, a pattern, then an asymmetric matcher, which is asked about the thrown value itself.
+        if expected_value.is_object() && !expected_value.js_type().is_function() && !expected_value.is_reg_exp() {
+            // Vitest doesn't ask about a falsy thrown value: `thrown && matcher.asymmetricMatch(thrown)`.
+            let asked = result_.filter(|thrown| thrown.is_object() || thrown.to_boolean() || !this.is_vitest());
+            let matched = match asked {
+                Some(thrown) => expected_value.jest_asymmetric_match(thrown, global)?,
+                None => (Expect::is_asymmetric_matcher(expected_value) || expected_value.has_asymmetric_match_method(global))
+                    .then_some(false),
+            };
+            if let Some(matched) = matched {
+                if matched != not {
+                    return Ok(JSValue::UNDEFINED);
+                }
+
+                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", not);
+                let mut formatter = Formatter::new(global).with_quote_strings(true);
+                let mut formatter2 = super::make_formatter(global);
+                return throw!(
+                    this,
+                    global,
+                    signature,
+                    "\n\nExpected value: {}<green>{}<r>\n{}Received value: <red>{}<r>\n",
+                    if not { "not " } else { "" },
+                    expected_value.to_fmt(&mut formatter2),
+                    if did_throw { "" } else { "\nReceived function did not throw\n" },
+                    result_.unwrap_or(return_value_from_function).to_fmt(&mut formatter),
+                );
+            }
+        }
+
         if not {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
-
-            if !did_throw {
-                return Ok(JSValue::UNDEFINED);
-            }
-
             let result: JSValue = result_.unwrap();
             let mut formatter = Formatter::new(global).with_quote_strings(true);
 
@@ -311,26 +329,6 @@ impl Expect {
                     "\n\nExpected pattern: <green>{}<r>\nReceived value: <red>{}<r>",
                     expected_value.to_fmt(&mut formatter),
                     result.to_fmt(&mut formatter2),
-                );
-            }
-
-            if Expect::is_asymmetric_matcher(expected_value) {
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-                let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
-
-                if is_equal {
-                    return Ok(JSValue::UNDEFINED);
-                }
-
-                let mut formatter = Formatter::new(global).with_quote_strings(true);
-                let mut formatter2 = super::make_formatter(global);
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nExpected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
-                    expected_value.to_fmt(&mut formatter2),
-                    result.to_fmt(&mut formatter),
                 );
             }
 

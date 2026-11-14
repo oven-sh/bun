@@ -97,6 +97,8 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// What `skip()` threw in this file, so `is_skip_error` knows it wherever it surfaces. Weak, so none outlives its last holder.
+    skip_errors: Vec<bun_jsc::Weak<()>>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -223,6 +225,11 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+
+    /// The test called `skip()` of its context, so it hides what its callbacks throw.
+    pub(crate) fn called_skip(&self) -> bool {
+        self.result == Result::Skip && self.context.is_some()
     }
 
     pub(crate) fn context(
@@ -425,7 +432,26 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            skip_errors: Vec::new(),
         }
+    }
+
+    /// A new error for `skip()` to throw.
+    pub(crate) fn skip_error(&mut self, global: &JSGlobalObject) -> JSValue {
+        let error = global.create_error_instance(format_args!("test is skipped; abort execution"));
+        if self.skip_errors.len() == self.skip_errors.capacity() {
+            self.skip_errors.retain(|known| known.get().is_some());
+        }
+        self.skip_errors.push(bun_jsc::Weak::create_passive(error, global));
+        error
+    }
+
+    pub(crate) fn is_skip_error(&self, value: JSValue) -> bool {
+        let error = value.to_error();
+        self.skip_errors
+            .iter()
+            .filter_map(|known| known.get())
+            .any(|known| known == value || Some(known) == error)
     }
 
     // `groups` / `sequences` are `Box<[T]>` and drop automatically — no explicit Drop impl needed.
@@ -928,7 +954,7 @@ impl Execution {
         };
 
         sequence.maybe_skip = true;
-        if sequence.result == Result::Skip && sequence.context.is_some() {
+        if sequence.called_skip() {
             // Vitest reports a test that called `skip()` as skipped, whatever it throws.
             return HandleUncaughtExceptionResult::HideError;
         }

@@ -69,10 +69,16 @@ describe("shellWords", () => {
     expect(shellWords(["-a -b"], true)).toEqual(["-a", "-b"]);
   });
 
+  test("a quote that spans two elements keeps them in one word", () => {
+    expect(shellWords(['-I"/sdk', 'root/include"'], false)).toEqual(["-I/sdk root/include"]);
+    expect(shellWords(['-I"/sdk', 'root/include"'], true)).toEqual(["-I/sdk root/include"]);
+  });
+
   test("backslashes before a quote on Windows", () => {
     expect(shellWords(['a\\\\"b c"'], true)).toEqual(["a\\b c"]);
     expect(shellWords(['a\\\\\\"b'], true)).toEqual(['a\\"b']);
     expect(shellWords(["C:\\dir\\"], true)).toEqual(["C:\\dir\\"]);
+    expect(shellWords(['"a\\\\""b"'], true)).toEqual(['a\\"b']);
   });
 
   test("what the shell would expand, or an unterminated quote, throws", () => {

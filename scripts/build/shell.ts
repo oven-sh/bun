@@ -88,11 +88,10 @@ export function quoteArgs(args: string[], windows: boolean): string {
  * which is not what the shell does with them unquoted.
  */
 export function shellWords(flags: readonly string[], windows: boolean): string[] {
-  const words: string[] = [];
-  for (const text of flags) {
-    words.push(...(windows ? windowsWords(text) : posixWords(text)));
-  }
-  return words;
+  // Joined the way the rule's command joins them: a quote opened in one
+  // element may close in the next.
+  const text = flags.join(" ");
+  return windows ? windowsWords(text) : posixWords(text);
 }
 
 function posixWords(text: string): string[] {
@@ -147,8 +146,8 @@ function posixWords(text: string): string[] {
 
 // The rules of LLVM's cl::TokenizeWindowsCommandLine, which clang and
 // clang-cl read their command line with on Windows: 2n backslashes before `"`
-// give n and toggle quoting, 2n+1 give n and a literal `"`, and `""` inside
-// quotes is a literal `"`.
+// give n and leave the `"` to open or close quoting, 2n+1 give n and a
+// literal `"`, and `""` inside quotes is a literal `"`.
 function windowsWords(text: string): string[] {
   const words: string[] = [];
   let word = "";
@@ -172,11 +171,11 @@ function windowsWords(text: string): string[] {
         continue;
       }
       word += "\\".repeat(Math.floor(n / 2));
-      i += n;
       if (n % 2 === 1) {
         word += '"';
+        i += n;
       } else {
-        quoted = !quoted;
+        i += n - 1;
       }
       continue;
     }

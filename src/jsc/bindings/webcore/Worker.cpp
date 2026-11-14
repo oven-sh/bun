@@ -261,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalO
     auto port = callFrame->argument(0);
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
         auto& wrapped = messagePort->wrapped();
-        bool active = (wrapped.isDetached() == false) && wrapped.pipe()->isOtherSideOpen(wrapped.side());
+        bool active = (wrapped.isDetached() == false) && !MessagePortPipe::atEndOfStream(wrapped.pipe()->state(wrapped.side()));
         return JSC::JSValue::encode(jsBoolean(active));
     }
     return JSC::JSValue::encode(jsBoolean(false));

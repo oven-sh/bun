@@ -246,6 +246,10 @@ const writableStream = new WritableStream();
   const a = new Event("asdf");
   a.bubbles;
   a.composedPath()[0];
+  expectType(a.NONE).is<0>();
+  expectType(a.CAPTURING_PHASE).is<1>();
+  expectType(a.AT_TARGET).is<2>();
+  expectType(a.BUBBLING_PHASE).is<3>();
 }
 {
   const a = new Blob();
@@ -254,6 +258,11 @@ const writableStream = new WritableStream();
 {
   const a = new File(["asdf"], "stuff.txt ");
   a.name;
+}
+{
+  // The JavaScriptCore module loader is not exposed as a global.
+  // @ts-expect-error
+  Loader;
 }
 {
   performance.now();

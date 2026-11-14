@@ -6276,6 +6276,141 @@ dynamic.getSSRProps = binding => {
       }
     });
 
+    // A reduced drizzle-orm column builder. Measuring the variances of PgTextBuilder compares PgArrayBuilder
+    // instantiations, which starts the measurement of PgArrayBuilder. Inside it, `$type()` returns `this`, so the stack
+    // holds the marker type twice when `array()` returns the instantiation the outer comparison created. tsgo counts
+    // stack entries only if they were created after the previous one, and the outer's instantiation is older than the
+    // marker type, so the comparison goes on and finds the cycle through PgArrayBuilder before PgColumnBuilder is
+    // measured. A cut there measured PgTextBuilder as invariant without the flag that allows a structural comparison.
+    describe("a nested variance measurement meets an instantiation that the outer comparison created", () => {
+      const builders = `
+type Simplify<T> = { [K in keyof T]: T[K] } & {};
+interface Config { name: string; data: unknown }
+declare class ColumnBuilder<T extends Config, TTypeConfig = {}> {
+    $type(): this & { _: { $type: unknown } };
+    $onUpdate: (fn: this["_"] extends { $type: infer U } ? U : T["data"]) => void;
+    _: Simplify<{ data: T["data"] } & TTypeConfig>;
+}
+declare class PgColumnBuilder<T extends Config, TTypeConfig = {}> extends ColumnBuilder<T, TTypeConfig> {
+    array(): PgArrayBuilder<{ name: T["name"]; data: unknown }, T>;
+}
+declare class PgArrayBuilder<T extends Config, TBase extends Config> extends PgColumnBuilder<T> {
+    config: PgColumnBuilder<TBase, TBase>;
+}
+declare class PgTextBuilder<T extends Config> extends PgColumnBuilder<T> {}
+`;
+      const widening = `
+declare const t1: PgTextBuilder<{ name: ""; data: string }>;
+export const c: PgTextBuilder<{ name: string; data: string }> = t1;
+`;
+
+      test.each([1, 8])("accepts widening the name of a column builder, on %d threads", async threads => {
+        using dir = project({ "a.ts": builders + widening });
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      // The shape of #47707: `ReturnType` of the builder function is the last overload's return type, and a call's
+      // result widens to it. The `ReturnType` assertions hold without the fix too, because the erased last overload
+      // returns `PgTextBuilder<{ name: any; ... }>`. The widening does not.
+      test("resolves ReturnType of an overloaded builder function and widens a call's result to it", async () => {
+        using dir = project({
+          "a.ts":
+            builders +
+            `
+declare function text(): PgTextBuilder<{ name: ""; data: string }>;
+declare function text<N extends string>(name: N): PgTextBuilder<{ name: N; data: string }>;
+type IsAny<T> = 0 extends 1 & T ? true : false;
+export const notAny: IsAny<ReturnType<typeof text>> = false;
+type Matches<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+export const lastOverload: Matches<ReturnType<typeof text>, PgTextBuilder<{ name: string; data: string }>> = true;
+export const column: PgTextBuilder<{ name: string; data: string }> = text("id");
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      // The classes come from another file, so their instantiations are shared between tasks.
+      test("accepts it when the builders are imported", async () => {
+        using dir = project({
+          "builders.ts": builders.replaceAll("declare class", "export declare class"),
+          "a.ts": `import type { PgTextBuilder } from "./builders";` + widening,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      // A comparison of two PgArrayBuilder instantiations measures PgArrayBuilder first, as the outermost measurement.
+      // The instantiation that `array()` returns is then created after the marker types, so the comparison is cut off
+      // and the cycle is found later. TypeScript 7.1 `--singleThreaded` reports both assignments when that file is
+      // checked first, and neither when the PgTextBuilder file is. 7.0 reports neither in both orders.
+      describe("the result of the outermost measurement depends on which file is checked first, as in TypeScript 7.1", () => {
+        const array = `
+import type { PgArrayBuilder } from "./builders";
+declare const a1: PgArrayBuilder<{ name: ""; data: unknown }, { name: ""; data: string }>;
+export const x: PgArrayBuilder<{ name: string; data: unknown }, { name: string; data: string }> = a1;
+`;
+        const files = { "builders.ts": builders.replaceAll("declare class", "export declare class") };
+        const text = `import type { PgTextBuilder } from "./builders";` + widening;
+
+        test("no error when the PgTextBuilder file is checked first", async () => {
+          using dir = project({ ...files, "a.ts": text, "b.ts": array });
+          const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+          expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        });
+
+        test("both assignments are rejected when the PgArrayBuilder file is checked first", async () => {
+          using dir = project({ ...files, "a.ts": array, "b.ts": text });
+          const { stdout } = await check(dir, ["--threads", "1"]);
+          expect(stdout).toMatchInlineSnapshot(`
+            "a.ts(4,14): error TS2322: Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }>' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+              The types of 'config.array().$type()' are incompatible between these types.
+                Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }> & { _: { $type: unknown; }; }'.
+                  Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+                    The types of 'config.array()' are incompatible between these types.
+                      Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }>' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+                        Type '{ name: string; data: unknown; }' is not assignable to type '{ name: ""; data: unknown; }'.
+                          Types of property 'name' are incompatible.
+                            Type 'string' is not assignable to type '""'.
+            b.ts(3,14): error TS2322: Type 'PgTextBuilder<{ name: ""; data: string; }>' is not assignable to type 'PgTextBuilder<{ name: string; data: string; }>'.
+              The types returned by '$type()' are incompatible between these types.
+                Type 'PgTextBuilder<{ name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgTextBuilder<{ name: string; data: string; }> & { _: { $type: unknown; }; }'.
+                  Type 'PgTextBuilder<{ name: ""; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgTextBuilder<{ name: string; data: string; }>'.
+                    The types returned by 'array()' are incompatible between these types.
+                      Type 'PgArrayBuilder<{ name: ""; data: unknown; }, { name: ""; data: string; }>' is not assignable to type 'PgArrayBuilder<{ name: string; data: unknown; }, { name: string; data: string; }>'.
+                        Type '{ name: string; data: unknown; }' is not assignable to type '{ name: ""; data: unknown; }'.
+                          Types of property 'name' are incompatible.
+                            Type 'string' is not assignable to type '""'."
+          `);
+        });
+      });
+
+      // Between PgColumnBuilder instantiations the name is invariant. tsc 7.0.2 reports the first assignment only.
+      test("still rejects narrowing and widening the name between PgColumnBuilder instantiations", async () => {
+        using dir = project({
+          "a.ts":
+            builders +
+            widening +
+            `
+declare const p1: PgColumnBuilder<{ name: string; data: string }>;
+export const d: PgColumnBuilder<{ name: ""; data: string }> = p1;
+declare const p2: PgColumnBuilder<{ name: ""; data: string }>;
+export const e: PgColumnBuilder<{ name: string; data: string }> = p2;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(21,14): error TS2322: Type 'PgColumnBuilder<{ name: string; data: string; }, {}>' is not assignable to type 'PgColumnBuilder<{ name: ""; data: string; }, {}>'.
+            The types returned by 'array().config.$type()' are incompatible between these types.
+              Type 'PgColumnBuilder<{ name: string; data: string; }, { name: string; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgColumnBuilder<{ name: ""; data: string; }, { name: ""; data: string; }> & { _: { $type: unknown; }; }'.
+                Type 'PgColumnBuilder<{ name: string; data: string; }, { name: string; data: string; }> & { _: { $type: unknown; }; }' is not assignable to type 'PgColumnBuilder<{ name: ""; data: string; }, { name: ""; data: string; }>'.
+                  The types returned by 'array().config._.name' are incompatible between these types.
+                    Type 'string' is not assignable to type '""'."
+        `);
+      });
+    });
+
     // The argument is wrong: without the cycle through `keyof typeof shapes`, TypeScript reports TS2345. Inside the initializer
     // that the type refers back to, the comparison re-enters itself, and TypeScript 7.0 and 7.1 keep the inner result.
     test("keeps the first result of a comparison that re-enters itself through a variable's initializer", async () => {

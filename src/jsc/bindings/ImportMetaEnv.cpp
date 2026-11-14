@@ -50,6 +50,26 @@ static bool startedInProduction(Zig::GlobalObject* globalObject)
     return Bun__getEnvValue(globalObject, &name, &value) && WTF::equalSpans(std::span { Zig::untag(value.ptr), value.len }, "production"_s.span8());
 }
 
+// hasProperty() that also reads the slot of an own `document`. The own lookup is apart because getPropertySlot() inlines the whole walk.
+static bool globalHasDocument(Zig::GlobalObject* globalObject)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& name = WebCore::builtinNames(vm).documentPublicName();
+
+    PropertySlot slot(globalObject, PropertySlot::InternalMethodType::HasProperty);
+    bool isOwn = globalObject->methodTable()->getOwnPropertySlot(globalObject, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isOwn) {
+        JSValue prototype = globalObject->getPrototypeDirect();
+        RELEASE_AND_RETURN(scope, prototype.isObject() && asObject(prototype)->hasProperty(globalObject, name));
+    }
+    if (!slot.isValue() || !slot.getValue(globalObject, name).isUndefinedOrNull())
+        return true;
+    // An own `document` that holds undefined or null is a key that a test left, unless it is a stub inside a window of internal/test/environment.
+    return globalObject->mockModule.hasEnvironmentWindow;
+}
+
 // `import.meta.env` under `bun test`, a live view of `process.env` plus Vite's variables. Its hooks never use the cell's own storage.
 class ImportMetaEnv final : public JSNonFinalObject {
 public:
@@ -150,7 +170,7 @@ JSValue ImportMetaEnv::defaultValueOf(ViteVariable variable) const
     case ViteVariable::Prod:
         return jsBoolean(isProduction());
     case ViteVariable::SSR: {
-        bool hasDocument = globalObject->hasProperty(globalObject, WebCore::builtinNames(vm).documentPublicName());
+        bool hasDocument = globalHasDocument(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         return jsBoolean(!hasDocument);
     }

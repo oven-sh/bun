@@ -11,6 +11,12 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "jsFunctionTestEnvironmentModuleOfLastingRealm",
   0,
 );
+// Tells ImportMetaEnv.cpp whether the names of one of Bun's windows are on globalThis.
+const setHasWindow: (hasWindow: boolean) => void = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionTestEnvironmentSetHasWindow",
+  1,
+);
 
 const { captureStackTrace } = Error;
 const { isExtensible } = Object;
@@ -521,6 +527,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
     $arrayPush(defined, key);
     $arrayPush(originals, original);
   }
+  setHasWindow(true);
   environment.forgetLastFile?.();
 
   function teardown(isLoadingFileAgain: boolean) {
@@ -536,6 +543,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
   }
 
   function leave() {
+    setHasWindow(false);
     let stuck: string | undefined;
     for (let i = 0; i < defined.length; i++) {
       const key = defined[i];
@@ -589,6 +597,7 @@ function forwarder(key: string) {
 
 function uninstallFromSharedGlobal() {
   currentWindowProperties = undefined;
+  setHasWindow(false);
   originalDescriptors.$forEach((original, key) => void putBack(key, original));
   originalDescriptors.$clear();
 }
@@ -613,6 +622,7 @@ function installOnSharedGlobal(environment: Environment) {
     originalDescriptors.$delete(key);
   });
   currentWindowProperties = properties;
+  setHasWindow(true);
 }
 
 function setupSharedGlobal(

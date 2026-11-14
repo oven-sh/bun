@@ -1367,16 +1367,20 @@ describe.concurrent("import.meta.env", () => {
     ]);
   });
 
+  const happyDOMStandIn = {
+    "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+    "node_modules/happy-dom/index.js": `
+      exports.Window = class Window {
+        document = { defaultView: this };
+        happyDOM = { async abort() {} };
+        close() {}
+      };
+    `,
+  };
+
   test("SSR is false in a DOM environment", async () => {
     using dir = tempDir("import-meta-env", {
-      "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
-      "node_modules/happy-dom/index.js": `
-        exports.Window = class Window {
-          document = { defaultView: this };
-          happyDOM = { async abort() {} };
-          close() {}
-        };
-      `,
+      ...happyDOMStandIn,
       "a-dom.test.ts": `console.log("@" + JSON.stringify([typeof document, import.meta.env.SSR]));`,
       "b-node.test.ts": `// @${"vitest"}-environment node\nconsole.log("@" + JSON.stringify([typeof document, import.meta.env.SSR]));`,
     });
@@ -1384,5 +1388,120 @@ describe.concurrent("import.meta.env", () => {
       ["object", false],
       ["undefined", true],
     ]);
+  });
+
+  // A test that puts `document` back by assignment leaves the key, with the value undefined.
+  test.each(isolationFlags)("SSR is true while document is undefined or null in a file with no DOM %j", async flags => {
+    const happyDOM = `// @${"vitest"}-environment happy-dom`;
+    using dir = tempDir("import-meta-env", {
+      ...happyDOMStandIn,
+      "a-dom.test.ts": `${happyDOM}
+        import { test, vi } from "bun:test";
+        test("prints", () => {
+          const rows = { "a DOM": import.meta.env.SSR };
+          const saved = globalThis.document;
+          globalThis.document = undefined;
+          rows["document set to undefined"] = import.meta.env.SSR;
+          globalThis.document = saved;
+          vi.stubGlobal("document", null);
+          rows["document stubbed as null"] = import.meta.env.SSR;
+          vi.stubGlobal("document", undefined);
+          delete globalThis.HTMLElement;
+          rows["document stubbed as undefined, HTMLElement deleted"] = import.meta.env.SSR;
+          vi.unstubAllGlobals();
+          console.log("@" + JSON.stringify(rows));
+        });
+      `,
+      "b-node.test.ts": `
+        import { test, vi } from "bun:test";
+        test("prints", () => {
+          const rows = {};
+          const saved = globalThis.document;
+          globalThis.document = { title: "a stub" };
+          globalThis.document = saved;
+          rows["document put back as undefined"] = import.meta.env.SSR;
+          globalThis.document = null;
+          rows["document set to null"] = import.meta.env.SSR;
+          globalThis.document = 0;
+          rows["document set to 0"] = import.meta.env.SSR;
+          Object.assign(globalThis, { document: undefined, window: undefined, HTMLElement: undefined });
+          rows["document, window and HTMLElement set to undefined"] = import.meta.env.SSR;
+          delete globalThis.window;
+          delete globalThis.HTMLElement;
+          globalThis.Node = class { appendChild() {} };
+          rows["document set to undefined beside a node class"] = import.meta.env.SSR;
+          delete globalThis.Node;
+          delete globalThis.document;
+          vi.stubGlobal("document", undefined);
+          rows["document stubbed as undefined"] = import.meta.env.SSR;
+          vi.unstubAllGlobals();
+          let calls = 0;
+          Object.defineProperty(globalThis, "document", { get: () => void calls++, configurable: true });
+          rows["a getter"] = import.meta.env.SSR;
+          rows["calls of the getter"] = calls;
+          delete globalThis.document;
+          const prototype = Object.getPrototypeOf(globalThis);
+          Object.setPrototypeOf(globalThis, { __proto__: prototype, document: undefined });
+          rows["an inherited undefined"] = import.meta.env.SSR;
+          Object.setPrototypeOf(globalThis, prototype);
+          console.log("@" + JSON.stringify(rows));
+          // Without --isolate, the next files start with this key.
+          globalThis.document = saved;
+        });
+      `,
+      "c-dom.test.ts": `${happyDOM}
+        import { test } from "bun:test";
+        test("prints", () => {
+          console.log("@" + JSON.stringify({ "a DOM file after that key": [typeof document, import.meta.env.SSR] }));
+        });
+      `,
+      "d-node.test.ts": `
+        import { test } from "bun:test";
+        import { runInThisContext } from "node:vm";
+        test("prints", () => {
+          const rows = { "a file with no DOM after that key": import.meta.env.SSR };
+          delete globalThis.document;
+          runInThisContext("var document");
+          rows["var document"] = import.meta.env.SSR;
+          runInThisContext("document = {}");
+          rows["var document = {}"] = import.meta.env.SSR;
+          console.log("@" + JSON.stringify(rows));
+        });
+      `,
+    });
+    expect(await run(String(dir), ["test", ...flags])).toEqual({
+      printed: [
+        // a-dom.test.ts: a stubbed document is still a document in a DOM environment, as in Vitest.
+        {
+          "a DOM": false,
+          "document set to undefined": false,
+          "document stubbed as null": false,
+          "document stubbed as undefined, HTMLElement deleted": false,
+        },
+        // b-node.test.ts
+        {
+          "document put back as undefined": true,
+          "document set to null": true,
+          "document set to 0": false,
+          "document, window and HTMLElement set to undefined": true,
+          // setup() of internal/test/environment takes this for a DOM that a test registered by hand.
+          "document set to undefined beside a node class": true,
+          "document stubbed as undefined": true,
+          "a getter": false,
+          "calls of the getter": 0,
+          "an inherited undefined": false,
+        },
+        // c-dom.test.ts
+        { "a DOM file after that key": ["object", false] },
+        // d-node.test.ts
+        {
+          "a file with no DOM after that key": true,
+          "var document": true,
+          "var document = {}": false,
+        },
+      ],
+      failures: [],
+      exitCode: 0,
+    });
   });
 });

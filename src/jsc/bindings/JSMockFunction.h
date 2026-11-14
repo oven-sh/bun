@@ -70,6 +70,8 @@ public:
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
+    // Whether internal/test/environment has the names of one of its windows on globalThis.
+    bool hasEnvironmentWindow { false };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

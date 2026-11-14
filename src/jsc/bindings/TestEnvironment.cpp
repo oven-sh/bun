@@ -53,6 +53,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTestEnvironmentModuleOfLastingRealm, (JSC::JS
     return Bun__TestEnvironment__setupFunction(lastingRealm(JSC::getVM(globalObject)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionTestEnvironmentSetHasWindow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    defaultGlobalObject(globalObject)->mockModule.hasEnvironmentWindow = callFrame->argument(0).isTrue();
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 // Whether every change to an own property of `object` changes its structure or one of its property slots.
 static bool showsChangesInSlots(JSC::VM& vm, JSC::JSObject* object, JSC::Structure* structure)
 {

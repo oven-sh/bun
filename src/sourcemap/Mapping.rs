@@ -314,15 +314,10 @@ impl Lookup {
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
         let source_map = self.source_map.as_deref()?;
         // See doc comment on `external_source_names`
-        if source_map.external_source_names.len() == 0 {
+        if !source_map.is_external() {
             return None;
         }
-        let source_idx = usize::try_from(self.mapping.source_index).ok()?;
-        if source_idx >= source_map.external_source_names.len() {
-            return None;
-        }
-
-        let name: &[u8] = &source_map.external_source_names[source_idx];
+        let name = source_map.external_source_name(self.mapping.source_index)?;
 
         let display = if source_map.standalone_module_graph.is_none()
             && bun_paths::is_absolute(base_filename)
@@ -357,7 +352,7 @@ impl Lookup {
             // Standalone module graph source maps are stored (in memory) compressed.
             // They are decompressed on demand.
             if let Some(serialized) = source_map.standalone_module_graph {
-                if index >= source_map.external_source_names.len() {
+                if index >= source_map.external_source_count() {
                     return None;
                 }
 
@@ -378,11 +373,7 @@ impl Lookup {
                 }
             }
 
-            if index >= source_map.external_source_names.len() {
-                return None;
-            }
-
-            let name: &[u8] = &source_map.external_source_names[index];
+            let name = source_map.external_source_name(self.mapping.source_index)?;
 
             let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is

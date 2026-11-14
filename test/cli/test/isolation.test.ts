@@ -1616,6 +1616,72 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
   });
 
+  // Object.defineProperty() can't put back a property that a file made non-configurable or read-only, and can't add one to an object
+  // that a file made non-extensible.
+  test.each([
+    ["replaces Date.now and freezes Date", `Date.now = () => 0; Object.freeze(Date);`],
+    [
+      "replaces three functions of Math and seals it",
+      `Math.cbrt = Math.random = Math.trunc = () => 0; Object.seal(Math);`,
+    ],
+    ["deletes Math.max and prevents extensions of Math", `delete Math.max; Object.preventExtensions(Math);`],
+    [
+      "redefines the size accessor of Map.prototype and freezes it",
+      `Object.defineProperty(Map.prototype, "size", { get() { return 7; } }); Object.freeze(Map.prototype);`,
+    ],
+    [
+      "makes the name of Array non-configurable, replaces Array.of, adds a key and prevents extensions of Array",
+      `Object.defineProperty(Array, "name", { value: "fake", configurable: false }); Array.of = function fake() {}; Array.added = 1; Object.preventExtensions(Array);`,
+    ],
+    ["replaces Bun.sleep, which is not configurable, and freezes Bun", `Bun.sleep = () => "stub"; Object.freeze(Bun);`],
+    [
+      "makes Bun.sleep a stub that is read-only",
+      `Object.defineProperty(Bun, "sleep", { value: () => "stub", writable: false });`,
+    ],
+    [
+      "adds a global, replaces fetch and freezes globalThis",
+      `globalThis.leaked = 1; globalThis.fetch = function stub() {}; Object.freeze(globalThis);`,
+    ],
+    [
+      "only freezes Error.prototype, Date and Math",
+      `Object.freeze(Error.prototype); Object.freeze(Date); Object.freeze(Math);`,
+    ],
+  ])("the next files find the properties of the builtins as at the start, when a file %s", async (_, change) => {
+    const state = `JSON.stringify([
+      [Date.now, Math.cbrt, Math.random, Math.trunc, Math.max, Array.of, Bun.sleep, fetch].map(fn => String(fn).includes("[native code]")),
+      [Date, Math, Array, Map.prototype, Bun].map(object => Reflect.ownKeys(object).length),
+      [[Date, "now"], [Date, "parse"], [Math, "cbrt"], [Math, "PI"], [Array, "name"], [Bun, "sleep"], [globalThis, "fetch"], [Error.prototype, "name"]]
+        .map(([object, key]) => Object.getOwnPropertyDescriptor(object, key)),
+      new Map([[1, 1]]).size, typeof Object.getOwnPropertyDescriptor(Map.prototype, "size").get, Array.name, "leaked" in globalThis,
+    ])`;
+    const files = {
+      "a.test.js": `test("a", () => { console.log(${state}); ${change} });`,
+      "b.test.js": `test("b", () => { console.log(${state}); });`,
+      "c.test.js": `test("c", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 3)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(3).fill(lines[0]));
+  });
+
+  // The restore adds the property back below the level of Object.defineProperty(). JavaScriptCore must not learn from it
+  // that an object of that shape takes the property.
+  test("a property that was put back on a non-extensible builtin can't be assigned to another one of its kind", async () => {
+    const files = {
+      "a.test.js": `test("a", () => { delete Bun.SQL.toCamel.column; Object.preventExtensions(Bun.SQL.toCamel); });`,
+      "b.test.js": `"use strict";
+        test("b", () => {
+          const other = Bun.SQL.toPascal;
+          delete other.column;
+          Object.preventExtensions(other);
+          let result;
+          try { other.column = 1; result = "assigned"; } catch (error) { result = error.constructor.name; }
+          console.log(JSON.stringify(["column" in Bun.SQL.toCamel, result, Object.hasOwn(other, "column")]));
+        });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual([JSON.stringify([true, "TypeError", false])]);
+  });
+
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {
     const file = `
       import "node:perf_hooks";

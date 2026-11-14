@@ -355,10 +355,26 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
 
 static constexpr unsigned descriptorAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor;
 
-static void putOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, const PropertyDescriptor& descriptor)
+void putOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, const PropertyDescriptor& descriptor)
 {
     JSValue storage = descriptor.isAccessorDescriptor() ? GetterSetter::create(globalObject->vm(), globalObject, descriptor.getter(), descriptor.setter()) : descriptor.value();
     putOwnPropertyStorage(globalObject, object, key, storage, descriptor.attributes() & descriptorAttributes, false);
+}
+
+bool setOwnPropertyAttributes(JSGlobalObject* globalObject, JSObject* object, PropertyName key, unsigned attributes)
+{
+    unsigned current;
+    PropertyOffset offset = object->structure()->get(globalObject->vm(), key, current);
+    if (!isValidOffset(offset))
+        return false;
+    // An accessor is never read-only.
+    unsigned changeable = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
+    if (!(current & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor)))
+        changeable |= PropertyAttribute::ReadOnly;
+    unsigned wanted = (current & ~changeable) | (attributes & changeable);
+    if (wanted != current)
+        putOwnPropertyStorage(globalObject, object, key, object->getDirect(offset), wanted, false);
+    return true;
 }
 
 class JSMockFunction final : public JSC::InternalFunction {

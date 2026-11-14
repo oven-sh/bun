@@ -7,6 +7,7 @@ const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
   "jsFunctionShapesOfObjects",
   1,
 );
+// For an object that is not extensible, the index is ~index.
 const indexesOfChanged: (objects: object[], shapes: unknown[]) => number[] = $newCppFunction(
   "TestEnvironment.cpp",
   "jsFunctionIndexesOfChangedObjects",
@@ -17,6 +18,18 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
   "TestEnvironment.cpp",
   "jsFunctionDeleteOwnProperty",
   2,
+);
+// Gives a property the attributes of a descriptor, also where a test file made the property non-configurable. False if it can't.
+const setAttributes: (object: object, key: PropertyKey, descriptor: PropertyDescriptor) => boolean = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionSetOwnPropertyAttributes",
+  3,
+);
+// Object.defineProperty() for a property that the object doesn't have. An object that is not extensible takes it too.
+const addOwnProperty: (object: object, key: PropertyKey, descriptor: PropertyDescriptor) => void = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionAddOwnProperty",
+  3,
 );
 
 // Builtin modules are loaded once and shared by all files. These two patch `Performance.prototype` and
@@ -109,7 +122,31 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
   );
 }
 
-function restoreProperties(object: object, properties: Properties, size: number) {
+// On an object that a file made non-extensible, Object.freeze() and Object.seal() have changed attributes too.
+function isSameWithAttributes(current: PropertyDescriptor, saved: PropertyDescriptor) {
+  return (
+    isSame(current, saved) &&
+    $getByIdDirect(current, "configurable") === saved.configurable &&
+    $getByIdDirect(current, "writable") === saved.writable &&
+    $getByIdDirect(current, "enumerable") === saved.enumerable
+  );
+}
+
+// Not part of the loop below: with more code in the loop, the interpreter has to look up the target of its most taken jump.
+function restoreProperty(object: object, key: PropertyKey, current: PropertyDescriptor, saved: PropertyDescriptor) {
+  if (!$getByIdDirect(current, "configurable")) {
+    const isWritable = $getByIdDirect(current, "writable");
+    // Object.defineProperty() refuses the saved descriptor until the property has its saved attributes again.
+    if (saved.configurable || (!isWritable && saved.writable)) {
+      if (!setAttributes(object, key, saved)) return;
+    }
+    // Some builtins have a read-only property that gives a new value each time it's read.
+    else if (!isWritable) return;
+  }
+  defineProperty(object, key, saved);
+}
+
+function restoreProperties(object: object, properties: Properties, size: number, isSame: typeof isSameWithAttributes) {
   const keys = ownKeys(object);
   let found = 0;
   for (let i = 0; i < keys.length; i++) {
@@ -123,17 +160,11 @@ function restoreProperties(object: object, properties: Properties, size: number)
       continue;
     }
     const current = getOwnPropertyDescriptor(object, key)!;
-    if (isSame(current, saved)) continue;
-    if (!$getByIdDirect(current, "configurable")) {
-      if (saved.configurable) deleteOwnProperty(object, key);
-      // Some builtins have a read-only property that gives a new value each time it's read.
-      else if (!$getByIdDirect(current, "writable")) continue;
-    }
-    defineProperty(object, key, saved);
+    if (!isSame(current, saved)) restoreProperty(object, key, current, saved);
   }
   if (found === size) return;
   properties.$forEach((saved, key) => {
-    if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
+    if (!getOwnPropertyDescriptor(object, key)) addOwnProperty(object, key, saved);
   });
 }
 
@@ -181,9 +212,14 @@ export default function restoreGlobals() {
   }
   const changed = indexesOfChanged(objects, shapes);
   for (let i = 0; i < changed.length; i++) {
-    const index = changed[i];
+    let index = changed[i];
+    let same = isSame;
+    if (index < 0) {
+      index = ~index;
+      same = isSameWithAttributes;
+    }
     try {
-      restoreProperties(objects[index], savedProperties[index], savedPropertyCounts[index]);
+      restoreProperties(objects[index], savedProperties[index], savedPropertyCounts[index], same);
     } catch {}
   }
   // A property that was deleted and put back is in another slot.

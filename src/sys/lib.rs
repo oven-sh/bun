@@ -1,3 +1,4 @@
+#![feature(core_io_borrowed_buf)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 // `File` here IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_methods)]
@@ -15,6 +16,9 @@
 pub extern crate bun_core as bun_str;
 #[cfg(windows)]
 pub extern crate bun_libuv_sys;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
+use core::mem::MaybeUninit;
+
 pub mod fd;
 pub use fd::{ErrorCase, FdExt, MakeLibUvOwnedError, RawFd};
 #[path = "Error.rs"]
@@ -1728,7 +1732,7 @@ mod posix_impl {
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    fn sys_read(fd: i32, buf: &mut [u8]) -> isize {
+    fn sys_read(fd: i32, buf: &mut [MaybeUninit<u8>]) -> isize {
         #[cfg(target_os = "macos")]
         {
             // SAFETY: `buf` is writable for `buf.len()` bytes.
@@ -1756,7 +1760,7 @@ mod posix_impl {
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
-    fn sys_pread(fd: i32, buf: &mut [u8], off: i64) -> isize {
+    fn sys_pread(fd: i32, buf: &mut [MaybeUninit<u8>], off: i64) -> isize {
         #[cfg(target_os = "macos")]
         {
             // SAFETY: `buf` is writable for `buf.len()` bytes.
@@ -1783,7 +1787,7 @@ mod posix_impl {
         }
     }
     #[inline]
-    fn sys_recv(fd: i32, buf: &mut [u8], flags: i32) -> isize {
+    fn sys_recv(fd: i32, buf: &mut [MaybeUninit<u8>], flags: i32) -> isize {
         #[cfg(target_os = "macos")]
         {
             // SAFETY: `buf` is writable for `buf.len()` bytes, and the address is not asked for.
@@ -1980,7 +1984,7 @@ mod posix_impl {
             Ok(())
         }
     }
-    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    pub(crate) fn read_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -2008,7 +2012,7 @@ mod posix_impl {
             Ok(n as usize)
         }
     }
-    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -3218,7 +3222,7 @@ mod posix_impl {
     // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
     // exposed for shell/pipe IPC.
-    pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
+    fn recv(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // macOS: `recvfrom$NOCANCEL`, retried on EINTR.
         let n = check!(sys_recv(fd.native(), &mut buf[..len], flags), Tag::recv);
@@ -3231,7 +3235,7 @@ mod posix_impl {
         let n = check!(sys_send(fd.native(), buf, flags), Tag::send);
         Ok(n as usize)
     }
-    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
         recv(fd, buf, MSG_DONTWAIT)
     }
     /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
@@ -3679,9 +3683,7 @@ pub mod sys_uv;
 /// callers (e.g. `pack_command`) can write `bun_sys::sys_uv::fstat(fd)` portably.
 #[cfg(not(windows))]
 pub mod sys_uv {
-    pub use super::{
-        close, fstat, lstat, mkdir, open, pread, pwrite, read, rename, stat, unlink, write,
-    };
+    pub use super::{close, fstat, lstat, mkdir, open, pread, pwrite, rename, stat, unlink, write};
 }
 
 #[cfg(windows)]
@@ -3702,12 +3704,12 @@ mod windows_impl {
             None => Ok(()),
         }
     }
-    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    pub(crate) fn read_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
         // libuv for uv-kind fds, kernel32 `ReadFile` otherwise. The libuv path
         // requires a CRT fd via `fd.uv()`, which PANICS for HANDLE-backed
         // (`FdKind::System`) Fds — i.e. anything from `openat()`/NtCreateFile.
         if fd.kind() == FdKind::Uv {
-            return sys_uv::read(fd, buf);
+            return sys_uv::pread_uninit(fd, buf, -1);
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         // Stdin callers route through this function (via
@@ -3720,7 +3722,7 @@ mod windows_impl {
             let rc = unsafe {
                 w::kernel32::ReadFile(
                     fd.native(),
-                    buf.as_mut_ptr(),
+                    buf.as_mut_ptr().cast(),
                     adjusted_len,
                     &mut amount_read,
                     core::ptr::null_mut(),
@@ -3786,12 +3788,12 @@ mod windows_impl {
         }
         Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
     }
-    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], off: i64) -> Maybe<usize> {
         // Positioned-I/O lowering:
         // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
         // (HANDLE) fds.
         if fd.kind() == FdKind::Uv {
-            return sys_uv::pread(fd, buf, off);
+            return sys_uv::pread_uninit(fd, buf, off);
         }
         let off = off as u64;
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
@@ -3810,7 +3812,7 @@ mod windows_impl {
             let rc = unsafe {
                 w::kernel32::ReadFile(
                     fd.native(),
-                    buf.as_mut_ptr(),
+                    buf.as_mut_ptr().cast(),
                     adjusted_len,
                     &mut amount_read,
                     core::ptr::from_mut(&mut overlapped).cast(),
@@ -4555,7 +4557,7 @@ mod windows_impl {
         }
         _umask(mode as core::ffi::c_int) as Mode
     }
-    pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
+    fn recv(fd: Fd, buf: &mut [MaybeUninit<u8>], flags: i32) -> Maybe<usize> {
         // Winsock `recv`. Winsock's `len` is a
         // signed `int`, so clamp to `i32::MAX` (NOT `MAX_COUNT == u32::MAX`)
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
@@ -4578,7 +4580,7 @@ mod windows_impl {
         }
         Ok(rc as usize)
     }
-    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    pub(crate) fn recv_non_block_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Maybe<usize> {
         recv(fd, buf, 0)
     }
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
@@ -4602,15 +4604,42 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::*;
 
+pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    read_buf(fd, BorrowedBuf::from(buf).unfilled())
+}
+
+pub fn read_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
+    // SAFETY: the system initializes as many bytes as it reports, and uninitializes none.
+    unsafe { read_uninit(fd, cursor.as_mut()).inspect(|&n| _ = cursor.advance(n)) }
+}
+
+pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    pread_buf(fd, BorrowedBuf::from(buf).unfilled(), off)
+}
+
+pub(crate) fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
+    // SAFETY: as in `read_buf`.
+    unsafe { pread_uninit(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
+}
+
+pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    recv_non_block_buf(fd, BorrowedBuf::from(buf).unfilled())
+}
+
+pub fn recv_non_block_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
+    // SAFETY: as in `read_buf`.
+    unsafe { recv_non_block_uninit(fd, cursor.as_mut()).inspect(|&n| _ = cursor.advance(n)) }
+}
+
 /// Shared inner loop for `read_to_end_into` / `read_to_end_with_array_list`:
 /// repeatedly reserve `grow_by` when full, hand the spare capacity to
-/// `read_chunk(dst, running_offset)`, and grow `len` by the result until
+/// `read_chunk(dst, running_offset)`, and grow `len` by what it filled until
 /// `read_chunk` returns 0. Returns total bytes appended.
 #[inline]
 fn read_fill_vec(
     buf: &mut Vec<u8>,
     grow_by: usize,
-    mut read_chunk: impl FnMut(&mut [u8], i64) -> Maybe<usize>,
+    mut read_chunk: impl FnMut(BorrowedCursor<'_, u8>, i64) -> Maybe<usize>,
 ) -> Maybe<usize> {
     let start = buf.len();
     let mut total: i64 = 0;
@@ -4622,13 +4651,10 @@ fn read_fill_vec(
                 return Err(Error::oom());
             }
         }
-        // SAFETY: `read_chunk` writes initialized bytes; we commit exactly what was written.
-        let n = read_chunk(unsafe { bun_core::vec::spare_bytes_mut(buf) }, total)?;
+        let n = bun_core::vec::append_with(buf, usize::MAX, |spare| read_chunk(spare, total))?;
         if n == 0 {
             return Ok(buf.len() - start);
         }
-        // SAFETY: `n` bytes were just initialized by `read_chunk`.
-        unsafe { bun_core::vec::commit_spare(buf, n) };
         total += n as i64;
     }
 }

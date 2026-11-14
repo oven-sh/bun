@@ -599,7 +599,7 @@ fn whose_file_beside_is(fields: &str, beside: &[&str], written: &str, name: &str
 }
 
 #[test]
-fn a_manifest_that_names_nothing_names_the_index_files_that_bun_compile_takes() {
+fn a_manifest_that_names_nothing_where_the_run_starts_names_the_index_files_of_bun_compile() {
     for name in crate::options::INDEX_FILES {
         let name = core::str::from_utf8(name).unwrap();
         let written = name.rsplit_once('.').unwrap().0;
@@ -657,6 +657,39 @@ fn a_manifest_that_names_nothing_names_the_index_files_that_bun_compile_takes() 
             "{fields} {name}"
         );
     }
+}
+
+#[test]
+fn a_manifest_that_names_nothing_below_the_folder_of_the_run_names_index_js_alone() {
+    let whose_helper = |manifest: &str, helper: &str| {
+        let files = [
+            (
+                "checks/a.test.ts",
+                "import { test } from 'bun:test';\nimport { help } from './index';\ntest('a', () => { help(); });\n",
+            ),
+            (helper, "export const help = () => 1;\n"),
+            ("checks/package.json", manifest),
+            MANIFEST,
+        ];
+        with_run(&files, (1, 0), |files, run| whose(files, run, helper))
+    };
+    let names_nothing = r#"{ "type": "module" }"#;
+    for helper in ["checks/index.ts", "checks/index.tsx", "checks/index.mts"] {
+        assert_eq!(
+            whose_helper(names_nothing, helper),
+            WhoseFile::OfTests,
+            "{helper}"
+        );
+        assert_eq!(
+            whose_helper(r#"{ "main": "./index" }"#, helper),
+            WhoseFile::OfProduct,
+            "{helper}"
+        );
+    }
+    assert_eq!(
+        whose_helper(names_nothing, "checks/index.js"),
+        WhoseFile::OfProduct
+    );
 }
 
 #[test]

@@ -80,6 +80,8 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       try {
         socket.connect({ fd, fdIsRawSocket: true });
       } catch (err) {
+        // On Windows `fd` is a SOCKET handle, which node:fs cannot close: the native side closes it on the throw.
+        if (process.platform === "win32") throw err;
         // A descriptor the socket cannot adopt (a pipe's write end): the socket reports it, like a socket whose read failed.
         require("node:fs").closeSync(fd);
         socket.destroy(err as Error);

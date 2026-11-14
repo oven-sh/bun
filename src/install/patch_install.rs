@@ -769,8 +769,6 @@ impl PatchTask {
         let patch_hash_idx = strings::index_of(cache_dir_subpath_bytes, b"_patch_hash=")
             .unwrap_or_else(|| panic!("This is a bug in Bun."));
 
-        // need to dupe this as it's calculated using
-        // `PackageManager.cached_package_folder_name_buf` which may be modified
         let cache_dir_subpath = ZBox::from_bytes(cache_dir_subpath_bytes);
         let cache_dir_subpath_without_patch_hash =
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);

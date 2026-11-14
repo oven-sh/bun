@@ -392,7 +392,7 @@ fn print_js<'a>(
         mangled_props: None,
         ..Default::default()
     };
-    bun_js_printer::print_ast::<_, false, true>(
+    bun_js_printer::print_ast::<false, true>(
         &mut printer,
         arena,
         &ast,

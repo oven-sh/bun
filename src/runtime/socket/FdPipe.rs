@@ -1,10 +1,6 @@
 //! The transport of a socket over a descriptor that is not a `us_socket_t`: `new net.Socket({ fd, writable: true })`
 //! over a pipe, a terminal, or a socket that is only written to, and on POSIX `new net.Socket({ fd, readable: true })`
-//! and `Bun.connect({ fd })` over a pipe or a FIFO.
-//!
-//! uSockets reads with `recv`, which a pipe refuses, so a `BufferedReader` reads it and `write(2)` writes it. A
-//! readable descriptor is node's `uv_pipe_open` adoption: it is made non-blocking (stdio too, and the flag is never
-//! put back) and, unless it is stdio, closed with the socket.
+//! and `Bun.connect({ fd })` over a pipe or a FIFO (node's `uv_pipe_open`: made non-blocking, closed unless stdio).
 
 use core::cell::Cell;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -78,9 +74,7 @@ bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
 impl FdPipe {
     /// Makes `fd` the transport of `socket` and reports it open.
     ///
-    /// A `readable` descriptor is the program's own, stdio included: the pipe closes it unless it is stdio.
-    /// `Err`: nothing was started, no handler ran, and `fd` is still the caller's. `Ok` holds what
-    /// `TCPSocket::on_open` left pending.
+    /// `Err`: nothing was started, no handler ran, and `fd` is still the caller's.
     pub(crate) fn open(
         socket: ThisPtr<TCPSocket>,
         fd: Fd,
@@ -386,10 +380,8 @@ impl Transport for FdPipe {
         self.write(data).0
     }
 
-    /// A pipe has no half-close to send: the peer sees EOF only when the descriptor closes. For a
-    /// descriptor that is read from, the socket calls this once its queued bytes are out, so a
-    /// writable end closes now (from the event loop, like `reject_send`) and a read-only end waits
-    /// for EOF. A write-only pipe stays open, as it always did: its socket closes it.
+    /// A pipe's peer sees EOF only when the descriptor closes, so a writable end that is also read
+    /// from closes now (from the event loop, like `reject_send`). A read-only end waits for EOF.
     fn shutdown(&self) {
         self.is_shutdown.set(true);
         #[cfg(unix)]

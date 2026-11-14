@@ -140,8 +140,7 @@ impl Handler {
             Handler::ServerHandler(mut saved) => {
                 debug_log_dr!(
                     "  request url: {}",
-                    // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
-                    bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
+                    bstr::BStr::new(saved.request.url.get().byte_slice())
                 );
                 saved
                     .ctx

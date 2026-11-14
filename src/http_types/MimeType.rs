@@ -411,12 +411,6 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
     None
 }
 
-// TODO: use a precomputed static hash map for this
-// its too many branches to use ComptimeStringMap
-pub fn by_name(name: &[u8]) -> MimeType {
-    MimeType::init(name)
-}
-
 // Duplicate keys are rejected at compile time. The original table
 // contained duplicate entries for "tsx", "yaml", "yml" — only the first
 // occurrence is kept; later duplicates dropped below.

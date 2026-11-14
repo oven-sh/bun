@@ -143,12 +143,6 @@ impl Body {
     }
 }
 
-impl Body {
-    pub(crate) fn reset(&self) {
-        self.value_mut().reset();
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // PendingValue
 // ────────────────────────────────────────────────────────────────────────────
@@ -1188,14 +1182,6 @@ impl Value {
         }
         Ok(())
     }
-
-    /// A locked body stays locked, without its stream.
-    pub fn reset(&mut self) {
-        match self {
-            Value::Locked(locked) => locked.readable.deinit(),
-            _ => *self = Value::Null,
-        }
-    }
 }
 
 impl Value {
@@ -1431,7 +1417,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared body-clone for `clone_into` / `clone_value`: clone through the
+    /// Shared body-clone for `Request` and `Response`: clone through the
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
     fn clone_body_value_via_cached_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {

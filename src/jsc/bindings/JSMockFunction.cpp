@@ -2552,6 +2552,11 @@ __attribute__((minsize)) NEVER_INLINE JSString* objectPrototypeToStringOutOfLine
     return JSC::objectPrototypeToString(globalObject, value);
 }
 
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__objectPrototypeToString(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(objectPrototypeToStringOutOfLine(globalObject, JSValue::decode(value)));
+}
+
 AutomockKind Automocker::kindOf(JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

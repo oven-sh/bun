@@ -168,6 +168,14 @@ export function editCssArray(array: string[]) {
   }
 }
 
+/** True if a stylesheet of the route has no content on this page. The page gets it when it loads again. */
+export function lacksStylesheet(): boolean {
+  for (const css of cssStore.values()) {
+    if (css.active && !css.sheet && !css.link) return true;
+  }
+  return false;
+}
+
 export function editCssContent(id: string, newContent: string) {
   let entry = cssStore.get(id);
   if (!entry) return;

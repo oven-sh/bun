@@ -801,12 +801,11 @@ where
         changed_files: &[ChangedFilePath],
         watchlist: &bun_watcher::WatchList,
     ) {
-        let slice = watchlist.slice();
-        let file_paths = slice.items_file_path();
-        let kinds = slice.items_kind();
-        let hashes = slice.items_hash();
-        let parents = slice.items_parent_hash();
-        let file_descriptors = slice.items_fd();
+        let file_paths = watchlist.items_file_path();
+        let kinds = watchlist.items_kind();
+        let hashes = watchlist.items_hash();
+        let parents = watchlist.items_parent_hash();
+        let file_descriptors = watchlist.items_fd();
         // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
         // `self` can be reborrowed inside the loop body for tombstone access,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`

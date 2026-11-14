@@ -176,6 +176,8 @@ pub(super) fn lower_inner<'h>(
         if is_rest {
             // Create a temporary place for the spread param
             let place = build_temporary_place(&mut builder, param_loc);
+            // Not in upstream (facebook/react#38087): PromoteUsedTemporaries never sees a function that OutlineFunctions moved.
+            promote_temporary(&mut builder, place.identifier);
             hir_params.push(ParamPattern::Spread(SpreadPattern {
                 place: place.clone(),
             }));

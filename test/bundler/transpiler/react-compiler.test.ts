@@ -4356,6 +4356,158 @@ describe("bundler", () => {
     },
   });
 
+  // A function without a name that reads nothing of its component is moved to module level, and PromoteUsedTemporaries
+  // never sees it there. That pass gave the temporary of a rest parameter its name, so codegen found a parameter without
+  // one and left the whole component as written: "Expected temporaries to be promoted to named identifiers in an earlier
+  // pass". babel-plugin-react-compiler 1.0.0 compiles Named, NamedInAHook, DeclaredInABlock and ReadsAConstant, because
+  // only Bun's parser takes the name away or folds the constant before the compiler runs. It leaves the other eight that
+  // have no prop as written (its fixture error.bug-invariant-unnamed-temporary).
+  const restParameterOutput = `
+    Arrow memoized [1,2]
+    DeclaredInABlock memoized 3
+    InAnAttribute memoized 3
+    Method memoized 3
+    Named memoized 3
+    NamedInAHook memoized 3
+    Nested memoized 3
+    ReadsAConstant memoized 10
+    ReadsAProp memoized [1,2,4]
+    RestIsAssigned memoized [2,3]
+    RestIsCaptured memoized 3
+    RestIsNotRead memoized 1
+    RestPattern memoized 3
+  `;
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/RestParameterOfAFunctionMovedToModuleLevel-${target}-syntax=${minifySyntax}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import { render } from "react";
+            import * as components from "./components";
+            const lines = [];
+            for (const [name, Component] of Object.entries(components)) {
+              const props = { on: true, n: 4 };
+              const first = render(Component, props);
+              // The second render has the same props, so a compiled component returns what is in its memo cache.
+              const memoized = render(Component, props) === first;
+              let { v } = first.props;
+              if (typeof v === "function") v = v(1, 2, 3);
+              lines.push(name + (memoized ? " memoized " : " not memoized ") + JSON.stringify(v));
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/components.jsx": /* jsx */ `
+            import { useCallback } from "react";
+
+            export function Arrow() {
+              const g = (first, ...rest) => [first, rest.length];
+              return <b v={g(1, 2, 3)} />;
+            }
+            export function RestIsNotRead() {
+              const g = (first, ...rest) => first;
+              return <b v={g(1, 2, 3)} />;
+            }
+            export function RestPattern() {
+              const g = (...[first, second]) => first + second;
+              return <b v={g(1, 2, 3)} />;
+            }
+            export function InAnAttribute() {
+              return <b v={(...rest) => rest.length} />;
+            }
+            export function RestIsAssigned() {
+              const g = (...rest) => {
+                rest = rest.slice(1);
+                return rest;
+              };
+              return <b v={g(1, 2, 3)} />;
+            }
+            export function RestIsCaptured() {
+              const g = (...rest) => () => rest.length;
+              return <b v={g(1, 2, 3)()} />;
+            }
+            // Inside a function that is moved out.
+            export function Nested() {
+              const g = first => (...rest) => first + rest.length;
+              return <b v={g(1)(2, 3)} />;
+            }
+            export function Method() {
+              const g = () => ({
+                count(...rest) {
+                  return rest.length;
+                },
+              });
+              return <b v={g().count(1, 2, 3)} />;
+            }
+            // minify.syntax drops a name that nothing reads.
+            export function Named() {
+              const g = function named(...rest) {
+                return rest.length;
+              };
+              return <b v={g(1, 2, 3)} />;
+            }
+            export function NamedInAHook() {
+              const g = useCallback(function named(...rest) {
+                return rest.length;
+              }, []);
+              return <b v={g(1, 2, 3)} />;
+            }
+            // The parser makes this a \`let\` that holds a function without a name.
+            export function DeclaredInABlock({ on }) {
+              if (on) {
+                function h(...rest) {
+                  return rest.length;
+                }
+                return <b v={h(1, 2, 3)} />;
+              }
+              return <b v={null} />;
+            }
+            // The parser folds the only thing that the function reads of its component.
+            export function ReadsAConstant() {
+              const fallback = null ?? 7;
+              const g = (...rest) => rest.length + fallback;
+              return <b v={g(1, 2, 3)} />;
+            }
+            // Stays in its component. This one was compiled before.
+            export function ReadsAProp({ n }) {
+              const g = (first, ...rest) => [first, rest.length, n];
+              return <b v={g(1, 2, 3)} />;
+            }
+          `,
+          // One memo cache per component, kept between renders, as a fiber keeps it.
+          "/node_modules/react/index.js": /* js */ `
+            const fibers = new Map();
+            let current;
+            exports.render = (Component, props) => {
+              current = fibers.get(Component);
+              if (!current) fibers.set(Component, (current = { cache: null }));
+              return Component(props);
+            };
+            exports.memoCache = size =>
+              (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+            exports.useCallback = fn => fn;
+          `,
+          "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifySyntax,
+        onAfterBundle(api) {
+          // A compiled function has a temporary for its rest parameter: `(...t0) => { let rest = t0; }`.
+          expect(api.readFile("/out.js").match(/\.\.\.(rest|\[)/g) ?? []).toEqual([]);
+        },
+        // The ssr output has no memo cache.
+        run: {
+          stdout:
+            target === "bun" ? restParameterOutput.replaceAll(" memoized ", " not memoized ") : restParameterOutput,
+        },
+      });
+    }
+  }
+
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
   // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
   // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.

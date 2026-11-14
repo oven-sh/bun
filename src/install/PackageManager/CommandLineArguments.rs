@@ -1070,7 +1070,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
   <b><green>bun patch --commit 'node_modules/jquery'<r>
 
   <d>Generate a patch file in a custom directory for changes made to jquery<r>
-  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
+  <b><green>bun patch --commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 ",

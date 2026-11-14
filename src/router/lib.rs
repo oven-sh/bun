@@ -545,10 +545,10 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
+        // Snapshot the cached `DirEntry`'s entries under `entries_mutex`:
         // another thread (e.g. the bundler's resolver) rewrites this map in place
         // under that lock, so iterating it live would walk freed buckets.
-        let entry_ptrs: Vec<*mut Fs::Entry> = {
+        let entries: Vec<&Fs::Entry> = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
             match root_dir_info.get_entries_const() {
                 Some(entries) => entries.data.values().copied().collect(),
@@ -557,9 +557,7 @@ impl<'a> RouteLoader<'a> {
         };
         // NOTE: the guard is dropped before this loop on purpose — the
         // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
-        'outer: for entry_ptr in entry_ptrs {
-            // SAFETY: EntryStore-owned, valid for process lifetime.
-            let entry: &Fs::Entry = unsafe { &*entry_ptr };
+        'outer: for entry in entries {
             if entry.base()[0] == b'.' {
                 continue 'outer;
             }

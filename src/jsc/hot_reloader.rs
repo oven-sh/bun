@@ -1103,16 +1103,13 @@ where
                                     let abs_path: &[u8] = 'brk: {
                                         // Probe `.data` under `entries_mutex`; a
                                         // resolver at a newer generation rewrites
-                                        // the map in place under that lock. The
-                                        // entry pointer stays valid after unlock
-                                        // (EntryStore-owned).
+                                        // the map in place under that lock.
                                         let looked_up = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();
                                             dir_ent.get(changed_name)
                                         };
-                                        if let Some(file_ent) = looked_up {
+                                        if let Some(ent) = looked_up {
                                             // reset the file descriptor
-                                            let ent = file_ent.entry();
                                             {
                                                 // Every cached-`Entry` rewrite takes
                                                 // the per-entry mutex.

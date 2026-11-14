@@ -5254,7 +5254,7 @@ maybe(() => { return f; });
       });
 
       // The next tests lint the projects in oracle/plugins/oxlint. expected.json is what oxlint 1.87.0 with tsgolint
-      // 7.0.2003 reports for them.
+      // 7.0.2003 reports for them. The header of compare.ts names the projects recorded with a later oxlint.
       const found = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, Set<string>] => [it, new Set()]));
         for (const it of JSON.parse(raw).diagnostics) {

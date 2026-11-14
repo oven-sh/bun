@@ -12,7 +12,12 @@ export interface Project {
   typed?: boolean;
   /** Directory symlinks, as link path -> target. Both are relative to the project's directory. */
   links?: Record<string, string>;
+  /** The version of oxlint the project is recorded with, if not `OXLINT_VERSION`. */
+  oxlint?: string;
 }
+
+/** The version of oxlint that `bun lint` follows with an oxlint config, and that the recordings are made with. */
+export const OXLINT_VERSION = "1.87.0";
 
 type Label = { label?: string; span: { line: number; column: number; length: number } };
 
@@ -2332,8 +2337,9 @@ const hand: Project[] = [
   },
   {
     name: "no-control-regex/place",
-    about: "the first of the characters as they are written; a tab is none",
+    about: "the first of the characters as they are written, or the character itself (oxlint 1.91)",
     config: rules([], { "no-control-regex": "error" }),
+    oxlint: "1.92.0",
     files: {
       "a.js": lines(
         String.raw`a = /b\x1bc\x1f/;`,
@@ -2344,13 +2350,29 @@ const hand: Project[] = [
         `a = new RegExp("\t");`,
         String.raw`a = /[\x00-\x1f]/;`,
         String.raw`a = /\u{1b}/u;`,
+        `a = /a\bb/;`,
+        `a = /\x00/;`,
+        `a = /[\b]/u;`,
+        `a = /\\\b/;`,
+        `a = new RegExp("a\bb");`,
+        `a = RegExp("\x00");`,
+        `a = /(a)(b)\x02/;`,
+        `a = new RegExp("(a)(b)\x02");`,
+        `a = new RegExp("\\n\x1f\bb");`,
+        `a = new RegExp("\u{1F600}\bb");`,
+        `a = / /;`,
+        String.raw`a = /(a)(b)[\2]/;`,
+        String.raw`a = new RegExp("(a)(b)[\\2]");`,
       ),
+      // A line break in a template: only the LF is the character itself.
+      "b.js": "a = new RegExp(`a\nb`);\na = new RegExp(`a\r\nb`);\na = new RegExp(`a\rb`);\n",
     },
   },
   {
     name: "no-control-regex/written",
     about: "how a character is written counts, in a string too; an octal escape whose first digit is the value",
     config: rules([], { "no-control-regex": "error" }),
+    oxlint: "1.92.0",
     files: {
       "a.ts": lines(
         String.raw`/\1/;`,
@@ -2379,13 +2401,11 @@ const hand: Project[] = [
         String.raw`new RegExp('\\u{1f}');`,
         String.raw`new RegExp('\0');`,
         String.raw`new RegExp('\\0');`,
-        String.raw`new RegExp('\00');`,
         String.raw`new RegExp('\\00');`,
         String.raw`new RegExp('\1');`,
         String.raw`new RegExp('\\1');`,
         String.raw`new RegExp('\\2(a)');`,
         String.raw`new RegExp('\12');`,
-        String.raw`new RegExp('\01');`,
         String.raw`new RegExp('\\08');`,
         String.raw`new RegExp('\\cL');`,
         String.raw`new RegExp('[\\1]');`,
@@ -2395,6 +2415,18 @@ const hand: Project[] = [
         "new RegExp(`a${b}\\x1f`);",
         "new RegExp(String.raw`\\x1f`);",
         "new RegExp('😀\\x1f');",
+      ),
+    },
+  },
+  {
+    name: "no-control-regex/string-reader",
+    about:
+      "how oxlint 1.87 reads a string: `\\0` and a digit, and a line continuation. oxlint 1.92 reads both differently",
+    config: rules([], { "no-control-regex": "error" }),
+    files: {
+      "a.ts": lines(
+        String.raw`new RegExp('\00');`,
+        String.raw`new RegExp('\01');`,
         "new RegExp('a\\",
         String.raw`\x1f');`,
       ),
@@ -2404,6 +2436,7 @@ const hand: Project[] = [
     name: "no-control-regex/calls",
     about: "run_on_regex_node: which calls, which arguments, which flags",
     config: rules([], { "no-control-regex": "error" }),
+    oxlint: "1.92.0",
     files: {
       "a.ts": lines(
         String.raw`RegExp('\x1f');`,

@@ -12,13 +12,23 @@ impl TimeoutObject {
     pub(crate) fn init(
         cx: &bun_jsc::JsThread<'_>,
         id: u64,
+        async_hooks_id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
         clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, kind, interval, callback, arguments, clock)
+        Self::init_with(
+            cx,
+            id,
+            async_hooks_id,
+            kind,
+            interval,
+            callback,
+            arguments,
+            clock,
+        )
     }
 
     pub(crate) fn refresh(

@@ -10,11 +10,21 @@ impl ImmediateObject {
     pub(crate) fn init(
         cx: &bun_jsc::JsThread<'_>,
         id: u64,
+        async_hooks_id: u64,
         callback: JSValue,
         arguments: JSValue,
         clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments, clock)
+        Self::init_with(
+            cx,
+            id,
+            async_hooks_id,
+            Kind::SetImmediate,
+            0,
+            callback,
+            arguments,
+            clock,
+        )
     }
 
     /// Thin forwarder to

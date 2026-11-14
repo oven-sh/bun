@@ -1029,6 +1029,8 @@ When you provide a string for the `naming` field, Bun uses it only for bundles t
   </Tab>
 </Tabs>
 
+Every entry point, chunk, and copied asset needs its own output path. If a template gives two of them the same path, the build fails with `Multiple files share the same output path` and writes nothing. For example, `asset: '[name].[ext]'` gives `a/logo.png` and `b/logo.png` the path `logo.png`. Add `[dir]` or `[hash]` to the template to keep the two files apart. Two copied assets with identical contents can share a path.
+
 ### root
 
 The root directory of the project.

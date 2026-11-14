@@ -179,7 +179,8 @@ impl SideEffects {
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
                 if ternary.yes.is_empty() {
-                    return Some(Expr::join_with_left_associative_op(
+                    return Some(Self::join_unused_test_with_branch(
+                        p,
                         Op::Code::BinLogicalOr,
                         ternary.test,
                         ternary.no,
@@ -188,7 +189,8 @@ impl SideEffects {
 
                 // "foo() ? bar() : 2" => "foo() && bar()"
                 if ternary.no.is_empty() {
-                    return Some(Expr::join_with_left_associative_op(
+                    return Some(Self::join_unused_test_with_branch(
+                        p,
                         Op::Code::BinLogicalAnd,
                         ternary.test,
                         ternary.yes,
@@ -492,6 +494,25 @@ impl SideEffects {
         } else {
             Some(result)
         }
+    }
+
+    /// "(a(), 0, b) ? c() : 1" => "a(), b && c()"
+    fn join_unused_test_with_branch<'a, const TS: bool, const SCAN: bool>(
+        p: &mut P<'a, TS, SCAN>,
+        op: Op::Code,
+        mut test: Expr,
+        branch: Expr,
+    ) -> Expr {
+        let mut hoisted = test.to_empty();
+        while let ExprData::EBinary(comma) = test.data
+            && comma.op == Op::Code::BinComma
+        {
+            if let Some(left) = Self::simplify_unused_expr(p, comma.left) {
+                hoisted = hoisted.join_with_comma(left);
+            }
+            test = comma.right;
+        }
+        hoisted.join_with_comma(Expr::join_with_left_associative_op(op, test, branch))
     }
 
     ///

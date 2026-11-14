@@ -6463,6 +6463,13 @@ impl VirtualMachine {
                     write_msg!(build_error.msg, writer, allow_ansi_color);
                     build_error.logged.set(true);
                     let _ = writer.write_all(b"\n");
+                    if allow_side_effects {
+                        Self::print_github_annotation_for_msg(
+                            writer,
+                            "BuildMessage",
+                            &build_error.msg,
+                        );
+                    }
                 }
                 self.had_errors
                     .set(self.had_errors.get() || build_error.msg.kind == bun_ast::Kind::Err);
@@ -6483,6 +6490,13 @@ impl VirtualMachine {
                     write_msg!(resolve_error.msg, writer, allow_ansi_color);
                     resolve_error.logged.set(true);
                     let _ = writer.write_all(b"\n");
+                    if allow_side_effects {
+                        Self::print_github_annotation_for_msg(
+                            writer,
+                            "ResolveMessage",
+                            &resolve_error.msg,
+                        );
+                    }
                 }
                 self.had_errors
                     .set(self.had_errors.get() || resolve_error.msg.kind == bun_ast::Kind::Err);
@@ -7716,6 +7730,66 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// The directory that `file=` of a GitHub Actions annotation is relative to.
+    fn github_annotation_dir() -> &'static [u8] {
+        bun_core::env_var::GITHUB_WORKSPACE::get()
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir())
+    }
+
+    /// Starts a GitHub Actions `::error` command, up to `title=`. A line or a column below 1 is unknown and is left out.
+    #[inline]
+    fn write_github_annotation_head(
+        writer: &mut bun_core::io::Writer,
+        dir: &[u8],
+        location: Option<(&[u8], i32, i32)>,
+    ) {
+        let Some((file, line, column)) = location else {
+            let _ = writer.write_all(b"\n::error title=");
+            return;
+        };
+        let file = crate::ZigStackFrame::relative_source_url(dir, file);
+        let _ = write!(
+            writer,
+            "\n::error file={}",
+            bun_core::fmt::github_action_property(file)
+        );
+        if line > 0 {
+            let _ = write!(writer, ",line={line}");
+            if column > 0 {
+                let _ = write!(writer, ",col={column}");
+            }
+        }
+        let _ = writer.write_all(b",title=");
+    }
+
+    /// Writes the `::error` line of a `BuildMessage` or `ResolveMessage` that `bun test` reports, after its text.
+    #[cold]
+    #[inline(never)]
+    fn print_github_annotation_for_msg(
+        writer: &mut bun_core::io::Writer,
+        class_name: &'static str,
+        msg: &bun_ast::Msg,
+    ) {
+        let is_bun_test_in_github_actions =
+            bun_core::Output::IS_GITHUB_ACTION.load(core::sync::atomic::Ordering::Relaxed);
+        if !is_bun_test_in_github_actions || msg.kind != bun_ast::Kind::Err {
+            return;
+        }
+        let location = msg
+            .data
+            .location
+            .as_ref()
+            .filter(|location| !location.file.is_empty())
+            .map(|location| (&*location.file, location.line, location.column));
+        Self::write_github_annotation_head(writer, Self::github_annotation_dir(), location);
+        // GitHub makes no annotation from a command without data, so the text is the data and the title is the class.
+        let _ = writeln!(
+            writer,
+            "{class_name}::{}",
+            bun_core::fmt::github_action(&msg.data.text)
+        );
+    }
+
     /// Emits a GitHub Actions `::error` annotation for the exception when running in CI.
     #[cold]
     #[inline(never)]
@@ -7725,30 +7799,24 @@ impl VirtualMachine {
         let message = &exception.message;
         let frames = exception.stack.frames();
         let top_frame = frames.first();
-        let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
+        let dir = Self::github_annotation_dir();
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();
 
-        let mut has_location = false;
-        if let Some(frame) = top_frame {
-            if !frame.position.is_invalid() {
-                let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
-                let _ = write!(
-                    writer,
-                    "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
-                    frame.position.line.one_based(),
-                    frame.position.column.one_based(),
-                );
-                has_location = true;
-            }
-        }
-        if !has_location {
-            let _ = writer.write_all(b"\n::error title=");
-        }
+        let located_frame = top_frame.filter(|frame| !frame.position.is_invalid());
+        let source_url = located_frame.map(|frame| frame.source_url.to_utf8());
+        let location = located_frame
+            .zip(source_url.as_ref())
+            .map(|(frame, source_url)| {
+                let position = frame.position;
+                (
+                    source_url.slice(),
+                    position.line.one_based(),
+                    position.column.one_based(),
+                )
+            });
+        Self::write_github_annotation_head(writer, dir, location);
 
         if name.is_empty() || name.eq_ascii(b"Error") {
             let _ = writer.write_all(b"error");

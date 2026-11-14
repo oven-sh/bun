@@ -385,7 +385,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Owned by this
     /// struct so the `K=V\0` buffers stay alive across every async
-    /// `spawn_next_script` for the script chain; freed by `Drop`.
+    /// `spawn_next_script` for the script chain; freed with it.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
     pub(crate) shell_bin: Option<&'a ZStr>,
 
@@ -995,9 +995,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         debug_assert!(self.remaining_fds == 0);
 
         self.process = None;
-
-        self.stdout.deinit();
-        self.stderr.deinit();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
     }
@@ -1152,10 +1149,4 @@ bun_io::impl_buffered_reader_parent! {
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
         &(*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();
-}
-
-impl Drop for LifecycleScriptSubprocess<'_> {
-    fn drop(&mut self) {
-        self.reset_polls();
-    }
 }

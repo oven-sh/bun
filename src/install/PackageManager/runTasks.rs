@@ -589,13 +589,9 @@ fn run_tasks_erased(
             let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
             let pkg_id = installer.store.nodes.items_pkg_id()[node_id.get() as usize];
             let optional = !manager.is_package_required(dep_id, pkg_id);
-            let list = installer.store.entries.items_scripts()[entry_id.get() as usize]
-                .get()
-                .expect("a queued entry has a scripts list");
-            // SAFETY: `list` is the per-entry scripts slot owned by
-            // `store.entries.items_scripts()[entry_id]`; this Task is
-            // its sole consumer (see Installer.rs Result::RunScripts).
-            let list_val = unsafe { (*list).clone() };
+            let list_val = (installer.tasks[entry_id.get() as usize].scripts.as_deref())
+                .expect("a queued entry has a scripts list")
+                .clone();
             // reborrow instead of moving the field out of `*installer`
             let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
             // `installer.manager == manager`, so this is called through the reborrow of

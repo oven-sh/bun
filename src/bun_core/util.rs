@@ -3474,33 +3474,69 @@ pub mod base64 {
     }
 }
 
-// ── dupe_z / free_sensitive ───────────────────────────────────────────────
-/// `bun.default_allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated
-/// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
-/// stores C-strings. Caller frees via [`free_sensitive`].
-///
-/// Allocated via the default allocator (`bun_alloc::default_alloc` —
-/// mimalloc, or `std::alloc::System` under `cfg(bun_asan)`), so the
-/// allocation is visible to ASAN's interceptor and LeakSanitizer like every
-/// other heap allocation. Pairs with [`free_sensitive`], which frees through
-/// the same `default_alloc::free`.
-pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    let p = bun_alloc::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
-    if p.is_null() {
-        crate::out_of_memory();
+/// A C string that is zeroed before it is freed. A slice of them is a `char **`.
+#[repr(transparent)]
+pub struct SensitiveCString(core::ptr::NonNull<core::ffi::c_char>);
+
+// SAFETY: it is the only owner of the allocation.
+unsafe impl Send for SensitiveCString {}
+// SAFETY: `&self` only reads.
+unsafe impl Sync for SensitiveCString {}
+
+impl SensitiveCString {
+    /// The string ends at the first NUL in `bytes`.
+    pub fn new(bytes: &[u8]) -> Self {
+        let bytes = crate::slice_to_nul(bytes);
+        let Some(p) = core::ptr::NonNull::new(bun_alloc::default_alloc::malloc(bytes.len() + 1))
+        else {
+            crate::out_of_memory();
+        };
+        let p = p.cast::<u8>();
+        // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), bytes.len());
+            p.add(bytes.len()).write(0);
+        }
+        Self(p.cast())
     }
-    // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-        *p.add(bytes.len()) = 0;
+
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr()
     }
-    p.cast_const().cast::<core::ffi::c_char>()
+
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        // SAFETY: `new` has terminated it, and it lives until `drop`.
+        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_cstr().to_bytes()
+    }
 }
 
-/// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
-/// case used by http SSLConfig — re-exported from `bun_alloc` so the
-/// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
-pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+impl Clone for SensitiveCString {
+    fn clone(&self) -> Self {
+        Self::new(self.as_bytes())
+    }
+}
+
+impl PartialEq for SensitiveCString {
+    fn eq(&self, other: &Self) -> bool {
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes(), true)
+    }
+}
+
+impl Drop for SensitiveCString {
+    fn drop(&mut self) {
+        let len = self.as_bytes().len();
+        // SAFETY: `new` got the allocation from `default_alloc`, whose `free` needs no size.
+        unsafe {
+            secure_zero(core::slice::from_raw_parts_mut(self.0.as_ptr().cast(), len));
+            bun_alloc::default_alloc::free(self.0.as_ptr().cast());
+        }
+    }
+}
+
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
 

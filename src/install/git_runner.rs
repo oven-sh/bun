@@ -23,7 +23,7 @@ use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
-use crate::cache_publish::StagedEntry;
+use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager_task::{self as Task, Job};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -131,9 +131,7 @@ impl Finalize {
                 finish_checkout(request, log, staging, &tree).map(|read| *data = Some(read))
             }
             (Finalize::Failed { staging, err }, _) => {
-                if let Some(staging) = staging {
-                    staging.discard();
-                }
+                drop(staging);
                 Err(err)
             }
             _ => unreachable!("the finalize step is for another kind of task"),
@@ -155,13 +153,7 @@ fn finish_checkout(
 ) -> Result<ExtractData, Error> {
     let (name, resolved) = (req.name.slice(), req.resolved.slice());
 
-    let dir = match bun_sys::Dir::borrow(&staging.cache_dir).open_at(&staging.tmp_name) {
-        Ok(dir) => dir,
-        Err(err) => {
-            staging.discard();
-            return Err(err.into());
-        }
-    };
+    let dir = bun_sys::Dir::borrow(&staging.entry.parent()).open_at(staging.entry.name())?;
     let _ = dir.delete_tree(b".git");
     // `.bun-tag` is the cache-hit marker; a checked-in one is replaced.
     let _ = dir.delete_tree(b".bun-tag");
@@ -188,7 +180,6 @@ fn finish_checkout(
     // Windows cannot rename a directory with an open handle inside it.
     drop(dir);
     if let Err((what, err)) = prepared {
-        staging.discard();
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -504,9 +495,8 @@ fn checkout_folder_name(resolved: &[u8]) -> Vec<u8> {
 
 /// A cache folder, built under a temporary name and renamed once complete.
 pub(crate) struct CacheStaging {
-    cache_dir: Fd,
-    tmp_name: Vec<u8>,
-    /// `<cache dir>/<tmp_name>`
+    entry: UnfinishedEntry,
+    /// `<cache dir>/<name of the entry>`
     tmp_path: Vec<u8>,
 }
 
@@ -515,26 +505,20 @@ impl CacheStaging {
         let mut tmp_name_buf = [0u8; 64];
         let tmp_name =
             Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?
-                .to_vec();
+                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         let tmp_path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
             cache_dir_path,
-            &[&tmp_name],
+            &[tmp_name],
         )
         .to_vec();
         Ok(Self {
-            cache_dir,
-            tmp_name,
+            entry: UnfinishedEntry::new(cache_dir, tmp_name),
             tmp_path,
         })
     }
 
     fn create(&self) -> bun_sys::Maybe<()> {
-        bun_sys::Dir::borrow(&self.cache_dir).make_path(&self.tmp_name)
-    }
-
-    fn discard(&self) {
-        let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
+        bun_sys::Dir::borrow(&self.entry.parent()).make_path(self.entry.name())
     }
 
     /// Opens `folder_name`, which is either the staging folder renamed into place, or a folder that
@@ -546,12 +530,10 @@ impl CacheStaging {
         folder_name: &[u8],
         is_complete: &dyn Fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
-        StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
-            .publish_and_open(
-                self.cache_dir,
-                &bun_core::ZBox::from_bytes(folder_name),
-                is_complete,
-            )
+        let cache_dir = self.entry.parent();
+        let folder_name = bun_core::ZBox::from_bytes(folder_name);
+        self.entry
+            .finish(|staged| staged.publish_and_open(cache_dir, &folder_name, is_complete))
             .map_err(|err| {
                 log.add_error_fmt(
                     None,
@@ -789,8 +771,6 @@ pub(crate) struct GitSubprocess {
     urls: JsCell<Vec<Vec<u8>>>,
     /// Every URL tried so far, each with git's stderr. Printed only after the last URL has failed.
     clone_output: JsCell<Vec<u8>>,
-    /// Moves into the task's `Finalize`; `Drop` discards it otherwise.
-    staging: JsCell<Option<CacheStaging>>,
     read_error: JsCell<Option<bun_sys::Error>>,
 
     process: JsCell<Option<ProcessHandle>>,
@@ -798,6 +778,8 @@ pub(crate) struct GitSubprocess {
     stdout: JsCell<BufferedReader>,
     stderr: JsCell<BufferedReader>,
     remaining_fds: Cell<i8>,
+    /// Moves into the task's `Finalize`.
+    staging: JsCell<Option<CacheStaging>>,
 }
 
 impl GitSubprocess {
@@ -1315,8 +1297,6 @@ impl GitSubprocess {
     fn reset_polls(&self) {
         debug_assert!(self.remaining_fds.get() == 0);
         self.process.set(None);
-        self.stdout.with_mut(|r| r.deinit());
-        self.stderr.with_mut(|r| r.deinit());
         self.stdout.set(BufferedReader::init::<Self>());
         self.stderr.set(BufferedReader::init::<Self>());
     }
@@ -1438,10 +1418,7 @@ impl GitSubprocess {
                 if !this.urls.get().is_empty() {
                     // Try the next URL form (ssh after https), even after "not found": hosts also
                     // say that about a private repository that the login cannot access.
-                    this.staging
-                        .take()
-                        .expect("clone has a staging folder")
-                        .discard();
+                    this.staging.set(None);
                     this.reset_polls();
                     if let Err(err) = Self::spawn_clone(this, replaces) {
                         Self::fail(this, err);
@@ -1587,17 +1564,6 @@ impl GitSubprocess {
         manager.resolve_tasks.push(task_ptr);
         // SAFETY: the manager outlives every task; see `wake_raw`.
         unsafe { PackageManager::wake_raw(manager.as_ptr()) };
-    }
-}
-
-impl Drop for GitSubprocess {
-    fn drop(&mut self) {
-        self.process.set(None);
-        self.stdout.with_mut(|r| r.deinit());
-        self.stderr.with_mut(|r| r.deinit());
-        if let Some(staging) = self.staging.take() {
-            staging.discard();
-        }
     }
 }
 

@@ -1646,6 +1646,8 @@ impl FFI {
         let _js_object_guard = js_object.protected();
         // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
         let lib = unsafe { this_value.payload_ptr().as_ref() };
+        lib.dylib.set(Some(dylib));
+        let dylib = lib.dylib.get().as_ref().expect("just set");
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1659,7 +1661,6 @@ impl FFI {
                         BStr::new(function_name.as_bytes()),
                         BStr::new(name)
                     ));
-                    dylib.close();
                     lib.do_close();
                     return Ok(ret);
                 };
@@ -1669,7 +1670,6 @@ impl FFI {
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                dylib.close();
                 lib.do_close();
                 return Ok(err);
             }
@@ -1689,7 +1689,6 @@ impl FFI {
                                 BStr::new(name)
                             ))
                         });
-                        dylib.close();
                         lib.do_close();
                         return ret;
                     }
@@ -1697,14 +1696,12 @@ impl FFI {
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                dylib.close();
                 lib.do_close();
                 return Err(err);
             }
         }
 
         lib.functions.set(symbols);
-        lib.dylib.set(Some(dylib));
         js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
     }

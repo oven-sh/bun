@@ -192,7 +192,6 @@ pub struct VirtualMachine {
     pub main_entry_point: Cell<MainEntryPoint>,
     pub did_look_for_server: Cell<bool>,
     pub main_resolved_path: JsCell<bun_core::String>,
-    pub main_hash: Cell<u32>,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: JsCell<crate::strong::Optional>,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
@@ -1580,7 +1579,14 @@ impl VirtualMachine {
     /// `js_printer::SourceMapHandler` for `print_with_source_map`.
     #[inline]
     pub fn source_map_handler(&self) -> SourceMapHandlerGetter<'_> {
-        SourceMapHandlerGetter::new(&self.source_mappings, self.debugger.get())
+        SourceMapHandlerGetter::new(&self.source_mappings, self.wants_inline_source_map())
+    }
+
+    /// `.connect` (VSCode extension) clients do not read inline source maps.
+    pub(crate) fn wants_inline_source_map(&self) -> bool {
+        self.debugger
+            .get()
+            .is_some_and(|d| d.mode != crate::debugger::Mode::Connect)
     }
 
     #[inline]
@@ -3138,7 +3144,6 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(Cell::new(NonNull::new(log)));
             addr_of_mut!((*vm).main).write(JsCell::new(None));
-            addr_of_mut!((*vm).main_hash).write(Cell::new(0));
             addr_of_mut!((*vm).main_entry_point).write(Cell::new(MainEntryPoint::File));
             addr_of_mut!((*vm).main_resolved_path).write(JsCell::new(bun_core::String::EMPTY));
             addr_of_mut!((*vm).bake_config_plugin_names).write(JsCell::default());
@@ -3329,8 +3334,6 @@ impl VirtualMachine {
     #[inline]
     pub fn set_main(&self, path: Option<&[u8]>) {
         self.main.set(path.map(bun_ptr::RawSlice::new));
-        self.main_hash
-            .set(path.map_or(0, bun_watcher::Watcher::get_hash));
     }
 
     pub fn entry_point_is_commonjs(&self) -> bool {
@@ -3701,37 +3704,26 @@ pub fn process_fetch_log(
 // SourceMapHandlerGetter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Holds two fields of the VM so that `get()` can
+/// Lets `get()`
 /// return an erased `js_printer::SourceMapHandler` borrowing either the VM's
 /// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path).
 pub struct SourceMapHandlerGetter<'a> {
     source_mappings: &'a SavedSourceMap,
-    debugger: Option<&'a crate::debugger::Debugger>,
+    inline: bool,
 }
 
 impl<'a> SourceMapHandlerGetter<'a> {
-    /// Takes the fields, not the VM: the transpiler's worker threads print too.
+    /// Does not take the VM: the transpiler's worker threads print too.
     #[inline]
-    pub(crate) fn new(
-        source_mappings: &'a SavedSourceMap,
-        debugger: Option<&'a crate::debugger::Debugger>,
-    ) -> Self {
+    pub(crate) fn new(source_mappings: &'a SavedSourceMap, inline: bool) -> Self {
         Self {
             source_mappings,
-            debugger,
+            inline,
         }
     }
 
     pub fn get(&self) -> bun_js_printer::SourceMapHandler<'_> {
-        // Take the inline-sourcemap path only when a
-        // debugger is present AND it is *not* in `.connect` mode — `.connect`
-        // (VSCode-extension) clients fall through to the `source_mappings`
-        // fast-path handler.
-        let wants_inline_source_map = matches!(
-            self.debugger,
-            Some(d) if d.mode != crate::debugger::Mode::Connect
-        );
-        if !wants_inline_source_map {
+        if !self.inline {
             return self.source_mappings;
         }
         self

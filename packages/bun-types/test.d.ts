@@ -618,7 +618,10 @@ declare module "bun:test" {
       hookTimeout?: number | undefined;
       /** The number of concurrent tests that can run at the same time. */
       maxConcurrency?: number | undefined;
-      /** Call `vi.clearAllMocks()` before each test. This is the default for tests that use `test` from `"vitest"`. */
+      /**
+       * Call `vi.clearAllMocks()` before each test. This is the default for tests that use `test` from `"vitest"`,
+       * `test.for()` or a `test` that `test.extend()` returned.
+       */
       clearMocks?: boolean | undefined;
       /** Call `vi.resetAllMocks()` before each test. */
       mockReset?: boolean | undefined;
@@ -778,6 +781,12 @@ declare module "bun:test" {
     each<const T>(table: readonly T[]): Describe<[T]>;
     /**
      * Like `each()`, but an array row is passed as one argument instead of being spread.
+     *
+     * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when an
+     * object row has no `name`.
+     *
+     * @see https://bun.com/docs/test/writing-tests#vitest-title-format
      */
     for<const T>(table: readonly T[]): Describe<[row: T]>;
     for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
@@ -1194,12 +1203,22 @@ declare module "bun:test" {
      * Like `each()`, but an array row is passed as one argument instead of being spread,
      * and the second argument is the {@link TestContext}.
      *
+     * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when an
+     * object row has no `name`.
+     *
+     * A test from `for()` behaves like a test from `"vitest"`, also when `test` comes from `"bun:test"`.
+     * For example, mock functions are cleared before it, and `.not.not` still negates in it.
+     *
      * @example
      * ```ts
      * test.for([[1, 2, 3]])("%i + %i = %i", ([a, b, sum], { expect }) => {
      *   expect(a + b).toBe(sum);
      * });
      * ```
+     *
+     * @see https://bun.com/docs/test/writing-tests#vitest-title-format
+     * @see https://bun.com/docs/test/writing-tests#importing-from-vitest
      */
     for<const Row>(table: readonly Row[]): TestWithContext<object, [row: Row]>;
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<object, [row: any]>;
@@ -1208,6 +1227,12 @@ declare module "bun:test" {
      *
      * A fixture is set up for the tests that destructure it, and for the returned `test`'s
      * `beforeEach()` / `afterEach()` hooks that destructure it. It's torn down after the test.
+     *
+     * The tests and hooks of the returned `test` behave like the ones from `"vitest"`, also when `test` comes
+     * from `"bun:test"`. For example, mock functions are cleared before each of its tests, and `.not.not` still
+     * negates in them.
+     *
+     * @see https://bun.com/docs/test/writing-tests#importing-from-vitest
      *
      * @example
      * ```ts
@@ -1424,7 +1449,11 @@ declare module "bun:test" {
     failingIf(condition: boolean): TestWithContext<Context, Row>;
     concurrentIf(condition: boolean): TestWithContext<Context, Row>;
     serialIf(condition: boolean): TestWithContext<Context, Row>;
-    /** Each row is spread over the callback's parameters, so the callback doesn't receive the context. */
+    /**
+     * If every row is an array, the elements of a row are passed as separate arguments. Otherwise each row is
+     * passed as one argument. The callback doesn't receive the context.
+     * The title is formatted the way Vitest formats it, as for {@link Test.for}.
+     */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): TestOfRows<T>;
     each<T extends readonly unknown[]>(table: readonly T[]): TestOfRows<T>;
     each<const T>(table: readonly T[]): TestOfRows<[row: T]>;
@@ -1690,6 +1719,12 @@ declare module "bun:test" {
     /**
      * Returns `expect`'s state for the running test, plus anything passed to
      * {@link Expect.setState}. Every call returns the same object, kept up to date.
+     *
+     * When a test runs concurrently with other tests, `expect` can't tell which test called it.
+     * `currentTestName` is then `undefined`, and the three counters stay at `0`, `null` and `false`.
+     * The `expect` of the {@link TestContext} knows its test. A test receives that context if it comes from
+     * `"vitest"`, from `test.for()` or from a `test` that `test.extend()` returned, and isn't an `each()` test.
+     * Its `getState()` writes into the same object, so copy the values you need before the next `await`.
      */
     getState(): ExpectState & Record<string, unknown>;
 
@@ -1706,7 +1741,13 @@ declare module "bun:test" {
   export interface ExpectState {
     /** The number of assertions the current test has made. */
     assertionCalls: number;
-    /** The enclosing `describe` blocks' names and the current test's name, joined by a space. */
+    /**
+     * The enclosing `describe` blocks' names and the current test's name, joined by a space. In a test from
+     * `"vitest"`, from `test.for()` or from a `test` that `test.extend()` returned, ` > ` joins them.
+     *
+     * `undefined` outside a test. In a test that runs concurrently with other tests, it is `undefined`
+     * unless you read it through the `expect` of the {@link TestContext}.
+     */
     currentTestName?: string;
     /** The number passed to `expect.assertions()`, if it was called in the current test. */
     expectedAssertionsNumber: number | null;

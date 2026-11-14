@@ -346,7 +346,7 @@ unstubEnvs = true     # vi.unstubAllEnvs()
 unstubGlobals = true  # vi.unstubAllGlobals()
 ```
 
-They're all off by default, except that `clearMocks` is on for tests that use `test` from `"vitest"`, like in Vitest 5. Set `clearMocks = false` to turn that off. `vi.setConfig({ clearMocks: true })` changes an option for the rest of the test file.
+They're all off by default, except that `clearMocks` is on for tests that use `test` from `"vitest"`, like in Vitest 5. It's also on for a `test.for` test and for a test of an [extended](/test/writing-tests#fixtures) `test`, in every module. Set `clearMocks = false` to turn that off. `vi.setConfig({ clearMocks: true })` changes an option for the rest of the test file.
 
 ## Coverage Options
 

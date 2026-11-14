@@ -1920,8 +1920,17 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 RETURN_IF_EXCEPTION(scope, {});
                 ASSERT(prop1);
 
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(scope, {});
+                // An Error's own hidden line, column or sourceURL is JSC's source position, not the counterpart of a stored one.
+                JSValue prop2;
+                bool isHiddenPosition = false;
+                if (i1 == vm.propertyNames->line || i1 == vm.propertyNames->column || i1 == vm.propertyNames->sourceURL) {
+                    unsigned attributes;
+                    isHiddenPosition = isValidOffset(right->getDirectOffset(vm, propertyName1, attributes)) && (attributes & PropertyAttribute::DontEnum);
+                }
+                if (!isHiddenPosition) {
+                    prop2 = right->getIfPropertyExists(globalObject, propertyName1);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
 
                 if (!mode.isStrict) {
                     if (prop1.isUndefined() && prop2.isEmpty()) {

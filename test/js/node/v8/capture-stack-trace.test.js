@@ -2509,6 +2509,26 @@ test("a deep comparison sees the line assigned to an Error made without frames",
   ]);
 });
 
+test("a deep comparison does not take the hidden line of an Error for the counterpart of a stored line", () => {
+  // An Error that nobody wrote to has a line of its own that is not enumerable: the line on which it was made.
+  const untouched = new Error("m");
+  expect(typeof untouched.line).toBe("number");
+  const stored = line => {
+    const error = withoutFrames();
+    error.line = line;
+    return error;
+  };
+  // undefined on one side and nothing stored on the other
+  expect(stored(undefined)).toEqual(untouched);
+  expect(untouched).toEqual(stored(undefined));
+  expect(stored(undefined)).not.toStrictEqual(untouched);
+  // A stored line that happens to be the line on which the other Error was made
+  const coincidence = stored(untouched.line);
+  expect(coincidence).not.toEqual(untouched);
+  expect(untouched).not.toEqual(coincidence);
+  expect([Bun.deepEquals(coincidence, untouched), isDeepStrictEqual(coincidence, untouched)]).toEqual([false, false]);
+});
+
 test("store sites that run hot keep what they stored before and after the frames arrive", () => {
   function storeLine(error, value) {
     error.line = value;

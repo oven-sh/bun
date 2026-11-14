@@ -946,9 +946,8 @@ fn sentence_of_variables_never_read(names: &[&[u8]]) -> Option<String> {
 pub fn refuse_variables_that_are_never_read() {
     let names: Vec<&[u8]> = bun_sys::environ()
         .iter()
-        .filter_map(|&entry| {
-            // SAFETY: an entry of the environment ends with a NUL and lives as long as the process.
-            let entry = unsafe { core::ffi::CStr::from_ptr(entry) };
+        .filter_map(|entry| {
+            let entry = entry.to_cstr();
             let bytes = entry.to_bytes();
             let end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
             let name = &bytes[..end];

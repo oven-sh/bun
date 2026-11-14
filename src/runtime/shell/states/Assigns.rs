@@ -4,7 +4,7 @@
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::Expansion;
+use crate::shell::states::expansion::{Expansion, WordContext};
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
 
@@ -56,9 +56,9 @@ impl Assigns {
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
-            let (shell, node) = {
+            let (shell, node, ctx) = {
                 let me = interp.as_assigns(this);
-                (me.base.shell, me.node)
+                (me.base.shell, me.node, me.ctx)
             };
             let assigns = node.slice();
             match interp.as_assigns(this).state {
@@ -72,7 +72,11 @@ impl Assigns {
                         continue;
                     }
                     let atom = &assigns[idx as usize].value;
-                    let child = Expansion::init(interp, shell, atom, this, true);
+                    let word = match ctx {
+                        AssignCtx::Cmd => WordContext::EnvValue,
+                        AssignCtx::Shell => WordContext::ShellVarValue,
+                    };
+                    let child = Expansion::init(interp, shell, atom, this, word);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {

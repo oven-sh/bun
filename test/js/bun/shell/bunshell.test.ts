@@ -988,6 +988,71 @@ booga"
       .stdout(s => expect(s).toBeOneOf(["hihello hifriends\n", "hifriends hihello\n"]))
       .runAsTest("Trailing asterisk with matches, inline");
 
+    // The value of `NAME=value cmd` and of `export NAME=value` gets no
+    // pathname expansion (POSIX 2.9.1): the command gets the text.
+    describe("a value for the environment of a command is not a pattern", () => {
+      TestBuilder.command`DEBUG=* ${BUN} foo.js`
+        .ensureTempDir()
+        .file("foo.js", "console.log(process.env.DEBUG);")
+        .file("package.json", "{}")
+        .stdout("*\n")
+        .runAsTest("DEBUG=* bun foo.js sets DEBUG to * in foo.js");
+
+      const printValues =
+        "const { ONE, DEEP, SUBST } = process.env; console.log(JSON.stringify({ ONE, DEEP, SUBST }));";
+      TestBuilder.command`ONE=hi* DEEP=**/*.txt SUBST=*$(echo x) ${BUN} -e ${printValues}`
+        .ensureTempDir()
+        .file("hihello", "")
+        .directory("sub")
+        .file("sub/deep.txt", "")
+        .file("box", "")
+        .stdout(out => expect(JSON.parse(out)).toEqual({ ONE: "hi*", DEEP: "**/*.txt", SUBST: "*x" }))
+        .runAsTest("a value before a command that matches files stays text");
+
+      TestBuilder.command`export DEBUG=xss:* && ${BUN} -e ${"console.log(process.env.DEBUG)"}`
+        .ensureTempDir()
+        .stdout("xss:*\n")
+        .runAsTest("export DEBUG=xss:* sets DEBUG to xss:*");
+
+      // As one word, `FOO=hi*` is a pattern that matches the file `FOO=hix`.
+      TestBuilder.command`export FOO=hi* && echo "$FOO"`
+        .ensureTempDir()
+        .file("FOO=hix", "")
+        .stdout("hi*\n")
+        .runAsTest("an export operand is not matched against a file named like the whole word");
+
+      TestBuilder.command`export FOO={a,b}* && echo "$FOO"`
+        .ensureTempDir()
+        .file("a1", "")
+        .file("b1", "")
+        .stdout("b*\n")
+        .runAsTest("the * of an export operand with a brace group stays text");
+
+      TestBuilder.command`echo FOO=hi*`
+        .ensureTempDir()
+        .file("FOO=hix", "")
+        .stdout("FOO=hix\n")
+        .runAsTest("an argument that only looks like an assignment is still a pattern");
+
+      test("a package.json script that Bun Shell runs gives the command DEBUG=*", async () => {
+        using dir = tempDir("shell-assign-no-glob", {
+          "package.json": JSON.stringify({ scripts: { dev: `DEBUG=* "${BUN}" foo.js` } }),
+          "foo.js": "console.log(process.env.DEBUG);",
+        });
+        await using proc = Bun.spawn({
+          cmd: [BUN, "run", "--shell=bun", "--silent", "dev"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("*\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     TestBuilder.command`ls *.js`
       // Calling `ensureTempDir()` changes the cwd here
       .ensureTempDir()

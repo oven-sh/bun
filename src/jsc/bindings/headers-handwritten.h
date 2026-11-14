@@ -551,9 +551,3 @@ private:
 #else
 #define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
 #endif
-
-#if ASSERT_ENABLED
-#define ASSERT_PENDING_EXCEPTION(globalObject) EXCEPTION_ASSERT(!!DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).exception());
-#else
-#define ASSERT_PENDING_EXCEPTION(globalObject) void()
-#endif

@@ -3914,6 +3914,22 @@ impl TestCommand {
         std::ptr::from_mut(rejected)
     }
 
+    /// Uses the hook timeout. A leaked timer or server keeps the loop alive, so what never settles would block forever.
+    fn wait_within_hook_timeout(
+        vm: &VirtualMachine,
+        mut is_done: impl FnMut() -> bool,
+    ) -> Result<(), TopLevelWaitError> {
+        if is_done() {
+            return Ok(());
+        }
+        let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
+        let real_time = bun::TimespecMockMode::ForceRealTime;
+        let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
+        vm.event_loop_ref().wait_at_top_level(|| {
+            is_done() || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
+        })
+    }
+
     fn undo_module_mocks(
         vm: &VirtualMachine,
         global: &jsc::JSGlobalObject,
@@ -3946,15 +3962,8 @@ impl TestCommand {
             vm.event_loop_ref().tick();
         }
         // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
-        // Uses the hook timeout. A leaked timer or server keeps the loop alive, so a load that never settles would
-        // block here forever.
-        let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
-        let real_time = bun::TimespecMockMode::ForceRealTime;
-        let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
-        let waited = vm.event_loop_ref().wait_at_top_level(|| {
-            !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
-                || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
-        });
+        let waited =
+            Self::wait_within_hook_timeout(vm, || !bun_jsc::cpp::JSMock__hasModulesToEvict(global));
         if waited != Err(TopLevelWaitError::Stopped)
             && bun_jsc::cpp::JSMock__hasModulesToEvict(global)
         {
@@ -4123,6 +4132,8 @@ impl TestCommand {
                 let (result, promise_js) = (p.result(global.vm()), p.to_js());
                 vm.unhandled_rejection(global, result, promise_js);
             }
+            let runs_again = !failed_to_load && repeat_index + 1 < repeat_count;
+            let later_load_shares_registry = next_file_shares_registry || runs_again;
 
             'blk: {
                 // Check if bun_test is available and has tests to run
@@ -4203,6 +4214,14 @@ impl TestCommand {
                     }
                 }
 
+                // A test left an import() behind a mock factory that waits for the read of a module. The file stays open for the read,
+                // so the import settles with the file's mocks and stubs in place. A factory that waits for anything else is abandoned below.
+                if later_load_shares_registry {
+                    let _ = Self::wait_within_hook_timeout(vm, || {
+                        !bun_jsc::cpp::JSMock__isFactoryRunningBesideRead(global)
+                    });
+                }
+
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
@@ -4242,13 +4261,12 @@ impl TestCommand {
             if next_load_shares_global {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
-            let runs_again = !failed_to_load && repeat_index + 1 < repeat_count;
             Self::undo_module_mocks(
                 vm,
                 global,
                 file_path,
                 next_load_shares_global,
-                next_file_shares_registry || runs_again,
+                later_load_shares_registry,
                 runs_again,
             );
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.

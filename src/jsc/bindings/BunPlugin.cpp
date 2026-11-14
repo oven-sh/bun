@@ -7747,6 +7747,41 @@ extern "C" void JSMock__willRunTestFileAgain([[maybe_unused]] Zig::GlobalObject*
 #endif
 }
 
+// A mock factory is running while the loader reads a file. The read ends by itself, and the factory may wait for it: `await import()`.
+// A fetch that a factory, a virtual module or an onLoad() callback holds is no read: it may depend on the test's progress.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSMock__isFactoryRunningBesideRead(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.runningModuleMocks.isEmpty()) [[likely]]
+        return false;
+#if ENABLE(AOT)
+    // A compiled call of import() is held for its text for as long as `bun test` reads the file.
+    if (globalObject->vm().hasCompiledCode() && JSC::AOT::hasBatchedFetches(globalObject))
+        return true;
+#endif
+    auto isRead = [&](const String& key) {
+        // A factory holds the fetch of its module also after its mock has ended, as after vi.doUnmock().
+        if (plugins.runningModuleMocks.containsIf([&](auto& running) { return uncheckedDowncast<JSModuleMock>(running.mock.get())->specifier->tryGetValue().data == key; }))
+            return false;
+#if ENABLE(AOT)
+        if (plugins.fetchesBlockedOnFactories.contains(key)) [[unlikely]]
+            return false;
+#endif
+        if (plugins.hasVirtualModules() && plugins.virtualModules->contains(key) && !registeredModuleMock(globalObject, key))
+            return false;
+        return !isLoadedByPlugin(globalObject, key);
+    };
+    for (auto& [key, fetch] : plugins.loadRootFetches) {
+        if (uncheckedDowncast<JSC::JSPromise>(fetch.get())->status() == JSC::JSPromise::Status::Pending && isRead(key))
+            return true;
+    }
+    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
+        if (isBeingFetchedWithoutFactory(globalObject, entry.get()) && isRead(String(mapKey.first)))
+            return true;
+    }
+    return false;
+}
+
 // While this is true, the next test file would pick up this file's still-loading modules and the mocks they imported.
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSMock__hasModulesToEvict(Zig::GlobalObject* globalObject)
 {

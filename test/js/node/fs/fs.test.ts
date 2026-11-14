@@ -3140,10 +3140,26 @@ describe("writeFileSync", () => {
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
   it("write file with mode, issue #3740", () => {
-    const path = `${tmpdirSync()}/writeFileSyncWithMode.txt`;
+    using dir = tempDir("writeFileSyncWithMode", {});
+    const path = `${dir}/writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
-    expect(stat.mode).toBe(isWindows ? 33206 : 33188);
+    // open(2) masks the requested mode with the process umask (0o077 on
+    // Android/Termux). Derive the mask from a file that openSync creates with
+    // mode 0o666 in the same directory: process.umask() clears the mask for an
+    // instant and can race with concurrent tests that create files.
+    const plain = `${dir}/writeFileSyncDefaultMode.txt`;
+    closeSync(openSync(plain, "w", 0o666));
+    const umask = 0o666 & ~fs.statSync(plain).mode;
+    expect(stat.mode).toBe(isWindows ? 33206 : 33188 & ~umask);
+
+    if (!isWindows) {
+      // 0o644 masked by a 0o022 or 0o077 umask equals the 0o666 default masked
+      // the same way. A read-only mode still differs, so a dropped option fails.
+      const readOnly = `${dir}/writeFileSyncWithReadOnlyMode.txt`;
+      writeFileSync(readOnly, "bun", { mode: 0o444 });
+      expect(fs.statSync(readOnly).mode & 0o777).toBe(0o444 & ~umask);
+    }
   });
   it("returning Buffer works", () => {
     const buffer = new Buffer([

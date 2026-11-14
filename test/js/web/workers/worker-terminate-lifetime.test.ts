@@ -1305,3 +1305,32 @@ test(
   },
   timeout,
 );
+
+test.skipIf(!isASAN)(
+  "a worker's end frees the strings its FileSystemRouter interned",
+  async () => {
+    using dir = tempDir("worker-router-strings", {
+      "pages/index.js": "",
+      "main.js": `
+        const { Worker, isMainThread } = require("node:worker_threads");
+        if (isMainThread) new Worker(__filename).on("exit", () => console.log("ok"));
+        // leaksan.supp hides what module evaluation allocates.
+        else setImmediate(() => new Bun.FileSystemRouter({ dir: __dirname + "/pages", style: "nextjs" }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);

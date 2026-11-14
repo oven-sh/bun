@@ -18,6 +18,19 @@ impl<T> AliasableBox<T> {
     pub fn as_ptr(&self) -> *mut T {
         self.0.as_ptr()
     }
+
+    /// Valid until `self` is dropped.
+    pub fn as_non_null(&self) -> NonNull<T> {
+        self.0
+    }
+}
+
+impl<T> core::ops::Deref for AliasableBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: live until `self` is dropped.
+        unsafe { self.0.as_ref() }
+    }
 }
 
 impl<T> From<Box<T>> for AliasableBox<T> {

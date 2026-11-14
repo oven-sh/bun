@@ -2924,7 +2924,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             written,
                             input_specifier,
                             path.text,
-                            None,
                         )
                         .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;

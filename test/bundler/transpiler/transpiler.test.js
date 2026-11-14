@@ -3922,6 +3922,115 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
+    it("`in` in a function expression parameter default inside a for initializer", () => {
+      const result = (code, loader) => {
+        try {
+          return { printed: transpiler.transformSync(code, loader) };
+        } catch (e) {
+          return { error: (e.errors?.[0] ?? e).message };
+        }
+      };
+      const endsInit = 'Expected ")" but found ";"';
+
+      for (const loader of ["js", "ts"]) {
+        const exp = (code, out) => expect(result(code, loader)).toEqual({ printed: out });
+        const err = (code, message) => expect(result(code, loader)).toEqual({ error: message });
+
+        // Each initializer prints as it is written.
+        for (const init of [
+          // Every kind of function expression
+          "f = function(a = b in c) {}",
+          "f = function* (a = b in c) {}",
+          "f = async function(a = b in c) {}",
+          "f = async function* (a = b in c) {}",
+          "f = function g(a = b in c) {}",
+          // Every default of the list
+          "f = function(a, b = c in d, e) {}",
+          "f = function(a = b in c, d = e in f) {}",
+          "f = function([a] = b in c, { d } = e in f) {}",
+          // What a default holds
+          "f = function(a = b = c in d) {}",
+          "f = function(a = [b] in c) {}",
+          // Every way the initializer reaches the function expression
+          "let f = function(a = b in c) {}",
+          "const f = function(a = b in c) {}",
+          "let a = 1, f = function(b = c in d) {}",
+          "f = 1 + function(a = b in c) {}",
+          "f = -function(a = b in c) {}",
+          "f = a ? b : function(c = d in e) {}",
+          "f = () => function(a = b in c) {}",
+          "f = function(a = b in c) {}()",
+        ]) {
+          exp(`for (${init}; ; ) ;`, `for (${init};; )\n  ;\n`);
+        }
+
+        exp("for (var f = function (a = b in c) {}; ; ) ;", "for (f = function(a = b in c) {};; )\n  ;\nvar f;\n");
+        exp(
+          "for (f = function (a = b ? c : d in e) {}; ; ) ;",
+          "for (f = function(a = b ? c : (d in e)) {};; )\n  ;\n",
+        );
+        exp("for (f = function (a = () => b in c) {}; ; ) ;", "for (f = function(a = () => (b in c)) {};; )\n  ;\n");
+        exp(
+          "class K { #x; m() { for (f = function (a, b = #x in a) {}; ; ) ; } }",
+          "class K {\n  #x;\n  m() {\n    for (f = function(a, b = #x in a) {};; )\n      ;\n  }\n}\n",
+        );
+        exp(
+          "for (f = class extends function (a = b in c) {} {}; ; ) ;",
+          "for (f = class extends function(a = b in c) {} {\n};; )\n  ;\n",
+        );
+        exp(
+          "function* g() { for (f = yield function (a = b in c) {}; ; ) ; }",
+          "function* g() {\n  for (f = yield function(a = b in c) {};; )\n    ;\n}\n",
+        );
+        exp(
+          "async function g() { for (f = await function (a = b in c) {}; ; ) ; }",
+          "async function g() {\n  for (f = await function(a = b in c) {};; )\n    ;\n}\n",
+        );
+        exp(
+          "for (f = function () { for (g = function (a = b in c) {}; ; ) ; }; ; ) ;",
+          "for (f = function() {\n  for (g = function(a = b in c) {};; )\n    ;\n};; )\n  ;\n",
+        );
+        // `in` does not make the object literal before it a for-in pattern
+        err("for (f = function (a = {b = 1} in c) {}; ; ) ;", 'Unexpected "="');
+
+        // After the function expression `in` ends the initializer again
+        exp(
+          "for (var f = function (a = b in c) {} in d) ;",
+          "f = function(a = b in c) {};\nfor (f in d)\n  ;\nvar f;\n",
+        );
+        err("for (var f = function (a = b in c) {} of d) ;", "for-of loop variables cannot have an initializer");
+        err("for (var f = function (a = b in c) {}, x = d in e; ; ) ;", "for-in loops must have a single declaration");
+        err("for (f = function (a = b in c) {} in d; ; ) ;", endsInit);
+        err("for (f = function (a = b in c) {}, g = d in e; ; ) ;", endsInit);
+
+        // Everywhere else in the initializer `in` still ends it
+        err("for (var x = a in b; ; ) ;", endsInit);
+        err("for (x = a in b; ; ) ;", endsInit);
+        err("for (x = 1, a in b; ; ) ;", endsInit);
+        err("for (x = y = a in b; ; ) ;", endsInit);
+        err("for (x = a ? b : c in d; ; ) ;", endsInit);
+        err("for (x = !a in b; ; ) ;", endsInit);
+        err("for (f = () => a in b; ; ) ;", endsInit);
+        err("for (f = function (a) {} in b; ; ) ;", endsInit);
+        err("function* g() { for (x = yield a in b; ; ) ; }", endsInit);
+        err("for (let x = a in b; ; ) ;", "for-in loop variables cannot have an initializer");
+        err("class K { #x; m(o) { for (y = #x in o; ; ) ; } }", "Unexpected #x");
+      }
+
+      // TypeScript syntax around the default
+      const exp = (code, out) => expect(result(code, "ts")).toEqual({ printed: out });
+      exp("for (f = function (a: boolean = b in c) {}; ; ) ;", "for (f = function(a = b in c) {};; )\n  ;\n");
+      exp("for (f = function (this: T, a = b in c) {}; ; ) ;", "for (f = function(a = b in c) {};; )\n  ;\n");
+      exp("for (f = function <T>(a?: T, b = c in d): T {}; ; ) ;", "for (f = function(a, b = c in d) {};; )\n  ;\n");
+      exp("for (f = function (a = Array<number> in b) {}; ; ) ;", "for (f = function(a = Array in b) {};; )\n  ;\n");
+      expect(result("for (f = function (a: T = b in c): T {} in d; ; ) ;", "ts")).toEqual({ error: endsInit });
+
+      // The printer drops the parentheses of a default, and its output is parsed again
+      const { printed } = result("for (f = function (a = (b in c)) {}; ; ) ;", "js");
+      expect(printed).toBe("for (f = function(a = b in c) {};; )\n  ;\n");
+      expect(result(printed, "js")).toEqual({ printed });
+    });
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

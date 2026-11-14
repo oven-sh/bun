@@ -1,0 +1,37 @@
+Nothing ticks while a script runs, so a loop of uploads got a new staging buffer for each one.
+https://crbug.com/42240396
+
+--- a/src/dawn/native/DynamicUploader.cpp
++++ b/src/dawn/native/DynamicUploader.cpp
+@@ -41,6 +41,8 @@
+ 
+ namespace {
+ constexpr uint64_t kRingBufferSize = 4ULL * 1024 * 1024;
++// Those of an early submit, and those that fill up meanwhile.
++constexpr size_t kRingBuffersToKeep = 8;
+ }  // anonymous namespace
+ 
+ DynamicUploader::DynamicUploader(DeviceBase* device) : mDevice(device) {}
+@@ -158,9 +160,8 @@
+ 
+     // TODO(crbug.com/42240396): Consider blocking when there is too much memory in flight for
+     // freeing, which could cause OOM even if we eagerly flush when too much memory is pending.
+-    QueueBase* queue = mDevice->GetQueue();
+-    queue->ForceEventualFlushOfCommands();
+-    return queue->SubmitPendingCommands();
++    mDevice->GetQueue()->ForceEventualFlushOfCommands();
++    return mDevice->Tick();
+ }
+ 
+ void DynamicUploader::Deallocate(ExecutionSerial lastCompletedSerial, bool freeAll) {
+@@ -172,9 +173,7 @@
+     while (i < mRingBuffers.size()) {
+         mRingBuffers[i]->mAllocator.Deallocate(lastCompletedSerial);
+ 
+-        // Never erase the last buffer as to prevent re-creating smaller buffers
+-        // again unless explicitly asked to do so. The last buffer is the largest.
+-        const bool shouldFree = (i < mRingBuffers.size() - 1) || freeAll;
++        const bool shouldFree = mRingBuffers.size() > kRingBuffersToKeep || freeAll;
+         if (mRingBuffers[i]->mAllocator.Empty() && shouldFree) {
+             mRingBuffers.erase(mRingBuffers.begin() + sign_cast(i));
+         } else {

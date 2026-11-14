@@ -20,7 +20,6 @@ impl GPUQueue {
         check_stack(heap)?;
         let handles = command_buffers.iter().map(|buffer| &*buffer.handle);
         self.handle.submit(&handles.collect::<SmallVec<[_; 8]>>());
-        self.state.instance.schedule();
         Ok(())
     }
 
@@ -52,9 +51,7 @@ impl GPUQueue {
         convert::with_elements(heap, data, data_offset, size, |bytes| {
             self.handle
                 .write_buffer(&buffer.handle, buffer_offset, bytes);
-        })?;
-        self.state.instance.schedule();
-        Ok(())
+        })
     }
 
     pub(crate) fn write_texture<'a>(
@@ -73,7 +70,6 @@ impl GPUQueue {
             self.handle
                 .write_texture(&destination, bytes, &data_layout, &size);
         });
-        self.state.instance.schedule();
         Ok(())
     }
 }

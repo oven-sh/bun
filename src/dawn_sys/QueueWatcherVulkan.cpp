@@ -57,6 +57,10 @@ private:
             m_changed.wait(lock, [&] { return m_stopping || m_wanted > m_passed; });
             if (m_stopping)
                 return;
+            if (device->IsLost()) {
+                lock.unlock();
+                return m_host->wake();
+            }
 
             lock.unlock();
             auto [fence, serial] = queue->LendFenceAfter(m_passed);

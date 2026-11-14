@@ -1,0 +1,182 @@
+Memory is freed by the tick after a submit has finished, and that submit may have yet to be made.
+This tells the embedder when either is due.
+https://crbug.com/398193014
+
+--- a/include/dawn/platform/DawnPlatform.h
++++ b/include/dawn/platform/DawnPlatform.h
+@@ -201,6 +201,10 @@
+     // stuck.
+     virtual void ReportProgress();
+ 
++    // The last submitted or the last awaited serial of a queue has gone up. Called on any thread,
++    // with locks held.
++    virtual void OnSerialRaised() {}
++
+   private:
+     Platform(const Platform&) = delete;
+     Platform& operator=(const Platform&) = delete;
+--- a/src/dawn/native/DynamicUploader.cpp
++++ b/src/dawn/native/DynamicUploader.cpp
+@@ -99,6 +99,7 @@
+     // Upon failure, append a newly created ring buffer to fulfill the
+     // request.
+     if (startOffset == RingBufferAllocator::kInvalidOffset) {
++        mDevice->GetQueue()->AwaitPendingCommandSerial();
+         mRingBuffers.emplace_back(std::unique_ptr<RingBuffer>(
+             new RingBuffer{nullptr, RingBufferAllocator(kRingBufferSize)}));
+ 
+@@ -180,6 +181,10 @@
+             i++;
+         }
+     }
++
++    if (freeAll && mRingBuffers.size() > 1) {
++        mDevice->GetQueue()->AwaitPendingCommandSerial();
++    }
+ }
+ 
+ void DynamicUploader::UpdateMemoryPendingSubmit() {
+--- a/src/dawn/native/ExecutionQueue.cpp
++++ b/src/dawn/native/ExecutionQueue.cpp
+@@ -33,6 +33,7 @@
+ #include <utility>
+ #include <vector>
+ 
++#include "dawn/platform/DawnPlatform.h"
+ #include "src/dawn/common/Atomic.h"
+ #include "src/dawn/native/Device.h"
+ #include "src/dawn/native/Error.h"
+@@ -64,6 +65,18 @@
+ 
+ ExecutionSerial ExecutionQueueBase::GetPendingCommandSerial() const {
+     return ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire) + 1);
++}
++
++ExecutionSerial ExecutionQueueBase::AwaitPendingCommandSerial() {
++    const auto serial = static_cast<uint64_t>(GetPendingCommandSerial());
++    if (FetchMax(mLastAwaitedSerial, serial) < serial) {
++        GetDevice()->GetPlatform()->OnSerialRaised();
++    }
++    return ExecutionSerial(serial);
++}
++
++ExecutionSerial ExecutionQueueBase::GetLastAwaitedSerial() const {
++    return ExecutionSerial(mLastAwaitedSerial.load(std::memory_order_acquire));
+ }
+ 
+ ExecutionSerial ExecutionQueueBase::GetLastSubmittedCommandSerial() const {
+@@ -371,6 +384,7 @@
+ 
+ void ExecutionQueueBase::IncrementLastSubmittedCommandSerial() {
+     mLastSubmittedSerial.fetch_add(1u, std::memory_order_release);
++    GetDevice()->GetPlatform()->OnSerialRaised();
+ }
+ 
+ bool ExecutionQueueBase::HasScheduledCommands() const {
+--- a/src/dawn/native/ExecutionQueue.h
++++ b/src/dawn/native/ExecutionQueue.h
+@@ -95,6 +95,9 @@
+     ExecutionSerial GetLastSubmittedCommandSerial() const;
+     // The serial of the batch that is currently pending submission.
+     ExecutionSerial GetPendingCommandSerial() const;
++    // The same, for what has to be cleaned up once it has completed.
++    ExecutionSerial AwaitPendingCommandSerial();
++    ExecutionSerial GetLastAwaitedSerial() const;
+     // The serial by which time all currently submitted or pending operations will be completed.
+     ExecutionSerial GetScheduledWorkDoneSerial() const;
+     // Whether the execution queue has scheduled commands to be submitted or executing.
+@@ -189,6 +192,7 @@
+     // commands have been completed.
+     MutexCondVarProtected<uint64_t> mCompletedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
+     std::atomic<uint64_t> mLastSubmittedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
++    std::atomic<uint64_t> mLastAwaitedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
+ 
+     // Mutex, condition variable, and boolean statuses are used by the class to synchronize task
+     // completion to ensure that:
+--- a/src/dawn/native/d3d12/DeviceD3D12.cpp
++++ b/src/dawn/native/d3d12/DeviceD3D12.cpp
+@@ -411,7 +411,7 @@
+ }
+ 
+ void Device::ReferenceUntilUnused(ComPtr<IUnknown> object) {
+-    mUsedComObjectRefs->Enqueue(std::move(object), GetQueue()->GetPendingCommandSerial());
++    mUsedComObjectRefs->Enqueue(std::move(object), GetQueue()->AwaitPendingCommandSerial());
+ }
+ 
+ ResultOrError<Ref<BindGroupBase>> Device::CreateBindGroupImpl(
+--- a/src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.cpp
++++ b/src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.cpp
+@@ -423,7 +423,7 @@
+         return;
+     }
+ 
+-    mAllocationsToDelete.Enqueue(allocation, mDevice->GetQueue()->GetPendingCommandSerial());
++    mAllocationsToDelete.Enqueue(allocation, mDevice->GetQueue()->AwaitPendingCommandSerial());
+ 
+     // Directly allocated ResourceHeapAllocations are created with a heap object that must be
+     // manually deleted upon deallocation. See ResourceAllocatorManager::CreateCommittedResource
+--- a/src/dawn/native/metal/BufferMTL.mm
++++ b/src/dawn/native/metal/BufferMTL.mm
+@@ -238,6 +238,8 @@
+     //   other threads using the buffer since there are no other live refs.
+     BufferBase::DestroyImpl(reason);
+     mMtlBuffer = nullptr;
++    // The pending commands may retain it.
++    GetDevice()->GetQueue()->AwaitPendingCommandSerial();
+ }
+ 
+ void Buffer::TrackUsage() {
+--- a/src/dawn/native/metal/FencedReferencer.mm
++++ b/src/dawn/native/metal/FencedReferencer.mm
+@@ -44,7 +44,7 @@
+ 
+ void FencedReferencer::RefUntilUnused(id handle) {
+     mPendingDeletions.Use([&](auto pending) {
+-        ExecutionSerial deletionSerial = mDevice->GetQueue()->GetPendingCommandSerial();
++        ExecutionSerial deletionSerial = mDevice->GetQueue()->AwaitPendingCommandSerial();
+         if (pending->mCompletedSerial >= deletionSerial) {
+             // If the serial has already passed (e.g. queue is shutdown), we can just drop the ref.
+             return;
+--- a/src/dawn/native/metal/TextureMTL.mm
++++ b/src/dawn/native/metal/TextureMTL.mm
+@@ -434,6 +434,8 @@
+     TextureBase::DestroyImpl(reason);
+     mMtlPlaneTextures.clear();
+     mIOSurface = nullptr;
++    // The pending commands may retain it.
++    GetDevice()->GetQueue()->AwaitPendingCommandSerial();
+ }
+ 
+ void Texture::SetLabelImpl() {
+--- a/src/dawn/native/vulkan/CommandRecordingContextVk.cpp
++++ b/src/dawn/native/vulkan/CommandRecordingContextVk.cpp
+@@ -36,6 +36,7 @@
+                                                               wgpu::BufferUsage usage) {
+     if (!(usage & kMappableBufferUsages) && (buffer->GetInternalUsage() & kMappableBufferUsages)) {
+         mappableBuffersForEagerTransition.insert(buffer);
++        buffer->GetDevice()->GetQueue()->AwaitPendingCommandSerial();
+     }
+ }
+ 
+--- a/src/dawn/native/vulkan/DeviceVk.cpp
++++ b/src/dawn/native/vulkan/DeviceVk.cpp
+@@ -543,7 +543,7 @@
+ 
+ void Device::EnqueueDeferredDeallocation(DescriptorSetAllocator* allocator) {
+     mDescriptorAllocatorsPendingDeallocation->Enqueue(allocator,
+-                                                      GetQueue()->GetPendingCommandSerial());
++                                                      GetQueue()->AwaitPendingCommandSerial());
+ }
+ 
+ void Device::CacheStaticSampler(const Ref<Sampler>& s) {
+--- a/src/dawn/native/vulkan/FencedDeleter.cpp
++++ b/src/dawn/native/vulkan/FencedDeleter.cpp
+@@ -78,7 +78,7 @@
+ }
+ 
+ ExecutionSerial FencedDeleter::GetCurrentDeletionSerial() {
+-    return mDevice->GetQueue()->GetPendingCommandSerial();
++    return mDevice->GetQueue()->AwaitPendingCommandSerial();
+ }
+ 
+ void FencedDeleter::UpdateCompletedSerialTo(ExecutionSerial completedSerial) {

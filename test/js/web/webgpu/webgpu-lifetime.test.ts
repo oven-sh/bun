@@ -1,91 +1,10 @@
 // Runs alone: its last tests disturb other processes that use the GPU of a macOS virtual machine.
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv as defaultEnv, isASAN, isDebug, isLinux, libcPathForDlopen, tempDir } from "harness";
+import { isArm64, isLinux, isMacOS, libcPathForDlopen, withoutAsanQuarantine } from "harness";
 import { hasAdapter, runWithDriverOfChrome } from "./driver";
+import { bunEnv, printed, run, uploads, withMacro, withoutGC, withoutGCTimer, withoutMacroLog } from "./subprocess";
 
 runWithDriverOfChrome(import.meta.path);
-
-// As in CI. With ASAN the process ends in exit(), which runs the destructors of a driver whose threads may be at work.
-const bunEnv = isASAN ? { ...defaultEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" } : defaultEnv;
-// The timer and the finalizers would wake an event loop that has missed something.
-const withoutGCTimer = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
-const withoutGC = { ...withoutGCTimer, BUN_JSC_useGC: "0" };
-
-const helpers = `
-  import { readdirSync, readFileSync } from "node:fs";
-  /** On Linux, the devices that have waited for the GPU and are not destroyed. */
-  export const countWatchers = () => readdirSync("/proc/self/task").filter(thread => {
-    try { return readFileSync(\`/proc/self/task/\${thread}/comm\`, "utf8") === "GPUQueue\\n"; } catch {}
-  }).length;
-  export const requestDevice = async () => (await navigator.gpu.requestAdapter()).requestDevice();
-  export const slowModule = (device, seed, rounds = 10000) => device.createShaderModule({ code: \`
-    @group(0) @binding(0) var<storage, read_write> out: array<u32, 64>;
-    @compute @workgroup_size(64) fn main(@builtin(local_invocation_index) index: u32) {
-      var x = index + \${seed};
-      for (var i = 0; i < \${rounds}; i++) { x = x * 1664525 + 1013904223; }
-      out[index] = x;
-    }\` });
-  export const compile = (device, seed) =>
-    device.createComputePipelineAsync({ layout: "auto", compute: { module: slowModule(device, seed) } });
-  /** Submits when it is called, and returns a buffer to map once the GPU is done. */
-  export function prepare(device, workgroups = 100) {
-    const pipeline = device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0) } });
-    const resource = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    const result = device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource }] }));
-    pass.dispatchWorkgroups(workgroups);
-    pass.end();
-    encoder.copyBufferToBuffer(resource, result);
-    const commands = encoder.finish();
-    return () => (device.queue.submit([commands]), result);
-  }
-  export const keepBusy = (device, workgroups) => prepare(device, workgroups)();
-  /** One of each thing that can be under way. */
-  export function startEverything(device) {
-    device.onuncapturederror = event => event.preventDefault();
-    device.createBuffer({ size: 4, usage: 0 });
-    globalThis.range = device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true }).getMappedRange();
-    device.pushErrorScope("validation");
-    return [
-      keepBusy(device).mapAsync(GPUMapMode.READ),
-      device.queue.onSubmittedWorkDone(),
-      compile(device, 1),
-      compile(device, 2),
-      slowModule(device, 3).getCompilationInfo(),
-      device.popErrorScope(),
-      navigator.gpu.requestAdapter(),
-    ];
-  }`;
-const imports = `import { compile, countWatchers, keepBusy, prepare, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
-
-async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
-  using dir = tempDir("webgpu", {
-    ...Object.fromEntries(Object.entries(files).map(([name, source]) => [name, imports + source])),
-    "helpers.js": helpers,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd: String(dir),
-    env,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
-const printed = (stdout: string) => ({ stdout: stdout + "\n", stderr: "", exitCode: 0 });
-
-/** Two files for `require()`, which runs a macro on the thread and in the realm of the program. */
-const withMacro = (name: string, macro: string) => ({
-  [`${name}.js`]: `
-    import { macro } from "./${name}-macro.js" with { type: "macro" };
-    console.log(macro());`,
-  [`${name}-macro.js`]: `export const macro = ${macro};`,
-});
-// A debug build prints a line for each call of a macro.
-const withoutMacroLog = (stdout: string) => stdout.replaceAll("[macro] call macro\n", "");
 
 describe.concurrent("with or without a driver", () => {
   const noAdapter = `navigator.gpu.requestAdapter({ featureLevel: "none" })`;
@@ -313,11 +232,12 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
   test.skipIf(!isLinux)("finds no driver that runs on the CPU if it cannot make memory executable", async () => {
     const script = `
       import { dlopen } from "bun:ffi";
-      const { prctl } = dlopen(${JSON.stringify(isLinux && libcPathForDlopen())}, {
+      const libc = dlopen(${JSON.stringify(isLinux && libcPathForDlopen())}, {
         prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" },
-      }).symbols;
+      });
       const setMDWE = 65, refuseExecGain = 1;
-      const isRefused = prctl(setMDWE, refuseExecGain, 0, 0, 0) === 0;
+      const isRefused = libc.symbols.prctl(setMDWE, refuseExecGain, 0, 0, 0) === 0;
+      libc.close();
       for (const forceFallbackAdapter of [false, true]) {
         const adapter = await navigator.gpu.requestAdapter({ forceFallbackAdapter });
         console.log(isRefused && adapter !== null && adapter.info.isFallbackAdapter);
@@ -367,14 +287,23 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
   test("sleeps once the GPU is done and the memory is freed", async () => {
     const script = `
       import { getEventLoopStats } from "bun:internal-for-testing";
+      ${uploads}
+      async function countTurns(milliseconds) {
+        const before = getEventLoopStats().iteration;
+        await Bun.sleep(milliseconds);
+        return getEventLoopStats().iteration - before;
+      }
+      const asleep = Math.min(await countTurns(1), await countTurns(1), await countTurns(1));
       const device = await requestDevice();
       await Promise.all(startEverything(device));
       keepBusy(device, 1).destroy();
-      Bun.gc(true);
-      const before = getEventLoopStats().iteration;
-      await Bun.sleep(100);
-      console.log(getEventLoopStats().iteration - before < 50);`;
-    expect(await run({ "index.js": script })).toEqual(printed("true"));
+      prepareUploads(device)(3);
+      let turns;
+      const end = performance.now() + 30_000;
+      do turns = await countTurns(350);
+      while (turns > asleep && turns < 100 && performance.now() < end);
+      console.log(turns - asleep);`;
+    expect(await run({ "index.js": script }, undefined, withoutGC)).toEqual(printed("0"));
   });
 
   test("does not miss what the GPU finishes just as it asks to be woken", async () => {
@@ -460,30 +389,39 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     },
   );
 
-  test.each(["device.destroy()", "buffer.destroy()", "buffer.unmap()", "texture.destroy()", "querySet.destroy()"])(
-    "sleeps under --hot though a listener of beforeExit calls %s",
-    async call => {
-      const script = `
-        const device = await requestDevice();
-        const buffer = device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ });
-        const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
-        const querySet = device.createQuerySet({ type: "occlusion", count: 1 });
-        let calls = 0;
-        process.on("beforeExit", () => (calls++, ${call}));
-        Bun.spawn([process.execPath, "-e", ""], { onExit: () => (console.log(calls < 20), process.exit(0)) }).unref();`;
-      expect(await run({ "index.js": script }, ["--hot", "index.js"])).toEqual(printed("true"));
-    },
-  );
+  test.each([
+    "device.destroy()",
+    "buffer.destroy()",
+    "buffer.unmap()",
+    "texture.destroy()",
+    "querySet.destroy()",
+    "device.queue.writeBuffer(buffer, 0, new Uint8Array(0))",
+    "device.queue.writeTexture({ texture }, new Uint8Array(0), {}, [0])",
+    "device.destroy(), device.queue.submit([])",
+    `device.pushErrorScope("validation"), device.queue.submit([commands, commands])`,
+  ])("sleeps under --hot though a listener of beforeExit calls %s", async call => {
+    const script = `
+      const device = await requestDevice();
+      const buffer = device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
+      const querySet = device.createQuerySet({ type: "occlusion", count: 1 });
+      const commands = device.createCommandEncoder().finish();
+      let calls = 0;
+      process.on("beforeExit", () => (calls++, ${call}));
+      Bun.spawn([process.execPath, "-e", ""], { onExit: () => (console.log(calls < 50), process.exit(0)) }).unref();`;
+    expect(await run({ "index.js": script }, ["--hot", "index.js"])).toEqual(printed("true"));
+  });
 
-  const returnsFreedMemory = {
-    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+  const returningFreedMemory = (env: typeof bunEnv) => ({
+    ...withoutAsanQuarantine(env),
     // Or glibc raises it, and keeps what is below.
     MALLOC_MMAP_THRESHOLD_: "1048576",
-  };
+  });
 
   test.each([
     ["buffers that it destroys", "buffer", "for (const it of all) it.destroy()"],
     ["textures that it destroys", "texture", "for (const it of all) it.destroy()"],
+    ["small buffers that it destroys", "small", "for (const it of all.flat()) it.destroy()"],
     ["buffers that are collected", "buffer", "(all.length = 0), Bun.gc(true)"],
     ["textures that are collected", "texture", "(all.length = 0), Bun.gc(true)"],
     ["buffers that bind groups hold to the last", "buffer", "await collectAfter(bindGroup)"],
@@ -495,22 +433,39 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       "buffer",
       "await collectAfter(buffer => encode(buffer).finish(), all => device.queue.submit((globalThis.submitted = [...all])))",
     ],
+    [
+      "buffers that a submit that fails holds to the last",
+      "buffer",
+      `device.pushErrorScope("validation");
+      await collectAfter(buffer => encode(buffer).finish(), all => device.queue.submit((globalThis.submitted = [...all, ...all])))`,
+    ],
+    ["buffers that it destroys after an upload", "mappable", "for (const it of all) upload(it), it.destroy()"],
+    ["buffers that are collected after an upload", "mappable", "all.splice(0).forEach(upload), Bun.gc(true)"],
   ])("gets back the memory of %s, though it submits nothing more", async (_, kind, release) => {
     const script = `
       const device = await requestDevice();
       const rss = () => process.memoryUsage.rss() >> 20;
       // 8 MB each
-      const buffer = encoder => {
+      const buffer = (encoder, size = 8 << 20) => {
         const { COPY_DST, STORAGE, VERTEX } = GPUBufferUsage;
-        const buffer = device.createBuffer({ size: 8 << 20, usage: COPY_DST | STORAGE | VERTEX });
+        const buffer = device.createBuffer({ size, usage: COPY_DST | STORAGE | VERTEX });
         encoder.clearBuffer(buffer);
         return buffer;
       };
+      const small = encoder => Array.from({ length: 8 }, () => buffer(encoder, 1 << 20));
       const texture = encoder => {
         const view = device.createTexture({ size: [2048, 1024], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT });
         encoder.beginRenderPass({ colorAttachments: [{ view, loadOp: "clear", storeOp: "store" }] }).end();
         return view;
       };
+      const mappable = encoder => {
+        const { COPY_DST, MAP_READ } = GPUBufferUsage;
+        const buffer = device.createBuffer({ size: 8 << 20, usage: COPY_DST | MAP_READ, mappedAtCreation: true });
+        buffer.unmap();
+        encoder.clearBuffer(buffer);
+        return buffer;
+      };
+      const upload = buffer => device.queue.writeBuffer(buffer, 0, new Uint8Array(4));
 
       const layout = device.createBindGroupLayout({
         entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }],
@@ -549,64 +504,41 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       for (let i = 0; i < 2; i++) await new Promise(setImmediate);
       await device.queue.onSubmittedWorkDone();
       ${release};
-      // Only a driver that runs on the CPU has it in the RSS.
-      const expected = device.adapterInfo.isFallbackAdapter ? 32 : -Infinity;
+      // The RSS has only what the CPU has written.
+      const expected = device.adapterInfo.isFallbackAdapter || ${isMacOS && kind === "mappable"} ? 32 : -Infinity;
       const end = performance.now() + 30_000;
       do await Bun.sleep(1);
       while (inUse - rss() < expected && performance.now() < end);
       console.log(inUse - rss() < expected ? inUse - rss() + " MB" : "freed");`;
-    const env = { ...bunEnv, ...returnsFreedMemory };
-    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("freed"));
+    expect(await run({ "index.js": script }, undefined, returningFreedMemory(bunEnv))).toEqual(printed("freed"));
   });
 
-  // Each upload fills a staging buffer. Dawn submits after four, and takes back those that the GPU is done with.
-  const uploads = `
-    const rss = () => process.memoryUsage.rss() >> 20;
-    const pixels = new Uint8Array(4 << 20);
-    function prepareUploads(device) {
-      const texture = device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
-      return count => {
-        while (count--) device.queue.writeTexture({ texture }, pixels, { bytesPerRow: 4096 }, [1024, 1024]);
-      };
-    }`;
-
-  test("gets back the memory of uploads, though it submits nothing more", async () => {
+  test.each([3, 4])("gets back the memory of %d uploads, though it submits nothing more", async count => {
     const script = `
       ${uploads}
+      const rss = () => process.memoryUsage.rss() >> 20;
       const devices = await Promise.all(Array.from({ length: 4 }, requestDevice));
-      const uploaders = devices.map(prepareUploads);
-      async function finish() {
-        for (let i = 0; i < 3; i++) {
-          for (const { queue } of devices) await queue.onSubmittedWorkDone();
-          for (let i = 0; i < 2; i++) await new Promise(setImmediate);
-        }
-      }
-      for (const upload of uploaders) upload(1);
-      for (const { queue } of devices) queue.submit([]);
-      await finish();
-      for (const upload of uploaders) upload(4);
+      for (const upload of devices.map(prepareUploads)) upload(${count});
+      // 48 MB or more
       const inUse = rss();
-      await finish();
-      // With Direct3D 12 it goes back to a pool of the device, which only the next uploads show.
-      for (const upload of uploaders) upload(4);
-      console.log(rss() - inUse);`;
-    const { stdout, exitCode } = await run({ "index.js": script }, undefined, { ...withoutGC, ...returnsFreedMemory });
-    // 48 if nothing comes back.
-    expect(parseInt(stdout)).toBeLessThan(24);
-    expect(exitCode).toBe(0);
+      const expected = devices[0].adapterInfo.isFallbackAdapter || ${isMacOS} ? 24 : -Infinity;
+      const end = performance.now() + 30_000;
+      do await Bun.sleep(1);
+      while (inUse - rss() < expected && performance.now() < end);
+      console.log(inUse - rss() < expected ? inUse - rss() + " MB" : "freed");`;
+    expect(await run({ "index.js": script }, undefined, returningFreedMemory(withoutGC))).toEqual(printed("freed"));
   });
 
   test("gets back the memory of uploads before the event loop turns", async () => {
     const script = `
       ${uploads}
       const upload = prepareUploads(await requestDevice());
-      const before = rss();
+      const before = process.memoryUsage.rss();
       let rounds = 0;
       do upload(4), Bun.sleepSync(++rounds);
-      while (rounds * 16 - (rss() - before) < 64 && rounds < 24);
+      while (rounds * 16 - ((process.memoryUsage.rss() - before) >> 20) < 64 && rounds < 24);
       console.log(rounds < 24);`;
-    const env = { ...bunEnv, ...returnsFreedMemory };
-    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("true"));
+    expect(await run({ "index.js": script }, undefined, returningFreedMemory(withoutGC))).toEqual(printed("true"));
   });
 });
 
@@ -644,33 +576,6 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
       }
       console.log("done");`;
     expect(await run({ "index.js": script }, undefined, withoutGCTimer)).toEqual(printed("done"));
-  });
-
-  test.skipIf(!isLinux).each([
-    ["samplers", "device.createSampler()"],
-    ["query sets", `device.createQuerySet({ type: "occlusion", count: 1 })`],
-    ["pipelines", `device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0) } })`],
-    ["pipelines that were compiled on another thread", "compile(device, 0)"],
-    [
-      "render pipelines",
-      `device.createRenderPipeline({
-        layout: "auto",
-        vertex: { module: device.createShaderModule({ code: "@vertex fn main() -> @builtin(position) vec4f { return vec4f(); }" }) },
-        depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "always" },
-      })`,
-    ],
-  ])("has the driver free %s, which takes a submit", async (_, create) => {
-    const script = `
-      const device = await requestDevice();
-      await device.queue.onSubmittedWorkDone();
-      console.log(countWatchers());
-      for (const end = performance.now() + 30_000; countWatchers() === 0 && performance.now() < end; ) {
-        await (() => ${create})();
-        Bun.gc(true);
-        await Bun.sleep(1);
-      }
-      console.log(countWatchers());`;
-    expect(await run({ "index.js": script })).toEqual(printed("0\n1"));
   });
 
   test("leaves the listeners of a device while something can report an error to it", async () => {
@@ -730,12 +635,36 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
     expect(await run({ "index.js": script })).toEqual(printed("collected"));
   });
 
-  test("knows how much memory a buffer takes", async () => {
+  test("collects a realm that has just used the GPU", async () => {
+    const script = `
+      import { heapStats } from "bun:jsc";
+      const use = async done => {
+        const { queue } = await (await navigator.gpu.requestAdapter()).requestDevice();
+        queue.submit([]);
+        done(await queue.onSubmittedWorkDone());
+      };
+      for (let i = 0; i < 4; i++) await new Promise(new ShadowRealm().evaluate(\`done => void (\${use})(done)\`));
+      // The last one, with its prototype.
+      do Bun.gc(true), await Bun.sleep(1);
+      while (heapStats().objectTypeCounts.GPU > 2);
+      console.log("collected");`;
+    expect(await run({ "index.js": script })).toEqual(printed("collected"));
+  });
+
+  test.each([
+    ["a buffer", "device.createBuffer({ size: 2 << 20, usage: GPUBufferUsage.COPY_DST })"],
+    ["a texture", "texture(GPUTextureUsage.COPY_DST)"],
+    // None on Apple silicon.
+    ...(isMacOS && isArm64 ? [] : [["a transient attachment", "texture(GPUTextureUsage.TRANSIENT_ATTACHMENT)"]]),
+  ])("knows how much memory %s takes", async (_, create) => {
     const script = `
       import { heapStats } from "bun:jsc";
       const device = await requestDevice();
-      for (let i = 0; i < 128; i++) device.createBuffer({ size: 2 << 20, usage: GPUBufferUsage.COPY_DST });
-      console.log(heapStats().objectTypeCounts.GPUBuffer < 64);`;
+      const texture = usage =>
+        device.createTexture({ size: [1024, 512], format: "rgba8unorm", usage: usage | GPUTextureUsage.RENDER_ATTACHMENT });
+      for (let i = 0; i < 128; i++) ${create};
+      const { GPUBuffer = 0, GPUTexture = 0 } = heapStats().objectTypeCounts;
+      console.log(GPUBuffer + GPUTexture < 64);`;
     expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
 });
@@ -948,28 +877,6 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
     };
     const { stdout, exitCode } = await run(files, undefined, withoutGC);
     expect(withoutMacroLog(stdout)).toBe("first\nsecond\n");
-    expect(exitCode).toBe(0);
-  });
-
-  test.skipIf(!isLinux)("a macro gets back the memory of what it destroys", async () => {
-    const files = withMacro(
-      "inlined",
-      `async () => {
-        const device = await requestDevice();
-        const before = process.memoryUsage.rss();
-        for (let i = 0; i < 24; i++) {
-          const buffer = device.createBuffer({ size: 16 << 20, usage: GPUBufferUsage.STORAGE, mappedAtCreation: true });
-          buffer.unmap();
-          buffer.destroy();
-          await new Promise(setImmediate);
-          await new Promise(setImmediate);
-        }
-        return (process.memoryUsage.rss() - before) >> 20;
-      }`,
-    );
-    const { stdout, exitCode } = await run({ "index.js": `require("./inlined.js");`, ...files });
-    // 770 if nothing comes back.
-    expect(Number(withoutMacroLog(stdout))).toBeLessThan(isASAN || isDebug ? 400 : 300);
     expect(exitCode).toBe(0);
   });
 

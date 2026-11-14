@@ -90,12 +90,6 @@ pub(crate) struct Buffer {
     memory_size: AtomicUsize,
 }
 
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        self.will_release_memory();
-    }
-}
-
 #[derive(Clone, Copy)]
 enum Contents {
     Keep,
@@ -144,19 +138,11 @@ impl Buffer {
         }
     }
 
-    fn will_release_memory(&self) {
-        if self.memory_size.swap(0, Ordering::Relaxed) > 0 {
-            self.device.will_release_memory();
-        }
-    }
-
     fn unmap(&self, global: &JSGlobalObject, contents: Contents) -> JsResult<()> {
-        if !self.is_unmapped() {
-            self.device.instance.schedule();
-        }
         match self.map_state.take() {
             MapState::Unmapped => Ok(()),
             MapState::Pending { mut promise, .. } => {
+                self.device.instance.schedule();
                 let error = global.create_dom_exception_instance(
                     DOMExceptionCode::AbortError,
                     format_args!("The buffer was unmapped before the mapping was resolved"),
@@ -439,7 +425,7 @@ impl GPUBuffer {
         self.handle.destroy();
         buffer.idle_shadow.take();
         buffer.shadow_size.store(0, Ordering::Relaxed);
-        buffer.will_release_memory();
+        buffer.memory_size.store(0, Ordering::Relaxed);
         Ok(result?)
     }
 

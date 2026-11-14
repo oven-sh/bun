@@ -110,14 +110,16 @@ export const dawn: Dependency = {
 
   patches: [
     "patches/dawn/d3d12-no-compare-object-handles.patch",
+    "patches/dawn/d3d12-reduce-memory-usage.patch",
     "patches/dawn/freebsd.patch",
     "patches/dawn/log-errors-only.patch",
     "patches/dawn/metal-no-string-literal.patch",
     "patches/dawn/no-iostream.patch",
     "patches/dawn/no-module-search-path.patch",
+    "patches/dawn/reuse-staging-buffers.patch",
     "patches/dawn/tick-after-last-serial.patch",
-    "patches/dawn/tick-at-early-submit.patch",
     "patches/dawn/vulkan-lend-fence.patch",
+    "patches/dawn/wake-for-awaited-serial.patch",
   ],
 
   fetchDeps: ["abseil", "jinja", "markupsafe"],

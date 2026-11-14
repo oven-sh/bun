@@ -8,7 +8,7 @@ use bun_dawn_sys::{self as dawn, Chain, ComponentSwizzle, FeatureName, Ref};
 use bun_jsc::bindgen::{JsHeap, JsPayload as _, JsWrapper, Result};
 
 use super::convert::{self, optional_u32};
-use super::device::{Device, HoldsMemory};
+use super::device::Device;
 use super::idl::{self, GPUTextureFormat, GPUTextureViewDimension};
 use super::{GPUTextureView, Object};
 
@@ -24,20 +24,6 @@ pub(crate) struct Texture {
     usage: u32,
     default_view: OnceCell<Ref<dawn::TextureView>>,
     memory_size: AtomicUsize,
-}
-
-impl Texture {
-    fn will_release_memory(&self) {
-        if self.memory_size.swap(0, Ordering::Relaxed) > 0 {
-            self.device.will_release_memory();
-        }
-    }
-}
-
-impl Drop for Texture {
-    fn drop(&mut self) {
-        self.will_release_memory();
-    }
 }
 
 fn required_feature(format: GPUTextureFormat) -> Option<FeatureName> {
@@ -184,8 +170,7 @@ impl GPUTexture {
             aspect: descriptor.aspect.into(),
             usage: dawn::TextureUsage::from_bits(descriptor.usage),
         }));
-        let state = HoldsMemory::of(&self.state.device);
-        Ok(Object::with_state(handle, &descriptor.label, state).into_js(heap))
+        Ok(Object::new(handle, &descriptor.label).into_js(heap))
     }
 
     /// For where a texture is taken in place of a view.
@@ -195,7 +180,7 @@ impl GPUTexture {
 
     pub(crate) fn destroy(&self) {
         self.handle.destroy();
-        self.state.will_release_memory();
+        self.state.memory_size.store(0, Ordering::Relaxed);
     }
 
     pub(crate) fn estimated_size(&self) -> usize {

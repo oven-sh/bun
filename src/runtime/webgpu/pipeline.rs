@@ -107,8 +107,7 @@ macro_rules! impl_pipeline_base {
                 heap: &JsHeap<'a>,
                 index: u32,
             ) -> JsWrapper<'a, GPUBindGroupLayout> {
-                let handle = self.handle.get_bind_group_layout(index);
-                Object::with_state(handle, &String::EMPTY, self.state.clone()).into_js(heap)
+                Object::new(self.handle.get_bind_group_layout(index), &String::EMPTY).into_js(heap)
             }
         }
     )*};

@@ -7,6 +7,7 @@
 #include "src/dawn/common/GPUInfo.h"
 #include "src/dawn/native/Adapter.h"
 #include "src/dawn/native/Buffer.h"
+#include "src/dawn/native/EnumMaskIterator.h"
 #include "src/dawn/native/Instance.h"
 #include "src/dawn/native/PhysicalDevice.h"
 #include "src/dawn/native/Queue.h"
@@ -42,11 +43,10 @@ std::unique_ptr<dawn::platform::WorkerTaskPool> Host::CreateWorkerTaskPool()
 QueueWatcher::QueueWatcher(DeviceBase* device)
     : m_device(device)
     , m_host(Host::from(device))
-    , m_lastEmptySubmit(device->GetQueue()->GetLastSubmittedCommandSerial())
 {
 }
 
-Wake QueueWatcher::arm(ExecutionSerial serial, bool isScriptDone)
+Wake QueueWatcher::arm(ExecutionSerial serial)
 {
     QueueBase* queue = m_device->GetQueue();
     ExecutionSerial submitted = queue->GetLastSubmittedCommandSerial();
@@ -59,34 +59,58 @@ Wake QueueWatcher::arm(ExecutionSerial serial, bool isScriptDone)
     if (state != DeviceBase::State::Alive)
         return Wake::None;
 
-    if (submitted <= completed) {
-        if (std::exchange(m_serialThatFreesMemory, kBeginningOfGPUTime) <= submitted) {
-            // After a submit, Dawn releases its staging buffers and what only the commands held. The script may submit again.
-            if (submitted == m_lastEmptySubmit)
-                return Wake::None;
-            if (!isScriptDone)
-                return Wake::Missed;
-        }
-        wgpuQueueSubmit(ToAPI(queue), 0, nullptr);
-        m_lastEmptySubmit = queue->GetLastSubmittedCommandSerial();
-        return arm(serial, isScriptDone);
-    }
+    if (submitted <= completed)
+        return serial == kMaxExecutionSerial ? Wake::None : Wake::Missed;
 
     serial = std::min(serial, submitted);
     if (serial <= completed)
         return Wake::Missed;
 
     if (serial != m_armedSerial) {
-        if (!wakeAfter(serial))
+        m_hasFailedToArm = !wakeAfter(serial);
+        if (m_hasFailedToArm)
             return Wake::None;
         m_armedSerial = serial;
     }
     return resume(serial) ? Wake::Follows : Wake::Missed;
 }
 
-void QueueWatcher::willReleaseMemory()
+bool QueueWatcher::freeMemory()
 {
-    m_serialThatFreesMemory = m_device->GetQueue()->GetPendingCommandSerial();
+    if (m_device->GetState() != DeviceBase::State::Alive)
+        return false;
+    if (std::exchange(m_hasFailedToArm, false)) {
+        m_host->wake();
+        return true;
+    }
+
+    QueueBase* queue = m_device->GetQueue();
+    auto lastSerial = [&] { return std::max(queue->GetLastSubmittedCommandSerial(), queue->GetLastAwaitedSerial()); };
+    const ExecutionSerial serial = lastSerial();
+    const bool isNew = std::exchange(m_knownSerial, serial) != serial;
+    if (isNew) {
+        m_idleCalls = 0;
+        m_hasFreedAll = false;
+    }
+
+    if (serial <= queue->GetCompletedCommandSerial()) {
+        if (m_hasFreedAll)
+            return false;
+        // The GPU may have finished after the last tick.
+        m_device->APITick();
+        if (++m_idleCalls <= 10)
+            return true;
+        // What Dawn keeps for reuse. That can release more of it.
+        m_device->ReduceMemoryUsage();
+        m_knownSerial = lastSerial();
+        m_hasFreedAll = m_knownSerial == serial;
+    } else if (isNew)
+        return serial > queue->GetLastSubmittedCommandSerial();
+
+    // Dawn frees what has been released once the GPU has finished the next submit, which the script has had the time to make.
+    if (m_knownSerial > queue->GetLastSubmittedCommandSerial())
+        wgpuQueueSubmit(ToAPI(queue), 0, nullptr);
+    return false;
 }
 
 extern "C" WGPUInstance BunDawn__createInstance(const BunDawnHost* descriptor)
@@ -167,11 +191,27 @@ extern "C" uint64_t BunDawn__bufferMemorySize(WGPUBuffer buffer)
     return FromAPI(buffer)->IsError() ? 0 : FromAPI(buffer)->GetAllocatedSize();
 }
 
+static bool keepsTransientAttachmentsInTiles(DeviceBase* device)
+{
+#if defined(DAWN_ENABLE_BACKEND_METAL)
+    return device->GetAdapter()->APIHasFeature(wgpu::FeatureName::TransientAttachments);
+#else
+    return device->GetAllocatorMemoryInfo().totalLazyUsedMemory;
+#endif
+}
+
 extern "C" uint64_t BunDawn__textureMemorySize(WGPUTexture handle)
 {
     TextureBase* texture = FromAPI(handle);
     if (texture->IsError() || !texture->IsAlive())
         return 0;
+    // The estimate is 0.
+    if ((texture->GetUsage() & wgpu::TextureUsage::TransientAttachment) && !keepsTransientAttachmentsInTiles(texture->GetDevice())) {
+        uint64_t bytesPerSample = 0;
+        for (Aspect aspect : IterateEnumMask(texture->GetFormat().aspects))
+            bytesPerSample += texture->GetFormat().GetAspectInfo(aspect).block.byteSize;
+        return bytesPerSample * texture->GetSampleCount() * texture->GetBaseSize().width * texture->GetBaseSize().height;
+    }
     // The estimate counts one slice of a 3D texture.
     uint64_t slices = texture->GetDimension() == wgpu::TextureDimension::e3D ? texture->GetBaseSize().depthOrArrayLayers : 1;
     return texture->ComputeEstimatedByteSize() * slices;
@@ -182,14 +222,14 @@ extern "C" QueueWatcher* BunDawn__createQueueWatcher(WGPUDevice device)
     return QueueWatcher::create(FromAPI(device)).release();
 }
 
-extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial, bool isScriptDone)
+extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial)
 {
-    return watcher->arm(ExecutionSerial(serial), isScriptDone);
+    return watcher->arm(ExecutionSerial(serial));
 }
 
-extern "C" void BunDawn__willReleaseMemory(QueueWatcher* watcher)
+extern "C" bool BunDawn__freeMemory(QueueWatcher* watcher)
 {
-    watcher->willReleaseMemory();
+    return watcher->freeMemory();
 }
 
 extern "C" uint64_t BunDawn__serialOfLastUse(WGPUBuffer buffer)

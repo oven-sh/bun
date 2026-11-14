@@ -1334,6 +1334,11 @@ pub(crate) unsafe fn fire_timer(
                 (*c).on_room_timer(vm)
             })
         }
+        EventLoopTimerTag::WebGpuFreeMemory => {
+            feature_timer_arm!([WebGpu], crate::webgpu::Instance, timer, |c, _now, _vm| {
+                (*c).on_timer()
+            })
+        }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
                 GarbageCollectionController,

@@ -35,6 +35,7 @@ private:
     ~Host() override { m_host.release(m_host.context); }
 
     std::unique_ptr<dawn::platform::WorkerTaskPool> CreateWorkerTaskPool() override;
+    void OnSerialRaised() override { wake(); }
 
     const BunDawnHost m_host;
 };
@@ -52,10 +53,10 @@ public:
     virtual ~QueueWatcher() = default;
 
     // Asks for a wake at this serial, or at the last one submitted if that comes first. Wakes that were asked for before need not come.
-    Wake arm(dawn::native::ExecutionSerial, bool isScriptDone);
+    Wake arm(dawn::native::ExecutionSerial);
 
-    // Dawn frees it once the GPU has finished the next submit. arm() makes one if the queue runs dry before.
-    void willReleaseMemory();
+    // If true, the next call is to be made in 100 ms. Otherwise after the next wake.
+    bool freeMemory();
 
     // Called before the device is destroyed. The watcher is deleted after.
     virtual void stop() {}
@@ -73,8 +74,12 @@ protected:
 
 private:
     dawn::native::ExecutionSerial m_armedSerial { dawn::native::kBeginningOfGPUTime };
-    dawn::native::ExecutionSerial m_serialThatFreesMemory { dawn::native::kBeginningOfGPUTime };
-    dawn::native::ExecutionSerial m_lastEmptySubmit;
+    bool m_hasFailedToArm { false };
+
+    // The last one that freeMemory() has seen submitted or awaited.
+    dawn::native::ExecutionSerial m_knownSerial { dawn::native::kBeginningOfGPUTime };
+    unsigned m_idleCalls { 0 };
+    bool m_hasFreedAll { true };
 };
 
 } // namespace Bun::Dawn

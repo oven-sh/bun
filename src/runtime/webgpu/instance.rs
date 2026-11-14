@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use bun_collections::smallvec::SmallVec;
 use bun_core::thread_id::{self, ThreadId};
+use bun_core::{Timespec, TimespecMockMode};
 use bun_dawn_sys::{self as dawn, Host as _, OwnedInstance, WorkerTask};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_event_loop::{ContextId, Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::JsScope;
@@ -59,6 +61,7 @@ pub(crate) struct Instance {
     has_polled: Cell<bool>,
     operations: Cell<u32>,
     keep_alive: KeepAlive,
+    pub(crate) timer: EventLoopTimer,
 }
 
 impl Instance {
@@ -77,6 +80,7 @@ impl Instance {
             has_polled: Cell::new(false),
             operations: Cell::new(0),
             keep_alive: KeepAlive::default(),
+            timer: EventLoopTimer::init_paused(TimerTag::WebGpuFreeMemory),
         });
         vm.add_task_source(Rc::<Self>::downgrade(&instance));
         instance
@@ -99,20 +103,44 @@ impl Instance {
         self.host.wake();
     }
 
-    fn process_events(&self) {
-        if let Some(Some(dawn)) = self.dawn.get() {
-            dawn.process_events();
-        }
-        let mut devices = SmallVec::<[Rc<Device>; 2]>::new();
+    fn devices(&self) -> SmallVec<[Rc<Device>; 2]> {
+        let mut devices = SmallVec::new();
         self.devices.borrow_mut().retain(|device| {
             devices.extend(device.upgrade());
             device.strong_count() > 0
         });
-        let results = self.new_completions.borrow().len();
-        let has_results = results > 0 || !self.completions.borrow().is_empty();
+        devices
+    }
+
+    fn free_memory(&self, devices: &[Rc<Device>]) {
+        let mut is_unfinished = false;
         for device in devices {
-            device.watch_queue(has_results);
+            is_unfinished |= device.dawn.free_memory();
+        }
+        if is_unfinished {
+            (self.timer.next).set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(100));
+            // SAFETY: the callers have found it unlinked. `self` is in an `Rc`, and unlinks it when dropped.
+            unsafe { VirtualMachine::get().timer_insert(&raw const self.timer) };
+        }
+    }
+
+    pub(crate) fn on_timer(&self) {
+        self.timer.state.set(TimerState::FIRED);
+        self.free_memory(&self.devices());
+    }
+
+    fn process_events(&self) {
+        if let Some(Some(dawn)) = self.dawn.get() {
+            dawn.process_events();
+        }
+        let devices = self.devices();
+        let results = self.new_completions.borrow().len();
+        for device in &devices {
+            device.watch_queue();
             device.complete_events();
+        }
+        if self.timer.state.get() != TimerState::ACTIVE {
+            self.free_memory(&devices);
         }
         // A result can follow from an event: an error, or the loss of the device.
         self.new_completions.borrow_mut().rotate_left(results);
@@ -159,6 +187,12 @@ impl Instance {
         }
         drop(self.completions.take());
         drop(self.new_completions.take());
+    }
+}
+
+impl Drop for Instance {
+    fn drop(&mut self) {
+        VirtualMachine::get().timer_remove(&self.timer);
     }
 }
 

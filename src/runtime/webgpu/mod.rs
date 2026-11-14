@@ -62,7 +62,7 @@ pub(crate) fn create_navigator_gpu(global: &JSGlobalObject) -> JSValue {
 }
 
 /// `GPUObjectBase`
-pub(crate) struct Object<T: ExternalSharedDescriptor, State = device::HoldsMemory> {
+pub(crate) struct Object<T: ExternalSharedDescriptor, State = ()> {
     handle: Ref<T>,
     label: JsCell<String>,
     state: State,
@@ -79,6 +79,12 @@ impl<T: ExternalSharedDescriptor, State> Object<T, State> {
 
     pub(crate) fn get_label(&self) -> String {
         self.label.get().clone()
+    }
+}
+
+impl<T: ExternalSharedDescriptor> Object<T> {
+    fn new(handle: Ref<T>, label: &String) -> Self {
+        Self::with_state(handle, label, ())
     }
 }
 

@@ -152,6 +152,63 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  test("reactCompiler and minify.syntax: the annotation of a pattern is not on the variable of its default value", async () => {
+    using dir = tempDir("build-api-dts-pattern-default", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/state.ts": `export function useState<T>(initial: T): [T] {
+  return [initial];
+}
+`,
+      "src/index.tsx": `import { useState } from "./state";
+export function useMode({ mode = "x" }: { mode?: "x" | "y" }): "x" | "y" {
+  const [held] = useState(0);
+  return held ? mode : mode;
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.tsx")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      target: "bun",
+      reactCompiler: true,
+      minify: { syntax: true },
+      dts: true,
+    });
+    expect(built.logs.map(log => [log.level, log.message])).toEqual([]);
+    expect(readFileSync(join(root, "out/index.aot.ts"), "utf8")).toContain(
+      `  let { mode: t1 }: { mode?: "x" | "y" } = t0, mode = t1 === void 0 ? "x" : t1, [held] = useState(0);`,
+    );
+  });
+
+  test.each([
+    ["two declarators", "const ident = row.id as number, label = row.name;", false],
+    ["two statements and minify.syntax", "const ident = row.id as number;\n  const label = row.name;", true],
+  ])("declarators that read one object stay declarators, each with its cast: %s", async (_, declarations, syntax) => {
+    using dir = tempDir("build-api-dts-declarators", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `export function name(row: { id: number; name: string }): [number, string] {
+  ${declarations}
+  return [ident, label];
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      target: "bun",
+      minify: { syntax },
+      dts: true,
+    });
+    expect(built.logs.map(log => [log.level, log.message])).toEqual([]);
+    const read = (name: string) => readFileSync(join(root, "out", name), "utf8");
+    expect(read("index.aot.ts")).toContain("  const ident = row.id as number, label = row.name;");
+    expect(read("index.js")).toContain("  const ident = row.id, label = row.name;");
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),

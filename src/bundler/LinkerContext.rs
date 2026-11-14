@@ -1357,6 +1357,8 @@ pub struct LinkerOptions {
     pub(crate) entry_naming_has_hash: bool,
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
+    /// `BundleOptions::is_library`.
+    pub(crate) is_library: bool,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
@@ -1418,6 +1420,7 @@ impl Default for LinkerOptions {
             entry_naming_has_hash: false,
             module_preload: true,
             source_maps: SourceMapOption::None,
+            is_library: false,
             target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,
@@ -2315,6 +2318,7 @@ impl<'a> LinkerContext<'a> {
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
+            is_library: self.options.is_library,
             input_module_type: ast.module_type,
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,

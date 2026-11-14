@@ -756,6 +756,23 @@ export function counts(): Counts {
     expect(typedFile(dir)).toContain("new Map<string, number[]> as Counts");
   });
 
+  test("declarators that read one object keep their annotations, and the package its aot condition", async () => {
+    using dir = tempDir(
+      "library-typed-file-declarators",
+      library({
+        "src/index.ts": `export function pick(obj: { foo: number; bar: string }): [number, string] {
+  const a: number = obj.foo, b: string = obj.bar;
+  return [a, b];
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("  const a: number = obj.foo, b: string = obj.bar;");
+    expect(json(join(String(dir), "dist/package.json")).exports["."]).toEqual(conditions("index"));
+  });
+
   test("an entry point that is a script is not met twice when the .aot.ts files are type checked", async () => {
     using dir = tempDir(
       "library-typed-file-script",

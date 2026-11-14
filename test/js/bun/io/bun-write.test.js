@@ -1784,3 +1784,28 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.skipIf(isWindows)("Bun.write into a descriptor opened for appending", () => {
+  it("appends the file when stdout is redirected with >>", async () => {
+    using dir = tempDir("bun-write-append-fd", {
+      "src.txt": "hello world\n",
+      "log.txt": "before\n",
+    });
+    const src = join(String(dir), "src.txt");
+    const log = join(String(dir), "log.txt");
+    const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.file(${JSON.stringify(src)}))))`;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+      stdout: "",
+      stderr: "12",
+      content: "before\nhello world\n",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

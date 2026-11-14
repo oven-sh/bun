@@ -36,6 +36,8 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <algorithm>
 #include <cstddef>
+#include <limits>
+#include <optional>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
@@ -48,6 +50,8 @@
 #endif
 
 #include "JSDOMConvertBase.h"
+#include "Bindgen/IDLConvertBase.h"
+#include "Bindgen/IDLConvertIntegerRange.h"
 #include "ZigSourceProvider.h"
 #include "StrongRootBlock.h"
 #include "BunClientData.h"
@@ -109,21 +113,9 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     }
 
     uint16_t port = defaultPort;
-    if (portValue.isNumber()) {
-        auto port_int = JSC::toUInt32(portValue.asNumber());
-        if (!(port_int > 0 && port_int < 65536)) {
-            throwVMError(
-                globalObject, scope,
-                createRangeError(globalObject, "port must be between 0 and 65535"_s));
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-        port = port_int;
-    } else if (!portValue.isUndefined()) {
-        throwVMError(
-            globalObject, scope,
-            createTypeError(globalObject,
-                "port must be a number between 0 and 65535"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    if (!portValue.isUndefined()) {
+        if (Bun::Bindgen::hasException(scope, WebCore::Converter<Bun::Bindgen::IDLValidateInteger<uint16_t, 1, 65535>>::convertInto(*globalObject, portValue, "port"_s, port))) [[unlikely]]
+            return {};
     }
 
     globalObject->setInspectable(true);
@@ -466,47 +458,61 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
 extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
+// The `sampleInterval` of profile() and startSamplingProfiler(), in microseconds. A value that is not a number means no interval.
+static std::optional<uint32_t> sampleIntervalArgument(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue value)
+{
+    if (!value.isNumber())
+        return std::nullopt;
+    uint32_t microseconds = 0;
+    if (Bun::Bindgen::hasException(scope, WebCore::Converter<Bun::Bindgen::IDLValidateInteger<uint32_t, 1, std::numeric_limits<uint32_t>::max()>>::convertInto(*globalObject, value, "sampleInterval"_s, microseconds))) [[unlikely]]
+        return std::nullopt;
+    return microseconds;
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
 
     JSC::JSValue directoryValue = callFrame->argument(0);
     JSC::JSValue sampleValue = callFrame->argument(1);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String path;
     if (directoryValue.isString()) {
-        auto path = directoryValue.toWTFString(globalObject);
+        path = directoryValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!path.isEmpty()) {
-            if (path.contains(static_cast<UChar>(0))) {
-                throwVMError(
-                    globalObject, scope,
-                    createTypeError(globalObject, "directory must not contain null bytes"_s));
-                return {};
-            }
-            auto pathCString = toUTF8CString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
-                throwVMError(
-                    globalObject, scope,
-                    createTypeError(globalObject, "directory couldn't be created"_s));
-                return {};
-            }
-
-            // JSC::Options is read-only after Config::finalize, so store the directory on the VM.
-            auto directory = Bun::toString(path);
-            Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
+        if (path.contains(static_cast<UChar>(0))) {
+            throwVMError(
+                globalObject, scope,
+                createTypeError(globalObject, "directory must not contain null bytes"_s));
+            return {};
         }
     }
-    if (sampleValue.isNumber()) {
-        unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
-        samplingProfiler.setTimingInterval(
-            Seconds::fromMicroseconds(sampleInterval));
+
+    auto sampleInterval = sampleIntervalArgument(globalObject, scope, sampleValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!path.isEmpty()) {
+        auto pathCString = toUTF8CString(String(path));
+        if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
+            throwVMError(
+                globalObject, scope,
+                createTypeError(globalObject, "directory couldn't be created"_s));
+            return {};
+        }
+
+        // JSC::Options is read-only after Config::finalize, so store the directory on the VM.
+        auto directory = Bun::toString(path);
+        Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
     }
 
+    // Created right before it starts: a sampler that exists takes samples from the next VM entry, started or not.
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    if (sampleInterval)
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(*sampleInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     return JSC::JSValue::encode(jsUndefined());
@@ -715,7 +721,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
 
     JSC::JSValue callbackValue = callFrame->argument(0);
     JSC::JSValue sampleValue = callFrame->argument(1);
@@ -736,14 +741,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(JSValue {});
     }
 
-    if (sampleValue.isNumber()) {
-        unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
-        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
-    } else {
-        // Reset to default interval (1000 microseconds) to ensure each profile()
-        // call is independent of previous calls
-        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
-    }
+    auto sampleInterval = sampleIntervalArgument(globalObject, throwScope, sampleValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     const auto report = [](JSC::VM& vm,
                             JSC::JSGlobalObject* globalObject) -> JSC::JSValue {
@@ -788,6 +787,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     JSC::CallData callData = JSC::getCallData(callbackValue);
 
+    // Created right before it starts: a sampler that exists takes samples from the next VM entry, started or not.
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    // Without an interval, reset to the default (1000 microseconds) so that each profile() call is independent of the calls before it.
+    samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval.value_or(1000)));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, JSC::jsUndefined(), args);

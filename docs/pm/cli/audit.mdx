@@ -36,6 +36,8 @@ Otherwise, Bun lists each affected package with its severity, a short descriptio
 bun audit --audit-level=high
 ```
 
+Some registries also send the severity `info`. It is below every level. An advisory with any other severity (for example `HIGH`), or with none, has no rank: Bun reports it as `unknown severity` at every `--audit-level`. To accept such an advisory, pass `--ignore <id>`.
+
 **`--prod`** (`-p`, `-P`, `--production`) - Only audit packages reachable through `dependencies`, `optionalDependencies`, or `peerDependencies`:
 
 ```bash terminal icon="terminal"

@@ -1,7 +1,9 @@
 use crate::fs;
 use crate::package_json::{PackageJSON, SideEffects};
+use bun_collections::StringHashMap;
 use bun_options_types::bundle_enums::ModuleType;
 use bun_zstd as _;
+use std::sync::OnceLock;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
@@ -132,18 +134,11 @@ type FallbackEntry = (
     fn() -> &'static str,
 );
 
-// `PackageJSON` is `!Sync` (contains `StringArrayHashMap` with a `Cell<bool>`),
-// so it cannot live in `LazyLock`/`OnceLock`. `RacyCell` + `Once` matches the
-// "process-lifetime singleton, init once, read-only thereafter" shape. All
-// reads go through `map()`, which initializes via `INIT.call_once(init_modules)`
-// before touching the cells.
-static MODULES: bun_core::RacyCell<Option<Box<[FallbackEntry]>>> = bun_core::RacyCell::new(None);
-static MAP: bun_core::RacyCell<Option<bun_collections::StringHashMap<FallbackModule>>> =
-    bun_core::RacyCell::new(None);
-static INIT: std::sync::Once = std::sync::Once::new();
+static MODULES: OnceLock<Box<[FallbackEntry]>> = OnceLock::new();
+static MAP: OnceLock<StringHashMap<FallbackModule>> = OnceLock::new();
 
 #[cold]
-fn init_modules() {
+fn init_map() -> StringHashMap<FallbackModule> {
     let modules: Box<[FallbackEntry]> = SPECS
         .iter()
         .map(|spec| {
@@ -165,32 +160,24 @@ fn init_modules() {
         })
         .collect();
 
-    let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
-    // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
-    // thread observes `MODULES`/`MAP` until this returns.
-    unsafe {
-        *MODULES.get() = Some(modules);
-        let modules_ref: &'static [FallbackEntry] = (*MODULES.get()).as_deref().unwrap();
-        for (name, pkg, path, code) in modules_ref.iter() {
-            m.put_assume_capacity(
-                name,
-                FallbackModule {
-                    path: *path,
-                    package_json: pkg,
-                    code: *code,
-                },
-            );
-        }
-        *MAP.get() = Some(m);
+    let mut m = StringHashMap::default();
+    for (name, pkg, path, code) in MODULES.get_or_init(|| modules) {
+        m.put_assume_capacity(
+            name,
+            FallbackModule {
+                path: *path,
+                package_json: pkg,
+                code: *code,
+            },
+        );
     }
+    m
 }
 
 #[inline(never)]
-pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+pub(crate) fn map() -> &'static StringHashMap<FallbackModule> {
     bun_removable_features::removable_definition!(Bundler, map);
-    INIT.call_once(init_modules);
-    // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
-    unsafe { (*MAP.get()).as_ref().unwrap() }
+    MAP.get_or_init(init_map)
 }
 
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {

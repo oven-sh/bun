@@ -20,8 +20,8 @@ use bun_install::{
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn,
-    Subcommand, TaskCallbackList,
+    ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
+    TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
@@ -387,12 +387,9 @@ pub fn run_tasks(
             let list_val = (installer.tasks[entry_id.get() as usize].scripts.as_deref())
                 .expect("a queued entry has a scripts list")
                 .clone();
-            // reborrow instead of moving the field out of `*installer`
-            let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
             // `installer.manager == manager`, so this is called through the reborrow of
             // `manager_ptr`.
             let spawn_res = manager.spawn_package_lifecycle_scripts(
-                command_ctx,
                 list_val,
                 optional,
                 false,

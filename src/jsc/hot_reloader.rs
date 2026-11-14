@@ -31,25 +31,6 @@ pub enum ImportWatcher {
 }
 
 impl ImportWatcher {
-    /// Look up the `package_json` column for `hash` under the watcher's
-    /// mutex.
-    ///
-    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
-    /// and `flush_evictions` closes it concurrently, so a reader would hit
-    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
-    /// or read the stale pre-rename inode after an atomic save. Reloads open
-    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
-    pub fn snapshot_package_json(
-        &self,
-        hash: bun_watcher::HashType,
-    ) -> Option<&'static bun_watcher::PackageJSON> {
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = self;
-        let _guard = w.mutex.lock_guard();
-        let index = w.index_of(hash)?;
-        w.watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
-    }
-
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
@@ -64,13 +45,10 @@ impl ImportWatcher {
         file_path: &[u8],
         hash: bun_watcher::HashType,
         dir_fd: Fd,
-        // Note: bun_watcher::PackageJSON is an opaque forward-decl;
-        // callers cast from `&bun_resolver::PackageJSON`.
-        package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd)
             }
         }
     }

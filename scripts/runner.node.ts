@@ -363,6 +363,7 @@ const aotTestsThatAskTheSystem = [
   "aot/cli/entry-points-that-are-not-text",
   "aot/resolver/",
   "aot/file-names-in-another-letter-case",
+  "aot/what-package-json-names-",
   "aot/build-errors-name-real-paths",
   "aot/stack-frame-paths",
   "aot/the-folder-of-a-program-has-a-short-name",

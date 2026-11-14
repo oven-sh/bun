@@ -1,9 +1,9 @@
+use bun_aot::options::INDEX_FILES;
+
 use crate::cli::script_or_command::{
     LAUNCHER_SUFFIXES, RUNNABLE_EXTENSIONS, is_runnable_file, nearest_package_json,
     read_package_json,
 };
-
-const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"index.js"];
 
 pub(super) struct DefaultEntryPoint {
     pub(super) path: Box<[u8]>,

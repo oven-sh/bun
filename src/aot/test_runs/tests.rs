@@ -1,10 +1,15 @@
-use bun_sema::program::{FileId, Files, Sym};
+use std::sync::Mutex;
 
+use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::resolve::{CodeHost, CodeImportKind, FileSearch, FoundCode};
+
+use super::files_of_run::find_whose_files;
 use super::texts::ends_with_module_in_text;
-use super::{RunContents, WhoseFile, flags_of_module};
+use super::{RunContents, RunInput, WhoseFile, flags_of_module};
 use crate::builtins::BuiltinId;
 use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, run_build};
 use crate::ir::generated::ModuleFlags;
+use crate::ir::parallel::run_serially;
 use crate::load::ProjectId;
 use crate::load::source_provider::WithoutServices;
 use crate::load::sources::parsed_source;
@@ -520,6 +525,345 @@ fn a_file_that_a_manifest_names_as_a_way_in_is_the_products() {
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "src/app.ts"), WhoseFile::OfProduct);
     });
+}
+
+fn manifest_with(fields: &str) -> String {
+    format!(r#"{{ "name": "project", "type": "module"{fields} }}"#)
+}
+
+const TEXTS_FOR_APP: [&str; 7] = [
+    "./src/app.ts",
+    "./src/app",
+    "src/app",
+    "./src/app.js",
+    "././src/app",
+    "./src/../src/app.ts",
+    "./lib/../src/app",
+];
+const TEXTS_FOR_INDEX: [&str; 3] = ["./src", "./src/", "src"];
+
+fn fields_that_name(text: &str) -> [String; 5] {
+    [
+        format!(r#", "main": "{text}""#),
+        format!(r#", "module": "{text}""#),
+        format!(r#", "bin": "{text}""#),
+        format!(r#", "bin": {{ "tool": "{text}" }}"#),
+        format!(r#", "exports": "{text}""#),
+    ]
+}
+
+fn whose_entry_is(entry: &str, fields: &str) -> WhoseFile {
+    let written = entry.strip_suffix(".ts").unwrap();
+    let test_file = format!(
+        "import {{ test }} from 'bun:test';\nimport {{ app }} from '../{written}';\ntest('a', () => {{ app(); }});\n"
+    );
+    let manifest = manifest_with(fields);
+    let files = [
+        ("checks/a.test.ts", &test_file[..]),
+        (entry, "export const app = () => 1;\n"),
+        (MANIFEST.0, &manifest[..]),
+    ];
+    with_run(&files, (1, 0), |files, run| whose(files, run, entry))
+}
+
+#[test]
+fn a_manifest_names_the_file_that_a_require_of_its_text_finds() {
+    for (entry, texts) in [
+        ("src/app.ts", &TEXTS_FOR_APP[..]),
+        ("src/index.ts", &TEXTS_FOR_INDEX[..]),
+    ] {
+        for fields in texts.iter().flat_map(|text| fields_that_name(text)) {
+            assert_eq!(
+                whose_entry_is(entry, &fields),
+                WhoseFile::OfProduct,
+                "{fields}"
+            );
+        }
+    }
+}
+
+fn whose_file_beside_is(fields: &str, beside: &[&str], written: &str, name: &str) -> WhoseFile {
+    let test_file = format!(
+        "import {{ test }} from 'bun:test';\nimport {{ app }} from '../{written}';\ntest('a', () => {{ app(); }});\n"
+    );
+    let manifest = manifest_with(fields);
+    let mut files = vec![
+        ("checks/a.test.ts", &test_file[..]),
+        (MANIFEST.0, &manifest[..]),
+    ];
+    files.extend(beside.iter().map(|&name| match name.ends_with(".cjs") {
+        true => (name, "exports.app = () => 1;\n"),
+        false => (name, "export const app = () => 1;\n"),
+    }));
+    with_run(&files, (1, 0), |files, run| whose(files, run, name))
+}
+
+#[test]
+fn a_manifest_that_names_nothing_names_the_index_files_that_bun_compile_takes() {
+    for name in crate::options::INDEX_FILES {
+        let name = core::str::from_utf8(name).unwrap();
+        let written = name.rsplit_once('.').unwrap().0;
+        for fields in [
+            "",
+            r#", "main": """#,
+            r#", "exports": { "./*": "./src/*.ts" }"#,
+        ] {
+            assert_eq!(
+                whose_file_beside_is(fields, &[name], written, name),
+                WhoseFile::OfProduct,
+                "{name} {fields}"
+            );
+        }
+    }
+    let twins = ["index.ts", "index.js", "index.cjs"];
+    for (fields, written, name, side) in [
+        ("", "index", "index.ts", WhoseFile::OfProduct),
+        ("", "index.js", "index.js", WhoseFile::OfProduct),
+        ("", "index.cjs", "index.cjs", WhoseFile::OfTests),
+        (
+            r#", "main": "./index""#,
+            "index",
+            "index.ts",
+            WhoseFile::OfProduct,
+        ),
+        (
+            r#", "main": "./index""#,
+            "index.js",
+            "index.js",
+            WhoseFile::OfTests,
+        ),
+        (
+            r#", "main": "./dist/app.js""#,
+            "index",
+            "index.ts",
+            WhoseFile::OfTests,
+        ),
+        (
+            r#", "bin": "./dist/cli.js""#,
+            "index",
+            "index.ts",
+            WhoseFile::OfTests,
+        ),
+        (
+            r#", "module": "./src/other.ts", "main": """#,
+            "index",
+            "index.ts",
+            WhoseFile::OfTests,
+        ),
+    ] {
+        assert_eq!(
+            whose_file_beside_is(fields, &twins, written, name),
+            side,
+            "{fields} {name}"
+        );
+    }
+}
+
+#[test]
+fn a_text_of_a_manifest_that_names_no_file_of_the_product_takes_no_file_for_it() {
+    for fields in [
+        "",
+        r#", "main": "./src/other""#,
+        r#", "module": "./src/other.ts""#,
+        r#", "exports": { "./*": "./src/*.ts" }"#,
+        r#", "main": "./checks""#,
+    ] {
+        assert_eq!(
+            whose_entry_is("src/app.ts", fields),
+            WhoseFile::OfTests,
+            "{fields}"
+        );
+    }
+    let mut files = PROJECT.to_vec();
+    files.retain(|file| file.0 != MANIFEST.0);
+    let manifest =
+        manifest_with(r#", "main": "./checks/latest", "module": "./boot", "bin": "./src/stubs""#);
+    files.push((MANIFEST.0, &manifest[..]));
+    with_run(&files, (2, 1), |files, run| {
+        for name in ["checks/latest.ts", "boot.ts", "src/stubs.ts"] {
+            assert_eq!(whose(files, run, name), WhoseFile::OfTests, "{name}");
+        }
+    });
+}
+
+#[test]
+fn a_manifest_names_a_file_that_the_run_does_not_load_as_one_that_it_loads() {
+    let texts_for_main =
+        TEXTS_FOR_APP.map(|text| text.replace("app", "main").replace("App", "Main"));
+    let rows = [
+        (
+            "src/main.ts",
+            texts_for_main.iter().map(|it| &it[..]).collect::<Vec<_>>(),
+        ),
+        ("src/index.ts", TEXTS_FOR_INDEX.to_vec()),
+    ];
+    for (entry, texts) in rows {
+        let written = entry.strip_suffix(".ts").unwrap();
+        let left_out = format!(
+            "import {{ test }} from 'bun:test';\nimport '../{written}';\ntest('c', () => {{}});\n"
+        );
+        let mut fields: Vec<String> = texts
+            .iter()
+            .flat_map(|text| fields_that_name(text))
+            .collect();
+        fields.push(String::new());
+        for fields in fields {
+            let manifest = manifest_with(&fields);
+            let files = [
+                (
+                    "checks/a.test.ts",
+                    "import { test } from 'bun:test';\nimport { help } from '../shared/help';\ntest('a', () => { help(); });\n",
+                ),
+                (
+                    "checks/b.test.ts",
+                    "import { test } from 'bun:test';\ntest('b', () => {});\n",
+                ),
+                ("checks/left-out.ts", &left_out[..]),
+                (entry, "import { help } from '../shared/help';\nhelp();\n"),
+                ("shared/help.ts", "export const help = () => 1;\n"),
+                (MANIFEST.0, &manifest[..]),
+            ];
+            let side = match fields.is_empty() {
+                true => WhoseFile::OfTests,
+                false => WhoseFile::OfProduct,
+            };
+            for test_files in [1, 2] {
+                with_run(&files, (test_files, 0), |files, run| {
+                    assert_eq!(
+                        whose(files, run, "shared/help.ts"),
+                        side,
+                        "{fields} {test_files}"
+                    );
+                });
+            }
+        }
+    }
+}
+
+/// What the rule of a project with these fields asks of the build's search, and whose `src/app.ts` is by the answers.
+fn searches_of_manifest(
+    fields: Option<&str>,
+    rule_is_on: bool,
+) -> (Vec<(String, String)>, WhoseFile) {
+    let manifest = fields.map(manifest_with);
+    let mut files = vec![
+        (
+            "checks/a.test.ts",
+            "import { test } from 'bun:test';\nimport { app } from '../src/app';\ntest('a', () => { app(); });\n",
+        ),
+        ("src/app.ts", "export const app = () => 1;\n"),
+        ("src/main.ts", "export const main = () => 1;\n"),
+    ];
+    files.extend(manifest.as_ref().map(|it| (MANIFEST.0, &it[..])));
+    let mut project = project_of_run(&files, (1, 0));
+    project.aot.only_tests_load_code_from_disk = rule_is_on;
+    let options = project.options(BUNDLED_LIBS);
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        build.with_loaded_projects(|_, loaded| {
+            let application = loaded.project(ProjectId::Application);
+            let (files, host): (_, &dyn CodeHost) = (application.loaded.files(), application.host);
+            let search = |folder: &[u8], name: &[u8]| {
+                let search = FileSearch {
+                    directory: folder,
+                    specifier: name,
+                    kind: CodeImportKind::Require,
+                    prefers_module_field: false,
+                };
+                match host.find_code_file(&search) {
+                    FoundCode::File { path, .. } => Some(path),
+                    FoundCode::External(_) | FoundCode::NotFound(_) => None,
+                }
+            };
+            let asked: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+            let find = |folder: &[u8], name: &[u8]| {
+                let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+                asked.lock().unwrap().push((text(folder), text(name)));
+                search(folder, name)
+            };
+            let input = RunInput {
+                files,
+                options: &options,
+                replaced_builtins: &[],
+                in_parallel: &run_serially,
+                find_required_file: &find,
+            };
+            let (whose, _) = find_whose_files(&input);
+            let app = file_at(files, "src/app.ts");
+            let as_the_search_names_it = search(b"/project", b"/project/src/app.ts");
+            let as_the_build_names_it = files.module(app).file_name();
+            assert_eq!(
+                as_the_search_names_it.as_deref(),
+                Some(as_the_build_names_it)
+            );
+            Ok((asked.into_inner().unwrap(), whose[app.idx()]))
+        })
+    })
+}
+
+#[test]
+fn only_a_text_that_names_no_compiled_file_is_asked_of_the_search() {
+    let asks = |folder: &str, name: &str| vec![(folder.to_string(), name.to_string())];
+    let nothing: Vec<(String, String)> = Vec::new();
+    for fields in fields_that_name("./src/app.ts") {
+        let found = searches_of_manifest(Some(&fields), true);
+        assert_eq!(found, (nothing.clone(), WhoseFile::OfProduct), "{fields}");
+    }
+    let rows = [
+        (None, true, nothing.clone(), WhoseFile::OfTests),
+        (
+            Some(r#", "main": "./src/app.ts""#),
+            false,
+            nothing.clone(),
+            WhoseFile::OfTests,
+        ),
+        (Some(""), true, nothing.clone(), WhoseFile::OfTests),
+        (
+            Some(r#", "main": "./src/app.ts", "module": """#),
+            true,
+            nothing.clone(),
+            WhoseFile::OfProduct,
+        ),
+        (
+            Some(r#", "main": "./src/app""#),
+            true,
+            asks("/project", "/project/src/app"),
+            WhoseFile::OfProduct,
+        ),
+        (
+            Some(r#", "main": "./src/main.ts""#),
+            true,
+            asks("/project", "/project/src/main.ts"),
+            WhoseFile::OfTests,
+        ),
+        (
+            Some(r#", "module": "./src/app""#),
+            true,
+            asks("/project", "/project/src/app"),
+            WhoseFile::OfProduct,
+        ),
+        (
+            Some(r#", "bin": { "tool": "./src/main.ts" }"#),
+            true,
+            asks("/project", "/project/src/main.ts"),
+            WhoseFile::OfTests,
+        ),
+        (
+            Some(r#", "exports": "./src/""#),
+            true,
+            asks("/project", "/project/src/"),
+            WhoseFile::OfTests,
+        ),
+        (
+            Some(r#", "exports": ".""#),
+            true,
+            asks("/project", "."),
+            WhoseFile::OfTests,
+        ),
+    ];
+    for (fields, rule_is_on, asked, side) in rows {
+        let found = searches_of_manifest(fields, rule_is_on);
+        assert_eq!(found, (asked, side), "{fields:?} {rule_is_on}");
+    }
 }
 
 #[test]

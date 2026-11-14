@@ -22,6 +22,7 @@
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
 #include "wtf/text/WTFString.h"
+#include "wtf/URL.h"
 #include "AbortSignal.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #if ENABLE(AOT)
@@ -2010,6 +2011,29 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
+}
+
+bool isForbiddenFileURLHost(const WTF::URL& url)
+{
+#if !OS(WINDOWS)
+    return url.host().length() > 0 && url.host() != "localhost"_s;
+#else
+    UNUSED_PARAM(url);
+    return false;
+#endif
+}
+
+bool throwIfInvalidFileURLHost(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const WTF::URL& url)
+{
+    if (isForbiddenFileURLHost(url)) [[unlikely]] {
+#if OS(DARWIN)
+        ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
+#else
+        ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
+#endif
+        return true;
+    }
+    return false;
 }
 
 } // namespace Bun

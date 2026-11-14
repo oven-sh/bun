@@ -738,17 +738,20 @@ export function tempDirWithFiles(
   return base;
 }
 
+// On Windows a process that was just killed can hold the folder for a moment: a child that a job
+// object ends after its parent, for one. The folder is busy then. A program in it that has not quite ended may not be removed.
+const isHeldByEndingProcess = (error: any) => isWindows && (error?.code === "EBUSY" || error?.code === "EPERM");
+
 class DisposableString extends String {
   [Symbol.dispose]() {
-    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
-    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    // `rmSync` does not act on `maxRetries`.
     const deadline = Date.now() + 5000;
     while (true) {
       try {
         fs.rmSync(this + "", { recursive: true, force: true });
         return;
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         sleepSync(50);
       }
     }
@@ -759,7 +762,7 @@ class DisposableString extends String {
       try {
         return await fs.promises.rm(this + "", { recursive: true, force: true });
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         await Bun.sleep(50);
       }
     }

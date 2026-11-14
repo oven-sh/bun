@@ -929,6 +929,8 @@ pub(crate) struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
+    #[cfg(not(windows))]
+    read_before_close: Cell<bool>,
     /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
@@ -1049,6 +1051,8 @@ impl SendQueue {
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
+            #[cfg(not(windows))]
+            read_before_close: Cell::new(false),
             close_after_flush: Cell::new(false),
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
@@ -1183,8 +1187,16 @@ impl SendQueue {
             // SAFETY: caller contract — the queued task owns a ref on `this`.
             let sq = unsafe { &*this };
             sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
+            if sq.pending_close.get() {
                 log!("SendQueue#closeSocketTask");
+                #[cfg(not(windows))]
+                if sq.read_before_close.get()
+                    && let SocketUnion::Open(socket) = *sq.socket.get()
+                {
+                    // `pending_close` is still set, so a callback finds the channel disconnected.
+                    socket.read_now();
+                }
+                sq.pending_close.set(false);
                 sq.close_socket(CloseReason::Normal, CloseFrom::User);
             }
             if sq.pending_after_close.replace(false) {
@@ -1268,6 +1280,15 @@ impl SendQueue {
         }
         self.pending_close.set(true);
         self.schedule_deferred();
+    }
+
+    /// The peer's process has exited. Its last messages can still be in the socket.
+    pub(crate) fn close_after_exit(&self) {
+        #[cfg(not(windows))]
+        if !self.pending_close.get() {
+            self.read_before_close.set(true);
+        }
+        self.close_socket_next_tick(true);
     }
 
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.

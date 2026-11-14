@@ -4473,6 +4473,7 @@ pub mod spawn_ffi {
             pid: *mut c_int,
             path: *const c_char,
             request: *const BunSpawnRequest,
+            pending_fork: *const core::ffi::c_void,
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> isize;
@@ -4576,6 +4577,7 @@ fn spawn_sync_inherit_impl(
                 &raw mut pid,
                 exe,
                 &raw const req,
+                core::ptr::null(),
                 ptrs.as_ptr(),
                 environ,
             );

@@ -451,6 +451,43 @@ fn list_file_names<'f>(
     names.filter(|it| bun_core::strings::contains_char(it, b'.'))
 }
 
+#[derive(Default)]
+struct NamedFiles {
+    found: Vec<(FileId, ExprId, Vec<u8>)>,
+}
+
+impl NamedFiles {
+    fn add(&mut self, file: FileId, operand: ExprId, path: Vec<u8>) {
+        self.found.push((file, operand, path));
+    }
+
+    fn describe(
+        mut self,
+        diagnostics: &mut Diagnostics,
+        view: ProgramView<'_, '_>,
+        project_root: &[u8],
+        provider: &dyn SourceProvider,
+        mut noted: FxHashSet<Vec<u8>>,
+    ) {
+        self.found.sort_unstable();
+        for of_operand in self.found.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+            let (file, operand, _) = of_operand[0];
+            let embedded = of_operand.iter().map(|it| &it.2);
+            let names: Vec<Box<[u8]>> = embedded
+                .filter(|&it| provider.is_embedded_implicitly(it, true) && noted.insert(it.clone()))
+                .map(|it| compute_display_path(project_root, it))
+                .collect();
+            if names.is_empty() {
+                continue;
+            }
+            let span = Span::of_node(view.files().hir(file), file, NodeData::Expr(operand));
+            let code = Code::NamedFilesEmbedded;
+            let note = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..])]);
+            diagnostics.add(Some(view), note);
+        }
+    }
+}
+
 /// A package hands its own folder to code that reads there at paths that aren't known, as in `find(__dirname)` with `for (const name of ["package.json5", "package.json"])`. The files of the folder that this code names come along.
 fn embed_files_asked_by_name(
     view: ProgramView<'_, '_>,
@@ -459,6 +496,7 @@ fn embed_files_asked_by_name(
     provider: &dyn SourceProvider,
     entry: Option<&[u8]>,
     files_that_name_paths: &[FileId],
+    named: &mut NamedFiles,
 ) {
     let (files, sources) = (view.files(), view.sources);
     let Some(entry) = entry else {
@@ -518,8 +556,10 @@ fn embed_files_asked_by_name(
         while folder.len() >= package.len() && asked.iter().any(|it| !it.is_empty()) {
             for listed in provider.list_files_to_embed(to_native(folder), false) {
                 let name = bun_paths::basename(&listed);
-                if asked.iter().any(|it| it.contains(name)) {
-                    embed_unless_code(files, sources, provider, (entry, module), &listed, false);
+                if asked.iter().any(|it| it.contains(name))
+                    && embed_unless_code(files, sources, provider, (entry, module), &listed, false)
+                {
+                    named.add(file, argument, listed);
                 }
             }
             folder = dirname::<Posix>(folder);
@@ -813,6 +853,7 @@ fn warn_about_unembedded_reads(
             searched.extend(added.into_iter().map(|path| (file, operand, path)));
         }
     }
+    let mut named_files = NamedFiles::default();
     embed_files_asked_by_name(
         view,
         graph,
@@ -820,6 +861,7 @@ fn warn_about_unembedded_reads(
         provider,
         entry,
         &files_that_name_paths,
+        &mut named_files,
     );
     let folders_entered = find_folders_entered(files, left_out, in_parallel);
     let list_reads = |file: FileId| list_file_reads(files, graph, &folders_entered, file);
@@ -841,14 +883,10 @@ fn warn_about_unembedded_reads(
                 provider.embed_file_implicitly(entry, module, to_native(&path), is_query);
                 if read.is_listing && folders_embedded.insert((folder.to_vec(), path.clone())) {
                     for listed in provider.list_files_to_embed(to_native(&path), true) {
-                        embed_unless_code(
-                            files,
-                            sources,
-                            provider,
-                            (entry, module),
-                            &listed,
-                            false,
-                        );
+                        let from = (entry, module);
+                        if embed_unless_code(files, sources, provider, from, &listed, false) {
+                            named_files.add(file, read.operand, listed);
+                        }
                     }
                 }
             }
@@ -858,8 +896,9 @@ fn warn_about_unembedded_reads(
             let path = from_argument(folder, files.atoms.bytes(named.path));
             if files.by_path.get(&path).is_none()
                 && !is_in_left_out_code(files, left_out, file, named.operand)
+                && provider.embed_named_file(path_of(file), to_native(&path))
             {
-                provider.embed_named_file(path_of(file), to_native(&path));
+                named_files.add(file, named.operand, to_native(&path).to_vec());
             }
         }
         let patterns = analysis.module_relative_patterns.iter();
@@ -880,8 +919,10 @@ fn warn_about_unembedded_reads(
             let from = (entry, path_of(file));
             let below = pattern.names_folder;
             for found in provider.list_files_to_embed(to_native(&pattern.folder), below) {
-                if pattern.matches(&found) {
-                    embed_unless_code(files, sources, provider, from, &found, is_query);
+                if pattern.matches(&found)
+                    && embed_unless_code(files, sources, provider, from, &found, is_query)
+                {
+                    named_files.add(file, operand, found);
                 }
             }
         }
@@ -903,6 +944,9 @@ fn warn_about_unembedded_reads(
         let code = Code::NearerPackageJsonEmbedded;
         diagnostics.add(Some(view), Diagnostic::new(code, None, &[&name, &found]));
     }
+    let manifests = searched.into_iter().map(|it| it.2);
+    let manifests = manifests.chain(nearer.into_iter().map(|it| it.0));
+    let mut noted: FxHashSet<Vec<u8>> = manifests.collect();
     let (mut created, mut listers) = (None, None);
     for &file in &files_that_name_paths {
         let folder = dirname::<Posix>(files.module(file).file_name());
@@ -913,13 +957,18 @@ fn warn_about_unembedded_reads(
             let is_query = read.is_query && !provider.is_searched_for(to_native(path));
             let is_code = (files.by_path.get(path)).is_some_and(|found| !sources.is_data(found));
             if !is_code && provider.is_embedded_implicitly(to_native(path), is_query) {
-                if lists_files && !is_query && !is_in_left_out_code(files, left_out, file, operand)
-                {
-                    let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
-                    let name = compute_display_path(project_root, to_native(path));
-                    let code = Code::FileEmbeddedImplicitly;
-                    diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                if !lists_files || is_in_left_out_code(files, left_out, file, operand) {
+                    continue;
                 }
+                if is_query {
+                    named_files.add(file, operand, to_native(path).to_vec());
+                    continue;
+                }
+                let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+                let name = compute_display_path(project_root, to_native(path));
+                let code = Code::FileEmbeddedImplicitly;
+                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                noted.insert(to_native(path).to_vec());
                 continue;
             }
             if read.is_ruled_out {
@@ -1024,6 +1073,9 @@ fn warn_about_unembedded_reads(
                 diagnostics.add(Some(view), warning);
             }
         }
+    }
+    if lists_files {
+        named_files.describe(diagnostics, view, project_root, provider, noted);
     }
 }
 
@@ -1222,11 +1274,10 @@ fn embed_unless_code(
     from: (&[u8], &[u8]),
     path: &[u8],
     is_query: bool,
-) {
+) -> bool {
     let found = files.by_path.get(&from_native(path));
-    if found.is_none_or(|found| sources.is_data(found)) {
-        provider.embed_file_implicitly(from.0, from.1, path, is_query);
-    }
+    found.is_none_or(|found| sources.is_data(found))
+        && provider.embed_file_implicitly(from.0, from.1, path, is_query)
 }
 
 /// In the executable `node:fs` lists every compiled file.

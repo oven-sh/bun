@@ -1,6 +1,16 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { chmodSync, cpSync, mkdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { without } from "./harness/capabilities";
 import { run as runCommand } from "./harness/run";
@@ -672,13 +682,17 @@ export const start = async () => {
         "app/node_modules/store/index.mjs": `import fs from "node:fs";
 import path from "node:path";
 export { below } from "./below.cjs";
+const ways = { own: name => path.join(import.meta.dirname, name) };
 export const read = () => fs.readFileSync(path.join(import.meta.dirname, "a.txt"), "utf8");
+export const sheet = () => fs.readFileSync(path.join(import.meta.dirname, "a.module.css"), "utf8");
+export const classes = async way => Object.keys((await import(ways[way](Buffer.from("a.module.css").toString()))).default).join();
 `,
         "app/node_modules/store/a.txt": "first",
+        "app/node_modules/store/a.module.css": ".first { color: red }",
         "app/main.mjs": `import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { below, read } from "store";
+import { below, classes, read, sheet } from "store";
 const deeds = process.argv.slice(2);
 const start = () => Bun.spawnSync({ cmd: [process.env.BUN_OF_TEST, "--version"], stdout: "ignore" });
 if (deeds.includes("start")) start();
@@ -686,7 +700,7 @@ if (deeds.includes("remove")) fs.rmSync(fs.mkdtempSync(path.join(os.tmpdir(), "s
 console.log("ready");
 for await (const _ of console) break;
 if (deeds.includes("start later")) start();
-console.log(read(), path.basename(below("a.txt")));
+console.log(read(), path.basename(below("a.txt")), await classes("own"), sheet());
 `,
       });
       const app = join(String(dir), "app");
@@ -703,10 +717,11 @@ console.log(read(), path.basename(below("a.txt")));
         said += new TextDecoder().decode(bytes);
         if (said.trim() !== "ready") continue;
         writeFileSync(join(app, "node_modules/store/a.txt"), "changed");
+        writeFileSync(join(app, "node_modules/store/a.module.css"), ".changed { color: red }");
         program.stdin.write("go\n");
         program.stdin.end();
       }
-      expect(said.split(/\r?\n/)).toEqual(["ready", expected + " a.txt", ""]);
+      expect(said.split(/\r?\n/)).toEqual(["ready", `${expected} a.txt ${expected} .${expected} { color: red }`, ""]);
       expect(await program.exited).toBe(0);
     },
     120_000,
@@ -906,6 +921,106 @@ the program's manifest 7.8.9
       "note TS100166 node_modules/@scope/kit/package.json",
       "note TS100166 node_modules/tool/fonts/standard.flf",
       "note TS100166 node_modules/tool/package.json",
+    ]);
+  }, 120_000);
+
+  test("--explain and the metafile list the files that a package's paths lead to", async () => {
+    using dir = tempDir("aot-named-package-files-listed", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/node_modules/named/package.json": `{ "name": "named", "version": "1.0.0", "main": "index.cjs" }`,
+      "app/node_modules/named/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+exports.helper = path.join(__dirname, "helper");
+exports.list = () => fs.readdirSync(path.join(__dirname, "list")).sort().join();
+exports.part = name => fs.readFileSync(path.join(__dirname, "parts", name + ".txt"), "utf8");
+exports.read = () => fs.readFileSync(path.join(__dirname, "read.txt"), "utf8");
+exports.has = () => fs.existsSync(path.join(__dirname, "asked.txt"));
+`,
+      "app/node_modules/named/helper": "a helper",
+      "app/node_modules/named/list/a.txt": "a",
+      "app/node_modules/named/list/b.txt": "b",
+      "app/node_modules/named/parts/a.txt": "part a",
+      "app/node_modules/named/parts/b.md": "other",
+      "app/node_modules/named/read.txt": "read",
+      "app/node_modules/named/asked.txt": "asked",
+      "app/node_modules/named/unnamed.txt": "nobody names it",
+      "app/main.mjs": `import named from "named";
+import path from "node:path";
+console.log(path.basename(named.helper), named.list(), named.part("a"), named.read(), named.has());
+`,
+    });
+    const metafile = join(String(dir), "meta.json");
+    const flags = ["--explain", "--metafile=" + metafile];
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", ...flags);
+    expect(plain.stdout).toBe("helper a.txt,b.txt part a read true\n");
+    expect(compiled).toEqual(plain);
+    const slashes = (text: string) => text.replaceAll("\\", "/");
+    const notes = [...(built.stdout + built.stderr).matchAll(/note: TS100176: [^:\n]*: ([^\r\n]+)/g)];
+    const below = "node_modules/named/";
+    expect(notes.map(it => slashes(it[1])).sort()).toEqual([
+      below + "asked.txt",
+      below + "helper",
+      `${below}list/a.txt, ${below}list/b.txt`,
+      below + "parts/a.txt",
+    ]);
+    const inputs: Record<string, { bytes: number }> = JSON.parse(readFileSync(metafile, "utf8")).inputs;
+    const sizes = Object.keys(inputs).map(name => `${slashes(name)} ${inputs[name].bytes}`);
+    expect(sizes.filter(it => it.startsWith(below) && !/(index\.cjs|package\.json) /.test(it))).toEqual([
+      below + "asked.txt 5",
+      below + "helper 8",
+      below + "list/a.txt 1",
+      below + "list/b.txt 1",
+      below + "parts/a.txt 6",
+      below + "read.txt 4",
+    ]);
+  }, 120_000);
+
+  test("--explain and the metafile list the files that a package only tests for", async () => {
+    using dir = tempDir("aot-queried-package-files-listed", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/node_modules/tester/package.json": `{ "name": "tester", "version": "1.0.0", "main": "index.cjs" }`,
+      "app/node_modules/tester/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+exports.exists = () => fs.existsSync(path.join(__dirname, "tested.txt"));
+exports.existsToo = () => fs.existsSync(path.join(__dirname, "tested.txt"));
+exports.size = () => fs.statSync(path.join(__dirname, "sized.txt")).size;
+exports.isReadable = () => !fs.accessSync(path.join(__dirname, "readable.txt"));
+exports.read = () => fs.existsSync(path.join(__dirname, "read.txt")) && fs.readFileSync(path.join(__dirname, "read.txt"), "utf8");
+`,
+      "app/node_modules/tester/tested.txt": "tested",
+      "app/node_modules/tester/sized.txt": "sized",
+      "app/node_modules/tester/readable.txt": "readable",
+      "app/node_modules/tester/read.txt": "read",
+      "app/node_modules/tester/unnamed.txt": "nobody names it",
+      "app/main.mjs": `import tester from "tester";
+console.log(tester.exists(), tester.existsToo(), tester.size(), tester.isReadable(), tester.read());
+`,
+    });
+    const metafile = join(String(dir), "meta.json");
+    const flags = ["--explain", "--metafile=" + metafile];
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", ...flags);
+    expect(plain.stdout).toBe("true true 5 true read\n");
+    expect(compiled).toEqual(plain);
+    const slashes = (text: string) => text.replaceAll("\\", "/");
+    const notes = [...(built.stdout + built.stderr).matchAll(/note: TS100176: [^:\n]*: ([^\r\n]+)/g)];
+    const below = "node_modules/tester/";
+    expect(notes.map(it => slashes(it[1])).sort()).toEqual([
+      below + "readable.txt",
+      below + "sized.txt",
+      below + "tested.txt",
+    ]);
+    type Metafile = {
+      inputs: Record<string, { bytes: number }>;
+      outputs: Record<string, { bytes: number; inputs: Record<string, { bytesInOutput: number }> }>;
+    };
+    const { inputs, outputs }: Metafile = JSON.parse(readFileSync(metafile, "utf8"));
+    const [output] = Object.values(outputs);
+    const sizes = Object.keys(inputs).map(
+      name => `${slashes(name)} ${inputs[name].bytes} ${output.inputs[name].bytesInOutput}`,
+    );
+    expect(sizes.filter(it => it.startsWith(below) && it.includes(".txt "))).toEqual([
+      below + "read.txt 4 0",
+      below + "readable.txt 8 0",
+      below + "sized.txt 5 0",
+      below + "tested.txt 6 0",
     ]);
   }, 120_000);
 

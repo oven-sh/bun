@@ -59,6 +59,13 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
         }
+        if END_SIGNALS.contains(&number) {
+            UNSEEN_SIGNALS.fetch_or(1 << number, Ordering::SeqCst);
+            if IS_RESTARTING.load(Ordering::SeqCst) {
+                send_unseen_signals_again();
+                return;
+            }
+        }
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
         };
@@ -123,6 +130,30 @@ fn is_uncatchable_signal(_number: i32) -> bool {
 /// True while the pre-reload kill-signal handlers run: `process.exit` inside
 /// one must not stop the reload (node restarts the watched child regardless).
 static IS_EMITTING_WATCH_KILL_SIGNAL: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+static IS_RESTARTING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+static UNSEEN_SIGNALS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(unix)]
+static SIGNALS_SENT_BY_SCRIPT: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(unix)]
+const END_SIGNALS: [i32; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM];
+
+#[cfg(unix)]
+fn send_unseen_signals_again() {
+    let unseen =
+        UNSEEN_SIGNALS.load(Ordering::SeqCst) & !SIGNALS_SENT_BY_SCRIPT.load(Ordering::SeqCst);
+    for number in END_SIGNALS {
+        if unseen & (1 << number) != 0 {
+            // SAFETY: both are async-signal-safe and take no pointers.
+            unsafe { libc::kill(libc::getpid(), number) };
+        }
+    }
+}
 
 /// JS listener count for the configured watch kill signal, mirrored here so
 /// the watcher thread can decide between the immediate execve reload and the
@@ -202,9 +233,34 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
     let _ = Bun__onSignalForJS(i32::from(sig), global_object);
 }
 
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__willRestartProcess() {
+    IS_RESTARTING.store(true, Ordering::SeqCst);
+    send_unseen_signals_again();
+}
+
+pub(crate) fn did_not_restart() {
+    #[cfg(unix)]
+    IS_RESTARTING.store(false, Ordering::SeqCst);
+}
+
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__willSendSignalToSelf(number: i32) {
+    if END_SIGNALS.contains(&number) {
+        SIGNALS_SENT_BY_SCRIPT.fetch_or(1 << number, Ordering::SeqCst);
+    }
+}
+
 impl PosixSignalTask {
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
+        #[cfg(unix)]
+        if END_SIGNALS.contains(&i32::from(number)) {
+            UNSEEN_SIGNALS.fetch_and(!(1 << number), Ordering::SeqCst);
+            SIGNALS_SENT_BY_SCRIPT.fetch_and(!(1 << number), Ordering::SeqCst);
+        }
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).
         if !fired && number == SIGINT_NUMBER && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0

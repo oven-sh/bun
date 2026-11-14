@@ -4655,6 +4655,7 @@ impl VirtualMachine {
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(should_clear_terminal, may_return);
         });
+        crate::posix_signal_handle::did_not_restart();
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.

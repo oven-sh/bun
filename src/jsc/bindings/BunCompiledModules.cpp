@@ -22,7 +22,6 @@
 #include "ZigGlobalObject.h"
 #if ENABLE(AOT)
 #include "RemovableFeatures.h"
-#include <zstd.h>
 
 #include <JavaScriptCore/AOTImage.h>
 #include <JavaScriptCore/AOTPropertyWalk.h>
@@ -2257,14 +2256,6 @@ static void crashWithReason(std::span<const char> reason)
     Bun__panic(reason.data(), reason.size());
 }
 
-bool decompressSource(std::span<uint8_t> text, std::span<const uint8_t> compressed)
-{
-    ZSTD_DCtx* context = ZSTD_createDCtx();
-    bool isOpened = context && ZSTD_decompressDCtx(context, text.data(), text.size(), compressed.data(), compressed.size()) == text.size();
-    ZSTD_freeDCtx(context);
-    return isOpened;
-}
-
 static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID module)
 {
     String path = AOT::modulePath(module);
@@ -2419,7 +2410,6 @@ const AOT::ModuleHost compiledModuleHost = {
     &isRequestedByPendingFactory,
     &hasSourceCache,
     &crashWithReason,
-    &decompressSource,
     &pendingFactoryCallID,
     &evaluateOriginalBeforeFactory,
     &isLoadingUnderVitest,
@@ -2448,7 +2438,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 67 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -2767,7 +2757,6 @@ using namespace JSC;
 
 const AOT::ModuleHost compiledModuleHost {};
 
-bool decompressSource(std::span<uint8_t>, std::span<const uint8_t>) { return false; }
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }

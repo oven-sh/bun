@@ -266,8 +266,12 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
     let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
     let _ = Output::error_writer().write_all(stderr);
+    let reader_is_gone = |error: &bun_sys::Error| {
+        use bun_sys::E;
+        matches!(error.get_errno(), E::EPIPE | E::ENOTCONN | E::ECONNRESET)
+    };
     let exit_code = match write_result {
-        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+        Err(error) if !reader_is_gone(&error) => {
             let why = error.msg().unwrap_or(b"unknown error");
             Output::err_generic(
                 "Cannot write standard output: {}: {}",

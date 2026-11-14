@@ -1116,6 +1116,8 @@ pub(crate) fn write_program_alone(
     program: &[u8],
     build_id: &[u8; 16],
 ) -> Maybe<()> {
+    use bun_sys::close_on_fork;
+
     let bun = bun_core::self_exe_path().unwrap_or(bun_core::zstr!("bun"));
     let parts: Vec<&[u8]> = bun_core::strings::split(bun.as_bytes(), b"'").collect();
     let quoted = parts.join(&b"'\\''"[..]);
@@ -1131,11 +1133,11 @@ pub(crate) fn write_program_alone(
     launcher.extend_from_slice(build_id);
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
     let path = ZBox::from_bytes(path);
-    let file = File::from_fd(bun_sys::openat(directory, &path, flags, 0o755)?);
+    let file = File::from_fd(close_on_fork::openat(directory, &path, flags, 0o755)?);
     let written = file
         .write_all(&launcher)
         .and_then(|()| file.write_all(program));
-    let _ = bun_sys::close(file.into_raw());
+    close_on_fork::close(file.into_raw());
     written
 }
 

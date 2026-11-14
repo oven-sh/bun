@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -20,8 +19,8 @@ use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::update_transitive::{pretty_update_row, row_glyphs};
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, PackageID, PackageManager, PackageNameHash,
-    ResolutionTag, dependency, invalid_package_id,
+    Dependency, DependencyID, PackageID, PackageManager, PackageNameHash, ResolutionTag,
+    dependency, invalid_package_id,
 };
 
 mod json;
@@ -196,7 +195,7 @@ struct Edge {
     dep_id: DependencyID,
     parent: PackageID,
     /// The range after overrides and catalogs are applied. `None` unless that's an npm range.
-    range: Option<dependency::Version>,
+    range: Option<crate::dedupe::NpmRange>,
     /// The override's value, or else the dependent's specifier. Shown when `range` is `None`.
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
@@ -475,13 +474,12 @@ fn pin_for(
     };
     let name = holder.name.slice(buf);
     let version = &holder.version;
-    match version.tag {
-        DependencyVersionTag::Catalog => {
-            let catalog_name = version.catalog().slice(buf);
+    match &version.value {
+        dependency::Value::Catalog(catalog) => {
+            let catalog_name = catalog.slice(buf);
             let entry = lockfile.catalogs.find(buf, catalog_name, name)?;
-            if entry.version.tag != DependencyVersionTag::Npm
-                || (!latest && entry.version.npm().version.get_exact_version().is_none())
-            {
+            let range = entry.version.try_npm()?;
+            if !latest && range.version.get_exact_version().is_none() {
                 return None;
             }
             Some(PackageJsonEdit {
@@ -493,9 +491,9 @@ fn pin_for(
                 new_literal: Box::default(),
             })
         }
-        DependencyVersionTag::Npm => {
+        dependency::Value::Npm(npm) => {
             if !latest {
-                version.npm().version.get_exact_version()?;
+                npm.version.get_exact_version()?;
             }
             let literal = version.literal.slice(buf);
             match rule {
@@ -790,7 +788,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 && edge
                     .range
                     .as_ref()
-                    .is_some_and(|range| range.npm().version.satisfies(v, buf, manifest_buf))
+                    .is_some_and(|range| range.npm.version.satisfies(v, buf, manifest_buf))
         };
         let pin_accepts = |edge: &Edge, v: Semver::Version| -> bool {
             edge.pin.is_some()
@@ -1410,15 +1408,12 @@ fn enqueue_pinned_as(
         name_hash: row.name_hash,
         behavior: row.behavior.with(Behavior::PEER, false),
         version: dependency::Version {
-            tag: DependencyVersionTag::Npm,
             literal: Semver::String::default(),
-            value: dependency::Value {
-                npm: ManuallyDrop::new(dependency::NpmInfo {
-                    name: pkg_name,
-                    version: Group::from(to_version),
-                    is_alias: true,
-                }),
-            },
+            value: dependency::Value::Npm(dependency::NpmInfo {
+                name: pkg_name,
+                version: Group::from(to_version),
+                is_alias: true,
+            }),
         },
     };
     manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;

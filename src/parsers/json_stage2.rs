@@ -7,6 +7,7 @@ use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
+use bun_simdutf_sys::simdutf;
 
 use crate::json::JSONOptions;
 use crate::json_index::{self as jidx, StructuralIndex};
@@ -513,6 +514,36 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[cold]
     fn parse_string_slow(&mut self, body: &'s [u8]) -> PResult<E::EString> {
+        if self.idx.flags & jidx::FLAG_HAS_CTRL_IN_STRING != 0 {
+            return self.parse_string_by_code_point(body);
+        }
+        // No string so far has a control character, so a string with no backslash is its text.
+        let first = text_len(body);
+        if first == body.len() {
+            return Ok(E::EString::init(body));
+        }
+        self.decode_string(body, first)
+    }
+
+    /// `parse_string_slow` for a string with a backslash: `first` is the place of the first one.
+    #[inline(never)]
+    fn decode_string(&mut self, body: &'s [u8], first: usize) -> PResult<E::EString> {
+        let mut buf = core::mem::take(&mut self.scratch_str);
+        buf.clear();
+        let plain = decode_plain_text(body, first, &mut buf);
+        if plain < body.len() {
+            // The rest starts with a byte that is not UTF-8, or with a bad escape.
+            self.decode_escapes(&body[plain..], &mut buf)?;
+        }
+        let owned = self.alloc_owned_str(&buf);
+        self.scratch_str = buf;
+        Ok(E::EString::init(owned.slice()))
+    }
+
+    /// What `parse_string_slow` does if a string of the document has a control character.
+    #[cold]
+    #[inline(never)]
+    fn parse_string_by_code_point(&mut self, body: &'s [u8]) -> PResult<E::EString> {
         let mut first_special = None;
         for (k, &b) in body.iter().enumerate() {
             if b == b'\\' || b < 0x20 {
@@ -1290,6 +1321,158 @@ fn push_codepoint(buf: &mut Vec<u8>, cp: CodePoint) {
     buf.extend_from_slice(&tmp[..n]);
 }
 
+/// The length of `text` up to a backslash. It reads short text itself: `index_of_char` was slower.
+#[inline(always)]
+fn text_len(text: &[u8]) -> usize {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    // Below this many bytes the kernel reads no whole vector on some processors.
+    const KERNEL_MIN: usize = 64;
+    // A word read first makes one byte between two escapes slower than the loop this replaces.
+    let mut len = 0;
+    while len < 4 {
+        match text.get(len) {
+            Some(&byte) if byte != b'\\' => len += 1,
+            _ => return len,
+        }
+    }
+    while let Some(head) = text[len..].first_chunk::<8>() {
+        if len > 4 && text.len() - len >= KERNEL_MIN {
+            let rest = &text[len..];
+            return len + strings::index_of_char_usize(rest, b'\\').unwrap_or(rest.len());
+        }
+        let word = u64::from_le_bytes(*head) ^ (ONES * 0x5C);
+        // Sets the high bit of each backslash. Above the first one a borrow can set more.
+        let backslash = word.wrapping_sub(ONES) & !word & (ONES * 0x80);
+        if backslash != 0 {
+            return len + (backslash.trailing_zeros() / 8) as usize;
+        }
+        len += 8;
+    }
+    while text.get(len).is_some_and(|&byte| byte != b'\\') {
+        len += 1;
+    }
+    len
+}
+
+/// The length of the UTF-8 text at the start of `body`: it ends before a byte of no character.
+#[inline]
+fn utf8_len(body: &[u8]) -> usize {
+    // The call to simdutf costs more than the check of a short body.
+    if body.len() <= 64 {
+        if body.is_ascii() {
+            return body.len();
+        }
+        return match core::str::from_utf8(body) {
+            Ok(_) => body.len(),
+            Err(error) => error.valid_up_to(),
+        };
+    }
+    let result = simdutf::validate::with_errors::utf8(body);
+    if result.is_successful() {
+        body.len()
+    } else {
+        result.count
+    }
+}
+
+/// The value of the hex digits `digits`, if every byte is one.
+#[inline]
+fn hex_value(digits: Option<&[u8]>) -> Option<u32> {
+    let mut value: u32 = 0;
+    for &digit in digits? {
+        value = value * 16 + u32::from(bun_core::fmt::hex_digit_value(digit)?);
+    }
+    Some(value)
+}
+
+/// Decodes the row of escapes at the backslash `body[pos]`. `Ok`: its end. `Err`: a bad escape.
+#[inline(always)]
+fn decode_escapes_at(body: &[u8], mut pos: usize, out: &mut Vec<u8>) -> Result<usize, usize> {
+    loop {
+        debug_assert_eq!(body.get(pos), Some(&b'\\'));
+        let start = pos;
+        // `decode_string_escapes` drops a backslash that ends the body.
+        let Some(&escaped) = body.get(pos + 1) else {
+            return Ok(body.len());
+        };
+        pos += 2;
+        match escaped {
+            b'b' => out.push(0x08),
+            b'f' => out.push(0x0c),
+            b'n' => out.push(0x0a),
+            b'r' => out.push(0x0d),
+            b't' => out.push(0x09),
+            b'v' => out.push(0x0b),
+            b'8' | b'9' | b'"' | b'\\' | b'/' => out.push(escaped),
+            b'x' => {
+                let value = hex_value(body.get(pos..pos + 2)).ok_or(start)?;
+                pos += 2;
+                push_codepoint(out, value as CodePoint);
+            }
+            b'u' => {
+                let mut value = hex_value(body.get(pos..pos + 4)).ok_or(start)?;
+                pos += 4;
+                if strings::u16_is_lead(value as u16)
+                    && body.get(pos..pos + 2) == Some(b"\\u".as_slice())
+                    && let Some(trail) = hex_value(body.get(pos + 2..pos + 6))
+                    && strings::u16_is_trail(trail as u16)
+                {
+                    value = strings::u16_get_supplementary(value as u16, trail as u16);
+                    pos += 6;
+                }
+                push_codepoint(out, value as CodePoint);
+            }
+            _ => return Err(start),
+        }
+        if body.get(pos) != Some(&b'\\') {
+            return Ok(pos);
+        }
+    }
+}
+
+/// Decodes `body` up to a byte that is not UTF-8 or a bad escape, and returns where it stops.
+#[inline(always)]
+fn decode_plain_text(body: &[u8], first: usize, out: &mut Vec<u8>) -> usize {
+    out.reserve(body.len());
+    let mut copied = 0;
+    if body.first() == Some(&b'\\') {
+        // Escapes are ASCII, and a string such as "\n" has no text to check.
+        match decode_escapes_at(body, 0, out) {
+            Ok(after) => copied = after,
+            Err(bad) => return bad,
+        }
+        if copied == body.len() {
+            return copied;
+        }
+    }
+    let end = utf8_len(body);
+    let mut pos = if copied == 0 {
+        first.min(end)
+    } else {
+        copied + text_len(&body[copied..end])
+    };
+    loop {
+        // `body[copied..pos]` is text, and `body[pos]` is a backslash if `pos` is not `end`.
+        match &body[copied..pos] {
+            [] => {}
+            [byte] => out.push(*byte),
+            text => out.extend_from_slice(text),
+        }
+        if pos == end {
+            return end;
+        }
+        match decode_escapes_at(body, pos, out) {
+            Ok(after) => copied = after,
+            Err(bad) => return bad,
+        }
+        // Many strings end with an escape.
+        if copied == end {
+            return end;
+        }
+        pos = copied + text_len(&body[copied..end]);
+    }
+}
+
 fn read_trail_surrogate_escape(
     iterator: &strings::CodepointIterator<'_>,
     iter: &mut strings::Cursor,
@@ -1430,4 +1613,374 @@ pub(crate) fn decode_auto_quoted(
     let mut buf: Vec<u8> = Vec::with_capacity(body.len());
     decode_string_escapes::<true, _>(&mut l, body, &mut buf)?;
     Ok(E::String::init(bump.alloc_slice_copy(&buf)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The decoded bytes, or the error and what it logged.
+    type Outcome = Result<Vec<u8>, String>;
+
+    fn logged(err: crate::Error, log: &Log) -> String {
+        let messages: Vec<String> = log
+            .msgs
+            .iter()
+            .map(|m| String::from_utf8_lossy(&m.data.text).into_owned())
+            .collect();
+        format!("{err:?}: {messages:?}")
+    }
+
+    /// `decode_string_escapes` of `body`, after the text that `buf` has.
+    fn decode_by_code_point(allow_raw_control: bool, body: &[u8], mut buf: Vec<u8>) -> Outcome {
+        let source = Source::init_path_string("string.json", body);
+        let mut log = Log::init();
+        let mut l = MiniLog {
+            log: &mut log,
+            source: &source,
+            prev_error_loc: Loc::EMPTY,
+        };
+        let result = if allow_raw_control {
+            decode_string_escapes::<true, _>(&mut l, body, &mut buf)
+        } else {
+            decode_string_escapes::<false, _>(&mut l, body, &mut buf)
+        };
+        result.map(|()| buf).map_err(|err| logged(err, &log))
+    }
+
+    /// What the parser makes of the one string of the document `["body"]`.
+    fn parsed(body: &[u8]) -> Outcome {
+        let doc = [b"[\"".as_slice(), body, b"\"]"].concat();
+        bun_ast::initialize_store_or_reset();
+        let _scope = bun_ast::StoreResetGuard::new();
+        let source = Source::init_path_string("doc.json", &doc);
+        let mut log = Log::init();
+        let parsed = crate::json::ParsedJson::parse_json(&source, &mut log)
+            .map_err(|err| logged(err, &log))?;
+        let Data::EArrayJSON(root) = parsed.root.data else {
+            panic!("the document is an array");
+        };
+        match root.get().items() {
+            [E::JsonValue::String(string)] => Ok(string.slice().to_vec()),
+            items => panic!("{} items in {:?}", items.len(), bstr::BStr::new(&doc)),
+        }
+    }
+
+    /// What main makes of a string: it decodes one that has a backslash or a control character.
+    fn expected(body: &[u8]) -> Outcome {
+        if body.iter().any(|b| *b == b'\\' || *b < 0x20) {
+            decode_by_code_point(false, body, Vec::new())
+        } else {
+            Ok(body.to_vec())
+        }
+    }
+
+    /// Whether `"body"` is one string token: each quote of the body is escaped.
+    fn is_one_string(body: &[u8]) -> bool {
+        let mut i = 0;
+        while i < body.len() {
+            match body[i] {
+                b'"' => return false,
+                b'\\' if i + 1 == body.len() => return false,
+                b'\\' => i += 2,
+                _ => i += 1,
+            }
+        }
+        true
+    }
+
+    /// Every byte that takes its own path through a decoder, and its neighbours.
+    const BYTES: &[u8] = &[
+        // Printable ASCII, the escape letters, hex digits of each case, and `g`.
+        b' ', b'a', b'Z', b'~', 0x7F, b'\\', b'"', b'\'', b'/', b'b', b'f', b'n', b'r', b't', b'v',
+        b'u', b'x', b'0', b'7', b'8', b'9', b'A', b'D', b'F', b'c', b'd', b'g',
+        // Control characters: the two that end a line, and three that do not.
+        0x00, 0x09, 0x0A, 0x0D, 0x1F,
+        // Continuation bytes, then lead bytes: overlong (C0, C1, E0, F0), surrogate (ED), invalid.
+        0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xED, 0xEF, 0xF0,
+        0xF1, 0xF4, 0xF5, 0xF7, 0xF8, 0xFF,
+    ];
+
+    /// Pieces that a body is built from, so that long and well-formed sequences occur often.
+    const PIECES: &[&[u8]] = &[
+        b"plain text",
+        b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        b"\\n",
+        b"\\t",
+        b"\\\"",
+        b"\\\\",
+        b"\\/",
+        b"\\b\\f\\r\\v",
+        b"\\8\\9",
+        b"\\0",
+        b"\\'",
+        b"\\x41",
+        b"\\xff",
+        b"\\x4",
+        b"\\u0041",
+        b"\\u00e9",
+        b"\\u65e5",
+        b"\\uD83D\\uDE00",
+        b"\\uD83D",
+        b"\\uDE00",
+        b"\\uD83D\\u0041",
+        b"\\uD83D\\uD83D\\uDE00",
+        b"\\uD83D\\uDE0",
+        b"\\uD83D\\n",
+        b"\\u12",
+        b"\\u12G4",
+        b"\\",
+        "é".as_bytes(),
+        "日本語".as_bytes(),
+        "😀".as_bytes(),
+        "\u{7f}\u{80}\u{7ff}\u{800}\u{ffff}\u{10000}\u{10ffff}".as_bytes(),
+        // A lead and a trail surrogate as WTF-8, alone and as a pair.
+        &[0xED, 0xA0, 0xBD],
+        &[0xED, 0xB8, 0x80],
+        &[0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80],
+        // Sequences cut short, overlong, or past U+10FFFF.
+        &[0xC3],
+        &[0xE6, 0x97],
+        &[0xF0, 0x9F, 0x98],
+        &[0xC0, 0x80],
+        &[0xE0, 0x80, 0x80],
+        &[0xF0, 0x80, 0x80, 0x80],
+        &[0xF4, 0x90, 0x80, 0x80],
+        &[0x80],
+        &[0xFF],
+        &[0x00],
+        &[0x0A],
+        &[0x1F],
+    ];
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        /// A body of up to ten parts: a byte of `BYTES`, a run of ASCII, or one of `PIECES`.
+        fn body(&mut self, run: usize, body: &mut Vec<u8>) {
+            body.clear();
+            for _ in 0..self.below(10) {
+                match self.below(8) {
+                    0 => body.push(BYTES[self.below(BYTES.len())]),
+                    1 => {
+                        let len = self.below(run);
+                        body.extend(core::iter::repeat_n(b'a' + (len % 26) as u8, len));
+                    }
+                    _ => body.extend_from_slice(PIECES[self.below(PIECES.len())]),
+                }
+            }
+        }
+    }
+
+    /// Calls `check` with every body of one or two bytes, many of three, and random ones.
+    fn for_each_body(mut check: impl FnMut(&[u8])) {
+        check(b"");
+        for a in 0..=255u8 {
+            check(&[a]);
+            for b in 0..=255u8 {
+                check(&[a, b]);
+            }
+        }
+        for &a in BYTES {
+            for &b in BYTES {
+                for &c in BYTES {
+                    check(&[a, b, c]);
+                }
+            }
+        }
+        let mut rng = Rng(0x9E3779B97F4A7C15);
+        let mut body = Vec::new();
+        for _ in 0..200_000 {
+            body.clear();
+            for _ in 0..rng.below(14) {
+                body.push(BYTES[rng.below(BYTES.len())]);
+            }
+            check(&body);
+        }
+        for _ in 0..300_000 {
+            // The runs cross the widths that the search for a backslash reads in one step.
+            rng.body(150, &mut body);
+            check(&body);
+        }
+    }
+
+    #[test]
+    fn text_len_matches_a_byte_loop() {
+        let check = |text: &[u8]| {
+            let expected = text.iter().take_while(|b| **b != b'\\').count();
+            assert_eq!(text_len(text), expected, "{:?}", bstr::BStr::new(text));
+        };
+        // Every byte value at each place that is read by a branch or in a word, alone or in a pair.
+        for filler in [b'a', 0xE6] {
+            let mut text = [filler; 30];
+            for first in 0..28 {
+                for value in 0..=255u8 {
+                    text.fill(filler);
+                    text[first] = value;
+                    check(&text);
+                    for second in first + 1..28 {
+                        for other in [0x00, 0x1F, 0x5B, 0x5C, 0x5D, 0x7F, 0x80, 0xDC, 0xFF] {
+                            text[second] = other;
+                            check(&text);
+                        }
+                        text[second] = filler;
+                    }
+                }
+            }
+        }
+        // A backslash at each place of a text of each length up to 200 bytes, and no backslash.
+        let text = [b'a'; 200];
+        for len in 0..=text.len() {
+            check(&text[..len]);
+            for at in 0..len {
+                let mut text = text;
+                text[at] = b'\\';
+                check(&text[..len]);
+            }
+        }
+    }
+
+    #[test]
+    fn utf8_len_is_the_same_for_a_short_and_a_long_body() {
+        // A short body is checked without simdutf. 70 bytes of ASCII after it make it long.
+        let mut long = Vec::new();
+        for_each_body(|body| {
+            long.clear();
+            long.extend_from_slice(body);
+            long.resize(body.len() + 70, b'a');
+            let len = utf8_len(body);
+            let expected = if len == body.len() { long.len() } else { len };
+            assert_eq!(
+                utf8_len(&long),
+                expected,
+                "body {:?}",
+                bstr::BStr::new(body)
+            );
+        });
+    }
+
+    #[test]
+    fn bulk_decoder_matches_the_code_point_decoder() {
+        let (mut whole, mut part, mut rejected) = (0, 0, 0);
+        for_each_body(|body| {
+            let mut in_bulk = Vec::new();
+            let plain = decode_plain_text(body, text_len(body), &mut in_bulk);
+            // The bulk decoder takes a control character as text, so the other decoder does too.
+            let actual = decode_by_code_point(true, &body[plain..], in_bulk);
+            let expected = decode_by_code_point(true, body, Vec::new());
+            assert_eq!(
+                actual,
+                expected,
+                "body {:?}, in bulk up to {plain}",
+                bstr::BStr::new(body)
+            );
+            match actual {
+                Ok(_) if plain == body.len() => whole += 1,
+                Ok(_) => part += 1,
+                Err(_) => rejected += 1,
+            }
+        });
+        assert!(
+            whole > 50_000 && part > 50_000 && rejected > 50_000,
+            "{whole} decoded in bulk, {part} in part, {rejected} rejected"
+        );
+    }
+
+    #[test]
+    fn parser_decodes_like_the_code_point_decoder() {
+        let (mut decoded, mut rejected) = (0, 0);
+        for_each_body(|body| {
+            if !is_one_string(body) {
+                return;
+            }
+            let (expected, actual) = (expected(body), parsed(body));
+            assert!(
+                expected == actual,
+                "body {:?}\n by code point: {expected:?}\n parser: {actual:?}",
+                bstr::BStr::new(body)
+            );
+            match expected {
+                Ok(_) => decoded += 1,
+                Err(_) => rejected += 1,
+            }
+        });
+        assert!(
+            decoded > 50_000 && rejected > 50_000,
+            "{decoded} decoded, {rejected} rejected"
+        );
+    }
+
+    #[test]
+    fn parser_decodes_long_strings_like_the_code_point_decoder() {
+        let mut rng = Rng(0xD1B54A32D192ED03);
+        let (mut part, mut body) = (Vec::new(), Vec::new());
+        let (mut decoded, mut rejected) = (0, 0);
+        // Stage 1 reads 8192 bytes at a time, and the tape holds strings in buffers of 4096 bytes.
+        for target in [4095, 4096, 4097, 8191, 8192, 8193, 20_000] {
+            for _ in 0..200 {
+                // One body in eight has parts that are not a string, at any place in it.
+                let only_what_decodes = rng.below(8) != 0;
+                body.clear();
+                while body.len() < target {
+                    rng.body(52, &mut part);
+                    if is_one_string(&part) && (!only_what_decodes || expected(&part).is_ok()) {
+                        body.extend_from_slice(&part);
+                    }
+                }
+                let (expected, actual) = (expected(&body), parsed(&body));
+                assert!(
+                    expected == actual,
+                    "body {:?}\n by code point: {:?}\n parser: {:?}",
+                    bstr::BStr::new(&body),
+                    expected.as_ref().map(Vec::len),
+                    actual.as_ref().map(Vec::len),
+                );
+                match expected {
+                    Ok(_) => decoded += 1,
+                    Err(_) => rejected += 1,
+                }
+            }
+        }
+        assert!(
+            decoded > 1_000 && rejected > 100,
+            "{decoded} decoded, {rejected} rejected"
+        );
+    }
+
+    #[test]
+    fn decoded_text_of_known_bodies() {
+        assert_eq!(parsed(b"a\\nb"), Ok(b"a\nb".to_vec()));
+        assert_eq!(
+            parsed(b"\\b\\f\\n\\r\\t\\v\\8\\9\\\"\\\\\\/"),
+            Ok(b"\x08\x0c\n\r\t\x0b89\"\\/".to_vec())
+        );
+        assert_eq!(parsed(b"\\x41\\xe9\\u65e5"), Ok("Aé日".as_bytes().to_vec()));
+        assert_eq!(parsed(b"\\uD83D\\uDE00"), Ok("😀".as_bytes().to_vec()));
+        assert_eq!(parsed(b"\\uD83D"), Ok(vec![0xED, 0xA0, 0xBD]));
+        // A byte that starts no sequence is its code point. A lead byte without its tail is U+FFFD.
+        assert_eq!(
+            parsed(b"\\n\x80\xE6\x97"),
+            Ok("\n\u{80}\u{FFFD}\u{97}".as_bytes().to_vec())
+        );
+        assert!(
+            parsed(b"a\nb")
+                .unwrap_err()
+                .contains("Unterminated string literal")
+        );
+        assert!(parsed(b"a\x01b").unwrap_err().contains("Syntax Error"));
+        assert!(parsed(b"\\n\x01").unwrap_err().contains("Syntax Error"));
+        assert!(parsed(b"\\q").unwrap_err().contains("Syntax Error"));
+        assert!(parsed(b"\\u12G4").unwrap_err().contains("Syntax Error"));
+    }
 }

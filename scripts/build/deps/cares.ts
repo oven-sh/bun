@@ -12,7 +12,7 @@ import type { Config } from "../config.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const CARES_COMMIT = "0b88066f79ac9745d6819899f1794df91b73c873";
+const CARES_COMMIT = "bc91829cce983a35ec01f5dbc05465858a3df469";
 
 // prettier-ignore
 const SOURCES = [

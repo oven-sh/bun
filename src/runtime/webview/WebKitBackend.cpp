@@ -427,7 +427,7 @@ void HostClient::handleReply(const Frame& h, Reader r)
         return;
     }
     case Reply::EvalFailed:
-        settleSlot(g, view, view->m_pendingEval, false, createError(g, r.str()));
+        settleSlot(g, view, view->m_pendingEval, false, errorFromPageExceptionString(g, r.str()));
         return;
 
     case Reply::ScreenshotDone: {

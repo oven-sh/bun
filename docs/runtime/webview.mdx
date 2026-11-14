@@ -251,7 +251,12 @@ await view.evaluate("() => 1"); // undefined (functions don't serialize)
 await view.evaluate("fetch('/api').then(r => r.json())"); // awaited
 ```
 
-If the script throws (or returns a rejected promise), `evaluate()` rejects with an `Error` whose message comes from the page-side exception.
+If the script throws (or returns a rejected promise), `evaluate()` rejects with an error rebuilt from the page-side exception. A standard error class keeps its class and message, so a page `TypeError` rejects as a `TypeError` in Bun. With the Chrome backend the error also carries the page-side `stack`, and any other `Error` subclass arrives as a plain `Error` that keeps the page's `name`. With the WebKit backend anything but a standard class arrives as a plain `Error` whose message is the page's string form of the thrown value.
+
+```ts
+await view.evaluate("null.x"); // rejects with a TypeError
+await view.evaluate("1 + 1 // comments are fine"); // 2
+```
 
 Only one `evaluate()` may be in flight per view at a time; a second concurrent call throws `ERR_INVALID_STATE`.
 

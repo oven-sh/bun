@@ -359,6 +359,33 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
       ]
     `);
   });
+
+  test("CookieMap writes a parsed Cookie back with the value text it has", () => {
+    const map = new Bun.CookieMap();
+    const cookie = Bun.Cookie.parse("sid=s%3Aabc.def%2Fghi; Path=/; HttpOnly");
+    map.set(cookie);
+
+    expect(map.get("sid")).toBe("s%3Aabc.def%2Fghi");
+    expect(map.toJSON()).toEqual({ sid: "s%3Aabc.def%2Fghi" });
+    expect(map.toSetCookieHeaders()).toEqual(["sid=s%3Aabc.def%2Fghi; Path=/; HttpOnly; SameSite=Lax"]);
+
+    // The map holds the Cookie itself. A value that is assigned afterwards is text.
+    cookie.value = "x y";
+    expect(map.toSetCookieHeaders()).toEqual(["sid=x%20y; Path=/; HttpOnly; SameSite=Lax"]);
+  });
+
+  test("CookieMap percent-encodes a value that is set as a string", () => {
+    const cookie = Bun.Cookie.parse("sid=s%3Aabc");
+    const byNameAndValue = new Bun.CookieMap();
+    byNameAndValue.set(cookie.name, cookie.value);
+    const byObject = new Bun.CookieMap();
+    byObject.set(cookie.toJSON());
+
+    expect([byNameAndValue.toSetCookieHeaders(), byObject.toSetCookieHeaders()]).toEqual([
+      ["sid=s%253Aabc; Path=/; SameSite=Lax"],
+      ["sid=s%253Aabc; Path=/; SameSite=Lax"],
+    ]);
+  });
 });
 
 describe("Cookie name field is immutable", () => {

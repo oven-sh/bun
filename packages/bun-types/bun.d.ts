@@ -11136,7 +11136,10 @@ declare module "bun" {
     readonly name: string;
 
     /**
-     * The value of the cookie
+     * The value of the cookie.
+     *
+     * A value that you assign is text, and {@link Cookie.serialize}
+     * percent-encodes it.
      */
     value: string;
 
@@ -11186,7 +11189,16 @@ declare module "bun" {
     isExpired(): boolean;
 
     /**
-     * Serializes the cookie to a string
+     * Serializes the cookie to a string.
+     *
+     * The value is percent-encoded the way `encodeURIComponent` does, with
+     * one exception. A cookie that was made from a cookie string
+     * ({@link Cookie.parse} or `new Bun.Cookie(cookieString)`), and whose
+     * `value` was not assigned since, keeps the value text of that string.
+     * This applies when the text is a `cookie-value` of RFC 6265 section 4.1.1
+     * in which two hex digits follow every `%`. A `cookie-value` is printable
+     * ASCII other than space, `"`, `,`, `;` and `\`, optionally inside one
+     * pair of double quotes.
      *
      * @example
      * ```ts
@@ -11211,7 +11223,26 @@ declare module "bun" {
     toJSON(): CookieInit;
 
     /**
-     * Parses a serialized cookie string into a `Cookie`
+     * Parses a serialized cookie string into a `Cookie`.
+     *
+     * {@link Cookie.serialize} writes the value of a parsed cookie back as it
+     * is in the string (see there for the rule). A cookie string is read as it
+     * is. A value that is passed as a value is text and is percent-encoded:
+     * `new Bun.Cookie(name, value)`, {@link Cookie.from}, a {@link CookieInit}
+     * object, `CookieMap.set(name, value)` and an assignment to `value`.
+     *
+     * To send a parsed cookie again, use
+     * `headers.append("Set-Cookie", cookie.toString())` or
+     * `cookies.set(cookie)`. A `CookieMap` keeps one cookie for each name.
+     *
+     * A parsed cookie always has a `path` (`/` by default) and a `sameSite`
+     * (`lax` by default), and attributes that Bun does not know are dropped.
+     *
+     * @example
+     * ```ts
+     * const cookie = Bun.Cookie.parse("session=s%3Aabc; Path=/");
+     * cookie.toString(); // "session=s%3Aabc; Path=/; SameSite=Lax"
+     * ```
      * @param cookieString - A serialized cookie string, like `"name=value; Path=/"`
      */
     static parse(cookieString: string): Cookie;

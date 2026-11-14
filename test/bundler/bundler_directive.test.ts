@@ -588,4 +588,20 @@ describe("bundler", () => {
       expect(out).not.toStartWith('"use strict"');
     },
   });
+
+  // The scopes of the decorator exist before the directive of the method is read. In a sloppy scope the
+  // function of the block would be a variable of the function around it.
+  itBundled("directive/UseStrictReachesFunctionsInParameterDecorators", {
+    files: {
+      "/entry.ts": /* js */ `
+        function dec(f: any): any { return () => { console.log("dec=" + f()) } }
+        const h1 = "outer";
+        export class A {
+          m(@dec(function () { { function h1() { return 1 } } return h1 }) a: any) { "use strict"; return typeof a }
+        }
+      `,
+      "/tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": true } }`,
+    },
+    run: { stdout: "dec=outer" },
+  });
 });

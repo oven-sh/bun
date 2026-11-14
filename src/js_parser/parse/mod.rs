@@ -1799,7 +1799,8 @@ fn mark_use_strict(mut scope: js_ast::StoreRef<js_ast::Scope>) {
         && parent.kind == js_ast::scope::Kind::FunctionArgs
         && parent.strict_mode == StrictModeKind::SloppyMode
     {
-        parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+        // With the scopes that they already hold, such as a function in a decorator.
+        parent.recursive_set_strict_mode(StrictModeKind::ExplicitStrictMode);
     }
 }
 

@@ -1245,6 +1245,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut buf: Vec<u8> = Vec::new();
                         write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base))
                             .expect("unreachable");
+                        // Strict code cannot declare these. esbuild has this suffix on every such name.
+                        if crate::parser::is_eval_or_arguments(&buf) {
+                            buf.extend_from_slice(b"_star");
+                        }
                         p.arena.alloc_slice_copy(&buf)
                     };
                     namespace_ref = p.store_name_in_ref(name);

@@ -1585,6 +1585,21 @@ devTest("server: text that JavaScriptCore refuses does not abort the dev server"
   },
 });
 
+for (const name of ["eval", "arguments"]) {
+  // The import is named after the file.
+  devTest(`server: a strict file that re-exports a file with the name ${name}`, {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `import * as lib from "../lib.js"; export default () => Response.json(lib);`,
+      "lib.js": `"use strict"; export * from "./${name}.js";`,
+      [name + ".js"]: `export const value = "${name}";`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(JSON.stringify({ value: name }));
+    },
+  });
+}
+
 // The other files of the save are loaded without the one that is refused.
 devTest("server: the files that come with text that JavaScriptCore refuses are loaded", {
   framework: minimalFramework,

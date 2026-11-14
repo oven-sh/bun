@@ -1534,6 +1534,36 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
 
+    // Without a socket, the connection would go to the host of the URL over TCP, with its credentials.
+    test.each(adapters)("%s: a unix:// URL with no socket path throws", adapter => {
+      // The message has no part of the URL: what `URL` reads as the host and the port can be part of a password.
+      const noSocket = expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message:
+          "The argument 'url' must have the path of a unix socket (expected a URL like 'unix:///run/db.sock'). " +
+          "Received 'unix://[REDACTED]'",
+      });
+      for (const url of [
+        "unix://dbhost",
+        "unix://dbhost:1234",
+        "unix://dbhost?x=1",
+        "unix://dbhost#f",
+        "unix://",
+        "unix://user:secret@dbhost",
+        // The `#` of this password is not encoded, so `user:2024` is the host and the port.
+        "unix://user:2024#secret@dbhost",
+      ]) {
+        expect(() => new SQL(url, { adapter })).toThrow(noSocket);
+        expect(() => new SQL({ adapter, url })).toThrow(noSocket);
+      }
+      // The path of the socket can come from the options, the query or the host.
+      expect(new SQL("unix://dbhost", { adapter, path: "/run/db.sock" }).options.path).toBe("/run/db.sock");
+      expect(new SQL("unix://dbhost?path=/run/db.sock", { adapter }).options.path).toBe("/run/db.sock");
+      expect(new SQL("unix://%2Frun%2Fdb.sock", { adapter }).options.path).toBe(
+        adapter === "postgres" ? "/run/db.sock/.s.PGSQL.5432" : "/run/db.sock",
+      );
+    });
+
     test.skipIf(isWindows).each(adapters)(
       "%s: the pathname of any other URL is the database, whatever is on the disk",
       adapter => {

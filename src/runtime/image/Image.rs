@@ -15,7 +15,7 @@ use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
-use crate::webcore::node_types::PathOrFileDescriptor;
+use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
@@ -1035,15 +1035,23 @@ impl Image {
                 "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
             )));
         }
+        let write_dest = match WriteDest::from_js(global, dest) {
+            Ok(parsed) => parsed,
+            // An invalid destination rejects the promise; only a missing one throws.
+            Err(e) => {
+                return Ok(JSPromise::rejected_promise_with_caught_exception(global, e)?.to_js());
+            }
+        };
 
         let mut output = self.pipeline.get().output;
-        // Extension inference only when dest is a plain string. BunFile/S3 dests
+        // Extension inference only when dest is a string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
-        if output.is_none() && dest.is_string() {
-            let str = dest.to_bun_string(global)?;
-            let utf8 = str.to_utf8();
-            if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
+        if output.is_none()
+            && dest.is_string()
+            && let PathOrBlob::Path(PathOrFileDescriptor::Path(path)) = &write_dest.0
+        {
+            if let Some(f) = codecs::Format::from_extension(path.as_written()) {
                 match f {
                     // Only infer formats we can ENCODE; decode-only extensions
                     // (.bmp/.tiff/.gif) fall through to the source-format default.
@@ -1065,7 +1073,7 @@ impl Image {
             &cx,
             this_value.to_js(),
             Kind::Encode(output),
-            Deliver::WriteDest(Strong::create(dest, global)),
+            Deliver::WriteDest(Box::new(write_dest)),
         )
     }
 }
@@ -1229,7 +1237,7 @@ impl BlobReadChain {
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
-        // `deliver` may carry a `.write_dest` Strong; on these defensive
+        // `deliver` may carry a `.write()` destination; on these defensive
         // early-returns the chain is never created so its Drop can't free it.
         // (Same contract as schedule()'s detached-buffer branch.)
         let Source::Blob(strong) = image.source.get() else {
@@ -1405,6 +1413,30 @@ impl Drop for PendingTask {
     }
 }
 
+/// The destination of a `.write(dest)`, parsed in the call by `Bun.write`'s own parser.
+pub(crate) struct WriteDest(PathOrBlob);
+// SAFETY: `from_js` is the only constructor and leaves no pinned buffer in the
+// path. The rest is owned bytes, a string ref, an fd or a `Blob` view that
+// holds its own store ref: sound to use and drop on the JS thread.
+unsafe impl bun_jsc::job::JsAffine for WriteDest {}
+impl WriteDest {
+    fn from_js(global: &JSGlobalObject, dest: JSValue) -> JsResult<Self> {
+        let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&dest));
+        let mut parsed = crate::webcore::blob::write_destination_from_js(global, &mut args)?;
+        if let PathOrBlob::Path(PathOrFileDescriptor::Path(path)) = &mut parsed {
+            match path {
+                // Borrows the caller's bytes: unrooted, and the caller can rewrite them.
+                PathLike::Buffer(_) => *path = path.owned_copy(),
+                PathLike::String(_)
+                | PathLike::ThreadIsolatedString(_)
+                | PathLike::Utf8(_)
+                | PathLike::Joined(_) => {}
+            }
+        }
+        Ok(Self(parsed))
+    }
+}
+
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
@@ -1460,10 +1492,9 @@ pub(crate) enum Deliver {
     /// `.write(dest)` — `then()` hands the encoded bytes to `Bun.write`'s
     /// implementation with this as the destination. Anything `Bun.write`
     /// accepts (path string / BunFile / S3 / fd) works here unchanged.
-    WriteDest(Strong),
+    /// Boxed so that the jobs of the other terminals keep their size.
+    WriteDest(Box<WriteDest>),
 }
-// `Deliver::deinit` is just `Strong::Drop` on the `WriteDest` arm — handled
-// automatically.
 
 pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
@@ -1828,7 +1859,6 @@ impl PipelineTask {
                     // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
-                        let dest_js = dest.get();
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
                         // ownership transfers to JSC; `ctx` is null and `out.free`
                         // ignores it.
@@ -1843,20 +1873,9 @@ impl PipelineTask {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };
-                        let args = [dest_js];
-                        let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
-                            global,
-                            &mut arg_slice,
-                        ) {
-                            Ok(p) => p,
-                            Err(e) => return promise.reject(global, Err(e)),
-                        };
-                        // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
-                        // and frees on Drop — no explicit `path.deinit()` needed.
                         let write_promise = match crate::webcore::blob::write_file_internal(
                             cx,
-                            &mut path_or_blob,
+                            &mut dest.0,
                             data,
                             Default::default(),
                         ) {

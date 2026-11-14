@@ -261,12 +261,38 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 ))?;
-
-                            // Make sure these don't end up in the wrapper closure
-                            if should_extract_esm_stmts_for_wrap {
-                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
-                                continue 'stmt_loop;
+                        } else {
+                            // The statement copies no names here: a read binds to a member of its namespace (README: Pattern 5).
+                            let imports_namespace = c.imports_external_star_namespace(
+                                source_index,
+                                s.import_record_index,
+                            );
+                            let import = Stmt::alloc(
+                                S::Import {
+                                    namespace_ref: s.namespace_ref,
+                                    import_record_index: s.import_record_index,
+                                    star_name_loc: if imports_namespace {
+                                        stmt.loc
+                                    } else {
+                                        Loc::EMPTY
+                                    },
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            );
+                            if !chunk.prints_entry_point_file_in_place(source_index, wrap) {
+                                // Turn this statement into "import 'path'": the entry point tail has the export
+                                stmt = import;
+                            } else if imports_namespace {
+                                // The statement stays an export of the chunk, beside the import of its namespace.
+                                stmts.append(StmtListWhich::InsideWrapperSuffix, import);
                             }
+                        }
+
+                        // Make sure these don't end up in the wrapper closure
+                        if should_extract_esm_stmts_for_wrap {
+                            stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                            continue 'stmt_loop;
                         }
                     } else {
                         if record.source_index.is_valid() {

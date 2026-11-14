@@ -1005,6 +1005,10 @@ pub(crate) fn merge_small_chunks(
             || flags[source_index].wrap == WrapKind::Cjs
             || flags[source_index].needs_synthetic_default_export
             || !export_aliases[source_index].is_empty()
+            // The names of an `export * from` of an external module are exports too.
+            || !this
+                .external_export_stars_of(source_index as u32)
+                .is_empty()
     };
     let group_of_file: &mut [usize] = temp.alloc_slice_fill_copy(files_len, usize::MAX);
     let mut inits: Vec<u32> = Vec::new();

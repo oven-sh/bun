@@ -105,6 +105,18 @@ bun add <package> <@version>
   <code>-a</code>
 </ParamField>
 
+<ParamField path="--linker" type="string">
+  Linker strategy (one of <code>isolated</code> or <code>hoisted</code>)
+</ParamField>
+
+<ParamField path="--minimum-release-age" type="number">
+  Only install packages published at least N seconds ago (security feature)
+</ParamField>
+
+<ParamField path="--minimum-release-age-excludes" type="string">
+  Packages exempt from <code>--minimum-release-age</code> (comma-separated or repeated; replaces the bunfig.toml list)
+</ParamField>
+
 ### Network & Registry
 
 <ParamField path="--ca" type="string">
@@ -173,6 +185,22 @@ bun add <package> <@version>
 
 <ParamField path="--no-summary" type="boolean">
   Don't print a summary
+</ParamField>
+
+### Platform Targeting
+
+<ParamField path="--cpu" type="string">
+  Override CPU architecture for optional dependencies (e.g., <code>x64</code>, <code>arm64</code>, <code>*</code> for
+  all)
+</ParamField>
+
+<ParamField path="--os" type="string">
+  Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
+  all)
+</ParamField>
+
+<ParamField path="--libc" type="string">
+  Override libc for optional dependencies (e.g., <code>glibc</code>, <code>musl</code>, <code>*</code> for all)
 </ParamField>
 
 ### Global Configuration &amp; Context

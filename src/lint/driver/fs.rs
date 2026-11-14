@@ -255,12 +255,10 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
         let name = entry.name.slice_u8();
         let kind = match entry.kind {
             // This file system doesn't report the kind along with the name.
-            EntryKind::Unknown => {
-                match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
-                    Ok(found) => bun_sys::kind_from_mode(found.st_mode as _),
-                    Err(_) => continue,
-                }
-            }
+            EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), entry.name.as_zstr()) {
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _),
+                Err(_) => continue,
+            },
             kind => kind,
         };
         // Opening a pipe can block forever, and pipes, sockets and devices aren't files to read anyway.

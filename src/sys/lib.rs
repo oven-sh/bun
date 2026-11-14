@@ -107,19 +107,13 @@ pub mod copy_file;
 pub use bun_core::FileKind as EntryKind;
 
 #[cfg(unix)]
-pub mod dirent;
+mod dirent;
 
 // `bun.DirIterator`.
 //
 // A readdir-style directory iterator. Notable behaviors:
 // - returns errors in `bun_sys::Result` (preserves errno + syscall tag)
 // - doesn't mark BADF as unreachable
-// - entry name (`Name`) is a lifetime-erased borrow into the iterator's inline
-//   `buf` on POSIX, owned `Vec` on Windows
-//
-// The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
-// readdir loop lives here so `walker_skippable` / `bun_glob` / resolver can
-// iterate without pulling `bun_runtime` up-tier.
 
 /// `__getdirentries64` (private libsystem symbol): fills `buf` with
 /// variable-length dirent records and advances `*basep`. Returns the byte
@@ -134,7 +128,7 @@ pub mod dirent;
 /// SAFETY precondition: `buf` must be writable for `len` bytes and `basep`
 /// must point to a valid `i64`.
 #[cfg(target_os = "macos")]
-pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64) -> Maybe<usize> {
+unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64) -> Maybe<usize> {
     unsafe extern "C" {
         fn __getdirentries64(
             fd: libc::c_int,
@@ -167,19 +161,14 @@ pub mod dir_iterator {
     #[cfg(unix)]
     use super::dirent;
     use super::{EntryKind, Fd, Result, Tag};
+    use bun_core::ZStr;
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
 
     /// Native-encoding directory entry returned by `WrappedIterator::next()`.
-    ///
-    /// `name` is a
-    /// *borrow* into the iterator's internal `buf`. It is invalidated by the
-    /// next call to `next()` and by moving/dropping the iterator. Copy it out
-    /// (`.slice_u8().to_vec()` etc.) if you need it to outlive the iteration
-    /// step.
-    pub struct IteratorResult {
-        pub name: Name,
+    pub struct IteratorResult<'a> {
+        pub name: Name<'a>,
         pub kind: EntryKind,
         /// The inode number the directory records for the entry; 0 on Windows.
         pub ino: u64,
@@ -187,7 +176,7 @@ pub mod dir_iterator {
         has_directory_attribute: bool,
     }
 
-    impl IteratorResult {
+    impl IteratorResult<'_> {
         /// Whether a `SymLink` stands for a directory, where the listing says
         /// so: a link on Windows is made as one or the other, whatever is at
         /// its target, and `NtQueryAttributesFile` answers with the same bit.
@@ -205,96 +194,47 @@ pub mod dir_iterator {
         }
     }
 
-    /// Length-known, NUL-terminated entry name in OS-native encoding.
-    ///
-    /// **POSIX**: lifetime-erased borrow (raw pointer + length) into the
-    /// iterator's `getdents`/`getdirentries` buffer. The kernel writes
-    /// `d_name` NUL-terminated, so `as_zstr()` needs no copy. The slice is
-    /// only valid until the next `next()` call or until the iterator is
-    /// moved/dropped. No heap allocation per entry.
-    ///
-    /// **Windows**: `FILE_DIRECTORY_INFORMATION.FileName` is length-prefixed
-    /// (no NUL) and UTF-16; we keep an owning `Vec` per entry (cold path —
-    /// the install hot loop is POSIX-only) so `slice_u8()` can hand out a
-    /// borrowed `&[u8]` on every platform.
     #[cfg(not(windows))]
-    #[derive(Copy, Clone)]
-    pub struct Name {
-        /// Points at `d_name[0]` inside the iterator's `buf`; `ptr[len] == 0`.
-        ptr: core::ptr::NonNull<u8>,
-        len: usize,
+    pub struct Name<'a>(&'a ZStr);
+    #[cfg(not(windows))]
+    impl<'a> Name<'a> {
+        #[inline]
+        pub fn slice(&self) -> &'a [OSPathChar] {
+            self.0.as_bytes()
+        }
+        #[inline]
+        pub fn as_zstr(&self) -> &'a ZStr {
+            self.0
+        }
     }
-    #[cfg(not(windows))]
-    // SAFETY: `Name` is a lifetime-erased `&[u8]`; the borrowed bytes are
-    // immutable kernel-filled data and the iterator is not shared across
-    // threads while a `Name` is outstanding.
-    unsafe impl Send for Name {}
-    // SAFETY: see `Send` above — `Name` only exposes shared reads of
-    // immutable kernel-filled bytes, so `&Name` is safe to share.
-    #[cfg(not(windows))]
-    unsafe impl Sync for Name {}
+
     #[cfg(windows)]
-    pub struct Name {
-        native: Vec<OSPathChar>,
-        utf8: Vec<u8>,
+    pub struct Name<'a> {
+        native: &'a [OSPathChar],
+        /// Where `utf8` is written, when it is first asked for.
+        scratch: core::cell::Cell<&'a mut [u8]>,
+        utf8: core::cell::OnceCell<&'a ZStr>,
     }
-    impl Name {
-        #[cfg(not(windows))]
+    #[cfg(windows)]
+    impl<'a> Name<'a> {
         #[inline]
-        fn borrow(s: &[u8]) -> Name {
-            // SAFETY: `s` is a `dirent::Entry` name, so the byte after it is its NUL,
-            // inside the same record.
-            debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
-            Name {
-                ptr: core::ptr::NonNull::from(s).cast(),
-                len: s.len(),
-            }
+        pub fn slice(&self) -> &'a [OSPathChar] {
+            self.native
         }
-        #[cfg(windows)]
+        /// In UTF-8.
         #[inline]
-        fn from_slice(s: &[OSPathChar]) -> Name {
-            let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s);
-            v.push(0);
-            // Trust that Windows gives us valid UTF-16LE.
-            let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
-            Name { native: v, utf8 }
+        pub fn as_zstr(&self) -> &'a ZStr {
+            self.utf8.get_or_init(|| {
+                bun_paths::strings::paths::from_w_path(self.scratch.take(), self.native)
+            })
         }
-        /// Borrow the name as `&[OSPathChar]` (no NUL).
-        #[cfg(not(windows))]
+    }
+
+    impl<'a> Name<'a> {
+        /// In UTF-8.
         #[inline]
-        pub fn slice(&self) -> &[OSPathChar] {
-            // SAFETY: `borrow()` was given a live slice into the iterator's
-            // `buf`; caller honours the streaming-iterator contract.
-            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-        }
-        #[cfg(windows)]
-        #[inline]
-        pub fn slice(&self) -> &[OSPathChar] {
-            &self.native[..self.native.len() - 1]
-        }
-        #[inline]
-        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
-            self.slice()
-        }
-        /// Borrow the entry name as UTF-8 bytes (no NUL). On POSIX this is the
-        /// native slice; on Windows it is the cached `fromWPath` transcode.
-        #[cfg(not(windows))]
-        #[inline]
-        pub fn slice_u8(&self) -> &[u8] {
-            self.slice()
-        }
-        #[cfg(windows)]
-        #[inline]
-        pub fn slice_u8(&self) -> &[u8] {
-            &self.utf8
-        }
-        #[cfg(not(windows))]
-        #[inline]
-        pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: `dirent::parse` checked that `ptr[len] == 0`. See the
-            // `borrow()` debug_assert.
-            unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
+        pub fn slice_u8(&self) -> &'a [u8] {
+            self.as_zstr().as_bytes()
         }
     }
 
@@ -385,7 +325,7 @@ pub mod dir_iterator {
                 end_index: 0,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the syscall.
@@ -413,7 +353,7 @@ pub mod dir_iterator {
                 let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(entry.name),
+                    name: Name(entry.name),
                     kind: kind_from_dt(entry.d_type),
                     ino: entry.ino,
                 }));
@@ -442,7 +382,7 @@ pub mod dir_iterator {
                 received_eof: false,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -494,7 +434,7 @@ pub mod dir_iterator {
                 let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(entry.name),
+                    name: Name(entry.name),
                     kind: kind_from_dt(entry.d_type),
                     ino: entry.ino,
                 }));
@@ -519,7 +459,7 @@ pub mod dir_iterator {
                 end_index: 0,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             unsafe extern "C" {
                 fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
             }
@@ -549,7 +489,7 @@ pub mod dir_iterator {
                 let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(entry.name),
+                    name: Name(entry.name),
                     kind: kind_from_dt(entry.d_type),
                     ino: entry.ino,
                 }));
@@ -575,7 +515,10 @@ pub mod dir_iterator {
         /// `*` and `?`). Only honored on the first call (RestartScan=TRUE);
         /// sticky for the handle lifetime.
         name_filter: Option<Vec<u16>>,
+        utf8_name: [u8; 3 * MAX_NAME_UNITS + 1],
     }
+    #[cfg(windows)]
+    const MAX_NAME_UNITS: usize = 256;
     #[cfg(windows)]
     impl State {
         #[inline]
@@ -586,13 +529,13 @@ pub mod dir_iterator {
                 end_index: 0,
                 first: true,
                 name_filter: None,
+                utf8_name: [0; _],
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult<'_>>> {
             use bun_windows_sys::externs as w;
-            // `offset_of!(FILE_DIRECTORY_INFORMATION, FileName)` — fixed by the
-            // Win32 layout (4+4 + 6×8 + 4+4 = 64).
-            const NAME_OFFSET: usize = 64;
+            use core::mem::offset_of;
+            use w::FILE_DIRECTORY_INFORMATION as Record;
             loop {
                 if self.index >= self.end_index {
                     // The I/O manager only fills the IO_STATUS_BLOCK on IRP
@@ -639,6 +582,7 @@ pub mod dir_iterator {
                         )
                     };
                     self.first = false;
+                    crate::syslog!("NtQueryDirectoryFile({}) = {:#x}", dir, rc.0);
 
                     // If the handle is not a directory, we'll get
                     // STATUS_INVALID_PARAMETER.
@@ -670,47 +614,23 @@ pub mod dir_iterator {
                 // call only overwrites a prefix — `[0..BUF_SIZE)` stays fully
                 // initialized for the iterator's lifetime once we reach here.
                 let buf = unsafe { self.buf.filled(BUF_SIZE) };
-                // While the official api docs guarantee FILE_DIRECTORY_INFORMATION
-                // to be aligned properly, this may not always be the case (e.g.
-                // due to faulty VM/Sandboxing tools) — read fields unaligned via
-                // safe byte-array indexing. entry_offset < end_index ≤ BUF_SIZE;
-                // struct header (NAME_OFFSET = 64 bytes) is fully within the buffer
-                // per the NtQueryDirectoryFile contract on STATUS_SUCCESS.
-                let next_off = u32::from_ne_bytes(
-                    buf[entry_offset..entry_offset + 4]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                ) as usize;
-                let file_attrs = u32::from_ne_bytes(
-                    buf[entry_offset + 56..entry_offset + 60]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let name_len_bytes = u32::from_ne_bytes(
-                    buf[entry_offset + 60..entry_offset + 64]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                ) as usize;
+                // Faulty VM and sandboxing tools misalign records, so the fields are read as bytes.
+                let (header, name) = buf[entry_offset..].split_at(offset_of!(Record, FileName));
+                let field = |offset: usize| {
+                    u32::from_ne_bytes(*header[offset..].first_chunk().expect("in the header"))
+                };
+                let next_off = field(offset_of!(Record, NextEntryOffset)) as usize;
+                let file_attrs = field(offset_of!(Record, FileAttributes));
+                let name_len_bytes = field(offset_of!(Record, FileNameLength)) as usize;
                 self.index = if next_off != 0 {
                     entry_offset + next_off
                 } else {
                     BUF_SIZE
                 };
 
-                // Some filesystem / filter drivers have been observed
-                // returning FILE_DIRECTORY_INFORMATION entries with an
-                // out-of-range FileNameLength (well beyond the 255-WCHAR NTFS
-                // component limit). Clamp to what remains in `buf` so a
-                // misbehaving driver cannot walk us past the end of the buffer.
-                let name_byte_offset = entry_offset + NAME_OFFSET;
-                let buf_remaining_u16 = BUF_SIZE.saturating_sub(name_byte_offset) / 2;
-                let name_len_u16 = (name_len_bytes / 2).min(buf_remaining_u16);
-                // name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp above.
-                // `AlignedBuf` is align(8) and `entry_offset`/`NAME_OFFSET` are
-                // both multiples of 4, so the u8→u16 cast is always aligned.
-                let dir_info_name: &[u16] = bun_core::cast_slice(
-                    &buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
-                );
+                // Some drivers report a length beyond the limit of NTFS and the end of the buffer.
+                let name_len_u16 = (name_len_bytes / 2).min(MAX_NAME_UNITS).min(name.len() / 2);
+                let dir_info_name: &[u16] = bun_core::cast_slice(&name[..name_len_u16 * 2]);
 
                 if dir_info_name == [b'.' as u16] || dir_info_name == [b'.' as u16, b'.' as u16] {
                     continue;
@@ -733,7 +653,11 @@ pub mod dir_iterator {
                 };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::from_slice(dir_info_name),
+                    name: Name {
+                        native: dir_info_name,
+                        scratch: core::cell::Cell::new(&mut self.utf8_name),
+                        utf8: core::cell::OnceCell::new(),
+                    },
                     kind,
                     ino: 0,
                     has_directory_attribute: isdir,
@@ -742,14 +666,8 @@ pub mod dir_iterator {
         }
     }
 
-    /// `DirIterator.NewWrappedIterator(if windows .u16 else .u8)`
     pub struct WrappedIterator {
         dir: Fd,
-        // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
-        // ignored (kernel readdir has no name filter; callers post-filter).
-        // stored on `State` on Windows so `next()` can pass it.
-        #[cfg(not(windows))]
-        name_filter: Option<Vec<u16>>,
         state: State,
     }
     impl WrappedIterator {
@@ -757,47 +675,22 @@ pub mod dir_iterator {
         pub fn dir(&self) -> Fd {
             self.dir
         }
-        /// Windows-only kernel-side name filter (passed to `NtQueryDirectoryFile`).
-        /// On POSIX this is a no-op; callers must filter themselves.
+        /// Kernel-side name filter (passed to `NtQueryDirectoryFile`).
+        #[cfg(windows)]
         #[inline]
         pub fn set_name_filter(&mut self, filter: Option<&[u16]>) {
-            #[cfg(windows)]
-            {
-                self.state.name_filter = filter.map(|f| f.to_vec());
-            }
-            #[cfg(not(windows))]
-            {
-                self.name_filter = filter.map(|f| f.to_vec());
-            }
+            self.state.name_filter = filter.map(|f| f.to_vec());
         }
-        /// Memory such as file names referenced in this returned entry becomes
-        /// invalid with subsequent calls to `next`, as well as when this
-        /// iterator is moved or dropped.
-        ///
-        /// On POSIX `IteratorResult::name` is a lifetime-erased borrow into
-        /// this iterator's inline `buf`.
-        /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
-        pub fn next(&mut self) -> Result<Option<IteratorResult>> {
+        pub fn next(&mut self) -> Result<Option<IteratorResult<'_>>> {
             self.state.next(self.dir)
         }
     }
 
     pub fn iterate(dir: Fd) -> WrappedIterator {
-        #[cfg(not(windows))]
-        {
-            WrappedIterator {
-                dir,
-                name_filter: None,
-                state: State::new(),
-            }
-        }
-        #[cfg(windows)]
-        {
-            WrappedIterator {
-                dir,
-                state: State::new(),
-            }
+        WrappedIterator {
+            dir,
+            state: State::new(),
         }
     }
 }

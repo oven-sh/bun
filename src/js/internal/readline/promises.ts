@@ -11,8 +11,7 @@ const { validateBoolean, validateInteger } = require("internal/validators");
 const {
   codes: { ERR_INVALID_ARG_TYPE },
 } = require("internal/repl/node-errors");
-// Inlined from node-shims (which eagerly loads node:{util,module,path,vm}).
-const isWritable = (stream: { write?: unknown } | null | undefined) => typeof stream?.write === "function";
+let isWritable: $BunModules["internal/streams/utils"]["isWritable"] | undefined;
 
 const { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } = CSI;
 
@@ -22,7 +21,9 @@ class Readline {
   #todo: string[] = [];
 
   constructor(stream: $Node.Writable, options: { autoCommit?: boolean } | undefined = undefined) {
-    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    isWritable ??= require("internal/streams/utils").isWritable;
+    // List form so the message renders "an instance of Writable" like node.
+    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", ["Writable"], stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
       validateBoolean(options.autoCommit, "options.autoCommit");

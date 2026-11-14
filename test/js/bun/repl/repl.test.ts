@@ -808,6 +808,96 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // Piped stdin is read key by key, as a terminal is: byte 0x03 is Ctrl+C and byte 0x04 is Ctrl+D.
+  describe("Ctrl+C and Ctrl+D", () => {
+    const ctrlC = "\x03";
+    const ctrlD = "\x04";
+    const editorBanner = "// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)";
+    const exitHint = "(press Ctrl+C again to exit, or Ctrl+D)";
+
+    test("Ctrl+C drops the line being typed along with the earlier lines", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(
+        `foo(\nbar${ctrlC}` + // a continuation, cancelled in the middle of its second line
+          `2 + 2\n` +
+          `.editor\n1\nbar${ctrlC}` + // the same in editor mode
+          `3 + 3\n` +
+          `.exit\n`,
+      );
+      expect(outputs).toEqual(["", "4", `${editorBanner}\n\n\n// Editor mode cancelled`, "6"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Ctrl+C on an empty line exits on the second press in a row", async () => {
+      // `1 + 1` between the first two presses starts the count again. `2 + 2` arrives after the exit.
+      const { outputs, stderr, exitCode } = await runRepl(`${ctrlC}1 + 1\n${ctrlC}${ctrlC}2 + 2\n`);
+      expect(outputs).toEqual([exitHint, "2", exitHint]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Ctrl+C twice more exits after Ctrl+C cancelled a continuation", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(`foo(\nbar${ctrlC}${ctrlC}${ctrlC}2 + 2\n`);
+      expect(outputs).toEqual(["", exitHint]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Ctrl+D in editor mode evaluates the line being typed", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(
+        `.editor\n1 + 1\n40 + 2${ctrlD}` + // finished in the middle of the second line
+          `2 + 2\n` +
+          `.editor\n6 * 7${ctrlD}` + // finished in the middle of the only line
+          `.editor\n1 + 1\n${ctrlD}` + // finished with nothing on the line
+          `.editor\n${ctrlD}` + // finished with no input at all: nothing is evaluated
+          `.exit\n`,
+      );
+      expect(outputs).toEqual([
+        `${editorBanner}\n\n\n42`,
+        "4",
+        `${editorBanner}\n\n42`,
+        `${editorBanner}\n\n\n2`,
+        editorBanner,
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Ctrl+D in editor mode takes the line being typed the way Enter takes a line", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(
+        `.editor\n{ a: 1 } // c${ctrlD}` + // the line gets its newline, so the comment ends there
+          `.editor\n   ${ctrlD}` + // blanks are input
+          `.editor\n1 + 1\n.exit${ctrlD}` + // a dot-command is code in editor mode
+          `3 + 3\n` +
+          `.exit\n`,
+      );
+      expect(outputs).toEqual([
+        `${editorBanner}\n\n{\n  a: 1,\n}`,
+        `${editorBanner}\n\nundefined`,
+        `${editorBanner}\n\n\nNaN`,
+        "6",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Ctrl+D in editor mode resets the history position", async () => {
+      const up = "\x1b[A";
+      const ctrlU = "\x15";
+      const { outputs, stderr, exitCode } = await runRepl(
+        `100 + 11\n200 + 22\n` +
+          `.editor\n${up}${ctrlD}` + // Up recalls `200 + 22`, Ctrl+D evaluates it
+          `${up}\n` + // Up at the next prompt recalls the newest entry again
+          `.editor\n${up}${ctrlU}${ctrlD}` + // the same with the recalled line deleted: nothing to evaluate
+          `${up}\n` +
+          `.exit\n`,
+      );
+      expect(outputs).toEqual(["111", "222", `${editorBanner}\n\n222`, "222", editorBanner, "222"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("async evaluation", () => {
     test("awaits promises at the top level and in async functions", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -1078,6 +1168,51 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       // Should be back at a clean prompt
       send("1 + 1\n");
       await waitFor("2");
+    });
+  });
+
+  test("Ctrl+C in a continuation clears the line being typed", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+      send("foo(\n");
+      await waitForScreen(s => s.rows.at(-1) === "... ");
+      send("bar");
+      await waitForScreen(s => s.rows.at(-1) === "... bar");
+      send("\x03"); // Ctrl+C
+      let screen = await waitForScreen(s => s.rows.at(-1)!.startsWith("> "));
+      expect(screen.rows.slice(top)).toEqual(["> foo(", "... bar", "> "]);
+
+      send("2 + 2\n");
+      screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "4");
+      expect(screen.rows.slice(top)).toEqual(["> foo(", "... bar", "> 2 + 2", "4", "> "]);
+    });
+  });
+
+  test("Ctrl+C in editor mode clears the line being typed", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+      send(".editor\n");
+      await waitForScreen(s => s.rows.at(-1) === "... ");
+      send("1\n");
+      await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "... 1");
+      send("bar");
+      await waitForScreen(s => s.rows.at(-1) === "... bar");
+      send("\x03"); // Ctrl+C
+      const cancelled = [
+        "> .editor",
+        "// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)",
+        "... 1",
+        "... bar",
+        "// Editor mode cancelled",
+      ];
+      let screen = await waitForScreen(s => s.rows.at(-1)!.startsWith("> "));
+      expect(screen.rows.slice(top)).toEqual([...cancelled, "> "]);
+
+      send("2 + 2\n");
+      screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "4");
+      expect(screen.rows.slice(top)).toEqual([...cancelled, "> 2 + 2", "4", "> "]);
     });
   });
 
@@ -1530,6 +1665,28 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       );
     });
 
+    test("Ctrl+C in a continuation starts an empty prompt below a wrapped line", async () => {
+      // "... " plus 37 characters: the first 26 characters share the prompt's row.
+      const split = cols - "... ".length;
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send("foo(\n");
+          await waitForScreen(s => s.rows.at(-1) === "... ");
+          send(line);
+          await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          const typed = ["> foo(", `... ${line.slice(0, split)}`, line.slice(split)];
+          // Ctrl+A moves the cursor up to the prompt's row, then Ctrl+C.
+          send("\x01\x03");
+          const prompt = top + typed.length;
+          const screen = await waitForScreen(s => s.cursor.row === prompt && s.cursor.col === "> ".length);
+          expect(screen.rows.slice(top)).toEqual([...typed, "> "]);
+        },
+        { cols },
+      );
+    });
+
     test("recalling a shorter history entry clears the rows of a longer one", async () => {
       await withTerminalRepl(
         async ({ send, waitForScreen }) => {
@@ -1702,6 +1859,29 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("__editorResult + 23\n");
       send("\x04"); // Ctrl+D to finish editor mode
       await waitFor("123");
+    });
+  });
+
+  test("Ctrl+D in editor mode evaluates the line being typed", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+      send(".editor\n");
+      await waitForScreen(s => s.rows.at(-1) === "... ");
+      send("1 + 1\n");
+      await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "... 1 + 1");
+      send("40 + 2");
+      await waitForScreen(s => s.rows.at(-1) === "... 40 + 2");
+      send("\x04"); // Ctrl+D
+      const screen = await waitForScreen(s => s.rows.at(-1)!.startsWith("> "));
+      expect(screen.rows.slice(top)).toEqual([
+        "> .editor",
+        "// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)",
+        "... 1 + 1",
+        "... 40 + 2",
+        "42",
+        "> ",
+      ]);
     });
   });
 

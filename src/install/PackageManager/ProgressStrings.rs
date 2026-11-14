@@ -118,9 +118,9 @@ impl PackageManager {
         );
         let node = self.progress.root();
         node.estimated_total_items
-            .set((self.total_tasks + self.extracted_count) as usize);
+            .set((self.total_tasks.get() + self.extracted_count) as usize);
         node.completed_items
-            .set((self.total_tasks - self.pending_task_count()) as usize);
+            .set((self.total_tasks.get() - self.pending_task_count()) as usize);
         self.progress.refresh();
     }
 

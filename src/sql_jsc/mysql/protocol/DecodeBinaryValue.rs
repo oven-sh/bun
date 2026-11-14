@@ -4,7 +4,7 @@ use crate::shared::sql_data_cell::SQLDataCell;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
-use bun_sql::mysql::protocol::stack_reader::PacketReader;
+use bun_sql::mysql::protocol::new_reader::PacketReader;
 
 bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 
@@ -30,7 +30,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_TINY => {
             if raw {
                 let data = reader.read(1)?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             let val = reader.byte()?;
             if unsigned {
@@ -42,7 +42,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_SHORT => {
             if raw {
                 let data = reader.read(2)?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             if unsigned {
                 return Ok(SQLDataCell::uint4(reader.int::<u16>()? as u32));
@@ -54,7 +54,7 @@ pub(crate) fn decode_binary_value(
             // column_length is the display width (4), not the wire size.
             if raw {
                 let data = reader.read(2)?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             Ok(SQLDataCell::uint4(reader.int::<u16>()? as u32))
         }
@@ -63,7 +63,7 @@ pub(crate) fn decode_binary_value(
                 // Binary protocol sends INT24 as a fixed 4-byte field; consume
                 // all 4 to keep the cursor aligned and return only the low 3.
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(&data.slice()[..3]));
+                return Ok(SQLDataCell::raw(&data[..3]));
             }
             if unsigned {
                 return Ok(SQLDataCell::uint4(reader.int_u24()?));
@@ -73,7 +73,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_LONG => {
             if raw {
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             if unsigned {
                 return Ok(SQLDataCell::uint4(reader.int::<u32>()?));
@@ -82,7 +82,7 @@ pub(crate) fn decode_binary_value(
         }
         FieldType::MYSQL_TYPE_LONGLONG => {
             if raw {
-                return Ok(SQLDataCell::raw(reader.read(8)?.slice()));
+                return Ok(SQLDataCell::raw(reader.read(8)?));
             }
             if unsigned {
                 let val = reader.int::<u64>()?;
@@ -110,7 +110,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_FLOAT => {
             if raw {
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             Ok(SQLDataCell::float8(
                 f32::from_bits(reader.int::<u32>()?) as f64
@@ -119,7 +119,7 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_DOUBLE => {
             if raw {
                 let data = reader.read(8)?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             Ok(SQLDataCell::float8(f64::from_bits(reader.int::<u64>()?)))
         }
@@ -130,9 +130,9 @@ pub(crate) fn decode_binary_value(
             }
             let data = reader.read(length as usize)?;
             if raw {
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
-            let time = Time::from_binary(data.slice());
+            let time = Time::from_binary(data);
             if time.microseconds >= 1_000_000 {
                 return Err(crate::Error::InvalidBinaryValue);
             }
@@ -172,7 +172,7 @@ pub(crate) fn decode_binary_value(
             }
             let data = reader.read(length as usize)?;
             if raw {
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             // A zero-length binary DATETIME is MySQL's "0000-00-00 00:00:00"
             // sentinel — surface it as Invalid Date (NaN), not the Unix epoch,
@@ -182,7 +182,7 @@ pub(crate) fn decode_binary_value(
             }
             // Map JsError variants to their
             // interned crate::Error names so `?` can widen here.
-            let ts = DateTime::from_binary(data.slice())
+            let ts = DateTime::from_binary(data)
                 .to_js_timestamp(global_object)
                 .map_err(|e| match e {
                     bun_jsc::JsError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
@@ -198,10 +198,10 @@ pub(crate) fn decode_binary_value(
         FieldType::MYSQL_TYPE_NEWDECIMAL => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             let string_data = reader.encode_len_string()?;
-            Ok(SQLDataCell::string(string_data.slice()))
+            Ok(SQLDataCell::string(string_data))
         }
 
         // When the column contains a binary string we return a Buffer otherwise a string
@@ -217,7 +217,7 @@ pub(crate) fn decode_binary_value(
         | FieldType::MYSQL_TYPE_BLOB => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             let string_data = reader.encode_len_string()?;
             // Only treat as binary if character_set indicates the binary pseudo-charset.
@@ -226,32 +226,31 @@ pub(crate) fn decode_binary_value(
             // but should return strings, not buffers.
             if column.flags.contains(ColumnFlags::BINARY) && column.character_set == BINARY_CHARSET
             {
-                return Ok(SQLDataCell::raw(string_data.slice()));
+                return Ok(SQLDataCell::raw(string_data));
             }
-            Ok(SQLDataCell::string(string_data.slice()))
+            Ok(SQLDataCell::string(string_data))
         }
 
         FieldType::MYSQL_TYPE_JSON => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(data.slice()));
+                return Ok(SQLDataCell::raw(data));
             }
             let string_data = reader.encode_len_string()?;
-            Ok(SQLDataCell::json(string_data.slice()))
+            Ok(SQLDataCell::json(string_data))
         }
         FieldType::MYSQL_TYPE_BIT => {
             let data = reader.encode_len_string()?;
             // BIT(1) is a special case, it's a boolean
             if column.column_length == 1 && !raw {
-                let slice = data.slice();
-                Ok(SQLDataCell::bool(!slice.is_empty() && slice[0] == 1))
+                Ok(SQLDataCell::bool(data.first() == Some(&1)))
             } else {
-                Ok(SQLDataCell::raw(data.slice()))
+                Ok(SQLDataCell::raw(data))
             }
         }
         _ => {
             let data = reader.read(column.column_length as usize)?;
-            Ok(SQLDataCell::raw(data.slice()))
+            Ok(SQLDataCell::raw(data))
         }
     }
 }

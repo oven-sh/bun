@@ -48,7 +48,7 @@ pub(crate) fn ignores_damaged(h: &Block) -> bool {
     let field = &h[CHECKSUM.start..CHECKSUM.end + 4];
     let number = match field.first() {
         Some(0x80) => Some(0),
-        _ => field.iter().position(|c| matches!(c, b'0'..=b'7')),
+        _ => strings::index_of_any(field, b"01234567"),
     };
     let sum = header::unsigned_sum(h);
     sum != EMPTY_SUM
@@ -115,6 +115,8 @@ pub(crate) fn classify(h: &Block, named: bool) -> Header {
 pub(crate) struct Pax<'a> {
     pub(crate) path: Option<&'a [u8]>,
     pub(crate) size: Option<i64>,
+    /// Other number fields of a header.
+    pub(crate) replaces_numbers: bool,
 }
 
 /// npm takes each line for a record. `None` for a path or a size that there is no telling what it makes of.
@@ -145,14 +147,19 @@ pub(crate) fn read_pax(body: &[u8]) -> Option<Pax<'_>> {
             let skip = first.map_or_else(|| chunk.invalid().len(), char::len_utf8);
             record = record.get(skip..).unwrap_or_default();
         }
-        let (path, size) = (record.strip_prefix(b"path="), record.strip_prefix(b"size="));
-        let Some(value) = path.or(size) else {
-            continue;
-        };
+        let (key, value) = strings::split_once_char(record, b'=').unwrap_or((record, b""));
+        match key {
+            b"path" | b"size" => {}
+            b"uid" | b"gid" | b"mtime" | b"atime" | b"ctime" => {
+                pax.replaces_numbers = true;
+                continue;
+            }
+            _ => continue,
+        }
         if line.strip_prefix(length)?.first() != Some(&b' ') || value.is_empty() {
             return None;
         }
-        if path.is_some() {
+        if key == b"path" {
             if core::str::from_utf8(value).is_err() || strings::contains_char(value, 0) {
                 return None;
             }

@@ -874,6 +874,9 @@ impl Reader {
             if self.is_npm() {
                 self.null_blocks = self.null_blocks.saturating_add(1);
                 if self.null_blocks == 2 {
+                    if in_ignored_body {
+                        return Err(Error::Ambiguous);
+                    }
                     self.state = State::Drain;
                 }
             }
@@ -939,7 +942,6 @@ impl Reader {
                     return Err(Error::EmptyPaxGlobalHeader);
                 }
                 if npm && size <= npm::BODY_LIMIT {
-                    self.fields_are_replaced = true;
                     return self.begin_body(size, Some(Collect::PaxGlobal));
                 }
                 self.skip_body(size, Status::Ok);
@@ -1050,7 +1052,7 @@ impl Reader {
     }
 
     fn read_pax_like_npm(&mut self) -> Result<()> {
-        let npm::Pax { path, size } = npm::read_pax(&self.pax_body).ok_or(Error::Ambiguous)?;
+        let npm::Pax { path, size, .. } = npm::read_pax(&self.pax_body).ok_or(Error::Ambiguous)?;
         assign(&mut self.pax_path, path.unwrap_or_default())?;
 
         let ours = (self.size_fields & size_field::PAX_SIZE != 0).then_some(self.pax_size);
@@ -1297,9 +1299,8 @@ impl Reader {
                     }
                     Collect::LongLink => assign(&mut self.entry.link, slice_to_nul(value))?,
                     _ => {
-                        if npm::read_pax(value).is_none_or(|pax| pax.size.is_some()) {
-                            return Err(Error::Ambiguous);
-                        }
+                        let pax = npm::read_pax(value).filter(|pax| pax.size.is_none());
+                        self.fields_are_replaced |= pax.ok_or(Error::Ambiguous)?.replaces_numbers;
                     }
                 }
                 let padding = padding_for(i64::try_from(value.len()).unwrap_or(0));

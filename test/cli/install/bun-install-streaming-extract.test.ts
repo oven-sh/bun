@@ -2033,7 +2033,8 @@ describe.concurrent("entries that npm skips or names differently", () => {
   // Versions of npm differ.
   test.each(paths)("a NUL in the path of a pax header (%s)", async path => {
     const [result] = await installStreamPkg(path, tarball(...pax("path", `${index}\0.js`), ...other));
-    expect(result).toMatchObject({ error: expect.any(String), installed: false, cached: 0, exitCode: 1 });
+    const error = expect.stringContaining(path === "streaming" ? "Ambiguous tar header" : "Fail extracting tarball");
+    expect(result).toMatchObject({ error, installed: false, cached: 0, exitCode: 1 });
   });
 
   // Two cases that do not follow npm, which loses files of archives that real tar writers make.

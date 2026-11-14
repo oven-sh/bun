@@ -14,7 +14,7 @@ import { linksWithLld, type Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
-import { quote } from "./shell.ts";
+import { quote, shellWords } from "./shell.ts";
 import { machoPostlinkCommand } from "./shims.ts";
 import { toolIdentityFile } from "./tools.ts";
 
@@ -383,7 +383,7 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
     output: n.rel(out),
     arguments: [
       lang === "cxx" ? cfg.cxx : cfg.cc,
-      ...opts.flags,
+      ...shellWords(opts.flags, cfg.host.os === "windows"),
       ...(opts.pch !== undefined ? ["-include-pch", n.rel(opts.pch)] : []),
       "-c",
       absSrc,

@@ -37,7 +37,7 @@ import {
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
-import { quote, slash } from "./shell.ts";
+import { quote, shellWords, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
@@ -350,7 +350,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.addCompileCommand({
       directory: cfg.buildDir,
       file: src,
-      arguments: [cfg.cxx, ...cxxFlagsFull, "-c", src],
+      arguments: [cfg.cxx, ...shellWords(cxxFlagsFull, cfg.host.os === "windows"), "-c", src],
     });
   }
 

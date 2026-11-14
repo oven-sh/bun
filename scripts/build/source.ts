@@ -25,7 +25,7 @@ import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
 import { computeDepFlags, computeTargetLinkFlags, safeStackFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
-import { quote, quoteArgs } from "./shell.ts";
+import { quote, quoteArgs, shellWords } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 import { toolIdentityFile } from "./tools.ts";
 
@@ -1513,7 +1513,7 @@ function emitDirect(
         n.addCompileCommand({
           directory: cfg.buildDir,
           file,
-          arguments: [cfg.cxx, ...flags.cxx, ...extra, "-c", file],
+          arguments: [cfg.cxx, ...shellWords([...flags.cxx, ...extra], cfg.host.os === "windows"), "-c", file],
         });
       }
       const sourcePch = src.noPch ? undefined : src.pch === undefined ? groupPch : pchByHeader.get(src.pch);

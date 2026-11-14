@@ -42,6 +42,8 @@
  * see `-DFOO=bar` instead of `'-DFOO=bar'`.
  */
 
+import { BuildError } from "./error.ts";
+
 /**
  * Quote a single argument for a shell command.
  *
@@ -70,6 +72,128 @@ export function quote(arg: string, windows: boolean): string {
  */
 export function quoteArgs(args: string[], windows: boolean): string {
   return args.map(a => quote(a, windows)).join(" ");
+}
+
+/**
+ * The argv words a compiler receives from `flags`, the text that a ninja rule
+ * puts in its command (`$cxxflags`): what `/bin/sh` makes of it, or on Windows
+ * what the program's own argv parsing does (`\"` and `""` are both a literal
+ * quote). `compile_commands.json` holds argv, and clangd and the other readers
+ * pass its `arguments` to the compiler without a shell: a `-DX=\"v\"` copied
+ * there defines X as `\"v\"`, which does not compile.
+ *
+ * Only quoting, backslashes and whitespace are interpreted. On POSIX, `$` and
+ * a backquote throw, and so does an unterminated quote on either host; glob
+ * characters, `;`, `&`, `|`, `#` and `~` are kept as literal characters,
+ * which is not what the shell does with them unquoted.
+ */
+export function shellWords(flags: readonly string[], windows: boolean): string[] {
+  const words: string[] = [];
+  for (const text of flags) {
+    words.push(...(windows ? windowsWords(text) : posixWords(text)));
+  }
+  return words;
+}
+
+function posixWords(text: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === " " || ch === "\t" || ch === "\n") {
+      if (inWord) words.push(word);
+      word = "";
+      inWord = false;
+      continue;
+    }
+    inWord = true;
+    if (ch === "$" || ch === "`") {
+      throw new BuildError(`shellWords: ${JSON.stringify(text)} has an expansion (${ch})`);
+    }
+    if (ch === "\\") {
+      if (i + 1 < text.length) word += text[++i];
+      continue;
+    }
+    if (ch === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end < 0) throw new BuildError(`shellWords: unterminated ' in ${JSON.stringify(text)}`);
+      word += text.slice(i + 1, end);
+      i = end;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== '"'; j++) {
+        const c = text[j];
+        if (c === "$" || c === "`") {
+          throw new BuildError(`shellWords: ${JSON.stringify(text)} has an expansion (${c})`);
+        }
+        if (c === "\\" && j + 1 < text.length && '"\\$`\n'.includes(text[j + 1]!)) {
+          word += text[++j];
+          continue;
+        }
+        word += c;
+      }
+      if (j >= text.length) throw new BuildError(`shellWords: unterminated " in ${JSON.stringify(text)}`);
+      i = j;
+      continue;
+    }
+    word += ch;
+  }
+  if (inWord) words.push(word);
+  return words;
+}
+
+// The rules of LLVM's cl::TokenizeWindowsCommandLine, which clang and
+// clang-cl read their command line with on Windows: 2n backslashes before `"`
+// give n and toggle quoting, 2n+1 give n and a literal `"`, and `""` inside
+// quotes is a literal `"`.
+function windowsWords(text: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let inWord = false;
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (!quoted && (ch === " " || ch === "\t")) {
+      if (inWord) words.push(word);
+      word = "";
+      inWord = false;
+      continue;
+    }
+    inWord = true;
+    if (ch === "\\") {
+      let n = 0;
+      while (text[i + n] === "\\") n++;
+      if (text[i + n] !== '"') {
+        word += "\\".repeat(n);
+        i += n - 1;
+        continue;
+      }
+      word += "\\".repeat(Math.floor(n / 2));
+      i += n;
+      if (n % 2 === 1) {
+        word += '"';
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      if (quoted && text[i + 1] === '"') {
+        word += '"';
+        i++;
+        continue;
+      }
+      quoted = !quoted;
+      continue;
+    }
+    word += ch;
+  }
+  if (quoted) throw new BuildError(`shellWords: unterminated " in ${JSON.stringify(text)}`);
+  if (inWord) words.push(word);
+  return words;
 }
 
 /**

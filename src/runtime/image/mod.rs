@@ -32,6 +32,13 @@ pub(crate) mod codec_bmp;
 #[path = "codec_gif.rs"]
 pub(crate) mod codec_gif;
 
+// AVIF on Linux is dlopen'd at runtime — see `codec_avif.rs` header and
+// `src/jsc/bindings/image_avif_shim.cpp`. Linux-only; other targets route
+// AVIF through their `system_backend` (or throw UnsupportedOnPlatform).
+#[cfg(target_os = "linux")]
+#[path = "codec_avif.rs"]
+pub(crate) mod codec_avif;
+
 #[cfg(target_os = "macos")]
 #[path = "backend_coregraphics.rs"]
 pub(crate) mod backend_coregraphics;

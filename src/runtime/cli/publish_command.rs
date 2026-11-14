@@ -1377,23 +1377,17 @@ impl PublishCommand {
 
             let mut iter = DirIterator::iterate(dir);
             while let Some(entry) = pack::next_dir_entry(&mut iter, &dir_subpath) {
-                let name = entry.name.slice_u8();
+                let name = entry.name.as_zstr();
                 let mut join: Vec<u8> = Vec::new();
                 let _ = write!(
                     &mut join,
-                    "{}{}{}\0",
+                    "{}{}{}",
                     bstr::BStr::new(&dir_subpath),
                     // only using posix separators
                     if dir_subpath.is_empty() { "" } else { "/" },
-                    bstr::BStr::new(strings::without_trailing_slash(name)),
+                    bstr::BStr::new(name.as_bytes()),
                 );
-                let join_len = join.len() - 1;
-                let interned: &'static [u8] = cli_dupe(&join);
-                let subpath = &interned[..join_len];
-                // SAFETY: name is the trailing segment of `interned`, NUL-terminated
-                let name = unsafe {
-                    ZStr::from_raw(interned.as_ptr().add(join_len - name.len()), name.len())
-                };
+                let subpath: &'static [u8] = cli_dupe(&join);
 
                 if matches!(name.as_bytes(), b"" | b"." | b"..") {
                     continue;

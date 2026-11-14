@@ -136,18 +136,21 @@ function tryBuildHelper(syscall: string, arg1?: string): string | null {
 // Run `bun argv...` under the seccomp helper, with the blocked syscall failing
 // with `errno`. Returns { stdout, stderr, exitCode } on success, or null if
 // the environment refused to install the seccomp filter (skip).
+// `launcher` is a command that runs the helper, such as `unshare`.
 async function runBunUnderSeccomp(
   bin: string,
   errno: number,
   argv: string[],
-  options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+  options: { cwd?: string; env?: Record<string, string | undefined>; launcher?: string[] } = {},
 ) {
   await using proc = Bun.spawn({
-    cmd: [bin, String(errno), bunExe(), ...argv],
+    cmd: [...(options.launcher ?? []), bin, String(errno), bunExe(), ...argv],
     env: options.env ?? bunEnv,
     cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",
+    // `unshare --fork` ignores SIGTERM while it waits for its child.
+    killSignal: options.launcher ? "SIGKILL" : undefined,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode === 77) return null;
@@ -492,12 +495,23 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
   const closeRange = tryBuildHelper("__NR_close_range");
   const pidfdOpen = tryBuildHelper("__NR_pidfd_open");
 
-  async function run(helperBin: string | null, argv: string[], cwd?: string) {
+  // `unshare` arguments that make its command PID 1 of a new pid namespace, or null where the host
+  // allows no such namespace. --mount-proc, because LeakSanitizer lists the threads to scan from /proc.
+  // --kill-child, so that the command dies with `unshare`. BusyBox's `unshare` has no such option.
+  const asPid1 = (() => {
+    for (const userNamespace of [[], ["--user", "--map-root-user"]]) {
+      const launcher = ["unshare", ...userNamespace, "--pid", "--fork", "--kill-child", "--mount-proc"];
+      if (spawnSync(launcher[0], [...launcher.slice(1), "true"]).status === 0) return launcher;
+    }
+    return null;
+  })();
+
+  async function run(helperBin: string | null, argv: string[], options: { cwd?: string; launcher?: string[] } = {}) {
     if (helperBin == null) {
       console.warn("SKIP seccomp trap: cc or seccomp headers not available");
       return null;
     }
-    const out = await runBunUnderSeccomp(helperBin, TRAP, argv, { cwd });
+    const out = await runBunUnderSeccomp(helperBin, TRAP, argv, options);
     if (out == null) {
       console.warn("SKIP seccomp trap: seccomp not permitted in this environment");
       return null;
@@ -532,9 +546,45 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
     using dir = tempDir("seccomp-trap-run", {
       "package.json": JSON.stringify({ name: "app", scripts: { hello: "echo hello-from-script" } }),
     });
-    const out = await run(pidfdOpen, ["run", "--no-orphans", "--silent", "hello"], String(dir));
+    const out = await run(pidfdOpen, ["run", "--no-orphans", "--silent", "hello"], { cwd: String(dir) });
     if (out == null) return;
     expect(out).toEqual({ stdout: "hello-from-script\n", exitCode: 0 });
+  });
+
+  const killSelf = `process.kill(process.pid, "SIGSYS");`;
+
+  // bun is not PID 1 here, so the signal has its default action, as if bun had no handler.
+  test.concurrent("a SIGSYS sent with kill(2) that nothing listens for ends bun", async () => {
+    await using proc = Bun.spawn({
+      // No core file: the CI runner fails a test file that leaves one.
+      cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "-e", `${killSelf} console.log("survived");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // An ASAN build can warn on stderr when a handler on the alternate signal stack ends the process.
+    expect({ stdout, stderr: isASAN ? "" : stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      signalCode: "SIGSYS",
+    });
+  });
+
+  // The kernel drops a default-action signal that is sent to PID 1 of a pid namespace, which is what
+  // bun is as the entry point of a container. bun lives on, so it must still turn traps into ENOSYS.
+  test.concurrent.skipIf(!asPid1).each([
+    ["close_range", closeRange],
+    ["pidfd_open", pidfdOpen],
+  ])("%s after a SIGSYS sent with kill(2) to bun as PID 1", async (_, helperBin) => {
+    const snippet = `
+      ${killSelf}
+      const stdout = Bun.spawnSync(["echo", "hi"]).stdout.toString();
+      console.log(JSON.stringify({ pid: process.pid, stdout }));
+    `;
+    const out = await run(helperBin, ["-e", snippet], { launcher: asPid1! });
+    if (out == null) return;
+    expect(out).toEqual({ stdout: JSON.stringify({ pid: 1, stdout: "hi\n" }) + "\n", exitCode: 0 });
   });
 });
 

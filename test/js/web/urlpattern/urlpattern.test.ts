@@ -209,6 +209,26 @@ describe("URLPattern", () => {
     });
   });
 
+  // The pathname of such a URL is "", as the URL Standard says. Every expected value is also what Node.js gives.
+  test("matches a non-special URL that has credentials and no path before its query", () => {
+    expect(new URLPattern("zz://u@h?q").test("zz://u@h?q")).toBe(true);
+    expect(new URLPattern({ protocol: "zz", pathname: "" }).test("zz://u@h?q")).toBe(true);
+    expect(new URLPattern({ protocol: "zz", pathname: "/" }).test("zz://u@h?q")).toBe(false);
+    const result = new URLPattern({ protocol: "zz" }).exec("zz://u:p@h:8?q#f")!;
+    expect(kComponents.map(component => result[component].input)).toEqual(["zz", "u", "p", "h", "8", "", "q", "f"]);
+
+    // The base URL of the input, and the base URL of the pattern.
+    expect(new URLPattern({ protocol: "zz", pathname: "" }).test("?q", "zz://u@h?x")).toBe(true);
+    expect(new URLPattern({ protocol: "zz", pathname: "" }).test({ search: "q", baseURL: "zz://u@h?x" })).toBe(true);
+    const withBase = new URLPattern({ search: "q", baseURL: "zz://u@h?x" });
+    expect(withBase.pathname).toBe("");
+    expect(withBase.test("zz://h?q")).toBe(true);
+
+    // A special URL gets the pathname "/".
+    expect(new URLPattern({ protocol: "http" }).exec("http://u@h?q")!.pathname.input).toBe("/");
+    expect(new URLPattern("zz://h?q").test("zz://h?q")).toBe(true);
+  });
+
   // The tokenizer emits one token per code point, and the synthetic allocation limit caps the token list.
   test("throws for a pattern with more tokens than the token list allows", () => {
     const dots = (length: number) => Buffer.alloc(length, ".").toString();

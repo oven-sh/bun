@@ -311,9 +311,15 @@ impl QueryState {
     }
 }
 
+pub(crate) struct JscRequest {
+    state: QueryState,
+    query: Query,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum Inflight {
-    Jsc(*mut GetAddrInfoRequest),
+    /// A box that `complete` takes back.
+    Jsc(*mut JscRequest),
     Internal(*mut internal::Request),
 }
 
@@ -335,7 +341,17 @@ impl Inflight {
 
     fn complete(self) {
         match self {
-            Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
+            Inflight::Jsc(r) => {
+                // SAFETY: it left `inflight` and its refs are deallocated, so nothing else reaches it.
+                let mut request = unsafe { bun_core::heap::take(r) };
+                let results = request.state.take_results();
+                bun_output::scoped_log!(GetAddrInfoRequest, "completeDnsSd: {}", results.len());
+                request.query.complete_native(if results.is_empty() {
+                    Err(EMPTY_STATUS)
+                } else {
+                    Ok(results)
+                });
+            }
             Inflight::Internal(r) => internal::dns_sd_complete(r),
         }
     }
@@ -346,7 +362,7 @@ impl Inflight {
         // SAFETY: caller contract; event-loop thread only.
         unsafe {
             match self {
-                Inflight::Jsc(r) => &mut (*r).backend.as_dns_sd_mut().query,
+                Inflight::Jsc(r) => &mut (*r).state,
                 Inflight::Internal(r) => &mut (*r).dns_sd.query,
             }
         }
@@ -774,68 +790,33 @@ fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static
     VirtualMachine::get_or_null().map(VirtualMachine::enter_event_loop_scope)
 }
 
-pub(crate) fn lookup(
-    this: &Resolver,
-    query: &GetAddrInfo,
-    global_this: &JSGlobalObject,
-    context: bun_jsc::ContextId,
-) -> JSValue {
+/// Gives `pending` back if mDNSResponder cannot answer it.
+pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
     if getaddrinfo_only_flags(query.options.flags)
         || bun_core::ip_address::to_ip_address(query.name.as_ref()).is_some()
     {
-        return lib_c::lookup(this, query, global_this, context);
-    }
-
-    let key = get_addr_info_request::PendingCacheKey::init(query);
-    let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
-
-    if let CacheHit::Inflight(inflight) = cache {
-        let dns_lookup = DNSLookup::init(this, global_this, context);
-        let promise = dns_lookup.promise.value();
-        // SAFETY: inflight points into resolver's HiveArray buffer
-        unsafe { (*inflight).append(dns_lookup) };
-        return promise;
+        return Err(pending);
     }
 
     let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
-        if let CacheHit::New(new) = cache {
-            // SAFETY: `new` is the fresh HiveArray slot; no other token for it exists.
-            unsafe { this.pending_host_cache_native.get().put(new) };
-        }
-        return lib_c::lookup(this, query, global_this, context);
+        return Err(pending);
     };
 
     let protocol = protocol_for_family(query.options.family);
-    let request = GetAddrInfoRequest::init(
-        cache,
-        get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
-        this,
-        global_this,
-        context,
-        PendingCacheField::PendingHostCacheNative,
-    );
-    // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
-    let promise_value = unsafe { (*request).head.promise.value() };
+    let request = bun_core::heap::into_raw(Box::new(JscRequest {
+        state: QueryState::new(protocol),
+        query: pending,
+    }));
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
     if !shared.start(Inflight::Jsc(request), protocol, &name_z) {
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
-        unsafe {
-            if let Some(pos) = (*request).pending_slot {
-                let c = this.pending_host_cache_native.get();
-                let slot = c.ptr_at(pos as usize);
-                // SAFETY: `pos` was alloc'd; no other token outstanding.
-                c.put(slot);
-            }
-            drop(bun_core::heap::take(request));
-        }
-        return lib_c::lookup(this, query, global_this, context);
+        return Err(unsafe { bun_core::heap::take(request) }.query);
     }
 
     this.request_sent(this.vm());
-
-    promise_value
+    Ok(())
 }

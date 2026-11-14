@@ -146,17 +146,21 @@ fn dct(chan: &[f32], w: u32, h: u32, nx: u32, ny: u32) -> Channel {
     while cy < ny {
         let mut cx: u32 = 0;
         while cx * ny < nx * (ny - cy) {
-            for x in 0..w as usize {
-                fx[x] = (PI / w as f32 * cx as f32 * (x as f32 + 0.5)).cos();
-            }
+            // evanw/thumbhash sums these terms too, and a flat 100x1 then decodes as bands.
+            let aliased = cx > w || cy > h;
             let mut f: f32 = 0.0;
-            for y in 0..h as usize {
-                let fy = (PI / h as f32 * cy as f32 * (y as f32 + 0.5)).cos();
+            if !aliased {
                 for x in 0..w as usize {
-                    f += chan[x + y * w as usize] * fx[x] * fy;
+                    fx[x] = (PI / w as f32 * cx as f32 * (x as f32 + 0.5)).cos();
                 }
+                for y in 0..h as usize {
+                    let fy = (PI / h as f32 * cy as f32 * (y as f32 + 0.5)).cos();
+                    for x in 0..w as usize {
+                        f += chan[x + y * w as usize] * fx[x] * fy;
+                    }
+                }
+                f /= (w * h) as f32;
             }
-            f /= (w * h) as f32;
             if cx == 0 && cy == 0 {
                 c.dc = f;
             } else {

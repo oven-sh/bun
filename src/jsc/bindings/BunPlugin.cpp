@@ -941,7 +941,8 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
-    if (resolution.type != JSC::AbstractModuleRecord::Resolution::Type::Resolved)
+    // A record with live exports declares a variable by the name, which nothing reads: it asks its source at every use.
+    if (resolution.type != JSC::AbstractModuleRecord::Resolution::Type::Resolved || resolution.isLiveExport(vm))
         return {};
     auto* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
     if (!environment)

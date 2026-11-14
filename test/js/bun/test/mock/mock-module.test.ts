@@ -935,6 +935,39 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
+  test("keeps a name that a loaded module re-exports from a module mocked before its first load", async () => {
+    await expectFixturesToPass(
+      {
+        "db.ts": `export const save = () => "real";`,
+        "mail.ts": `export const send = () => "real";`,
+        "services.ts": `export * from "./db"; export * from "./mail";`,
+        "original.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          mock.module("./db", () => ({ save: () => "db mock" }));
+          test("after a mock has patched the module", async () => {
+            await import("./services");
+            const seen = [];
+            const partial = async importOriginal => {
+              const original = await importOriginal();
+              seen.push(Object.keys(original));
+              return { ...original, send: () => "stub" };
+            };
+            await mock.module("./services", partial);
+            await mock.module("./services", partial);
+            const actual = await vi.importActual("./services");
+            expect([seen, Object.keys(actual), Object.keys(jest.requireActual("./services")), actual.save()]).toEqual([
+              [["save", "send"], ["save", "send"]],
+              ["save", "send"],
+              ["save", "send"],
+              "db mock",
+            ]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   test("of a builtin and of a package", async () => {
     await expectFixturesToPass(
       {

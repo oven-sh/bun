@@ -7,6 +7,37 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+# The next two: a file that mocks is imported under a query. Compiled does not compile such a file with the tests, and mock.module() in it throws: the test files that import it do not run.
+test/js/bun/test/mock/mock-module.test.ts: a module that mocks and is imported with a query mocks for every test file that imports it: a CommonJS module
+test/js/bun/test/mock/mock-module.test.ts: a module that mocks and is imported with a query mocks for every test file that imports it: an ES module
+# These: the top-level code of a module makes a mock through a function of another file. Plain runs that module again for the next test file that imports it, and for the next run of --rerun-each. Compiled runs a body once. A test of the fixture fails for it.
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > is run again without the modules whose functions only pass the call on
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it with jest.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it with jest.mock()
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it with vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it, and for every run of one, with --isolate --rerun-each=2
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it, and for every run of one, with --isolate=modules --rerun-each=2
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it, and for every run of one, with --parallel=1 --no-isolate
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it, and for every run of one, with --parallel=1 --rerun-each=2
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it, and for every run of one, with --rerun-each=2
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a CommonJS preload that ends in the call
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a module that it imported with import()
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload that ends in the call
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, below a constructor that has yet to return from super()
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module that has changed its filename
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module that is imported with a query
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module that the body of a CommonJS module requires
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a CommonJS module that the body of another module requires
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, from a module that is imported with a query
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function of a preload, while another module waits at a top-level await
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function that another module of the test file made a global
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function that another module of the test file made a global, from a CommonJS module
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a function that it imports, of a module that a preload has loaded
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > mocks for every test file that imports it: a listener of its own that node:events calls
+test/js/bun/test/mock/mock-module.test.ts: a module whose top-level code mocks through a function of another module > two such modules each mock for the test files that import them
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails

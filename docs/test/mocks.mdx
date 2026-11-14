@@ -509,6 +509,8 @@ As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a
 
 Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files.
 
+A helper can also make the mock through a function of another module, such as a wrapper that a `--preload` script puts on `globalThis`. If the helper's top-level code is running when the wrapper makes the mock, Bun re-evaluates the helper for the next test file that imports it, and for the next `--rerun-each` run. A call that runs later is different: in a hook, or after an `await` in an `async` function, also when the wrapper itself awaits before it calls `mock.module()`. Bun can then leave the helper cached, and the mock applies to the first test file only. To mock for every test file, make the call from the helper's top-level code, or call `mock.module()` in the helper itself.
+
 Mocks made in a `--preload` script apply to every test file.
 
 A test file can mock a module that the preload script already mocked. With `vi.mock()` and `vi.doMock()`, only the modules the test file imports get the file's mock. Modules the preload script imported keep what they imported, as in Vitest. With `mock.module()` and `jest.mock()`, the modules the preload script imported get the file's mock too.

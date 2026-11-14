@@ -1286,32 +1286,23 @@ impl Reader {
     }
 
     fn add_pending_sparse_block(&mut self) -> Result<()> {
-        if !self.add_sparse_block(self.sparse_offset, self.sparse_num_bytes, false)? {
-            return Err(Error::MalformedSparseMap);
-        }
+        self.add_sparse_block(self.sparse_offset, self.sparse_num_bytes, false)?;
         self.sparse_offset = -1;
         self.sparse_num_bytes = -1;
         Ok(())
     }
 
-    /// `false` for a block that cannot be. An empty one takes its place, so the list is not empty.
-    fn add_sparse_block(&mut self, offset: i64, remaining: i64, hole: bool) -> Result<bool> {
+    fn add_sparse_block(&mut self, offset: i64, remaining: i64, hole: bool) -> Result<()> {
+        if remaining < 0 || offset < 0 || offset.checked_add(remaining).is_none() {
+            return Err(Error::MalformedSparseMap);
+        }
         self.sparse.try_reserve(1)?;
-        let valid = remaining >= 0 && offset >= 0 && offset.checked_add(remaining).is_some();
-        self.sparse.push(if valid {
-            SparseBlock {
-                offset,
-                remaining,
-                hole,
-            }
-        } else {
-            SparseBlock {
-                offset: 0,
-                remaining: 0,
-                hole: false,
-            }
+        self.sparse.push(SparseBlock {
+            offset,
+            remaining,
+            hole,
         });
-        Ok(valid)
+        Ok(())
     }
 
     /// `offset,size,offset,size,...`
@@ -1324,11 +1315,7 @@ impl Reader {
             let value = parse_decimal(field);
             match offset.take() {
                 None => offset = Some(value),
-                Some(offset) => {
-                    if !self.add_sparse_block(offset, value, false)? {
-                        return Ok(false);
-                    }
-                }
+                Some(offset) => self.add_sparse_block(offset, value, false)?,
             }
         }
         Ok(true)
@@ -1349,8 +1336,8 @@ impl Reader {
             }
             let start = end;
             end = parse_decimal(field);
-            if start < end && !self.add_sparse_block(start, end.saturating_sub(start), hole)? {
-                return Err(Error::MalformedSparseMap);
+            if start < end {
+                self.add_sparse_block(start, end.saturating_sub(start), hole)?;
             }
             let Some(tail) = tail.strip_prefix(b" ") else {
                 return Ok(true);
@@ -1366,9 +1353,7 @@ impl Reader {
             if offset.first() == Some(&0) {
                 break;
             }
-            if !self.add_sparse_block(parse_field(offset), parse_field(num_bytes), false)? {
-                return Err(Error::MalformedSparseMap);
-            }
+            self.add_sparse_block(parse_field(offset), parse_field(num_bytes), false)?;
         }
         Ok(())
     }
@@ -1570,11 +1555,7 @@ impl Reader {
                 self.state = State::SparseMapLine(SparseMapField::Size);
                 return Ok(());
             }
-            SparseMapField::Size => {
-                if !self.add_sparse_block(self.sparse_map_offset, value, false)? {
-                    return Err(Error::MalformedSparseMap);
-                }
-            }
+            SparseMapField::Size => self.add_sparse_block(self.sparse_map_offset, value, false)?,
         }
         if self.sparse_map_entries > 0 {
             self.sparse_map_entries = self.sparse_map_entries.saturating_sub(1);
@@ -1595,6 +1576,16 @@ impl Reader {
     }
 
     fn finish_header(&mut self, status: Status) -> Result<()> {
+        let mut end = 0;
+        for block in self.sparse.iter().filter(|block| block.remaining != 0) {
+            if block.offset < end {
+                return Err(Error::OutOfOrderSparse);
+            }
+            end = block.offset.saturating_add(block.remaining);
+        }
+        if end > self.disk_size {
+            return Err(Error::MalformedSparseMap);
+        }
         if self.sparse.is_empty() {
             self.add_sparse_block(0, self.bytes_remaining, false)?;
         }

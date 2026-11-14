@@ -449,3 +449,25 @@ impl DefineDataExt for DefineData {
 
 // `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
 // contents automatically; `Box<Define>` frees `self`. No explicit Drop needed.
+
+#[cfg(test)]
+mod tests {
+    use super::{Define, DotDefine, IdentifierDefine};
+    use bun_collections::StringHashMapKey;
+
+    /// `Define::memory_cost` takes the cost of the globals from a constant. This counts what the table holds.
+    #[test]
+    fn memory_cost_covers_the_globals_of_the_table() {
+        let table = Define::with_pure_globals(false, false);
+        let mut counted = table.identifiers.capacity()
+            * size_of::<(StringHashMapKey, IdentifierDefine)>()
+            + table.dots.capacity() * size_of::<(StringHashMapKey, Vec<DotDefine>)>();
+        for (_, defines) in table.dots.iter() {
+            for define in defines {
+                counted += size_of::<DotDefine>() + define.parts.len() * size_of::<Box<[u8]>>();
+                counted += define.parts.iter().map(|part| part.len()).sum::<usize>();
+            }
+        }
+        assert_eq!(table.memory_cost(), counted);
+    }
+}

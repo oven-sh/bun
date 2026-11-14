@@ -715,14 +715,10 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
                 finish(line, &|| "allocation failed\n".into());
                 return;
             }
-            // SAFETY: `pread_all` only writes into the spare bytes and returns how many it filled.
-            let read = unsafe {
-                bun_core::vec::fill_spare(&mut contents, 0, |spare| {
-                    let read = file.pread_all(&mut spare[..total], 0).ok();
-                    (read.unwrap_or(0), read)
-                })
-            };
-            if read != Some(total) {
+            let read = bun_core::vec::append_with(&mut contents, total, |spare| {
+                file.pread_all_buf(spare, 0)
+            });
+            if read.ok() != Some(total) {
                 finish(line, &|| "reading header failed\n".into());
                 return;
             }

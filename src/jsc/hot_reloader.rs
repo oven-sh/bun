@@ -15,7 +15,7 @@ use bun_resolver::fs::{self as Fs, FileSystem};
 #[cfg(not(windows))]
 use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
-use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
+use bun_watcher::{Op as WatchOp, Watcher};
 
 use crate::Task as JscTask;
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
@@ -776,7 +776,7 @@ where
     pub(crate) fn on_file_update(
         &mut self,
         events: &mut [bun_watcher::WatchEvent],
-        changed_files: &[ChangedFilePath],
+        changed_files: &[&[u8]],
         watchlist: &bun_watcher::WatchList,
     ) {
         let file_paths = watchlist.items_file_path();
@@ -905,14 +905,7 @@ where
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
                         let mut entries_option: Option<*mut Fs::DirEntry> = None;
 
-                        // Note: the affected-name element type differs by
-                        // platform (kqueue vs inotify). Split into two locals;
-                        // only one is populated per cfg.
-                        let mut affected_kqueue: &[&[u8]] = &[];
-                        let mut affected_inotify: &[ChangedFilePath] = &[];
-                        let _ = (&mut affected_kqueue, &mut affected_inotify);
-
-                        let affected_len: usize = 'brk: {
+                        let affected: &[&[u8]] = 'brk: {
                             if IS_KQUEUE {
                                 if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
                                     self.put_tombstone(file_path, existing);
@@ -996,15 +989,13 @@ where
                                     }
                                 }
 
-                                affected_kqueue = &affected_buf[0..affected_i];
-                                break 'brk affected_i;
+                                break 'brk &affected_buf[0..affected_i];
                             }
 
-                            affected_inotify = event.names(changed_files);
-                            break 'brk affected_inotify.len();
+                            event.names(changed_files)
                         };
 
-                        if affected_len > 0 && !IS_KQUEUE {
+                        if !affected.is_empty() && !IS_KQUEUE {
                             if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
                                 self.put_tombstone(file_path, existing);
                                 entries_option = Some(existing);
@@ -1036,11 +1027,7 @@ where
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
                         if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
                             let main_basename = bun_paths::basename(self.main.file);
-                            for changed_name_ in affected_inotify {
-                                let changed_name: &[u8] = match changed_name_ {
-                                    Some(z) => z.as_bytes(),
-                                    None => continue,
-                                };
+                            for &changed_name in affected {
                                 if changed_name != main_basename {
                                     continue;
                                 }
@@ -1074,12 +1061,7 @@ where
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
-                            'names: for i in 0..affected_len {
-                                let changed_name: &[u8] = if IS_KQUEUE {
-                                    affected_kqueue[i]
-                                } else {
-                                    affected_inotify[i].unwrap().as_bytes()
-                                };
+                            'names: for &changed_name in affected {
                                 if changed_name.is_empty()
                                     || changed_name[0] == b'~'
                                     || changed_name[0] == b'.'
@@ -1220,7 +1202,7 @@ where
                                     top_level_dir,
                                     file_path
                                 )),
-                                affected_len
+                                affected.len()
                             ));
                         }
                     }
@@ -1244,7 +1226,7 @@ where
     fn on_file_update(
         &mut self,
         events: &mut [bun_watcher::WatchEvent],
-        changed_files: &[bun_watcher::ChangedFilePath],
+        changed_files: &[&[u8]],
         watchlist: &bun_watcher::WatchList,
     ) {
         Self::on_file_update(self, events, changed_files, watchlist);

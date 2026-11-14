@@ -49,6 +49,11 @@ pub(crate) struct FileResponseStream {
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
+    /// For the uWS callbacks and the reader, until `finish()`.
+    self_ref: JsCell<Option<RefPtr<Self>>>,
+    /// A uv read in flight outlives `finish()`.
+    #[cfg(windows)]
+    read_ref: JsCell<Option<RefPtr<Self>>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -90,10 +95,8 @@ bitflags::bitflags! {
     #[repr(transparent)]
     struct State: u8 {
         const RESPONSE_DONE = 1 << 0;
-        const FINISHED      = 1 << 1;
-        const ERRORED       = 1 << 2;
-        const RESP_DETACHED = 1 << 3;
-        const READ_REF_HELD = 1 << 4;
+        const ERRORED       = 1 << 1;
+        const RESP_DETACHED = 1 << 2;
     }
 }
 
@@ -159,32 +162,30 @@ impl FileResponseStream {
     pub(crate) fn start(opts: StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
-        // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
-        // via `heap::take` in `deref()` when the intrusive refcount hits 0.
-        let this: *mut FileResponseStream =
-            bun_core::heap::into_raw(Box::new(FileResponseStream {
-                ref_count: Cell::new(1),
-                resp: Cell::new(opts.resp),
-                vm: Cell::new(opts.vm),
-                event_loop_handle: Cell::new(EventLoopHandle::init(opts.vm.event_loop_ptr())),
-                fd: Cell::new(opts.fd),
-                auto_close: Cell::new(opts.auto_close),
-                idle_timeout: Cell::new(opts.idle_timeout),
-                owner: Cell::new(Some(opts.owner)),
-                mode: Cell::new(if use_sendfile {
-                    Mode::Sendfile
-                } else {
-                    Mode::Reader
-                }),
-                reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
-                sendfile: JsCell::new(Sendfile::default()),
-                state: Cell::new(State::default()),
-            }));
-        // SAFETY: `this` is the live allocation above; the guard's ref defers
-        // any free until after `this_ref` is dead at the end of this frame.
-        let _guard = unsafe { RefPtr::init_ref(this) };
-        // SAFETY: `this` is live for at least as long as `_guard`.
-        let this_ref = unsafe { &*this };
+        let owned = RefPtr::new(FileResponseStream {
+            ref_count: Cell::new(1),
+            resp: Cell::new(opts.resp),
+            vm: Cell::new(opts.vm),
+            event_loop_handle: Cell::new(EventLoopHandle::init(opts.vm.event_loop_ptr())),
+            fd: Cell::new(opts.fd),
+            auto_close: Cell::new(opts.auto_close),
+            idle_timeout: Cell::new(opts.idle_timeout),
+            owner: Cell::new(Some(opts.owner)),
+            mode: Cell::new(if use_sendfile {
+                Mode::Sendfile
+            } else {
+                Mode::Reader
+            }),
+            reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
+            sendfile: JsCell::new(Sendfile::default()),
+            state: Cell::new(State::default()),
+            self_ref: JsCell::new(None),
+            #[cfg(windows)]
+            read_ref: JsCell::new(None),
+        });
+        owned.self_ref.set(Some(owned.clone()));
+        let this = owned.as_ptr();
+        let this_ref: &Self = &owned;
 
         let resp = this_ref.resp.get();
         resp.timeout(opts.idle_timeout);
@@ -270,7 +271,7 @@ impl FileResponseStream {
             }
         }
 
-        // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
+        #[cfg(windows)]
         this_ref.hold_read_ref();
         // SAFETY: `reader` is live for the stream's lifetime; `read` is the
         // raw re-entrancy-safe entry (its dispatch runs user JS).
@@ -323,9 +324,9 @@ impl FileResponseStream {
 
         match resp.write(chunk) {
             WriteResult::Backpressure(_) => {
-                // release the read ref; on_writable re-takes it. Adopts the ref
-                // taken before `reader.read()` — no fresh `ref_()` here.
-                let _guard2 = self.take_read_ref();
+                // `on_writable` takes it again.
+                #[cfg(windows)]
+                let _read_ref = self.read_ref.take();
                 resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
                         // SAFETY: uWS hands back the userdata pointer set below;
@@ -347,34 +348,22 @@ impl FileResponseStream {
     }
 
     pub(crate) fn on_reader_done(&self) {
-        // Adopts the in-flight read ref taken before `reader.read()`.
-        let _guard = self.take_read_ref();
+        #[cfg(windows)]
+        let _read_ref = self.read_ref.take();
         self.finish();
     }
 
     fn on_reader_error(&self, err: sys::Error) {
-        // Adopts the in-flight read ref taken before `reader.read()`.
-        let _guard = self.take_read_ref();
+        #[cfg(windows)]
+        let _read_ref = self.read_ref.take();
         self.fail_with(err);
     }
 
+    #[cfg(windows)]
     fn hold_read_ref(&self) {
-        if self.state.get().contains(State::READ_REF_HELD) {
-            return;
+        if self.read_ref.get().is_none() {
+            self.read_ref.set(self.self_ref.get().clone());
         }
-        self.insert_state(State::READ_REF_HELD);
-        self.ref_();
-    }
-
-    fn take_read_ref(&self) -> Option<RefPtr<Self>> {
-        if !self.state.get().contains(State::READ_REF_HELD) {
-            return None;
-        }
-        self.state
-            .set(self.state.get().difference(State::READ_REF_HELD));
-        // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
-        // witnesses exactly one outstanding ref taken in `hold_read_ref`.
-        Some(unsafe { RefPtr::from_raw(self.as_ptr()) })
     }
 
     fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
@@ -389,6 +378,7 @@ impl FileResponseStream {
             return true;
         }
         self.resp.get().timeout(self.idle_timeout.get());
+        #[cfg(windows)]
         self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
         self.reader_mut().unpause();
@@ -565,16 +555,12 @@ impl FileResponseStream {
         bun_output::scoped_log!(
             FileResponseStream,
             "finish (already={})",
-            self.state.get().contains(State::FINISHED)
+            self.self_ref.get().is_none()
         );
-        // If the request aborts before the reader gets its first byte, no reader callback will release this ref.
-        // On Windows, a pending uv read needs the stream alive and releases the ref itself.
-        #[cfg(unix)]
-        drop(self.take_read_ref());
-        if self.state.get().contains(State::FINISHED) {
+        // Never the last ref: every entry point that can reach here holds its own.
+        let Some(_self_ref) = self.self_ref.take() else {
             return;
-        }
-        self.insert_state(State::FINISHED);
+        };
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
@@ -585,12 +571,6 @@ impl FileResponseStream {
             resp.end(b"", resp.should_close_connection());
             self.deliver(resp, StreamEnd::Complete);
         }
-
-        // Release the owner ref from `heap::into_raw` in `start()`. Every entry
-        // point that can reach here holds its own ref, so the free lands on
-        // that guard's drop, not here.
-        // SAFETY: `self` is live and owns the ref; nothing touches `self` after.
-        unsafe { Self::deref(self.as_ptr()) };
     }
 
     fn event_loop(&self) -> EventLoopHandle {

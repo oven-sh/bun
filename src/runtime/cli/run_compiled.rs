@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -429,7 +429,7 @@ unsafe impl Send for SharedWatcher {}
 struct RestartOnChange;
 
 impl WatcherContext for RestartOnChange {
-    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {
+    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[&[u8]], _: &WatchList) {
         if events.is_empty() {
             return;
         }

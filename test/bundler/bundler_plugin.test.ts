@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -2089,6 +2090,96 @@ describe("bundler", () => {
       leaked: [],
       outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
       receivers: Array(6).fill("ERR_INVALID_THIS"),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A Promise subclass can start its work in then(), as Bun.$ and a Bun.SQL query do. For a promise that is
+  // pending when setup() returns it, the build waits on what `await` waits on, so it calls that then(). A
+  // fixture value starts itself on the next turn of the event loop when nothing called its then(), and counts
+  // that in `notAwaited`.
+  test.concurrent("plugin/setup() awaits a pending Promise subclass through its own then()", async () => {
+    const fixtures = pathToFileURL(join(import.meta.dir, "../js/bun/test/fixtures/returned-thenable.ts")).href;
+    using dir = tempDir("plugin-setup-promise-subclass", {
+      "entry.js": `console.log("entry");`,
+      "build.mjs": `
+        import { SQL } from "bun";
+        import { LazyPromise, SettledPromise, notAwaited, startUnlessAwaited } from ${JSON.stringify(fixtures)};
+
+        // Settled when setup() returns it. It counts the then() calls.
+        class Counted extends Promise {
+          static thenCalls = 0;
+          then(...args) {
+            Counted.thenCalls++;
+            return super.then(...args);
+          }
+        }
+        const thenCalls = { own: 0, thenable: 0 };
+        const sql = new SQL("sqlite://:memory:");
+        const later = () => new Promise(resolve => setImmediate(resolve));
+        // What setup() returns. Each pending value settles on a later turn of the event loop.
+        const returned = {
+          "lazy subclass": () => new LazyPromise(resolve => setImmediate(resolve)),
+          "Bun.$": () => startUnlessAwaited(Bun.$\`echo setup\`.quiet()),
+          "Bun.SQL query": () => startUnlessAwaited(sql\`select 1\`),
+          "lazy subclass that rejects": () => new LazyPromise((_, reject) => setImmediate(reject, new Error("from then()"))),
+          "fulfilled subclass": () => new SettledPromise(later),
+          "rejected subclass": () => Counted.reject(new Error("rejected before setup() returned")),
+          "promise with a then() of its own": () => Object.assign(later(), { then: () => void thenCalls.own++ }),
+          "thenable": () => ({ then: () => void thenCalls.thenable++ }),
+        };
+
+        async function build(name) {
+          let value, seen;
+          try {
+            await Bun.build({
+              entrypoints: ["./entry.js"],
+              plugins: [
+                { name, setup: () => (value = returned[name]()) },
+                // The next setup() runs when the promise that the first setup() returned has settled.
+                { name: "next", setup: () => void (seen = value instanceof Promise ? Bun.peek.status(value) : "not a promise") },
+              ],
+            });
+          } catch (error) {
+            return "rejected: " + error.message;
+          }
+          return seen;
+        }
+
+        const builds = {};
+        for (const name in returned) builds[name] = await build(name);
+        await sql.close();
+        Object.assign(thenCalls, { lazy: LazyPromise.thenCalls, settled: SettledPromise.thenCalls + Counted.thenCalls });
+        console.log(JSON.stringify({ builds, thenCalls, notAwaited: notAwaited.count }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      // What the next setup() saw.
+      builds: {
+        "lazy subclass": "fulfilled",
+        "Bun.$": "fulfilled",
+        "Bun.SQL query": "fulfilled",
+        "lazy subclass that rejects": "rejected: from then()",
+        // A promise that is settled when setup() returns it is read by its state: then() is not called.
+        "fulfilled subclass": "fulfilled",
+        "rejected subclass": "rejected: rejected before setup() returned",
+        // `await` does not call then() on a promise that is not a subclass. A thenable is not awaited.
+        "promise with a then() of its own": "fulfilled",
+        "thenable": "not a promise",
+      },
+      thenCalls: { lazy: 2, settled: 0, own: 0, thenable: 0 },
+      notAwaited: 0,
     });
     expect(exitCode).toBe(0);
   });

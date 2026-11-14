@@ -78,7 +78,7 @@
 [bun_io]
 "generic_body_not_generic:src/io/pipes.rs" = 1
 "param_wider_than_callers:src/io/PipeWriter.rs" = 1
-"safe_fn_returns_shared_mut:src/io/lib.rs" = 2
+"safe_fn_returns_shared_mut:src/io/lib.rs" = 1
 "unused_pub:src/io/PipeWriter.rs" = 2
 
 [bun_js_parser]
@@ -138,7 +138,7 @@
 [bun_resolver]
 "generic_body_not_generic:src/resolver/data_url.rs" = 1
 "generic_body_not_generic:src/resolver/package_json.rs" = 2
-"safe_fn_returns_shared_mut:src/resolver/lib.rs" = 2
+"safe_fn_returns_shared_mut:src/resolver/lib.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/resolver/fs.rs" = 1
 
 [bun_router]
@@ -162,7 +162,6 @@
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "field_valid_only_when:src/runtime/socket/udp_socket.rs" = 1
 "freed_while_borrowed:src/runtime/api/bun/subprocess/SubprocessPipeReader.rs" = 2
-"freed_while_borrowed:src/runtime/node/node_fs.rs" = 1
 "freed_while_borrowed:src/runtime/webcore/blob/copy_file.rs" = 2
 "freed_while_borrowed:src/runtime/webcore/blob/read_file.rs" = 1
 "freed_while_borrowed:src/runtime/webcore/fetch/FetchTasklet.rs" = 3
@@ -206,9 +205,6 @@
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/copy_file.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/read_file.rs" = 1
-
-[bun_sema]
-"parallel_vecs:src/sema/check/mod.rs" = 1
 
 [bun_simdutf_sys]
 "unused_pub:src/simdutf_sys/simdutf.rs" = 1

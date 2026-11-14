@@ -135,7 +135,6 @@ public:
 
     JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
 
-    WEBCORE_EXPORT Ref<JSC::ArrayBuffer> toArrayBuffer();
     static JSC::JSValue fromArrayBuffer(JSC::JSGlobalObject&, JSC::JSGlobalObject*, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset = 0, size_t maxByteLength = 0, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
 
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
@@ -143,6 +142,8 @@ public:
         return adoptRef(*new SerializedScriptValue(WTF::move(data)));
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
+    // Moves the bytes out. This value cannot be deserialized afterwards.
+    Vector<uint8_t> takeWireBytes() { return std::exchange(m_data, {}); }
 
     size_t memoryCost() const { return m_memoryCost; }
 

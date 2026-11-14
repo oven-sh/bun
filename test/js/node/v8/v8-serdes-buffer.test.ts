@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isWindows } from "harness";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 // Buffer identity through v8.serialize/deserialize, matching node v26.3.0's
@@ -123,5 +124,95 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("true true\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Node's v8.serialize() returns a Buffer that owns a plain ArrayBuffer: it
+// adopts the bytes of the serializer.
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_serdes.cc#L207-L219
+// A view on a SharedArrayBuffer is refused by WebCrypto, cannot be
+// transferred, and is shared where a clone is expected.
+describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => {
+  test.each([
+    ["an object", { a: 1 }],
+    ["a string", "text"],
+    ["a number", 1],
+    ["an array", [1, 2, 3]],
+    ["undefined", undefined],
+    ["a value with a Buffer inside", { b: Buffer.from("hi") }],
+  ])("for %s", (_name, value) => {
+    const bytes = v8.serialize(value);
+    expect(Buffer.isBuffer(bytes)).toBe(true);
+    expect(bytes.buffer).toBeInstanceOf(ArrayBuffer);
+    expect({ byteOffset: bytes.byteOffset, byteLength: bytes.byteLength }).toEqual({
+      byteOffset: 0,
+      byteLength: bytes.buffer.byteLength,
+    });
+    expect(v8.serialize(value).buffer).not.toBe(bytes.buffer);
+    expect(v8.deserialize(bytes)).toEqual(value);
+  });
+
+  describe.each([
+    ["without a Buffer inside", { a: 1 }],
+    ["with a Buffer inside", { a: 1, b: Buffer.from("hi") }],
+  ])("of a value %s", (_name, value) => {
+    test("WebCrypto accepts it", async () => {
+      const digest = await crypto.subtle.digest("SHA-256", v8.serialize(value));
+      expect(digest.byteLength).toBe(32);
+    });
+
+    test("structuredClone() copies it", () => {
+      const bytes = v8.serialize(value);
+      structuredClone(bytes).fill(0);
+      expect(v8.deserialize(bytes)).toEqual(value);
+    });
+
+    test("its ArrayBuffer can be transferred", () => {
+      const bytes = v8.serialize(value);
+      const byteLength = bytes.byteLength;
+      const moved = structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+      expect(bytes.byteLength).toBe(0);
+      expect(moved.byteLength).toBe(byteLength);
+      expect(v8.deserialize(Buffer.from(moved))).toEqual(value);
+    });
+  });
+
+  // The Buffer adopts the bytes that the serializer allocated, and the last
+  // owner frees them, here on the Worker's thread. Under ASAN this child
+  // checks that the free is a valid one. The RSS tests below check that it
+  // happens.
+  test("a Worker takes the ArrayBuffer by transfer and drops it on its thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "v8-serialize-transfer-fixture.js")],
+      env: {
+        ...bunEnv,
+        // With the system allocator, ASAN sees the adopted bytes (bmalloc has no system heap on Windows).
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // symbolize=0: symbolizing a failure report is slower than the test timeout.
+        // detect_leaks=0: Malloc=1 exposes the event name table that a Worker thread never frees to LSAN.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const rounds = [0, 1, 2, 3, 4, 5, 6, 7];
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ detached: true, moved: rounds, shared: rounds }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each fixture serializes 128 MiB and keeps none of it. In the third one a
+  // Worker takes each result by transfer, so the Worker's thread frees it.
+  test.concurrent.each([
+    ["node:v8 serialize() result", "node:v8"],
+    ["bun:jsc serialize() result", "bun:jsc"],
+    ["node:v8 serialize() result that a Worker takes", "worker"],
+  ])("the bytes of a %s are freed", async (_name, sink) => {
+    await expectRssDeltaBelow([join(import.meta.dir, "v8-serialize-rss-fixture.js"), sink], {
+      release: 32,
+      debug: 64,
+    });
   });
 });

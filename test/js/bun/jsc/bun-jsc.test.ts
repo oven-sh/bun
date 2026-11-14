@@ -229,10 +229,22 @@ describe("bun:jsc", () => {
     expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
   });
 
+  it("serialize returns a SharedArrayBuffer unless binaryType is 'nodebuffer'", () => {
+    for (const options of [undefined, {}, { binaryType: "arraybuffer" }] as const) {
+      const serialized = serialize("abc", options);
+      expect(serialized).toBeInstanceOf(SharedArrayBuffer);
+      // deserialize() reads the shared bytes in place. The string is their tail.
+      const bytes = new Uint8Array(serialized);
+      bytes[bytes.length - 1] = "z".charCodeAt(0);
+      expect(deserialize(serialized)).toBe("abz");
+    }
+  });
+
   it("serialize (binaryType: 'nodebuffer')", () => {
     const serialized = serialize({ a: 1 }, { binaryType: "nodebuffer" });
     expect(serialized).toBeInstanceOf(Buffer);
-    expect(serialized.buffer).toBeInstanceOf(SharedArrayBuffer);
+    // The Buffer owns its bytes, as the Buffer of node:v8 serialize() does in Node.js.
+    expect(serialized.buffer).toBeInstanceOf(ArrayBuffer);
     expect(deserialize(serialized)).toStrictEqual({ a: 1 });
     const nested = serialize(serialized);
     expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });

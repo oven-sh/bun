@@ -1002,3 +1002,49 @@ test.each([204, 304])("a %d Response with a ReadableStream body cancels the stre
   expect(cancelReasons).toStrictEqual([undefined]);
   await stopAndAssertDrained(server);
 });
+
+// Script that runs while the response is rendered aborts the request, and the render then found no response. The
+// callback that delivered the request body is still on the stack when the microtask runs, so the request is pending.
+test.concurrent.each([
+  [
+    "cancel() of a 204 Response's body",
+    false,
+    `return new Response(new ReadableStream({ cancel: stop }), { status: 204 })`,
+  ],
+  [
+    "cancel() of a 304 Response's body",
+    false,
+    `return new Response(new ReadableStream({ cancel: stop }), { status: 304 })`,
+  ],
+  ["a getter of the error to print", true, `throw Object.defineProperty(new Error(), "message", { get: stop })`],
+])("server.stop(true) in %s releases the request once", async (_, development, answer) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let during;
+        function stop() {
+          server.stop(true);
+          queueMicrotask(() => (during ??= server.pendingRequests));
+        }
+        const server = Bun.serve({
+          port: 0,
+          development: ${development},
+          async fetch(req) {
+            await req.text();
+            ${answer};
+          },
+        });
+        const result = await fetch(server.url, { method: "POST", body: "a" }).then(r => r.status, () => "closed");
+        console.log(JSON.stringify({ result, during, after: server.pendingRequests }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(JSON.stringify({ result: "closed", during: 1, after: 0 }) + "\n");
+  // An error that was printed sets the exit code.
+  expect(exitCode).toBe(development ? 1 : 0);
+});

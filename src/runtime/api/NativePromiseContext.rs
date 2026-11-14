@@ -182,7 +182,7 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 ///
 /// The destructor runs during GC sweep, so it is NOT safe to do anything
 /// that might touch the JSC heap. RequestContext.deref() can trigger
-/// deinit() which detaches responses, unrefs bodies, and calls back into
+/// deinit() which aborts signals, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
 #[inline(never)]

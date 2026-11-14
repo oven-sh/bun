@@ -290,3 +290,49 @@ test("an HMR upgrade on the last connection of a stopped server", async () => {
   expect(stdout).toBe('{"status":"HTTP/1.1 101 Switching Protocols","deinitsAtStop":0,"deinits":1,"closed":true}\n');
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(isWindows)("a client that leaves while the page of a failed bundle is still being sent", async () => {
+  using dir = tempDir("dev-server-failure-page-abort", {
+    "server.ts": `export function render(req: Request, meta: any) { return meta.pageModule.default(req, meta); }`,
+    // About 500 KB of errors, more than a unix socket buffers.
+    "routes/index.ts": Array.from({ length: 1000 }, (_, i) => `import "./${i}${Buffer.alloc(200, "a")}";`).join("\n"),
+    // Not watched, so removing the socket does not wake the watcher.
+    "run": {},
+    "fixture.ts": `
+      import net from "node:net";
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({
+        unix: "run/dev.sock",
+        development: true,
+        app: { framework: { fileSystemRouterTypes: [fsr] } },
+      });
+
+      const sock = net.connect("run/dev.sock", () => sock.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n"));
+      const status = await new Promise(resolve => {
+        sock.once("data", d => {
+          sock.destroy();
+          resolve(d.toString("latin1").split("\\r\\n")[0]);
+        });
+      });
+      const during = server.pendingRequests;
+      const deadline = Date.now() + 2000;
+      while (server.pendingRequests > 0 && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ status, during, after: server.pendingRequests }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    // The bundler reports the unresolved imports here.
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(JSON.parse(stdout)).toEqual({ status: "HTTP/1.1 500 Internal Server Error", during: 1, after: 0 });
+  expect(exitCode).toBe(0);
+});

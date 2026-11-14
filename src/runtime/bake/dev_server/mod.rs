@@ -150,6 +150,8 @@ pub(crate) struct IncrementalResult {
     pub(crate) failures_removed: Vec<SerializedFailure>,
     pub(crate) client_components_affected: Vec<incremental_graph::ServerFileIndex>,
     pub(crate) failures_added: Vec<SerializedFailure>,
+    /// The importers of a deleted file that `on_file_deleted` queued again.
+    pub(crate) client_files_requeued: Vec<incremental_graph::ClientFileIndex>,
 }
 impl IncrementalResult {
     pub(crate) const EMPTY: IncrementalResult = IncrementalResult {
@@ -162,6 +164,7 @@ impl IncrementalResult {
         client_components_added: Vec::new(),
         client_components_removed: Vec::new(),
         client_components_affected: Vec::new(),
+        client_files_requeued: Vec::new(),
     };
 
     /// Clears each list retaining capacity, asserts `failures_removed` was
@@ -177,6 +180,7 @@ impl IncrementalResult {
         self.failures_removed.clear();
         self.client_components_affected.clear();
         self.failures_added.clear();
+        self.client_files_requeued.clear();
         // NOTE: `had_adjusted_edges` is NOT reset here (matches spec).
     }
 }

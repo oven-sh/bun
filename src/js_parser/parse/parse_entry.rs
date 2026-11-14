@@ -198,7 +198,6 @@ impl<'a> Options<'a> {
     ///   user statements to rewrite.
     /// - `features.bundler_feature_flags` — `import { feature } from
     ///   "bun:bundle"` cannot appear in a synthetic single-expr AST.
-    /// - `features.runtime_transpiler_cache` — full-parse cache hook only.
     pub fn clone_for_lazy_export(&self) -> Options<'a> {
         let f = &self.features;
         Options {
@@ -245,7 +244,6 @@ impl<'a> Options<'a> {
                 emit_decorator_metadata: f.emit_decorator_metadata,
                 standard_decorators: f.standard_decorators,
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
-                runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 ascii_only: f.ascii_only,
                 bundler_feature_flags: None,
@@ -358,6 +356,33 @@ impl<'a> Options<'a> {
     }
 }
 
+/// The runtime's on-disk cache of transpiled files.
+pub trait RuntimeTranspilerCache {
+    fn get(
+        &mut self,
+        source: &bun_ast::Source<'_>,
+        options: &Options<'_>,
+        used_jsx: bool,
+    ) -> CacheLookup;
+
+    /// Follows a miss. `None`: the output depends on more than the source and must not be saved.
+    fn set_parsed(&mut self, parsed: Option<ParsedForCache>);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CacheLookup {
+    Hit,
+    Miss,
+    /// The file is not one that gets saved.
+    Skipped,
+}
+
+pub struct ParsedForCache {
+    pub exports_kind: js_ast::ExportsKind,
+    pub uses_test_api: bool,
+    pub imports_vitest: bool,
+}
+
 // ── live `Parser::init` ───────────────────────────────────────────────────
 // The two aliasing `Log` handles (parser + lexer) are modeled as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
@@ -401,13 +426,20 @@ impl<'a> Parser<'a> {
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
 impl<'a> Parser<'a> {
+    pub fn parse(self) -> Result<crate::Result<'a>, Error> {
+        self.parse_with_cache(None)
+    }
+
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
+    pub fn parse_with_cache(
+        mut self,
+        cache: Option<&mut dyn RuntimeTranspilerCache>,
+    ) -> Result<crate::Result<'a>, Error> {
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
             self.options.jsx.parse = true;
-            return self._parse::<true>();
+            return self._parse::<true>(cache);
         }
 
         // JSX is no longer part of the parser's monomorphization (it only
@@ -417,9 +449,9 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.options.ts {
-                self._parse::<true>()
+                self._parse::<true>(cache)
             } else {
-                self._parse::<false>()
+                self._parse::<false>(cache)
             }
         }
     }
@@ -797,7 +829,10 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    fn _parse<const TS: bool>(
+        self,
+        mut cache: Option<&mut dyn RuntimeTranspilerCache>,
+    ) -> Result<crate::Result<'a>, Error> {
         bun_crash_handler::scoped_action!(bun_crash_handler::Action::Parse(self.source.path.text));
 
         let Parser {
@@ -848,11 +883,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        let mut cache_lookup = CacheLookup::Skipped;
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+            if let Some(cache) = &mut cache {
                 // `Path::is_node_module`/`is_jsx_file` live on the resolver
                 // `fs::Path` (not the logger stub) — their bodies are inlined here.
                 let path = &p.source.path;
@@ -864,11 +900,12 @@ impl<'a> Parser<'a> {
                 let is_node_module = strings::last_index_of(name.dir, NM).is_some();
                 let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
                     || strings::has_suffix_comptime(name.filename, b".tsx");
-                if cache.get(
+                cache_lookup = cache.get(
                     p.source,
-                    core::ptr::NonNull::from(&p.options).cast::<()>(),
+                    &p.options,
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
-                ) {
+                );
+                if cache_lookup == CacheLookup::Hit {
                     return Ok(crate::Result::Cached);
                 }
             }
@@ -1019,11 +1056,7 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
-        let asks_uses_test_api = cfg!(debug_assertions)
-            || p.options
-                .features
-                .runtime_transpiler_cache_mut()
-                .is_some_and(|cache| cache.input_hash.is_some());
+        let asks_uses_test_api = cfg!(debug_assertions) || cache_lookup == CacheLookup::Miss;
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
@@ -2474,15 +2507,15 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            let depends_on_more_than_source = p.depends_on_more_than_source();
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                if depends_on_more_than_source {
-                    cache.input_hash = None;
-                } else {
-                    cache.exports_kind = exports_kind;
-                    cache.uses_test_api = uses_test_api;
-                    cache.imports_vitest = imports_vitest;
-                }
+            if let Some(cache) = cache
+                && cache_lookup == CacheLookup::Miss
+            {
+                let parsed = ParsedForCache {
+                    exports_kind,
+                    uses_test_api,
+                    imports_vitest,
+                };
+                cache.set_parsed((!p.depends_on_more_than_source()).then_some(parsed));
             }
         }
         // A test entry point gets its own cache key.

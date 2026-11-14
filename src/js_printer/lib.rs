@@ -845,10 +845,10 @@ pub mod analyze_transpiled_module {
     }
 }
 
-/// Cold path — called at most once per print to persist output. Dispatch lives
-/// on the parser-tier `RuntimeTranspilerCache` (`TranspilerCacheImpl`
-/// link-interface); the printer just holds the raw pointer.
-pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
+/// Where [`print_ast`] saves what it printed.
+pub trait RuntimeTranspilerCache {
+    fn put(&self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
+}
 
 use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
 use bun_core::printer::{
@@ -1245,10 +1245,12 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 pub type SourceMapHandler<'a> = &'a dyn OnSourceMapChunk;
 
 pub trait OnSourceMapChunk {
+    /// `output` holds the printed code.
     fn on_source_map_chunk(
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
+        output: &mut MutableString,
     ) -> crate::Result<()>;
 }
 
@@ -1257,6 +1259,7 @@ impl OnSourceMapChunk for core::cell::Cell<Option<SourceMap::Chunk>> {
         &self,
         chunk: SourceMap::Chunk,
         _: &bun_ast::Source,
+        _: &mut MutableString,
     ) -> crate::Result<()> {
         self.set(Some(chunk));
         Ok(())
@@ -1282,7 +1285,7 @@ pub struct Options<'a> {
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
 
-    pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
+    pub runtime_transpiler_cache: Option<&'a dyn RuntimeTranspilerCache>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [bun_ast::Source<'a>]>,
 
@@ -7188,12 +7191,13 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
     }
 }
 
+#[derive(Default)]
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
 }
 
 impl<C: WriterContext> Writer<C> {
-    pub fn init(ctx: C) -> Self {
+    pub const fn init(ctx: C) -> Self {
         Self { ctx }
     }
 
@@ -7316,6 +7320,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
 // DirectWriter / BufferWriter
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct BufferWriter {
     pub buffer: MutableString,
     /// Watermark into `buffer.list` set by `done()`. Rust can't keep a
@@ -7340,7 +7345,7 @@ impl BufferWriter {
         &self.buffer.list[..self.written_len]
     }
 
-    pub fn init() -> BufferWriter {
+    pub const fn init() -> BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written_len: 0,
@@ -7552,8 +7557,8 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
-    _writer: W,
+pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
+    writer: &mut BufferPrinter,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
     mut symbols: js_ast::symbol::Map,
@@ -7657,9 +7662,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     };
 
     // `is_bun_platform = ascii_only` for printAst.
-    type PrinterType<'a, W, const A: bool, const G: bool> =
-        Printer<'a, W, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
-    let mut writer = _writer;
+    type PrinterType<'a, 'w, const A: bool, const G: bool> =
+        Printer<'a, &'w mut BufferPrinter, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
     // Pre-size the output buffer ~proportional to the source. Transpiled output
     // is almost always within a small factor of the input, so reserving up front
     // keeps the per-token appends below from repeatedly growing+memmoving the
@@ -7673,7 +7677,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         source,
         tree.approximate_newline_count,
     );
-    let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
+    let mut printer = PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
         tree.import_records.as_slice(),
@@ -7685,7 +7689,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
     // (see `print_with_writer_and_platform`).
-    if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+    if PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
@@ -7705,7 +7709,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         // `require` must be an unbound variable.
         printer.print(b"var {require}=import.meta;");
 
-        if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+        if PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
             }
@@ -7720,7 +7724,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.check_stack_overflow()?;
 
-    let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
+    let have_module_info = PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
     if have_module_info {
         printer
@@ -7757,8 +7761,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .serialize(&mut srlz_res)
                 .map_err(|_| crate::Error::WriteFailed)?;
         }
-        // SAFETY: caller guarantees the cache outlives the print call.
-        unsafe { &mut *cache.as_ptr() }.put(
+        cache.put(
             printer.writer.slice(),
             source_maps_chunk
                 .as_ref()
@@ -7770,7 +7773,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     if GENERATE_SOURCE_MAP {
         if let Some(handler) = &printer.options.source_map_handler {
-            handler.on_source_map_chunk(source_maps_chunk.take().unwrap(), source)?;
+            let chunk = source_maps_chunk.take().unwrap();
+            handler.on_source_map_chunk(chunk, source, &mut printer.writer.ctx.buffer)?;
         }
     }
 

@@ -162,8 +162,6 @@ pub mod Runtime {
     use bun_core::strings;
     use bun_wyhash::Wyhash;
 
-    use bun_ast::RuntimeTranspilerCache;
-
     // ─────────────────────────── Runtime.Features ───────────────────────────
 
     pub struct Features {
@@ -249,12 +247,6 @@ pub mod Runtime {
         /// This is used for `--print` entry points so we can get the result.
         pub remove_cjs_module_wrapper: bool,
 
-        // `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
-        // so `Features` stays `'static`-bounded inside `Parser::Options` and avoids
-        // the borrowck self-borrow that `&'a mut` would induce while `P` holds
-        // `&mut Options`.
-        pub runtime_transpiler_cache: Option<*mut RuntimeTranspilerCache>,
-
         // TODO: make this a bitset of all unsupported features
         pub lower_using: bool,
 
@@ -322,7 +314,6 @@ pub mod Runtime {
                 emit_decorator_metadata: false,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,
-                runtime_transpiler_cache: None,
                 lower_using: true,
                 ascii_only: false,
                 bundler_feature_flags: None,
@@ -334,22 +325,6 @@ pub mod Runtime {
     }
 
     impl Features {
-        /// Reborrow the optional `RuntimeTranspilerCache` back-pointer.
-        ///
-        /// `&self` receiver (not `&mut`) so call sites may hold other shared
-        /// borrows of `p.options.*` across the returned `&mut` (e.g.
-        /// `cache.get(p.source, &raw const p.options, p.options.jsx.parse)`).
-        /// Callers must not hold two results live at once. Centralises the raw
-        /// deref so the four parse-entry use sites stay safe.
-        #[inline]
-        #[allow(clippy::mut_from_ref)]
-        pub(crate) fn runtime_transpiler_cache_mut(&self) -> Option<&mut RuntimeTranspilerCache> {
-            // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see PORT
-            // NOTE on the field) — the caller that populated it guarantees the
-            // pointee is unique to this parse and outlives `Features`.
-            self.runtime_transpiler_cache.map(|p| unsafe { &mut *p })
-        }
-
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
@@ -376,8 +351,6 @@ pub mod Runtime {
         //
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
-            debug_assert!(self.runtime_transpiler_cache.is_some());
-
             let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,

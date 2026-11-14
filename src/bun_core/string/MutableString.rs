@@ -68,7 +68,7 @@ impl MutableString {
         })
     }
 
-    pub fn init_empty() -> MutableString {
+    pub const fn init_empty() -> MutableString {
         MutableString { list: Vec::new() }
     }
 

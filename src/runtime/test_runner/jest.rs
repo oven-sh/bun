@@ -685,13 +685,21 @@ pub(crate) mod on_unhandled_rejection {
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
-            if let Some(entry) = entry_ptr {
+            let called_skip = current_state_data.sequence(buntest).is_some_and(|sequence| sequence.called_skip());
+            if buntest.execution.is_skip_error(rejection) {
+                // What `skip()` threw ends the test that called it, and is no error of any other test.
+                if !called_skip {
+                    return;
+                }
+            } else if let Some(entry) = entry_ptr {
                 // SAFETY: `entry` belongs to the running file.
                 let mode = unsafe { (*entry).base.mode };
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
+                        // Nor does a test that called `skip()` hide one.
+                        || called_skip
                     {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;

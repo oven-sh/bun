@@ -7,6 +7,7 @@
 // is a leak.
 //
 // argv: <rounds> <iterationsPerRound>
+import { residentBytes } from "_util/memory";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -43,20 +44,6 @@ const serverSocket = await serverSocketPromise;
 
 const { subject, issuer, raw } = serverSocket.getPeerCertificate();
 const peer = { subject, issuer, raw: raw.toString("base64") };
-
-// On Linux, process.memoryUsage.rss() reads /proc/self/stat. Since Linux 6.2
-// the kernel keeps that counter per CPU and adds each CPU's part to the total
-// in batches. On a machine with many cores the total is off by several MB, and
-// the error changes from one read to the next. smaps_rollup walks the page
-// tables, so it is exact. `Anonymous` leaves out the pages of the bun binary,
-// which the kernel can evict at any time.
-function residentBytes(): number {
-  if (process.platform === "linux") {
-    const rollup = readFileSync("/proc/self/smaps_rollup", "utf8");
-    return Number(/^Anonymous:\s+(\d+) kB$/m.exec(rollup)![1]) * 1024;
-  }
-  return process.memoryUsage.rss();
-}
 
 const samples: number[] = [];
 let iterations = 0;

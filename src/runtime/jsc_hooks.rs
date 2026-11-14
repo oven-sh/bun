@@ -707,6 +707,7 @@ unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeStat
     // touches the stores again.
     bun_ast::expr::data::Store::deinit();
     bun_ast::stmt::data::Store::deinit();
+    crate::api::drop_parked_text_format_arena();
 }
 
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic

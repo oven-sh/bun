@@ -1882,8 +1882,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            if let Some(r#ref) = scope.label_ref.to_nullable() {
-                let symbol = &symbols[r#ref.inner_index() as usize];
+            if let Some(index) = scope.label.symbol_index() {
+                let symbol = &symbols[index as usize];
                 if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     // SAFETY: see above.
                     char_freq.scan(
@@ -8097,11 +8097,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if scope.kind_stops_hoisting() {
                 break;
             }
-            if let Some(label_ref) = scope.label_ref.to_nullable() {
+            if let Some(index) = scope.label.symbol_index() {
                 if scope.kind == js_ast::scope::Kind::Label
                     // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                    && strings::eql(name, self.symbols[label_ref.inner_index() as usize].original_name.slice())
+                    && strings::eql(name, self.symbols[index as usize].original_name.slice())
                 {
+                    let label_ref = Ref::new(
+                        index,
+                        self.source.index.0 as js_ast::base::RefInt,
+                        js_ast::base::RefTag::Symbol,
+                    );
                     // Track how many times we've referenced this symbol
                     self.record_usage(label_ref);
                     res.r#ref = label_ref;
@@ -8133,6 +8138,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_usage(r#ref);
 
         res
+    }
+
+    /// `a: { a: ; }`, up to the function that holds the label, as in `find_label_symbol`.
+    #[inline(never)]
+    pub(crate) fn report_label_if_duplicate(&mut self, name: &[u8], name_loc: bun_ast::Loc) {
+        debug_assert!(self.current_scope_ref().kind == js_ast::scope::Kind::Label);
+        let mut enclosing = self.current_scope_ref().parent;
+
+        while let Some(scope) = enclosing {
+            if scope.kind_stops_hoisting() {
+                return;
+            }
+            if scope.kind == js_ast::scope::Kind::Label
+                && let Some(index) = scope.label.symbol_index()
+                && strings::eql(name, self.symbols[index as usize].original_name.slice())
+            {
+                self.log().add_range_error_fmt_with_note(
+                    Some(self.source),
+                    self.source.range_of_identifier(name_loc),
+                    format_args!("Duplicate label \"{}\"", bstr::BStr::new(name)),
+                    format_args!("The original label \"{}\" is here:", bstr::BStr::new(name)),
+                    self.source.range_of_identifier(scope.label.name_loc()),
+                );
+                return;
+            }
+            enclosing = scope.parent;
+        }
     }
 
     pub(crate) fn extract_decls_for_binding(
@@ -9615,7 +9647,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             children: bun_alloc::AstAlloc::vec(),
             generated: bun_alloc::AstAlloc::vec(),
             kind: js_ast::scope::Kind::Entry,
-            label_ref: Ref::NONE,
             parent: None,
             ..Default::default()
         });

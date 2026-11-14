@@ -827,8 +827,8 @@ pub mod renamer {
         }
 
         // Labels are always declared in a nested scope, so we don't need to check.
-        if let Some(ref_) = scope.label_ref.to_nullable() {
-            let symbol = &mut symbols[ref_.inner_index() as usize];
+        if let Some(index) = scope.label.symbol_index() {
+            let symbol = &mut symbols[index as usize];
             let ns = SlotNamespace::Label;
             symbol.nested_scope_slot = slot.slots[ns];
             slot.slots[ns] += 1;

@@ -1370,6 +1370,8 @@ pub(crate) struct ImportClause<'a> {
 
 pub struct PropertyOpts {
     pub(crate) declare_range: bun_ast::Range,
+    /// Out: the member that `parse_property` read is the constructor of the class.
+    pub(crate) is_constructor: bool,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
 
@@ -1388,6 +1390,7 @@ impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
             declare_range: bun_ast::Range::NONE,
+            is_constructor: false,
             is_async: false,
             is_generator: false,
             is_static: false,

@@ -191,6 +191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_index = p
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassBody, body_loc)
             .expect("unreachable");
+        let mut has_constructor = false;
 
         while !p.lexer.token.is_close_brace_or_eof() {
             if p.lexer.token == T::TSemicolon {
@@ -239,6 +240,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
+
+                if opts.is_constructor {
+                    if has_constructor && let Some(key) = prop_key {
+                        p.report_duplicate_constructor(key);
+                    }
+                    has_constructor = true;
+                }
 
                 // Forbid decorators on class constructors
                 if opts.ts_decorators.len() > 0 {
@@ -293,6 +301,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             assigns_fields_in_constructor: false,
             inner_class_ref: js_ast::Ref::NONE,
         })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_duplicate_constructor(&mut self, key: Expr) {
+        let mut range = self.source.range_of_identifier(key.loc);
+        if range.len == 0 {
+            // `"constructor"() {}`
+            range = self.source.range_of_string(key.loc);
+        }
+        self.log().add_range_error(
+            Some(self.source),
+            range,
+            b"Classes cannot contain more than one constructor",
+        );
     }
 
     pub(crate) fn parse_template_parts(

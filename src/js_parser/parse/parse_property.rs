@@ -74,6 +74,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         } else {
                             is_constructor = true;
+                            opts.is_constructor = true;
                         }
                     } else if opts.is_static && str_.eql_comptime(b"prototype") {
                         p.log().add_range_error(

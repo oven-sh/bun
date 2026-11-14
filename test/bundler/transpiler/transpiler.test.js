@@ -3258,6 +3258,22 @@ console.log(<div {...obj} key="after" />);`),
     throw new Error("Expected parse error for code\n\t" + code);
   };
 
+  // Every error of a transform: its message, then "line:column text" of what its range and its note cover.
+  const parseErrors = (code, loader = "js") => {
+    const bytes = Buffer.from(code);
+    const where = ({ line, column, offset, length }) => `${line}:${column} ${bytes.subarray(offset, offset + length)}`;
+    try {
+      transpiler.transformSync(code, loader);
+    } catch (e) {
+      return (e instanceof AggregateError ? e.errors : [e]).map(error => [
+        error.message,
+        where(error.position),
+        ...error.notes.map(note => where(note.position)),
+      ]);
+    }
+    return [];
+  };
+
   describe("parser", () => {
     it("arrays", () => {
       expectPrinted("[]", "[]");
@@ -4162,6 +4178,128 @@ class Foo {
     // Writing to method warnings
     expectParseError("class Foo { #x() { this.#x = 1 } }", 'Writing to read-only method "#x" will throw');
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
+  });
+
+  it("a class has at most one constructor", () => {
+    const message = "Classes cannot contain more than one constructor";
+
+    expect(parseErrors("class A { constructor() {} constructor() {} }")).toEqual([[message, "1:28 constructor"]]);
+    expect(parseErrors('class A { constructor() {} "constructor"() {} }')).toEqual([[message, '1:28 "constructor"']]);
+    expect(parseErrors("class A { constructor() {} constructo\\u0072() {} }")).toEqual([
+      [message, "1:28 constructo\\u0072"],
+    ]);
+    expect(parseErrors('class A { constructor() {} "constructo\\u0072"() {} }')).toEqual([
+      [message, '1:28 "constructo\\u0072"'],
+    ]);
+    expect(parseErrors("class A { constructor() {} constructo\\u{72}() {} }")).toEqual([
+      [message, "1:28 constructo\\u{72}"],
+    ]);
+    expect(parseErrors("class A { constructor() {} \\u{63}onstructor() {} }")).toEqual([
+      [message, "1:28 \\u{63}onstructor"],
+    ]);
+    expect(parseErrors("(class { constructor() {} x = 1; constructor() {} })")).toEqual([
+      [message, "1:34 constructor"],
+    ]);
+    expect(parseErrors("class A { constructor() {} constructor() {} constructor() {} }")).toEqual([
+      [message, "1:28 constructor"],
+      [message, "1:45 constructor"],
+    ]);
+    // A class that nothing uses, which tree shaking would remove.
+    expect(parseErrors("if (false) { class A { constructor() {} constructor() {} } }")).toEqual([
+      [message, "1:41 constructor"],
+    ]);
+
+    // A TypeScript overload signature is not a constructor. A parameter property does not make a second one legal.
+    expect(parseErrors("class A { constructor(a: string); constructor(a: any) {} constructor() {} }", "ts")).toEqual([
+      [message, "1:58 constructor"],
+    ]);
+    expect(parseErrors("class A { constructor(public x: number) {} constructor(public y: number) {} }", "ts")).toEqual([
+      [message, "1:44 constructor"],
+    ]);
+    // The body of this arrow function is parsed twice, and the error is reported once.
+    expect(parseErrors("x = a ? (b) : c => { class K { constructor() {} constructor() {} } } : d;", "ts")).toEqual([
+      [message, "1:49 constructor"],
+    ]);
+
+    // These already had an error of their own, and it stays the only one.
+    expect(parseErrors("class A { constructor() {} get constructor() {} }")).toEqual([
+      ["Class constructor cannot be a getter", "1:32 constructor"],
+    ]);
+    expect(parseErrors("class A { constructor() {} async constructor() {} }")).toEqual([
+      ["Class constructor cannot be an async function", "1:34 constructor"],
+    ]);
+
+    expect(() => transpiler.scanImports("class A { constructor() {} constructor() {} }", "js")).toThrow(message);
+
+    expectPrinted_(
+      "class A { constructor() {} static constructor() {} static constructor() {} }",
+      "class A {\n  constructor() {}\n  static constructor() {}\n  static constructor() {}\n}",
+    );
+    expectPrinted_(
+      'class A { constructor() {} ["constructor"]() {} }',
+      'class A {\n  constructor() {}\n  ["constructor"]() {}\n}',
+    );
+    expectPrinted_(
+      "class A { constructor() { class B { constructor() {} } } }",
+      "class A {\n  constructor() {\n    class B {\n      constructor() {}\n    }\n  }\n}",
+    );
+    expectPrinted_(
+      "class A { constructor() {} } class B { constructor() {} }",
+      "class A {\n  constructor() {}\n}\n\nclass B {\n  constructor() {}\n}",
+    );
+    ts.expectPrinted_(
+      "class A { constructor(a: string); constructor(a: number); constructor(a: any) {} }",
+      "class A {\n  constructor(a) {}\n}",
+    );
+    ts.expectPrinted_("declare class A { constructor(); constructor(a: string); }", "");
+    ts.expectPrinted_(
+      "abstract class A { abstract constructor() {} constructor() {} }",
+      "class A {\n  constructor() {}\n}",
+    );
+  });
+
+  it("a label does not repeat a label that encloses it", () => {
+    const message = name => `Duplicate label "${name}"`;
+
+    expect(parseErrors("outer: { outer: ; }")).toEqual([[message("outer"), "1:10 outer", "1:1 outer"]]);
+    expect(parseErrors("a: b: a: ;")).toEqual([[message("a"), "1:7 a", "1:1 a"]]);
+    expect(parseErrors("a: for (;;) { a: ; }")).toEqual([[message("a"), "1:15 a", "1:1 a"]]);
+    expect(parseErrors("function f() { a: { a: ; } }")).toEqual([[message("a"), "1:21 a", "1:16 a"]]);
+    expect(parseErrors("a: { class X { static { b: { b: ; } } } }")).toEqual([[message("b"), "1:30 b", "1:25 b"]]);
+    // Code that the transpiler removes.
+    expect(parseErrors("if (false) { a: { a: ; } }")).toEqual([[message("a"), "1:19 a", "1:14 a"]]);
+    // The name is compared, not its spelling.
+    expect(parseErrors("a: {\n  \\u0061: ;\n}")).toEqual([[message("a"), "2:3 \\u0061", "1:1 a"]]);
+    expect(parseErrors("\\u0061: {\n  a: ;\n}")).toEqual([[message("a"), "2:3 a", "1:1 \\u0061"]]);
+    expect(parseErrors("a: {\n  \\u{61}: ;\n}")).toEqual([[message("a"), "2:3 \\u{61}", "1:1 a"]]);
+    expect(parseErrors("a\\u{62}: {\n  ab: ;\n}")).toEqual([[message("ab"), "2:3 ab", "1:1 a\\u{62}"]]);
+    // The note points at the nearest label of that name.
+    expect(parseErrors("a: {\n  b: {\n    a: {\n      b: {\n        a: ;\n      }\n    }\n  }\n}")).toEqual([
+      [message("a"), "3:5 a", "1:1 a"],
+      [message("b"), "4:7 b", "2:3 b"],
+      [message("a"), "5:9 a", "3:5 a"],
+    ]);
+
+    // The note stays exact with a TypeScript enum before, inside and after the labels.
+    expect(parseErrors("enum E { A }\na: {\n  a: ;\n}", "ts")).toEqual([[message("a"), "3:3 a", "2:1 a"]]);
+    expect(parseErrors("a: {\n  enum E { A }\n  a: ;\n}", "ts")).toEqual([[message("a"), "3:3 a", "1:1 a"]]);
+    expect(parseErrors("a: {\n  a: ;\n}\nenum E { A }", "ts")).toEqual([[message("a"), "2:3 a", "1:1 a"]]);
+    // The body of this arrow function is parsed twice, and the error is reported once.
+    expect(parseErrors("x = a ? (b) : c => { l: { l: ; } } : d;", "ts")).toEqual([[message("l"), "1:27 l", "1:22 l"]]);
+
+    // Two labels that do not enclose each other, and labels of another function, may share a name.
+    expectPrinted_("a: { } a: { }", "a: {}\na: {}");
+    expectPrinted_("a: { (function() { a: ; })() }", "a: {\n  (function() {\n    a:\n      ;\n  })();\n}");
+    expectPrinted_("a: { (() => { a: ; })() }", "a: {\n  (() => {\n    a:\n      ;\n  })();\n}");
+    expectPrinted_("a: { x = { get y() { a: ; } } }", "a: {\n  x = { get y() {\n    a:\n      ;\n  } };\n}");
+    expectPrinted_(
+      "a: { class X { static { a: ; } m() { a: ; } y = () => { a: ; } } }",
+      "a: {\n  class X {\n    static {\n      a:\n        ;\n    }\n    m() {\n      a:\n        ;\n    }\n    y = () => {\n      a:\n        ;\n    };\n  }\n}",
+    );
+    ts.expectPrinted_(
+      "a: { let x = c ? (b) : d => { a: ; } : e; }",
+      "a: {\n  let x = c ? (b) => {\n    a:\n      ;\n  } : e;\n}",
+    );
   });
 
   it("class bodies keep `this` and the class name as written", () => {
@@ -6462,6 +6600,50 @@ describe("parse error flood", () => {
     expect(stdout).toContain("OK template catch flood");
     expect(stdout).toContain("OK duplicate catch flood");
     expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+
+  it("reports a flood of duplicates of three labels in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({ loader: "js" });
+          // Each first label is far into the file, and every duplicate gets a note that points back at its own.
+          const check = (label, first, repeats) => {
+            const filler = Buffer.alloc(3 * repeats, "{}\\n").toString();
+            const duplicates = first.map(([, name]) => name + ":;\\n").join("");
+            const input =
+              first.map(([spelling]) => filler + spelling + ":{\\n").join("") +
+              Buffer.alloc(duplicates.length * repeats, duplicates).toString() +
+              Buffer.alloc(first.length, "}").toString();
+            let threw;
+            try {
+              transpiler.transformSync(input);
+            } catch (e) {
+              threw = e;
+            }
+            if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
+            const said = [...new Set(threw.errors.map(e => e.message + " / note at line " + e.notes[0]?.position.line))];
+            const expected = first.map(([, name], i) => 'Duplicate label "' + name + '" / note at line ' + (i + 1) * (repeats + 1));
+            if (said.sort().join() !== expected.sort().join()) throw new Error("expected " + expected + ", got " + said);
+            console.log("OK " + label);
+          };
+          check("escaped first label", [["\\\\u0061", "a"]], 40000);
+          check("three first labels", [["x", "x"], ["y", "y"], ["z", "z"]], 20000);
+          console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK escaped first label\nOK three first labels\nDONE\n");
     expect(exitCode).toBe(0);
   }, 90_000);
 });

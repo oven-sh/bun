@@ -66,7 +66,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             bump,
             current_scope: Scope {
                 kind: ScopeKind::Entry,
-                label_ref: Ref::NONE,
                 parent: None,
                 ..Default::default()
             },

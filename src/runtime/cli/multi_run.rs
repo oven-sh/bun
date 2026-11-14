@@ -153,7 +153,7 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let spawned: SpawnProcessResult = {
+        let mut spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader; nothing else reaches it before the guard drops.
             let env = unsafe { &mut *state.env };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -178,18 +178,7 @@ impl<'a> ProcessHandle<'a> {
             }?
             .map_err(Error::from)?
         };
-        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
-        // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
-        // `self` by value.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
-        // On Windows the readers are wired via `Source::Pipe` taken from
-        // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
-        #[cfg(unix)]
-        let stdout_fd = spawned.stdout;
-        #[cfg(unix)]
-        let stderr_fd = spawned.stderr;
+        let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         self.stdout_reader.handle = std::ptr::from_mut(self);
@@ -203,20 +192,12 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // `spawn_process_windows` has *already* reclaimed
-            // sole ownership of that heap pipe into
-            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
-            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
-            // second Box from `self.options.stdout` here would alias the same
-            // allocation and double-free when `spawned` drops. Instead, move
-            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
-            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
                 self.stdout_reader
                     .reader
                     .set_source(bun_io::Source::Pipe(pipe));
             }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
                 self.stderr_reader
                     .reader
                     .set_source(bun_io::Source::Pipe(pipe));
@@ -225,14 +206,14 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout_fd) = stdout_fd {
+            if let Some(stdout_fd) = stdout_pipe.map(bun_sys::File::into_raw) {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
                 self.stdout_reader
                     .reader
                     .start(stdout_fd, true)
                     .map_err(Error::from)?;
             }
-            if let Some(stderr_fd) = stderr_fd {
+            if let Some(stderr_fd) = stderr_pipe.map(bun_sys::File::into_raw) {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
                 self.stderr_reader
                     .reader
@@ -1140,18 +1121,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             next_dependents: Vec::new(),
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {

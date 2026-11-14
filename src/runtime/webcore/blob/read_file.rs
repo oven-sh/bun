@@ -992,12 +992,11 @@ impl ReadFileUV {
             ReadFileResultType::Result(ReadFileRead { buf: boxed })
         };
 
-        // The completion must run BEFORE the cleanup below (store deref / req.deinit /
+        // The completion must run BEFORE the cleanup below (store deref /
         // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an
         // exception the JS side left pending is reported here (a termination just stands down).
         crate::dispatch::fold(completion.complete(result));
 
-        self.req.deinit();
         drop(self);
         // Release the event loop reference now that we're done
         event_loop.unref_keep_alive();

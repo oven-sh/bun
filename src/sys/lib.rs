@@ -4430,11 +4430,6 @@ mod windows_impl {
                 None,
             )
         };
-        // uv_fs_utime runs fs__capture_path which
-        // uv__malloc's the WTF-16 path into the req even for sync (cb=NULL)
-        // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
-        // call it explicitly before any return.
-        req.deinit();
         if let Some(err) = rc.to_error(Tag::utime) {
             return Err(err.with_path(path.as_bytes()));
         }
@@ -6997,22 +6992,17 @@ pub(crate) fn open_file_at_windows_nt_path(
 
         return match windows::Win32Error::from_nt_status(rc) {
             windows::Win32Error::SUCCESS => {
+                let file = File::from_fd(Fd::from_system(result));
                 if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     // SAFETY: FFI; result is a valid handle.
                     if unsafe { w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END) }
                         == 0
                     {
-                        // NtCreateFile succeeded — close the live HANDLE before
-                        // bailing so this error path doesn't leak it.
-                        // SAFETY: FFI; `result` is the just-created handle.
-                        unsafe {
-                            w::CloseHandle(result);
-                        }
                         return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                     }
                 }
-                Ok(Fd::from_system(result))
+                Ok(file.into_raw())
             }
             // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
             code => Err(Error::from_win32(code, Tag::open)),
@@ -7217,6 +7207,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
+        use std::os::windows::io::{HandleOrInvalid, OwnedHandle};
         // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
         // SAFETY: path is NUL-terminated UTF-16.
@@ -7245,8 +7236,8 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             }
             // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
-            let rc = unsafe {
-                w::CreateFileW(
+            let target = unsafe {
+                HandleOrInvalid::from_raw_handle(w::CreateFileW(
                     path.as_ptr(),
                     0,
                     0,
@@ -7254,16 +7245,9 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                     w::OPEN_EXISTING,
                     w::FILE_FLAG_BACKUP_SEMANTICS,
                     core::ptr::null_mut(),
-                )
+                ))
             };
-            if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-                return false;
-            }
-            // SAFETY: rc is a valid handle from CreateFileW.
-            unsafe {
-                let _ = w::CloseHandle(rc);
-            }
-            return true;
+            return OwnedHandle::try_from(target).is_ok();
         }
         true
     }
@@ -9617,7 +9601,7 @@ mod normalize_path_windows_tests {
 
     /// Open a directory handle with raw `CreateFileW` so the fixture fd does
     /// not depend on the code under test.
-    fn open_dir_handle(path: &std::path::Path) -> Fd {
+    fn open_dir_handle(path: &std::path::Path) -> File {
         use std::os::windows::ffi::OsStrExt;
         let wp: Vec<u16> = path.as_os_str().encode_wide().chain([0u16]).collect();
         // SAFETY: `wp` is NUL-terminated and outlives the call.
@@ -9637,7 +9621,7 @@ mod normalize_path_windows_tests {
             bun_windows_sys::INVALID_HANDLE_VALUE,
             "CreateFileW {path:?}"
         );
-        Fd::from_system(h)
+        File::from_fd(Fd::from_system(h))
     }
 
     /// pid-suffixed temp dir removed on drop (declare before handle guards so
@@ -9661,15 +9645,13 @@ mod normalize_path_windows_tests {
     fn relative_resolves_to_nt_device_name() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_rel");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize(*dir, "a\\b");
+        let dir = open_dir_handle(&tree.0);
+        let got = normalize(dir.fd(), "a\\b");
         assert!(got.starts_with("\\Device\\"), "{got}");
         assert!(got.ends_with("\\a\\b"), "{got}");
         assert!(!got.contains("\\??\\"), "{got}");
         // `..`-free rel: exactly the base directory's NT name plus the rel.
-        assert_eq!(got, format!("{}\\a\\b", normalize(*dir, ".")));
+        assert_eq!(got, format!("{}\\a\\b", normalize(dir.fd(), ".")));
     }
 
     #[test]
@@ -9677,14 +9659,10 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize(*child, "..\\x");
-        let base = normalize(*parent, ".");
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
+        let got = normalize(child.fd(), "..\\x");
+        let base = normalize(parent.fd(), ".");
         assert_eq!(got, format!("{base}\\x"));
     }
 
@@ -9692,51 +9670,53 @@ mod normalize_path_windows_tests {
     fn within_tree_dotdot_resolves_under_base() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_within");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // Non-climbing `..` needs no clamp boundary; it resolves in place.
-        assert_eq!(normalize(*dir, "a\\..\\b"), format!("{base}\\b"));
+        assert_eq!(normalize(dir.fd(), "a\\..\\b"), format!("{base}\\b"));
         // Collapsing to nothing lands exactly on the base directory (the
         // join's lone separator is dropped).
-        assert_eq!(normalize(*dir, "sub\\.."), base);
+        assert_eq!(normalize(dir.fd(), "sub\\.."), base);
     }
 
     #[test]
     fn excess_dotdot_fails_closed_on_local_volume() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_clamp");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
-        let depth = floor_depth(*dir);
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
+        let depth = floor_depth(dir.fd());
         assert!(depth >= 1, "{base}");
         // Enough `..` to cross the volume-root floor: local volumes are not
         // share-rooted, so the walk refuses instead of clamping silently.
         let over = format!("{}x", "..\\".repeat(depth + 1));
-        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+        assert_eq!(
+            normalize_err(dir.fd(), &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
         // Same without a trailing component.
         let over_only = "..\\".repeat(depth + 1);
-        assert_eq!(normalize_err(*dir, &over_only).get_errno(), E::EINVAL);
+        assert_eq!(normalize_err(dir.fd(), &over_only).get_errno(), E::EINVAL);
         // Within-tree `..` (never crosses the floor) still resolves.
-        assert_eq!(normalize(*dir, "sub\\..\\ok"), format!("{base}\\ok"));
+        assert_eq!(normalize(dir.fd(), "sub\\..\\ok"), format!("{base}\\ok"));
     }
 
     #[test]
     fn forward_slash_dotdot_through_walk() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_fwd");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // `/` separates components exactly like `\` — lexically for the
         // within-tree rel, and in the floor walk for the climbing one.
-        assert_eq!(normalize(*dir, "a/../b"), format!("{base}\\b"));
-        let over = format!("{}x", "../".repeat(floor_depth(*dir) + 1));
-        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+        assert_eq!(normalize(dir.fd(), "a/../b"), format!("{base}\\b"));
+        let over = format!("{}x", "../".repeat(floor_depth(dir.fd()) + 1));
+        assert_eq!(
+            normalize_err(dir.fd(), &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
     }
 
     #[test]
@@ -9744,22 +9724,18 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_climb_name");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
         // Net-climbing despite the leading name: the walk sees +1,−1,−1,+1
         // and stays above the floor while `..` resolves into the parent.
         assert_eq!(
-            normalize(*child, "a\\..\\..\\x"),
-            format!("{}\\x", normalize(*parent, "."))
+            normalize(child.fd(), "a\\..\\..\\x"),
+            format!("{}\\x", normalize(parent.fd(), "."))
         );
         // Same shape pushed one past the floor fails closed.
-        let over = format!("a\\..\\{}x", "..\\".repeat(floor_depth(*child) + 1));
+        let over = format!("a\\..\\{}x", "..\\".repeat(floor_depth(child.fd()) + 1));
         assert_eq!(
-            normalize_err(*child, &over).get_errno(),
+            normalize_err(child.fd(), &over).get_errno(),
             E::EINVAL,
             "{over}"
         );
@@ -9769,13 +9745,11 @@ mod normalize_path_windows_tests {
     fn exact_floor_dotdot_lands_on_volume_root() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_floor");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // Exactly base-depth `..` lands ON the floor (allowed): the volume
         // root DIRECTORY — the device prefix plus its lone separator.
-        let root = normalize(*dir, &"..\\".repeat(floor_depth(*dir)));
+        let root = normalize(dir.fd(), &"..\\".repeat(floor_depth(dir.fd())));
         assert!(root.starts_with("\\Device\\"), "{root}");
         assert!(root.ends_with('\\'), "{root}");
         assert!(base.starts_with(&root), "{base} vs {root}");
@@ -9786,20 +9760,14 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_bare_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*parent, ".");
-        assert_eq!(normalize(*child, ".."), base);
-        assert_eq!(normalize(*child, "..\\"), base);
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
+        let base = normalize(parent.fd(), ".");
+        assert_eq!(normalize(child.fd(), ".."), base);
+        assert_eq!(normalize(child.fd(), "..\\"), base);
         // From the volume root itself, `..` crosses the floor.
-        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(normalize_err(*root, "..").get_errno(), E::EINVAL);
+        let root = open_dir_handle(std::path::Path::new("C:\\"));
+        assert_eq!(normalize_err(root.fd(), "..").get_errno(), E::EINVAL);
     }
 
     #[test]
@@ -9807,15 +9775,11 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotneutral");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let parent = open_dir_handle(&tree.0);
+        let child = open_dir_handle(&tree.0.join("child"));
         // `.` and empty components cost no depth in the floor walk.
-        let got = normalize(*child, ".\\..\\\\.\\x");
-        assert_eq!(got, format!("{}\\x", normalize(*parent, ".")));
+        let got = normalize(child.fd(), ".\\..\\\\.\\x");
+        assert_eq!(got, format!("{}\\x", normalize(parent.fd(), ".")));
     }
 
     #[test]
@@ -9823,24 +9787,23 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_colon");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let base = normalize(dir.fd(), ".");
         // Colon components survive normalization verbatim — running under
         // debug_assertions, these ARE the no-panic proof; the invalid stream
         // spelling is NtCreateFile's to reject at open time.
-        assert_eq!(normalize(*dir, ":\\x"), format!("{base}\\:\\x"));
-        assert_eq!(normalize(*dir, ":a.b"), format!("{base}\\:a.b"));
-        assert_eq!(normalize(*dir, ".\\:\\x"), format!("{base}\\:\\x"));
-        assert_eq!(normalize(*dir, "a\\:\\x"), format!("{base}\\a\\:\\x"));
+        assert_eq!(normalize(dir.fd(), ":\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(dir.fd(), ":a.b"), format!("{base}\\:a.b"));
+        assert_eq!(normalize(dir.fd(), ".\\:\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(dir.fd(), "a\\:\\x"), format!("{base}\\a\\:\\x"));
         // `..` collapse promoting `:` toward the front of the output.
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(normalize(*child, "..\\:\\x"), format!("{base}\\:\\x"));
+        let child = open_dir_handle(&tree.0.join("child"));
+        assert_eq!(normalize(child.fd(), "..\\:\\x"), format!("{base}\\:\\x"));
         // All the way to the clamp floor: `\:\x` directly after the device.
-        let floored = normalize(*dir, &format!("{}:\\x", "..\\".repeat(floor_depth(*dir))));
+        let floored = normalize(
+            dir.fd(),
+            &format!("{}:\\x", "..\\".repeat(floor_depth(dir.fd()))),
+        );
         assert!(floored.ends_with("\\:\\x"), "{floored}");
         assert!(
             base.starts_with(floored.strip_suffix(":\\x").unwrap()),
@@ -9855,26 +9818,25 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_drive_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let child = open_dir_handle(&tree.0.join("child"));
         // The drive prefix of a drive-relative path is stripped; the `..`
         // after it must still reach the clamp logic.
-        assert_eq!(normalize(*child, "C:..\\x"), normalize(*child, "..\\x"));
+        assert_eq!(
+            normalize(child.fd(), "C:..\\x"),
+            normalize(child.fd(), "..\\x")
+        );
     }
 
     #[test]
     fn dot_in_name_resolves_under_base() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotname");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
+        let dir = open_dir_handle(&tree.0);
         // Dot without separator routes to fd resolution (not the bare
         // passthrough) and needs no `..` clamp.
         assert_eq!(
-            normalize(*dir, "a.b"),
-            format!("{}\\a.b", normalize(*dir, "."))
+            normalize(dir.fd(), "a.b"),
+            format!("{}\\a.b", normalize(dir.fd(), "."))
         );
     }
 
@@ -9882,18 +9844,14 @@ mod normalize_path_windows_tests {
     fn dot_resolves_to_base_dir() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dot");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize(*dir, ".");
+        let dir = open_dir_handle(&tree.0);
+        let got = normalize(dir.fd(), ".");
         assert!(got.starts_with("\\Device\\"), "{got}");
         assert!(!got.ends_with('\\'), "{got}");
         let name = tree.0.file_name().unwrap().to_str().unwrap();
         // Exact, trailing-sep-free expectation built from the parent handle.
-        let parent = scopeguard::guard(open_dir_handle(tree.0.parent().unwrap()), |fd| {
-            let _ = close(fd);
-        });
-        assert_eq!(got, format!("{}\\{name}", normalize(*parent, ".")));
+        let parent = open_dir_handle(tree.0.parent().unwrap());
+        assert_eq!(got, format!("{}\\{name}", normalize(parent.fd(), ".")));
     }
 
     #[test]
@@ -10025,16 +9983,14 @@ mod normalize_path_windows_tests {
     fn win32_output_uses_globalroot() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_gr");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let got = normalize_opts(*dir, "a\\b", false);
+        let dir = open_dir_handle(&tree.0);
+        let got = normalize_opts(dir.fd(), "a\\b", false);
         assert!(got.starts_with("\\\\?\\GLOBALROOT\\Device\\"), "{got}");
         assert!(got.ends_with("\\a\\b"), "{got}");
         // rel `.`: GLOBALROOT + base, no trailing separator.
         assert_eq!(
-            normalize_opts(*dir, ".", false),
-            format!("\\\\?\\GLOBALROOT{}", normalize(*dir, "."))
+            normalize_opts(dir.fd(), ".", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(dir.fd(), "."))
         );
     }
 
@@ -10042,10 +9998,8 @@ mod normalize_path_windows_tests {
     fn win32_globalroot_output_creates_directories() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_gr_mkdir");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let name = normalize_opts(*dir, ".\\fresh", false);
+        let dir = open_dir_handle(&tree.0);
+        let name = normalize_opts(dir.fd(), ".\\fresh", false);
         let wname: Vec<u16> = wide(&name).into_iter().chain([0u16]).collect();
         // SAFETY: `wname` is NUL-terminated.
         let ok = unsafe { w::CreateDirectoryW(wname.as_ptr(), core::ptr::null_mut()) };
@@ -10058,42 +10012,35 @@ mod normalize_path_windows_tests {
     #[test]
     fn volume_root_base_shapes() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
-            let _ = close(fd);
-        });
-        let dot = normalize(*root, ".");
+        let root = open_dir_handle(std::path::Path::new("C:\\"));
+        let dot = normalize(root.fd(), ".");
         assert!(dot.starts_with("\\Device\\"), "{dot}");
         // The lone separator is load-bearing: `\Device\<vol>\` is the root
         // directory, `\Device\<vol>` the volume device.
         assert!(dot.ends_with('\\'), "{dot}");
         // Generic across device shapes (incl. nested `HarddiskDmVolumes\…`):
         // a child of the root carries exactly the root's prefix + its name.
-        let windows_dir =
-            scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\Windows")), |fd| {
-                let _ = close(fd);
-            });
-        assert_eq!(normalize(*windows_dir, "."), format!("{dot}Windows"));
-        assert_eq!(normalize(*root, ".\\x"), format!("{dot}x"));
+        let windows_dir = open_dir_handle(std::path::Path::new("C:\\Windows"));
+        assert_eq!(normalize(windows_dir.fd(), "."), format!("{dot}Windows"));
+        assert_eq!(normalize(root.fd(), ".\\x"), format!("{dot}x"));
         // Any `..` from the volume root would cross the floor: fail closed.
-        assert_eq!(normalize_err(*root, "..\\x").get_errno(), E::EINVAL);
+        assert_eq!(normalize_err(root.fd(), "..\\x").get_errno(), E::EINVAL);
     }
 
     #[test]
     fn buffer_boundary_exact_fit() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_bound");
-        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
-            let _ = close(fd);
-        });
-        let base_len = wide(&normalize(*dir, ".")).len();
+        let dir = open_dir_handle(&tree.0);
+        let base_len = wide(&normalize(dir.fd(), ".")).len();
         let rel = "a\\b";
         // `..`-free path: prefix = whole base, `joined` = `\` + rel, and the
         // function reserves 8 u16 of headroom.
         let needed = base_len + 1 + rel.len() + 8;
         let mut exact = vec![0u16; needed];
-        assert!(normalize_path_windows(*dir, &wide(rel), &mut exact[..]).is_ok());
+        assert!(normalize_path_windows(dir.fd(), &wide(rel), &mut exact[..]).is_ok());
         let mut small = vec![0u16; needed - 1];
-        let err = match normalize_path_windows(*dir, &wide(rel), &mut small[..]) {
+        let err = match normalize_path_windows(dir.fd(), &wide(rel), &mut small[..]) {
             Ok(p) => panic!("expected ENAMETOOLONG, got {:?}", p.as_slice()),
             Err(e) => e,
         };
@@ -10108,7 +10055,7 @@ mod normalize_path_windows_tests {
         // The compose/None-query failure arms are not constructible from a
         // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
         let nul_path = wide("\\\\.\\NUL\0");
-        let nul = scopeguard::guard(
+        let nul = File::from_fd(
             open_windows_device_path(
                 bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
                 w::GENERIC_READ,
@@ -10116,11 +10063,8 @@ mod normalize_path_windows_tests {
                 0,
             )
             .expect("open NUL"),
-            |fd| {
-                let _ = close(fd);
-            },
         );
-        assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
+        assert_eq!(normalize_err(nul.fd(), ".\\x").get_errno(), E::BADFD);
     }
 
     #[test]
@@ -10136,12 +10080,10 @@ mod normalize_path_windows_tests {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_gr_dotdot");
         std::fs::create_dir_all(tree.0.join("child")).unwrap();
-        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
-            let _ = close(fd);
-        });
+        let child = open_dir_handle(&tree.0.join("child"));
         assert_eq!(
-            normalize_opts(*child, "..\\x", false),
-            format!("\\\\?\\GLOBALROOT{}", normalize(*child, "..\\x"))
+            normalize_opts(child.fd(), "..\\x", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(child.fd(), "..\\x"))
         );
     }
 }

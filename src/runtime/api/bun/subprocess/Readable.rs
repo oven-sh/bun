@@ -95,31 +95,19 @@ impl Readable {
         max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        super::assert_stdio_result!(result);
-
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut stdio = stdio;
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
         match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => {
-                #[cfg(unix)]
-                {
-                    let _ = fd;
-                    Readable::Fd(result.unwrap())
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(*fd)
-                }
-            }
+            Stdio::Fd(fd) => Readable::Fd(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => {
                 // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
@@ -141,8 +129,16 @@ impl Readable {
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
-            // ReadableStream is handled separately
-            Stdio::ReadableStream(..) => Readable::Ignore,
+            Stdio::ReadableStream(..) => {
+                // Nothing reads it, but closing it would fail the child's writes.
+                #[cfg(unix)]
+                let _ = result.map(bun_sys::File::into_raw);
+                #[cfg(windows)]
+                if let StdioResult::Buffer(pipe) = result {
+                    let _ = pipe.into_raw();
+                }
+                Readable::Ignore
+            }
             // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }

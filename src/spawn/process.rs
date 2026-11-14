@@ -1330,15 +1330,12 @@ pub mod waiter_thread_posix {
 
 // (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —
 // re-exported above. Windows option/result types stay here: they embed
-// `*mut Process` / `EventLoopHandle` and so cannot live in the leaf -sys crate.)
+// `Process` / `EventLoopHandle` and so cannot live in the leaf -sys crate.)
 
 #[cfg(windows)]
+#[derive(Default)]
 pub struct WindowsSpawnResult {
-    // Raw intrusive pointer. `Process` is intrusively
-    // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
-    // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
-    // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
-    pub(crate) process: Option<*mut Process>,
+    process: Option<RefPtr<Process>>,
     pub stdin: WindowsStdioResult,
     pub stdout: WindowsStdioResult,
     pub stderr: WindowsStdioResult,
@@ -1346,14 +1343,10 @@ pub struct WindowsSpawnResult {
 }
 
 #[cfg(windows)]
-impl Default for WindowsSpawnResult {
-    fn default() -> Self {
-        Self {
-            process: None,
-            stdin: WindowsStdioResult::Unavailable,
-            stdout: WindowsStdioResult::Unavailable,
-            stderr: WindowsStdioResult::Unavailable,
-            extra_pipes: Vec::new(),
+impl Drop for WindowsSpawnResult {
+    fn drop(&mut self) {
+        if let Some(process) = &self.process {
+            process.close();
         }
     }
 }
@@ -1362,7 +1355,7 @@ impl Default for WindowsSpawnResult {
 pub enum WindowsStdioResult {
     /// inherit, ignore, path, pipe
     Unavailable,
-    Buffer(Box<uv::Pipe>),
+    Buffer(uv::Owned<uv::Pipe>),
     BufferFd(Fd),
     /// A stdio slot at index >= 3 whose value `Subprocess.stdio` has exposed:
     /// a duplicate of the pipe's HANDLE that the caller owns and closes
@@ -1381,7 +1374,7 @@ impl Default for WindowsStdioResult {
 
 #[cfg(windows)]
 impl WindowsStdioResult {
-    /// Mirrors `Option::<Fd>::take()` on the POSIX `SpawnedStdio` so callers
+    /// Mirrors `Option::take()` on the POSIX `StdioResult` so callers
     /// (`shell::subproc`, `bun_spawn` JS bindings) can pull the handle out by
     /// value without per-platform `mem::replace` at every call site.
     #[inline]
@@ -1391,42 +1384,9 @@ impl WindowsStdioResult {
 }
 
 #[cfg(windows)]
-impl Drop for WindowsSpawnResult {
-    fn drop(&mut self) {
-        // Any `Buffer(Box<uv::Pipe>)` still held here was `uv_pipe_init`'d in
-        // `spawn_process_windows` and is linked into the loop's handle queue;
-        // auto-dropping the Box would deallocate a live handle and the next
-        // `uv_run` would walk freed memory. Route un-consumed pipes through
-        // `uv_close` (free in the close callback). Slots already consumed via
-        // `.take()` are `Unavailable` and skip this.
-        //
-        // `WindowsStdioResult` itself deliberately has no `Drop` so callers
-        // can keep destructuring `Buffer(pipe)` by value; the container is
-        // the ownership boundary.
-        for slot in [&mut self.stdin, &mut self.stdout, &mut self.stderr] {
-            if let WindowsStdioResult::Buffer(pipe) = core::mem::take(slot) {
-                // SAFETY: `pipe` is the Box-allocated `uv::Pipe` from
-                // `create_zeroed_pipe`; `close_and_destroy` reclaims it via
-                // `Box::from_raw` in the close callback (or immediately if
-                // never init'd / `loop_ == null`).
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
-            }
-        }
-        for slot in self.extra_pipes.drain(..) {
-            if let WindowsStdioResult::Buffer(pipe) = slot {
-                // SAFETY: see above.
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized) -> RefPtr<Process> {
-        // SAFETY: the live heap `Process` allocated by `spawn_process_windows`
-        // with its initial ref.
-        unsafe { RefPtr::from_raw(self.process.take().unwrap()) }
+        self.process.take().unwrap()
     }
 
     /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
@@ -1522,65 +1482,10 @@ pub enum WindowsStdio {
     Path(Box<[u8]>),
     Inherit,
     Ignore,
-    /// FFI-owned `uv::Pipe` (allocated via `heap::alloc` in
-    /// `create_zeroed_pipe`). Stored as a raw pointer so `spawn_process_windows`
-    /// can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    /// `heap::take` without double-freeing when `WindowsSpawnOptions` drops.
-    Buffer(*mut uv::Pipe),
-    /// See `Buffer` — same FFI ownership model.
-    Ipc(*mut uv::Pipe),
+    Buffer,
+    Ipc,
     Pipe(Fd),
     Dup2(Dup2),
-}
-
-#[cfg(windows)]
-impl WindowsStdio {
-    /// Explicit destructor.
-    ///
-    /// **Not** `Drop`: `spawn_process_windows` takes `&WindowsSpawnOptions`
-    /// (immutable borrow) and transfers sole ownership of the `Buffer`/`Ipc`
-    /// pipe into `WindowsStdioResult::Buffer` via `heap::take`. An auto-Drop
-    /// here would then double-free the same `*mut uv::Pipe` when the borrowed
-    /// `WindowsSpawnOptions` (or the `to_spawn_options` temporary) goes out of
-    /// scope. Callers invoke
-    /// `deinit()` only on the *error* path where ownership was never taken.
-    pub fn deinit(&mut self) {
-        match self {
-            WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
-                if !pipe.is_null() {
-                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    unsafe { uv::Pipe::close_and_destroy(*pipe) };
-                    *pipe = core::ptr::null_mut();
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-// WindowsSpawnOptions: no Drop. `WindowsStdio` holds FFI-owned `*mut uv::Pipe`
-// whose ownership is transferred to `WindowsStdioResult` on success; callers
-// must invoke `WindowsSpawnOptions::deinit` explicitly on the error path.
-#[cfg(windows)]
-impl WindowsSpawnOptions {
-    /// Explicit destructor. Closes and frees the heap-allocated `uv::Pipe`
-    /// handles for `Buffer`/`Ipc` stdio.
-    ///
-    /// **Not** `Drop`: on the *success* path `spawn_process_windows` transfers
-    /// sole ownership of each pipe into `WindowsStdioResult::Buffer` via
-    /// `heap::take`, leaving the raw pointers in `self` stale. An auto-Drop
-    /// would then double-free. Callers invoke this only on the *error* path
-    /// where ownership was never taken — failing to do so leaks `uv_pipe_t`
-    /// handles on the spawn-sync loop, which makes `uv_loop_close` return
-    /// `EBUSY` and trips `assert(err == 0)` in `uv_loop_delete` (uv-common.c).
-    pub fn deinit(&mut self) {
-        self.stdin.deinit();
-        self.stdout.deinit();
-        self.stderr.deinit();
-        for stdio in self.extra_fds.iter_mut() {
-            stdio.deinit();
-        }
-    }
 }
 
 /// Event-loop-aware extension on the raw [`PosixSpawnResult`] from
@@ -1622,8 +1527,6 @@ pub type SpawnProcessResult = WindowsSpawnResult;
 
 mod spawn_process_body {
     use super::*;
-    #[cfg(windows)]
-    use bun_sys::FdExt as _;
     #[cfg(unix)]
     use bun_sys::File;
 
@@ -1741,7 +1644,10 @@ mod spawn_process_body {
             cwd.as_ptr().cast::<c_char>()
         };
 
-        let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
+        let mut opened = OpenedFiles {
+            files: Vec::new(),
+            loop_,
+        };
 
         if let Some(hpcon) = options.pseudoconsole {
             uv_process_options.pseudoconsole = hpcon;
@@ -1787,9 +1693,17 @@ mod spawn_process_body {
         // We can create a pipe with `uv_pipe(fds, 0, 0)` and get a read fd and write fd.
         // We give the write fd to stdout/stderr
         // And use the read fd to read from the output.
-        let mut dup_fds: [uv::uv_file; 2] = [-1, -1];
-        let mut dup_src: Option<u32> = None;
-        let mut dup_tgt: Option<u32> = None;
+        let mut dup_pipe: Option<[bun_sys::File; 2]> = None;
+        let mut dup_tgt: Option<usize> = None;
+
+        let mut stdio_results: [WindowsStdioResult; 3] = Default::default();
+        let mut extra_pipes = Vec::with_capacity(options.extra_fds.len());
+        let new_pipe = |ipc: bool| {
+            let mut pipe = uv::Owned::<uv::Pipe>::zeroed();
+            pipe.init(loop_, ipc)
+                .to_result(bun_sys::Tag::uv_pipe)
+                .map(|()| pipe)
+        };
 
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
@@ -1804,74 +1718,36 @@ mod spawn_process_body {
 
             if fd_i == 1 && matches!(stdio_options[2], WindowsStdio::Dup2(_)) {
                 treat_as_dup = true;
-                dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
+                dup_tgt = Some(fd_i);
             } else if fd_i == 2 && matches!(stdio_options[1], WindowsStdio::Dup2(_)) {
                 treat_as_dup = true;
-                dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
+                dup_tgt = Some(fd_i);
             } else {
                 match stdio_options[fd_i] {
-                    WindowsStdio::Dup2(_) => {
-                        treat_as_dup = true;
-                        dup_src = Some(u32::try_from(fd_i).expect("int cast"));
-                    }
+                    WindowsStdio::Dup2(_) => treat_as_dup = true,
                     WindowsStdio::Inherit => {
                         stdio.flags = uv::UV_INHERIT_FD;
                         stdio.data.fd = uv::uv_file::try_from(fd_i).expect("int cast");
                     }
-                    WindowsStdio::Ipc(_) => {
-                        // ipc option inside stdin, stderr or stdout is not supported.
-                        // Don't free the pipe here — the caller owns it and will
-                        // clean it up via WindowsSpawnOptions Drop.
-                        stdio.flags = uv::UV_IGNORE;
-                    }
-                    WindowsStdio::Ignore => {
+                    // ipc option inside stdin, stderr or stdout is not supported.
+                    WindowsStdio::Ipc | WindowsStdio::Ignore => {
                         stdio.flags = uv::UV_IGNORE;
                     }
                     WindowsStdio::Path(path) => {
-                        let mut req = uv::fs_t::uninitialized();
-                        // Cleanup is via manual calls at each exit path, so `?` here
-                        // would leak any fds opened by earlier loop iterations.
-                        let path_z = match bun_sys::to_posix_path(path) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Err(crate::Error::Sys(e));
-                            }
-                        };
-                        // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
-                        // loop, `path_z` is NUL-terminated and outlives the call
-                        // (sync — no callback).
-                        let rc = unsafe {
-                            uv::uv_fs_open(
-                                loop_,
-                                &mut req,
-                                path_z.as_ptr(),
-                                flag | uv::O::CREAT,
-                                0o644,
-                                None,
-                            )
-                        };
-                        req.deinit();
-                        if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Ok(Err(err));
-                        }
                         stdio.flags = uv::UV_INHERIT_FD;
-                        let fd = rc.int();
-                        uv_files_to_close.push(fd);
-                        stdio.data.fd = fd;
+                        stdio.data.fd = match opened.open(path, flag)? {
+                            Ok(fd) => fd,
+                            Err(err) => return Ok(Err(err)),
+                        };
                     }
-                    WindowsStdio::Buffer(my_pipe) => {
-                        // SAFETY: `my_pipe` is a non-null heap allocation from
-                        // create_zeroed_pipe (heap::alloc).
-                        if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
-                            .to_error(bun_sys::Tag::uv_pipe)
-                        {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Ok(Err(err));
-                        }
+                    WindowsStdio::Buffer => {
+                        let pipe = match new_pipe(false) {
+                            Ok(pipe) => pipe,
+                            Err(err) => return Ok(Err(err)),
+                        };
                         stdio.flags = pipe_flags;
-                        stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
+                        stdio.data.stream = pipe.as_ptr().cast();
+                        stdio_results[fd_i] = WindowsStdioResult::Buffer(pipe);
                     }
                     WindowsStdio::Pipe(fd) => {
                         stdio.flags = uv::UV_INHERIT_FD;
@@ -1882,22 +1758,19 @@ mod spawn_process_body {
 
             if treat_as_dup {
                 if fd_i == 1 {
-                    // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                    if let Some(err) =
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.to_error(bun_sys::Tag::pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
+                    match bun_sys::pipe() {
+                        Ok(fds) => dup_pipe = Some(fds.map(bun_sys::File::from_fd)),
+                        Err(err) => return Ok(Err(err)),
                     }
                 }
                 stdio.flags = uv::UV_INHERIT_FD;
-                stdio.data.fd = dup_fds[1];
+                stdio.data.fd = dup_pipe.as_ref().map_or(-1, |[_, write]| write.fd().uv());
             }
         }
 
         for (i, ipc) in options.extra_fds.iter().enumerate() {
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[3 + i];
-            let flag: c_int = uv::O::RDWR;
+            let mut result = WindowsStdioResult::Unavailable;
 
             match ipc {
                 WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
@@ -1909,77 +1782,37 @@ mod spawn_process_body {
                     stdio.flags = uv::UV_IGNORE;
                 }
                 WindowsStdio::Path(path) => {
-                    let mut req = uv::fs_t::uninitialized();
-                    // See stdio loop above: manual cleanup on every exit path.
-                    let path_z = match bun_sys::to_posix_path(path) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Err(crate::Error::Sys(e));
-                        }
-                    };
-                    // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
-                    // `path_z` is NUL-terminated and outlives the call (sync).
-                    let rc = unsafe {
-                        uv::uv_fs_open(
-                            loop_,
-                            &mut req,
-                            path_z.as_ptr(),
-                            flag | uv::O::CREAT,
-                            0o644,
-                            None,
-                        )
-                    };
-                    req.deinit();
-                    if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
                     stdio.flags = uv::UV_INHERIT_FD;
-                    let fd = rc.int();
-                    uv_files_to_close.push(fd);
-                    stdio.data.fd = fd;
+                    stdio.data.fd = match opened.open(path, uv::O::RDWR)? {
+                        Ok(fd) => fd,
+                        Err(err) => return Ok(Err(err)),
+                    };
                 }
-                WindowsStdio::Ipc(my_pipe) => {
-                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, true) }
-                        .to_error(bun_sys::Tag::uv_pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
+                WindowsStdio::Ipc | WindowsStdio::Buffer => {
+                    let pipe = match new_pipe(matches!(ipc, WindowsStdio::Ipc)) {
+                        Ok(pipe) => pipe,
+                        Err(err) => return Ok(Err(err)),
+                    };
                     stdio.flags = uv::UV_CREATE_PIPE
                         | uv::UV_WRITABLE_PIPE
                         | uv::UV_READABLE_PIPE
                         | uv::UV_OVERLAPPED_PIPE;
-                    stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
-                }
-                WindowsStdio::Buffer(my_pipe) => {
-                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
-                        .to_error(bun_sys::Tag::uv_pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
-                    stdio.flags = uv::UV_CREATE_PIPE
-                        | uv::UV_WRITABLE_PIPE
-                        | uv::UV_READABLE_PIPE
-                        | uv::UV_OVERLAPPED_PIPE;
-                    stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
+                    stdio.data.stream = pipe.as_ptr().cast();
+                    result = WindowsStdioResult::Buffer(pipe);
                 }
                 WindowsStdio::Pipe(fd) => {
                     stdio.flags = uv::UV_INHERIT_FD;
                     stdio.data.fd = fd.uv();
                 }
             }
+            extra_pipes.push(result);
         }
 
         uv_process_options.stdio = stdio_containers.as_mut_ptr();
         uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).expect("int cast");
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
-        let process = bun_core::heap::into_raw(Box::new(Process {
+        let process = RefPtr::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: 0,
             status: OnceCell::new(),
@@ -1987,36 +1820,17 @@ mod spawn_process_body {
             handle: UnsafeCell::new(unsafe { bun_core::ffi::zeroed_unchecked() }),
             handle_has_closed: Cell::new(false),
             exit_handler: Cell::default(),
-        }));
+        });
 
-        // SAFETY: process is freshly allocated
-        let uv_proc = unsafe {
-            let uv_proc = (*process).handle.get();
-            // Back-pointer for `on_exit_uv` / `on_close_uv`.
-            (*uv_proc).data = process.cast::<c_void>();
-            uv_proc
-        };
-
-        let cleanup_dup = |failed: bool| {
-            if dup_src.is_some() {
-                debug_assert!(dup_src.is_some() && dup_tgt.is_some());
-            }
-            if failed && dup_fds[0] != -1 {
-                Fd::from_uv(dup_fds[0]).close();
-            }
-            if dup_fds[1] != -1 {
-                Fd::from_uv(dup_fds[1]).close();
-            }
-        };
+        let uv_proc = process.handle.get();
+        // SAFETY: process is freshly allocated. Back-pointer for `on_exit_uv` / `on_close_uv`.
+        unsafe { (*uv_proc).data = process.as_ptr().cast::<c_void>() };
 
         // SAFETY: the zeroed handle of `process`, which nothing else has seen yet.
         let spawn_err = unsafe { (*uv_proc).spawn(loop_, &mut uv_process_options) }
             .to_error(bun_sys::Tag::uv_spawn);
         if let Some(err) = spawn_err {
-            cleanup_dup(true);
-            cleanup_uv_files(&uv_files_to_close, loop_);
-            // SAFETY: adopts the initial ref.
-            unsafe { RefPtr::from_raw(process) }.close();
+            process.close();
             return Ok(Err(err));
         }
         // The process handle is open on this thread's loop until `close()`; a
@@ -2027,11 +1841,15 @@ mod spawn_process_body {
             // when `close()` issues its uv_close.
             unsafe { (*p.cast::<Process>()).close() };
         }
-        uv::open_handles::set_owner(uv_proc.cast(), process.cast(), Some(stop_for_vm_teardown));
+        uv::open_handles::set_owner(
+            uv_proc.cast(),
+            process.as_ptr().cast(),
+            Some(stop_for_vm_teardown),
+        );
 
         // SAFETY: process is valid, and nothing borrows it yet
         unsafe {
-            (*process).pid = (*uv_proc).pid;
+            (*process.as_ptr()).pid = (*uv_proc).pid;
             // Function pointers compared by address (`as usize`): direct
             // `fn == fn` is unreliable across codegen units and triggers
             // `unpredictable_function_pointer_comparisons`.
@@ -2044,76 +1862,57 @@ mod spawn_process_body {
             );
         }
 
-        // No FRU `..Default::default()` here: `WindowsSpawnResult` impls `Drop`,
-        // so functional-record-update would have to move fields out of the
-        // temporary default — E0509. Spell the defaults out instead.
-        let mut result = WindowsSpawnResult {
-            // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
+        if let (Some(target), Some([read, _write])) = (dup_tgt, dup_pipe) {
+            stdio_results[target] = WindowsStdioResult::BufferFd(read.into_raw());
+        }
+        let [stdin, stdout, stderr] = stdio_results;
+        Ok(Ok(WindowsSpawnResult {
             process: Some(process),
-            stdin: WindowsStdioResult::Unavailable,
-            stdout: WindowsStdioResult::Unavailable,
-            stderr: WindowsStdioResult::Unavailable,
-            extra_pipes: Vec::with_capacity(options.extra_fds.len()),
-        };
+            stdin,
+            stdout,
+            stderr,
+            extra_pipes,
+        }))
+    }
 
-        for i in 0..3usize {
-            let stdio = &stdio_containers[i];
-            let result_stdio: &mut WindowsStdioResult = match i {
-                0 => &mut result.stdin,
-                1 => &mut result.stdout,
-                2 => &mut result.stderr,
-                _ => unreachable!(),
-            };
-
-            if dup_src == Some(u32::try_from(i).expect("int cast")) {
-                *result_stdio = WindowsStdioResult::Unavailable;
-            } else if dup_tgt == Some(u32::try_from(i).expect("int cast")) {
-                *result_stdio = WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]));
-            } else {
-                match stdio_options[i] {
-                    WindowsStdio::Buffer(_) => {
-                        // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
-                        // produced by `heap::alloc` in create_zeroed_pipe and
-                        // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
-                        // has no `Drop` (deinit is explicit), so
-                        // reconstructing the Box here is the *sole* ownership
-                        // transfer — the borrowed `options` dropping later is a
-                        // no-op on the raw pointer.
-                        *result_stdio = WindowsStdioResult::Buffer(unsafe {
-                            bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
-                        });
-                    }
-                    _ => {
-                        *result_stdio = WindowsStdioResult::Unavailable;
-                    }
-                }
-            }
-        }
-
-        for (i, input) in options.extra_fds.iter().enumerate() {
-            match input {
-                WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
-                    // SAFETY: sole ownership transfer of the heap-allocated
-                    // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
-                    result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
-                        bun_core::heap::take(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
-                    }));
-                }
-                _ => {
-                    result.extra_pipes.push(WindowsStdioResult::Unavailable);
-                }
-            }
-        }
-
-        cleanup_dup(false);
-        cleanup_uv_files(&uv_files_to_close, loop_);
-        Ok(Ok(result))
+    /// The files opened for a child to inherit.
+    #[cfg(windows)]
+    struct OpenedFiles {
+        files: Vec<uv::uv_file>,
+        loop_: *mut uv::uv_loop_t,
     }
 
     #[cfg(windows)]
-    fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
-        for &fd in files {
-            bun_io::Closer::close(Fd::from_uv(fd), loop_);
+    impl OpenedFiles {
+        fn open(&mut self, path: &[u8], flag: c_int) -> Result<Maybe<uv::uv_file>, crate::Error> {
+            let path_z = bun_sys::to_posix_path(path).map_err(crate::Error::Sys)?;
+            let mut req = uv::fs_t::uninitialized();
+            // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
+            // `path_z` is NUL-terminated and outlives the call (sync).
+            let rc = unsafe {
+                uv::uv_fs_open(
+                    self.loop_,
+                    &raw mut req,
+                    path_z.as_ptr(),
+                    flag | uv::O::CREAT,
+                    0o644,
+                    None,
+                )
+            };
+            if let Some(err) = rc.to_error(bun_sys::Tag::open) {
+                return Ok(Err(err));
+            }
+            self.files.push(rc.int());
+            Ok(Ok(rc.int()))
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for OpenedFiles {
+        fn drop(&mut self) {
+            for &fd in &self.files {
+                bun_io::Closer::close(Fd::from_uv(fd), self.loop_);
+            }
         }
     }
 
@@ -2161,21 +1960,10 @@ mod spawn_process_body {
         impl SyncStdio {
             pub(crate) fn to_stdio(self) -> SpawnOptionsStdio {
                 match self {
-                    SyncStdio::Inherit => SpawnOptionsStdio::inherit(),
-                    SyncStdio::Ignore => SpawnOptionsStdio::ignore(),
+                    SyncStdio::Inherit => SpawnOptionsStdio::Inherit,
+                    SyncStdio::Ignore => SpawnOptionsStdio::Ignore,
                     SyncStdio::Pipe(fd) => SpawnOptionsStdio::Pipe(fd),
-                    SyncStdio::Buffer => {
-                        #[cfg(windows)]
-                        {
-                            SpawnOptionsStdio::buffer(bun_core::heap::into_raw(Box::new(
-                                bun_core::ffi::zeroed::<uv::Pipe>(),
-                            )))
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            SpawnOptionsStdio::buffer()
-                        }
-                    }
+                    SyncStdio::Buffer => SpawnOptionsStdio::Buffer,
                 }
             }
         }
@@ -2185,20 +1973,6 @@ mod spawn_process_body {
         pub(crate) type SpawnOptionsStdio = PosixStdio;
         #[cfg(windows)]
         pub(crate) type SpawnOptionsStdio = WindowsStdio;
-
-        // PosixStdio constructor helpers live in `bun_spawn_sys` (inherent impl).
-        #[cfg(windows)]
-        impl WindowsStdio {
-            fn inherit() -> Self {
-                WindowsStdio::Inherit
-            }
-            fn ignore() -> Self {
-                WindowsStdio::Ignore
-            }
-            fn buffer(p: *mut uv::Pipe) -> Self {
-                WindowsStdio::Buffer(p)
-            }
-        }
 
         impl Default for Options {
             fn default() -> Self {
@@ -2269,20 +2043,14 @@ mod spawn_process_body {
             /// `on_read`. Prevents the per-read leak that copying `data` into a
             /// fresh Box would cause.
             pending_alloc: Option<Box<[u8]>>,
-            pub(crate) pipe: Box<uv::Pipe>,
+            pub(crate) pipe: uv::Owned<uv::Pipe>,
             pub(crate) err: bun_sys::E,
             pub(crate) context: *mut SyncWindowsProcess,
-            pub(crate) on_done_callback:
-                fn(&mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
             pub(crate) tag: OutFd,
         }
 
         #[cfg(windows)]
         impl SyncWindowsPipeReader {
-            pub(crate) fn new(v: SyncWindowsPipeReader) -> Box<Self> {
-                Box::new(v)
-            }
-
             fn on_alloc(this: &mut SyncWindowsPipeReader, suggested_size: usize) -> &mut [u8] {
                 // Stash the allocation so `on_read` can reclaim it without copying.
                 // If a previous alloc was never consumed (nread == 0 / EAGAIN),
@@ -2375,54 +2143,28 @@ mod spawn_process_body {
                     !this.is_null(),
                     "Expected SyncWindowsPipeReader to have data"
                 );
-                // SAFETY: this was heap-allocated in start(); libuv is done
-                // with the handle once the close callback fires, so reclaim
-                // ownership here.
-                let mut this = unsafe { bun_core::heap::take(this) };
-                let context = this.context;
-                // Move ownership of the chunk allocations out *before* dropping
-                // `this`, otherwise the callback would observe freed buffers.
-                // The chunk allocations survive to be freed later by
-                // `flatten_owned_chunks`.
-                let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this.chunks);
+                // SAFETY: the box `start` gave up, whose handle libuv is done with.
+                let this = *unsafe { bun_core::heap::take(this) };
                 let err = if this.err == bun_sys::E::CANCELED {
                     bun_sys::E::SUCCESS
                 } else {
                     this.err
                 };
-                let tag = this.tag;
-                let on_done_callback = this.on_done_callback;
-                drop(this);
                 // SAFETY: `context` is the live `SyncWindowsProcess` that owns
                 // this reader (set in `spawn_windows_with_pipes`); the callback
                 // is non-reentrant field writes only.
-                on_done_callback(unsafe { &mut *context }, tag, chunks, err);
+                unsafe { &mut *this.context }.on_reader_done(this.tag, this.chunks, err);
             }
 
-            pub(crate) fn start(self: Box<Self>) -> Maybe<()> {
-                // Single-pointer ownership: `heap::alloc` is the *only* root for
-                // this allocation. Every subsequent access (including the libuv
-                // callbacks and the `heap::take` in `on_close`) goes through
-                // this pointer, so no Stacked Borrows tag is invalidated by an
-                // interleaved Box deref.
-                let this: *mut SyncWindowsPipeReader = bun_core::heap::into_raw(self);
-                // SAFETY: just allocated; sole owner.
-                unsafe {
-                    (*this).pipe.set_data(this.cast());
-                    (*this).pipe.ref_();
-                    if let Some(err) = (*this)
-                        .pipe
-                        .read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
-                        .to_error(bun_sys::Tag::listen)
-                    {
-                        // Intentionally leak `this`. The boxed `uv::Pipe` was already
-                        // `uv_pipe_init`'d by the spawn path and is linked into the
-                        // loop's handle queue; freeing it here without `uv_close()`
-                        // would leave a dangling `uv_handle_t`. The sole caller
-                        // `Output::panic`s on error, so the leak is bounded.
-                        return Err(err);
-                    }
-                }
+            pub(crate) fn start(self) -> Maybe<()> {
+                let this = bun_ptr::AliasableBox::new(self);
+                // SAFETY: just allocated; nothing else borrows it.
+                let pipe = unsafe { &mut (*this.as_ptr()).pipe };
+                pipe.set_data(this.as_ptr().cast());
+                pipe.ref_();
+                pipe.read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
+                    .to_result(bun_sys::Tag::listen)?;
+                let _ = this.into_raw(); // the pipe's until `on_close`
                 Ok(())
             }
         }
@@ -2456,12 +2198,8 @@ mod spawn_process_body {
 
         #[cfg(windows)]
         impl SyncWindowsProcess {
-            pub(crate) fn new(v: SyncWindowsProcess) -> Box<Self> {
-                Box::new(v)
-            }
-
             pub fn on_process_exit(this: *mut SyncWindowsProcess, status: Status) {
-                // SAFETY: `this` is the heap::alloc root from spawn_windows_with_pipes;
+                // SAFETY: `this` is the local of spawn_windows_with_pipes;
                 // single-threaded uv loop, no overlapping borrow of SyncWindowsProcess.
                 unsafe {
                     (*this).status = Some(status);
@@ -2543,22 +2281,17 @@ mod spawn_process_body {
                     Err(err) => return Ok(Err(err)),
                     Ok(process) => process,
                 };
-            // Single-pointer ownership: the
-            // `heap::alloc` result is the *only* root for this allocation. Every
-            // field access below — including those inside uv callbacks fired from
-            // `tick()` — goes through `this_ptr`, so no Box auto-deref ever
-            // reasserts a Unique tag and pops the callbacks' tags under Stacked
-            // Borrows.
-            let this_ptr: *mut SyncWindowsProcess =
-                bun_core::heap::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
-                    stderr: Vec::new(),
-                    stdout: Vec::new(),
-                    err: bun_sys::E::SUCCESS,
-                    waiting_count: 1,
-                    status: None,
-                }));
+            let mut this = SyncWindowsProcess {
+                stderr: Vec::new(),
+                stdout: Vec::new(),
+                err: bun_sys::E::SUCCESS,
+                waiting_count: 1,
+                status: None,
+            };
+            // The only path to `this` until the callbacks are done.
+            let this_ptr = &raw mut this;
             let process = spawned.to_process(());
-            // SAFETY: `this_ptr` is freed only once the exit has been dispatched.
+            // SAFETY: `this` outlives the dispatch of the exit.
             let handler = unsafe { ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr) };
             process.set_exit_handler(handler);
             process.enable_keeping_event_loop_alive();
@@ -2567,27 +2300,19 @@ mod spawn_process_body {
                 (OutFd::Stdout, &mut spawned.stdout),
                 (OutFd::Stderr, &mut spawned.stderr),
             ] {
-                // Move ownership of the `Box<uv::Pipe>` out of `spawned` by
-                // resetting the slot to `Unavailable`; otherwise `spawned`'s
-                // auto-Drop at scope end would double-free the pipe already freed
-                // via `SyncWindowsPipeReader::on_close`.
-                let taken = core::mem::replace(stdio, WindowsStdioResult::Unavailable);
-                if let WindowsStdioResult::Buffer(pipe) = taken {
-                    let reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
+                if let WindowsStdioResult::Buffer(pipe) = stdio.take() {
+                    let reader = SyncWindowsPipeReader {
                         context: this_ptr,
                         tag,
                         pipe,
                         chunks: Vec::new(),
                         pending_alloc: None,
                         err: bun_sys::E::SUCCESS,
-                        on_done_callback: SyncWindowsProcess::on_reader_done,
-                    });
+                    };
                     // SAFETY: sole owner via `this_ptr`; no uv callback has fired yet.
                     unsafe {
                         (*this_ptr).waiting_count += 1;
                     }
-                    // `start` consumes the Box and transfers ownership to libuv
-                    // via pipe.data (heap::alloc inside).
                     match reader.start() {
                         Err(err) => {
                             let _ = process.kill(1);
@@ -2608,21 +2333,13 @@ mod spawn_process_body {
                 loop_.platform_event_loop().tick();
             }
 
-            // SAFETY: loop drained (waiting_count == 0); no further uv callback
-            // will touch `this_ptr`.
-            let result = unsafe {
-                Result {
-                    status: (*this_ptr)
-                        .status
-                        .take()
-                        .expect("Expected Process to have exited when waiting_count == 0"),
-                    stdout: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stdout)),
-                    stderr: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stderr)),
-                }
-            };
-            // SAFETY: reclaim the SyncWindowsProcess allocation.
-            drop(unsafe { bun_core::heap::take(this_ptr) });
-            Ok(Ok(result))
+            Ok(Ok(Result {
+                status: this
+                    .status
+                    .expect("Expected Process to have exited when waiting_count == 0"),
+                stdout: flatten_owned_chunks(this.stdout),
+                stderr: flatten_owned_chunks(this.stderr),
+            }))
         }
 
         pub fn spawn_with_argv(
@@ -3013,16 +2730,15 @@ mod spawn_process_body {
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let _pidfd = process.pidfd.map(|fd| File::from_fd(Fd::from_native(fd)));
-            let mut out_files = [process.stdout, process.stderr].map(|fd| fd.map(File::from_fd));
+            let mut out_files = [process.stdout, process.stderr];
             let kill_and_fail = |err| {
                 let _ = kill(process.pid, 1);
                 Ok(Err(err))
             };
 
-            let mut out_fds_to_wait_for: [Fd; 2] = [
-                process.stdout.unwrap_or(Fd::INVALID),
-                process.stderr.unwrap_or(Fd::INVALID),
-            ];
+            let mut out_fds_to_wait_for = out_files
+                .each_ref()
+                .map(|file| file.as_ref().map_or(Fd::INVALID, File::fd));
 
             if process.memfds[1] {
                 out_fds_to_wait_for[0] = Fd::INVALID;

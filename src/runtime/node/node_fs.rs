@@ -276,47 +276,6 @@ const IOV_MAX: usize = libc::IOV_MAX as usize;
 #[cfg(windows)]
 const IOV_MAX: usize = core::ffi::c_uint::MAX as usize;
 
-/// In-place RAII wrapper for a libuv `fs_t` request.
-///
-/// `scopeguard::guard(fs_t, |mut r| r.deinit())` is *wrong* here: its `Drop`
-/// `ManuallyDrop::take`s the value into the closure parameter, relocating the
-/// ~440-byte request to a new stack address before `uv_fs_req_cleanup` runs.
-/// libuv stores self-referential pointers (`req->fs.info.bufs` may point at
-/// `req->fs.info.bufsml`), so the request must not move between init and
-/// cleanup. A real `Drop` impl runs in place at the original address.
-#[cfg(windows)]
-#[repr(transparent)]
-struct UvFsReq(uv::fs_t);
-#[cfg(windows)]
-impl UvFsReq {
-    #[inline]
-    fn new() -> Self {
-        Self(uv::fs_t::uninitialized())
-    }
-}
-#[cfg(windows)]
-impl Drop for UvFsReq {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.deinit();
-    }
-}
-#[cfg(windows)]
-impl core::ops::Deref for UvFsReq {
-    type Target = uv::fs_t;
-    #[inline]
-    fn deref(&self) -> &uv::fs_t {
-        &self.0
-    }
-}
-#[cfg(windows)]
-impl core::ops::DerefMut for UvFsReq {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut uv::fs_t {
-        &mut self.0
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Local cross-crate shims
 //
@@ -1641,8 +1600,6 @@ mod _async_tasks {
         }
 
         extern "C" fn uv_callback(req: *mut uv::fs_t) {
-            // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-            scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
             let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
             let mut node_fs = NodeFS::default();
@@ -1659,8 +1616,6 @@ mod _async_tasks {
 
         extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
             // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
-            // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-            scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
             let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
             let mut node_fs = NodeFS::default();
@@ -6343,11 +6298,11 @@ impl NodeFS {
     pub(crate) fn futimes(&mut self, args: &args::Futimes, _: Flavor) -> Maybe<ret::Futimes> {
         #[cfg(windows)]
         {
-            let mut req = UvFsReq::new();
+            let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_futime(
                     uv::Loop::get(),
-                    &mut *req,
+                    &raw mut req,
                     args.fd.uv(),
                     args.atime,
                     args.mtime,
@@ -6788,11 +6743,11 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let mut req = UvFsReq::new();
+            let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut req,
                     prefix_buf.as_ptr().cast(),
                     None,
                 )
@@ -6801,7 +6756,7 @@ impl NodeFS {
                 return Err(err.with_path(&prefix_buf[..len + 6]));
             }
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
-            // UTF-8 string owned by the request; `UvFsReq::drop` runs
+            // UTF-8 string owned by the request; dropping it runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
             let bytes = unsafe { bun_core::ffi::cstr(req.path) }.to_bytes();
             return Ok(encode_path_result(bytes, args.encoding));
@@ -8379,11 +8334,11 @@ impl NodeFS {
     ) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
-            let mut req = UvFsReq::new();
+            let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_realpath(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     None,
                 )
@@ -8953,11 +8908,11 @@ impl NodeFS {
         }
         #[cfg(windows)]
         {
-            let mut req = UvFsReq::new();
+            let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
                     args.mtime,
@@ -8987,11 +8942,11 @@ impl NodeFS {
         }
         #[cfg(windows)]
         {
-            let mut req = UvFsReq::new();
+            let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
                     args.mtime,

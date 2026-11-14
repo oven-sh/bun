@@ -19,10 +19,6 @@ use bun_ptr::RefPtr;
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-// `close`/`set_data`/`is_closed` are default trait methods; bring traits into
-// scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::UvHandle as _;
 
 // All logging in this module goes through `bun.sys.syslog` (the `SYS` scope)
 // or `libuv::log!`.
@@ -1137,9 +1133,7 @@ impl WindowsBufferedReader {
             return false;
         };
         match source {
-            Source::File(file) | Source::SyncFile(file) => {
-                file.state != crate::source::FileState::Deinitialized
-            }
+            Source::File(file) | Source::SyncFile(file) => file.is_busy(),
             _ => false,
         }
     }
@@ -1263,11 +1257,8 @@ impl WindowsBufferedReader {
         self.start_reading()
     }
 
-    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
-    /// transfers to `self.source` (later freed via `close_and_destroy`).
-    pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
-        // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.set_source(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+    pub fn start_with_pipe(&mut self, pipe: uv::Owned<uv::Pipe>) -> sys::Result<()> {
+        self.set_source(Source::Pipe(pipe));
         self.start_with_current_pipe()
     }
 
@@ -1420,41 +1411,16 @@ impl WindowsBufferedReader {
     /// Callback fired when a file read operation completes or is canceled.
     /// Handles cleanup, cancellation, and normal read processing.
     extern "C" fn on_file_read(fs: *mut uv::fs_t) {
-        // SAFETY: libuv fs_cb — `fs` is the `uv_fs_t` field of a heap-boxed
-        // `source::File` (separate allocation from `Self`). Invoked from the
-        // event loop with no other Rust borrow of it live (single-owner).
-        // `from_fs_callback` snapshots `result`/`data` then container_of's the
-        // owning `&mut File`; that borrow does not overlap the later
-        // `&mut WindowsBufferedReader` (distinct heap allocations).
-        let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
+        // SAFETY: the callback of a read on the source.
+        let Some((result, parent_ptr)) = (unsafe { crate::source::File::on_complete(fs) }) else {
+            return;
+        };
         let nread_int = result.int();
         let was_canceled = nread_int == uv::UV_ECANCELED as i64;
+        bun_sys::syslog!("onFileRead() = {}", nread_int);
 
-        bun_sys::syslog!(
-            "onFileRead({}) = {}",
-            // SAFETY: `uv_fs_read` populated the `fd` arm of the `file` union.
-            Fd::from_uv(unsafe { file.fs.file_fd() }),
-            nread_int
-        );
-
-        // ALWAYS complete the read first (cleans up fs_t, updates state)
-        file.complete(was_canceled);
-
-        if parent_ptr.is_null() {
-            if file.state != crate::source::FileState::Closing {
-                // detach_borrowed_fd path: no close scheduled, so reclaim here.
-                // SAFETY: sole &mut to the into_raw'd Box; no fs callback left.
-                drop(unsafe { bun_core::heap::take(core::ptr::from_mut(file)) });
-            }
-            // else: detach() set close_after_operation; on_close_complete frees.
-            return;
-        }
-
-        // SAFETY: `parent_ptr` (= `fs.data`) is `*mut Self` set via `set_data`.
-        // `file` above points into the boxed `source::File` — a separate heap
-        // allocation — and its borrow ends (NLL) before this point in the
-        // non-null path, so this is the sole live `&mut` to the reader
-        // (single-owner).
+        // SAFETY: `parent_ptr` (= `fs.data`) is `*mut Self` set via `set_data`, and the
+        // event loop holds no other borrow of the reader.
         let this: &mut WindowsBufferedReader =
             unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
         let _parent = this.vtable.ref_parent();
@@ -1504,7 +1470,7 @@ impl WindowsBufferedReader {
                 // The boxed `File` lives in its own heap allocation, so a
                 // `*mut File` snapshot is provenance-disjoint from `&mut self`.
                 let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                    Some(Source::File(f)) => f.as_mut() as *mut _,
+                    Some(Source::File(f)) => f.as_ptr(),
                     _ => core::ptr::null_mut(),
                 };
                 if !file_raw.is_null() {
@@ -1528,7 +1494,7 @@ impl WindowsBufferedReader {
                     // Re-snapshot — `on_read` may have mutated `this.source`.
                     let this_ptr = core::ptr::from_mut(this).cast::<c_void>();
                     let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                        Some(Source::File(f)) => f.as_mut() as *mut _,
+                        Some(Source::File(f)) => f.as_ptr(),
                         _ => core::ptr::null_mut(),
                     };
                     if !file_raw.is_null() {
@@ -1606,7 +1572,7 @@ impl WindowsBufferedReader {
 
         match source {
             Source::File(file) | Source::SyncFile(file) => {
-                let file_raw: *mut crate::source::File = file.as_mut();
+                let file_raw = file.as_ptr();
                 // SAFETY (each access below): `file_raw` points into the boxed
                 // File owned by `self.source` — a heap allocation disjoint
                 // from `*self` — and is live until `self.source` is replaced;
@@ -1707,57 +1673,17 @@ impl WindowsBufferedReader {
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(mut file) | Source::File(mut file) => {
-                    uv::open_handles::remove_file(core::ptr::from_mut(&mut *file).cast());
-                    // Hand the Box off to libuv: detach() leaves either an
-                    // in-flight uv_fs_read (on_file_read) or a scheduled
-                    // uv_fs_close (on_close_complete) pending; the callback
-                    // reclaims the allocation via heap::take. Dropping the
-                    // Box here would free the uv_fs_t out from under libuv.
-                    let raw = bun_core::heap::into_raw(file);
-                    // SAFETY: raw is a live heap File*; the pending fs callback
-                    // is the sole reclaimer (heap::take in on_close_complete /
-                    // on_file_read's detached path) when one is left pending.
-                    unsafe {
-                        // A read in flight writes into `self._buffer` (via
-                        // `iov`) whenever it completes; this reader may be
-                        // dropped before then, so the buffer goes with the File.
-                        if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
-                            (*raw).orphaned_buf = core::mem::take(&mut self._buffer);
-                        }
-                        if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
-                            (*raw).detach();
-                        } else if !(*raw).detach_borrowed_fd() {
-                            // Idle and the fd is parent-owned: nothing pending,
-                            // nothing to close. Reclaim and drop the Box.
-                            drop(bun_core::heap::take(raw));
-                        }
+                    uv::open_handles::remove_file(file.as_ptr().cast());
+                    // A read in flight writes into it whenever it completes.
+                    if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+                        file.orphaned_buf = core::mem::take(&mut self._buffer);
                     }
+                    file.close_on_drop = self.flags.contains(WindowsFlags::CLOSE_HANDLE);
+                    file.stop();
                 }
-                Source::Pipe(pipe) => {
-                    // Hand the Box off to libuv; the close cb reclaims it.
-                    let raw = bun_core::heap::into_raw(pipe);
-                    // SAFETY: raw is a live uv::Pipe*; on_pipe_close frees it.
-                    unsafe {
-                        (*raw).data = raw.cast::<c_void>();
-                        self.flags.insert(WindowsFlags::IS_PAUSED);
-                        (*raw).close(Self::on_pipe_close);
-                    }
-                }
-                Source::Tty(tty) => {
-                    let p = tty.as_ptr();
-                    if crate::source::stdin_tty::is_stdin_tty(p) {
-                        // Node only ever closes stdin on process exit.
-                    } else {
-                        // SAFETY: tty is a live heap-allocated Tty*;
-                        // `Tty::close` keeps whole-struct provenance so
-                        // on_tty_close may reclaim the Box.
-                        unsafe {
-                            (*p).uv.data = p.cast::<c_void>();
-                            crate::source::Tty::close(p, Self::on_tty_close);
-                        }
-                    }
-
+                stream => {
                     self.flags.insert(WindowsFlags::IS_PAUSED);
+                    drop(stream);
                 }
             }
             // self.source already None via take().
@@ -1774,16 +1700,11 @@ impl WindowsBufferedReader {
         let _ = self.stop_reading();
 
         // Check if we have a pending file operation
-        if let Some(source) = &self.source {
-            if matches!(source, Source::File(_) | Source::SyncFile(_)) {
-                let file = source.file();
-                // Defer done if operation is in progress (whether cancel succeeded or failed)
-                if file.state == crate::source::FileState::Canceling
-                    || file.state == crate::source::FileState::Operating
-                {
-                    self.flags.insert(WindowsFlags::DEFER_DONE_CALLBACK);
-                    return; // Don't call closeImpl yet - wait for operation callback
-                }
+        if let Some(Source::File(file) | Source::SyncFile(file)) = &self.source {
+            // Defer done if operation is in progress (whether cancel succeeded or failed)
+            if file.is_busy() {
+                self.flags.insert(WindowsFlags::DEFER_DONE_CALLBACK);
+                return; // Don't call closeImpl yet - wait for operation callback
             }
         }
 
@@ -1795,44 +1716,9 @@ impl WindowsBufferedReader {
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         self.maxbuf = None;
-        if let Some(source) = self.source.take() {
-            if !source.is_closed() {
-                // closeImpl will take care of freeing the source.
-                // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-                // linked into the loop's handle queue → UAF. Restore the source
-                // so close_impl can do the proper take + hand-off to libuv
-                // (into_raw + uv_close). close_impl also parks `_buffer` on
-                // the File for an in-flight uv_fs_read (orphaned_buf),
-                // which is why `_buffer` is freed after this, not before.
-                self.source = Some(source);
-                self.close_impl::<false>();
-            } else {
-                // Already closing/closed: a uv close callback may still be
-                // pending on this allocation; dropping the Box would free
-                // memory libuv still owns, so leak it instead.
-                core::mem::forget(source);
-            }
-        }
+        // Before `_buffer` goes, which a read in flight takes along.
+        self.close_impl::<false>();
         self._buffer = Vec::new();
-    }
-
-    extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
-        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the boxed Pipe
-        // ptr — no need to round-trip through `.data`.
-        // SAFETY: pipe was Box-allocated (into_raw in close_impl); reclaim.
-        drop(unsafe { bun_core::heap::take(handle) });
-    }
-
-    extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back; `Tty::from_uv` recovers the
-        // owning `Tty`. Caller gates on `!is_stdin_tty`, so it is heap-owned,
-        // and no request is pending once this runs (`uv::Tty::read_scratch`).
-        let tty = crate::source::Tty::from_uv(handle);
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(tty));
-        // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(tty) });
     }
 
     fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
@@ -1916,25 +1802,7 @@ impl WindowsBufferedReader {
 #[cfg(windows)]
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
-        // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
-        // live uv handles registered with the loop. Let close_impl perform the
-        // take + into_raw hand-off so the uv close callback reclaims them.
-        // Skip close_impl when the source is already closed — a uv_close is
-        // already pending on that allocation, so closing again would
-        // double-close and freeing the Box would UAF the handle libuv still
-        // references. Same as deinit(): leak the already-closing handle.
-        if let Some(source) = self.source.take() {
-            if !source.is_closed() {
-                self.source = Some(source);
-                self.close_impl::<false>();
-            } else {
-                let mut source = source;
-                if let Some(file) = source.file_key() {
-                    uv::open_handles::remove_file(file);
-                }
-                core::mem::forget(source);
-            }
-        }
+        self.close_impl::<false>();
     }
 }
 

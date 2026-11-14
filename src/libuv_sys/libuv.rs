@@ -1,7 +1,7 @@
 //! Zero-cost, zero-alloc FFI bindings for libuv on **Windows**.
 //!
 //! Field-accurate `#[repr(C)]` mirrors of every `uv_*_t` Bun touches, derived
-//! from `vendor/libuv/include/uv.h` + `uv/win.h`. All structs are POD (`Copy` where
+//! from `vendor/libuv/include/uv.h` + `uv/win.h`. The mirrors are POD but for `fs_t` (`Copy` where
 //! `union`s permit), all-zero is a valid bit-pattern (libuv expects callers to
 //! `memset(0)` before `uv_*_init`), and no method allocates.
 //!
@@ -380,7 +380,7 @@ thread_local! {
 // Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
 // `uv_process_t` this thread initialises is listed here from `init`/`spawn`
 // until the `uv_close` for it is issued (`UvHandle::close`,
-// `Pipe::close_and_destroy`). Whoever currently drives the handle records
+// `Owned::drop`). Whoever currently drives the handle records
 // itself with [`open_handles::set_owner`] — readers/writers do so through
 // `Source::set_owner`, IPC / named pipes / Process when they take the handle —
 // so a thread teardown can close each handle through its owner's ordinary
@@ -630,7 +630,58 @@ unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
+        open_handles::remove(handle);
         unsafe { uv_close(handle, None) };
+    }
+}
+
+/// SAFETY: `GET` fills in an array and its length, which `FREE` releases.
+pub unsafe trait ListItem: Sized {
+    const GET: unsafe extern "C" fn(*mut *mut Self, *mut c_int) -> c_int;
+    const FREE: unsafe extern "C" fn(*mut Self, c_int);
+}
+
+// SAFETY: a pair in uv.h.
+unsafe impl ListItem for uv_cpu_info_t {
+    const GET: unsafe extern "C" fn(*mut *mut Self, *mut c_int) -> c_int = uv_cpu_info;
+    const FREE: unsafe extern "C" fn(*mut Self, c_int) = uv_free_cpu_info;
+}
+
+// SAFETY: a pair in uv.h.
+unsafe impl ListItem for uv_interface_address_t {
+    const GET: unsafe extern "C" fn(*mut *mut Self, *mut c_int) -> c_int = uv_interface_addresses;
+    const FREE: unsafe extern "C" fn(*mut Self, c_int) = uv_free_interface_addresses;
+}
+
+/// An array that libuv allocated.
+pub struct List<T: ListItem> {
+    items: *mut T,
+    count: c_int,
+}
+
+impl<T: ListItem> List<T> {
+    pub fn get() -> Result<Self, c_int> {
+        let (mut items, mut count) = (ptr::null_mut(), 0);
+        // SAFETY: valid out-pointers.
+        match unsafe { T::GET(&raw mut items, &raw mut count) } {
+            0 => Ok(Self { items, count }),
+            err => Err(err),
+        }
+    }
+}
+
+impl<T: ListItem> core::ops::Deref for List<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: what `get` filled in.
+        unsafe { bun_core::ffi::slice(self.items, usize::try_from(self.count).expect("int cast")) }
+    }
+}
+
+impl<T: ListItem> Drop for List<T> {
+    fn drop(&mut self) {
+        // SAFETY: what `get` filled in.
+        unsafe { T::FREE(self.items, self.count) };
     }
 }
 
@@ -666,35 +717,6 @@ pub unsafe trait UvHandle: Sized {
     fn set_data(&mut self, ptr_: *mut c_void) {
         // SAFETY: handle prefix invariant.
         unsafe { uv_handle_set_data(self.as_handle_mut(), ptr_) };
-    }
-    /// Typed `Box<T>`-taking sibling of [`set_data`] for the common case where
-    /// `handle->data` owns a heap allocation freed in the close callback.
-    /// Ownership of `data` transfers to the handle; reclaim with
-    /// [`take_owned_data`](UvHandle::take_owned_data) (typically in the
-    /// `uv_close_cb`). This is the centralized `Box::into_raw` for the
-    /// owned-`handle->data` pattern — callers never spell the
-    /// raw round-trip themselves.
-    #[inline]
-    fn set_owned_data<T>(&mut self, data: Box<T>) {
-        self.set_data(Box::into_raw(data).cast::<c_void>());
-    }
-    /// Reclaim a `Box<T>` previously installed via [`set_owned_data`]. Clears
-    /// the `data` slot to null so a second call (or a later `uv_close_cb`)
-    /// observes `None` rather than a dangling pointer.
-    ///
-    /// # Safety
-    /// The handle's `data` must either be null or the unique live pointer
-    /// from a prior [`set_owned_data::<T>`](UvHandle::set_owned_data) call
-    /// with the **same** `T`.
-    #[inline]
-    unsafe fn take_owned_data<T>(&mut self) -> Option<Box<T>> {
-        let p = self.get_data::<T>();
-        if p.is_null() {
-            return None;
-        }
-        self.set_data(ptr::null_mut());
-        // SAFETY: caller contract — `p` came from `set_owned_data::<T>`.
-        Some(unsafe { Box::from_raw(p) })
     }
     #[inline]
     fn get_loop(&self) -> *mut Loop {
@@ -763,6 +785,7 @@ unsafe impl UvHandle for uv_stream_t {}
 unsafe impl UvHandle for Pipe {}
 unsafe impl UvHandle for uv_tcp_t {}
 unsafe impl UvHandle for uv_tty_t {}
+unsafe impl UvHandle for Tty {}
 unsafe impl UvHandle for uv_udp_t {}
 unsafe impl UvHandle for Timer {}
 unsafe impl UvHandle for uv_async_t {}
@@ -774,6 +797,84 @@ unsafe impl UvHandle for uv_signal_t {}
 unsafe impl UvHandle for Process {}
 unsafe impl UvHandle for uv_fs_event_t {}
 unsafe impl UvHandle for uv_fs_poll_t {}
+
+/// A heap handle. Dropping it closes the handle, which is freed once libuv is done with it.
+#[repr(transparent)]
+pub struct Owned<H: UvHandle>(ptr::NonNull<H>);
+
+impl<H: UvHandle + bun_core::ffi::Zeroable> Owned<H> {
+    /// A handle to `init`.
+    pub fn zeroed() -> Self {
+        Self(Box::into_non_null(bun_core::boxed_zeroed()))
+    }
+}
+
+impl<H: UvHandle> Owned<H> {
+    /// `handle` is zeroed: libuv keeps the address of an initialised one.
+    pub fn new(handle: H) -> Self {
+        Self(Box::into_non_null(Box::new(handle)))
+    }
+
+    /// SAFETY: `handle` is a `Box<H>` that nothing else closes or frees, zeroed or initialised.
+    pub unsafe fn from_raw(handle: *mut H) -> Self {
+        // SAFETY: fn contract.
+        Self(unsafe { ptr::NonNull::new_unchecked(handle) })
+    }
+
+    pub fn into_raw(self) -> *mut H {
+        mem::ManuallyDrop::new(self).as_ptr()
+    }
+
+    /// Valid until `self` is dropped.
+    pub fn as_ptr(&self) -> *mut H {
+        self.0.as_ptr()
+    }
+
+    /// See [`open_handles::set_owner`].
+    pub fn set_owner(&self, owner: *mut c_void, close: open_handles::CloseViaOwner) {
+        open_handles::set_owner(self.as_ptr().cast(), owner, Some(close));
+    }
+}
+
+impl<H: UvHandle> core::ops::Deref for Owned<H> {
+    type Target = H;
+    fn deref(&self) -> &H {
+        // SAFETY: live until `self` is dropped.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<H: UvHandle> core::ops::DerefMut for Owned<H> {
+    fn deref_mut(&mut self) -> &mut H {
+        // SAFETY: live until `self` is dropped.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl<H: UvHandle> Drop for Owned<H> {
+    fn drop(&mut self) {
+        unsafe extern "C" fn free<H>(handle: *mut uv_handle_t) {
+            // SAFETY: the box `Owned` held, which is not on the loop.
+            unsafe { bun_core::heap::destroy(handle.cast::<H>()) };
+        }
+        let handle = self.as_ptr().cast::<uv_handle_t>();
+        // SAFETY: handle prefix invariant, and it is freed once it is off the loop.
+        unsafe {
+            if (*handle).loop_.is_null() || uv_is_closed(&*handle) {
+                free::<H>(handle);
+            } else if uv_is_closing(handle) != 0 {
+                // By the thread's teardown, without a callback.
+                (*handle).close_cb = Some(free::<H>);
+            } else {
+                use HandleType::{NamedPipe, Process, Tty};
+                if matches!((*handle).type_, NamedPipe | Tty | Process) {
+                    open_handles::remove(handle);
+                }
+                uv_close(handle, Some(free::<H>));
+            }
+        }
+    }
+}
 
 /// Marker for `#[repr(C)]` structs prefixed with `UV_STREAM_FIELDS`
 /// (`uv_stream_t`, `Pipe`, `uv_tcp_t`, `uv_tty_t`).
@@ -1297,47 +1398,6 @@ impl Pipe {
         // SAFETY: both pipes embed `uv_stream_t` at offset 0.
         unsafe { uv_accept(self.as_stream(), client.as_stream()) }
     }
-    /// Close the pipe handle (if
-    /// needed) and then `Box::from_raw`-drop it. Handles all states:
-    /// never-initialized (`loop_ == null`), already closing, or active. After
-    /// `uv_pipe_init` the handle is in the event loop's `handle_queue`;
-    /// freeing without `uv_close` corrupts that list.
-    ///
-    /// SAFETY: `this` must be a `Box<Pipe>`-allocated pointer (the close
-    /// callback reclaims it via `Box::from_raw`). Caller relinquishes
-    /// ownership. Receiver is `*mut Pipe` (not `&mut self`) because the
-    /// never-initialized branch deallocates the pointee — holding a live
-    /// `&mut self` across that drop would dangle. In the already-closing
-    /// branch the allocation is *not* reclaimed here: the previously
-    /// registered `uv_close` callback is assumed to free the box;
-    /// if a non-freeing callback was registered, the pipe leaks.
-    pub unsafe fn close_and_destroy(this: *mut Pipe) {
-        open_handles::remove(this.cast());
-        // SAFETY: caller contract.
-        unsafe { Self::close_and_destroy_unlisted(this) }
-    }
-
-    /// [`close_and_destroy`] for a pipe already taken off the open-handles list.
-    ///
-    /// # Safety
-    /// As [`close_and_destroy`].
-    pub(crate) unsafe fn close_and_destroy_unlisted(this: *mut Pipe) {
-        unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
-            // SAFETY: handle was Box-allocated; callback fires exactly once.
-            drop(unsafe { Box::from_raw(handle) });
-        }
-        // SAFETY: caller contract — `this` is a live Box-allocated Pipe.
-        if unsafe { (*this).loop_.is_null() } {
-            // Never initialized — safe to free directly.
-            // SAFETY: caller contract — Box-allocated; no `&mut` borrow held.
-            drop(unsafe { Box::from_raw(this) });
-        } else if !unsafe { (*this).is_closing() } {
-            // Initialized and not yet closing — must uv_close first.
-            // SAFETY: `this` is live until the close cb fires.
-            unsafe { (*this).close(on_close_destroy) };
-        }
-        // else: already closing — the pending close callback owns the lifetime.
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1394,9 +1454,7 @@ pub struct uv_tty_t {
     tty: tty_u,
 }
 /// A console handle plus the read buffer whose lifetime libuv ties to the
-/// handle rather than to any reader. `uv` must remain the first field
-/// (`#[repr(C)]`): callbacks and `open_handles` traffic in the inner
-/// `uv_tty_t*`, and [`Tty::from_uv`] relies on both being the same address.
+/// handle rather than to any reader.
 #[repr(C)]
 pub struct Tty {
     pub uv: uv_tty_t,
@@ -1412,18 +1470,11 @@ pub struct Tty {
 }
 
 impl Tty {
-    /// Recover the owning `Tty` from the `uv_tty_t*` libuv hands back
-    /// (same address: `uv` is the first `#[repr(C)]` field).
-    #[inline]
-    pub fn from_uv(handle: *mut uv_tty_t) -> *mut Tty {
-        handle.cast()
-    }
-
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
         // Init and register through a whole-struct pointer: the close paths
         // reclaim the full `Tty` from this address, and `&mut self.uv` would
-        // narrow provenance to the field (same rule as `File::start_close`).
+        // narrow provenance to the field.
         let uv_ptr = core::ptr::from_mut(self).cast::<uv_tty_t>();
         // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
         let rc = unsafe { uv_tty_init(loop_, uv_ptr, file, 0) };
@@ -1433,27 +1484,6 @@ impl Tty {
             open_handles::add_tty(uv_ptr);
         }
         rc
-    }
-
-    /// `uv_close` through a whole-struct pointer so the close callback may
-    /// `Box::from_raw` the wrapper (`(*this).uv.close(..)` would autoref
-    /// `&mut uv_tty_t` and narrow provenance to the field).
-    ///
-    /// # Safety
-    /// `this` is a live, initialised tty that is not already closing.
-    pub unsafe fn close(this: *mut Self, cb: unsafe extern "C" fn(*mut uv_tty_t)) {
-        let handle = this.cast::<uv_handle_t>();
-        open_handles::remove(handle);
-        // SAFETY: `Tty` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
-        unsafe {
-            uv_close(
-                handle,
-                Some(mem::transmute::<
-                    unsafe extern "C" fn(*mut uv_tty_t),
-                    unsafe extern "C" fn(*mut uv_handle_t),
-                >(cb)),
-            );
-        }
     }
 }
 
@@ -1924,7 +1954,7 @@ union fs_fs {
     time: fs_time,
 }
 
-/// `uv_fs_t` (Windows layout).
+/// `uv_fs_t` (Windows layout). A read or write points into itself: do not move it until `deinit`.
 #[repr(C)]
 pub struct fs_t {
     pub data: *mut c_void,
@@ -1946,6 +1976,13 @@ pub struct fs_t {
     fs: fs_fs,
 }
 
+impl Drop for fs_t {
+    fn drop(&mut self) {
+        // SAFETY: zeroed, or passed to a `uv_fs_*` call that is over.
+        unsafe { uv_fs_req_cleanup(self) };
+    }
+}
+
 impl fs_t {
     #[cfg(debug_assertions)]
     const UV_FS_CLEANEDUP: c_int = 0x0010;
@@ -1963,6 +2000,7 @@ impl fs_t {
         v
     }
 
+    /// Readies the request for another call.
     #[inline]
     pub fn deinit(&mut self) {
         self.assert_initialized();
@@ -2317,6 +2355,7 @@ unsafe impl bun_core::ffi::Zeroable for Timer {}
 unsafe impl bun_core::ffi::Zeroable for Pipe {}
 unsafe impl bun_core::ffi::Zeroable for uv_idle_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_poll_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_signal_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
@@ -2823,13 +2862,13 @@ unsafe extern "C" {
     pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
     pub safe fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
-    pub fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
-    pub fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);
-    pub fn uv_interface_addresses(
+    fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
+    fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);
+    fn uv_interface_addresses(
         addresses: *mut *mut uv_interface_address_t,
         count: *mut c_int,
     ) -> c_int;
-    pub fn uv_free_interface_addresses(addresses: *mut uv_interface_address_t, count: c_int);
+    fn uv_free_interface_addresses(addresses: *mut uv_interface_address_t, count: c_int);
     pub fn uv_os_uname(buffer: *mut uv_utsname_t) -> c_int;
     pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
     pub safe fn uv_get_total_memory() -> u64;
@@ -3036,7 +3075,6 @@ unsafe extern "C" {
         signal_cb: uv_signal_cb,
         signum: c_int,
     ) -> ReturnCode;
-    pub fn uv_signal_stop(handle: *mut uv_signal_t) -> ReturnCode;
     pub fn uv_fs_event_init(loop_: *mut Loop, handle: *mut uv_fs_event_t) -> ReturnCode;
     pub fn uv_fs_event_start(
         handle: *mut uv_fs_event_t,
@@ -3044,7 +3082,6 @@ unsafe extern "C" {
         path: *const c_char,
         flags: c_uint,
     ) -> ReturnCode;
-    pub fn uv_fs_event_stop(handle: *mut uv_fs_event_t) -> c_int;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

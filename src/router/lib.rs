@@ -134,7 +134,7 @@ struct RouteIndex {
 // accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
 struct RouteIndexList {
-    // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
+    // The `Box` is load-bearing: `Routes::root` / `Routes::static_` hold
     // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
     // would dangle them on `Vec` realloc.
     #[expect(clippy::vec_box)]
@@ -195,11 +195,11 @@ pub struct Routes {
     /// this is a fast path?
     pub(crate) static_: StringHashMap<*const Route>,
 
-    /// Corresponds to "index.js" on the filesystem.
+    /// The route for the empty path: "index.js", else the first root-level `[[...x]]` in match order.
     /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
-    pub(crate) index: Option<NonNull<Route>>,
+    pub(crate) root: Option<NonNull<Route>>,
 }
 
 impl Default for Routes {
@@ -209,7 +209,7 @@ impl Default for Routes {
             dynamic_start: None,
             dynamic_len: 0,
             static_: StringHashMap::new(),
-            index: None,
+            root: None,
         }
     }
 }
@@ -257,13 +257,13 @@ impl Routes {
         let _ = redirect;
 
         if path.is_empty() {
-            if let Some(index_ptr) = self.index {
+            if let Some(root_ptr) = self.root {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
-                let index = unsafe { index_ptr.as_ref() };
+                let root = unsafe { root_ptr.as_ref() };
                 return Some(Match {
-                    name: index.name,
+                    name: root.name,
                     pathname: url_path.pathname,
-                    file_path: index.abs_path.as_bytes(),
+                    file_path: root.abs_path.as_bytes(),
                     query_string: url_path.query_string,
                 });
             }
@@ -318,10 +318,8 @@ impl Routes {
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
         let pathname = strings::trim_left(pathname_, b"/");
-
-        if pathname.is_empty() {
-            return self.index.map(|p| p.as_ptr().cast_const());
-        }
+        // `match_page_with_allocator` answers the empty path from `root`.
+        debug_assert!(!pathname.is_empty());
 
         self.static_
             .get(pathname)
@@ -484,9 +482,16 @@ impl<'a> RouteLoader<'a> {
             };
         }
 
-        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
-            sorter::sort_by_name_cmp(a, b)
+        let keys = sorter::Keys::new(&this.all_routes);
+        let mut order = index_sort::identity(this.all_routes.len());
+        index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
+            keys.compare(&this.all_routes, a, b)
         });
+        let root_optional_catch_all = match this.index {
+            Some(_) => None,
+            None => order.iter().position(|&i| keys.takes_empty_path(i)),
+        };
+        index_sort::apply_permutation_in_place(&mut this.all_routes, &mut order);
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -494,15 +499,10 @@ impl<'a> RouteLoader<'a> {
             .expect("unreachable");
 
         let mut dynamic_start: Option<usize> = None;
-        let mut index_id: Option<usize> = None;
 
         for (i, route) in this.all_routes.into_iter().enumerate() {
             if (route.kind as u8) > (pattern::Tag::Static as u8) && dynamic_start.is_none() {
                 dynamic_start = Some(i);
-            }
-
-            if route.full_hash == INDEX_ROUTE_HASH {
-                index_id = Some(i);
             }
 
             let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
@@ -514,17 +514,12 @@ impl<'a> RouteLoader<'a> {
             });
         }
 
-        let mut dynamic_len: usize = 0;
-        if let Some(dynamic_i) = dynamic_start {
-            dynamic_len = route_list.len() - dynamic_i;
-            if let Some(index_i) = index_id {
-                if index_i > dynamic_i {
-                    // Due to the sorting order, the index route can be the last route.
-                    // We don't want to attempt to match the index route or different stuff will break.
-                    dynamic_len -= 1;
-                }
-            }
-        }
+        let dynamic_len = dynamic_start.map_or(0, |dynamic_i| route_list.len() - dynamic_i);
+
+        let root = match root_optional_catch_all {
+            Some(i) => Some(NonNull::from(&mut *route_list.route[i])),
+            None => this.index,
+        };
 
         Routes {
             list: route_list,
@@ -533,7 +528,7 @@ impl<'a> RouteLoader<'a> {
             static_: this.static_list,
             // Points into a Box<Route> now owned by `route_list`; co-owned raw
             // pointer.
-            index: this.index,
+            root,
         }
     }
 
@@ -949,6 +944,7 @@ impl Route {
 }
 
 pub(crate) mod sorter {
+    use super::pattern::{Tag, Value};
     use super::*;
 
     const fn build_sort_table() -> [u8; 256] {
@@ -968,52 +964,78 @@ pub(crate) mod sorter {
 
     static SORT_TABLE: [u8; 256] = build_sort_table();
 
-    pub(crate) fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
+    fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> Ordering {
         let n = lhs.len().min(rhs.len());
         for (lhs_i, rhs_i) in lhs[0..n].iter().zip(&rhs[0..n]) {
             match SORT_TABLE[*lhs_i as usize].cmp(&SORT_TABLE[*rhs_i as usize]) {
                 Ordering::Equal => continue,
-                Ordering::Less => return true,
-                Ordering::Greater => return false,
+                order => return order,
             }
         }
-        lhs.len().cmp(&rhs.len()) == Ordering::Less
+        lhs.len().cmp(&rhs.len())
     }
 
-    pub(crate) fn sort_by_name(a: &Route, b: &Route) -> bool {
-        let a_name = a.match_name.as_bytes();
-        let b_name = b.match_name.as_bytes();
+    const fn rank(tag: Tag) -> u8 {
+        tag as u8 + 1
+    }
 
-        // route order determines route match order
-        // - static routes go first because we match those first
-        // - dynamic, catch-all, and optional catch all routes are sorted lexicographically, except "[", "]" appear last so that deepest routes are tested first
-        // - catch-all & optional catch-all appear at the end because we want to test those at the end.
-        match (a.kind as u8).cmp(&(b.kind as u8)) {
-            Ordering::Equal => match a.kind {
-                // static + dynamic are sorted alphabetically
-                pattern::Tag::Static | pattern::Tag::Dynamic => sort_by_name_string(a_name, b_name),
-                // catch all and optional catch all must appear below dynamic
-                pattern::Tag::CatchAll | pattern::Tag::OptionalCatchAll => {
-                    match a.param_count.cmp(&b.param_count) {
-                        Ordering::Equal => sort_by_name_string(a_name, b_name),
-                        Ordering::Less => false,
-                        Ordering::Greater => true,
+    /// A precedence key per dynamic route: per token its rank, and for static text also the text and a 0.
+    pub(crate) struct Keys {
+        bytes: Vec<u8>,
+        offsets: Vec<usize>,
+    }
+
+    impl Keys {
+        pub(crate) fn new(routes: &[Box<Route>]) -> Keys {
+            // A key is at most twice as long as its name.
+            let capacity = routes
+                .iter()
+                .filter(|route| route.kind != Tag::Static)
+                .map(|route| route.match_name.as_bytes().len() * 2)
+                .sum();
+            let mut keys = Keys {
+                bytes: Vec::with_capacity(capacity),
+                offsets: Vec::with_capacity(routes.len() + 1),
+            };
+            keys.offsets.push(0);
+            for route in routes {
+                if route.kind != Tag::Static {
+                    for token in Pattern::tokens(route.match_name.as_bytes()) {
+                        let Ok(token) = token else { break };
+                        keys.bytes.push(rank(token.value.tag()));
+                        if let Value::Static(text) = token.value {
+                            keys.bytes.extend_from_slice(text.str());
+                            keys.bytes.push(0);
+                        }
                     }
                 }
-            },
-            Ordering::Less => true,
-            Ordering::Greater => false,
+                keys.offsets.push(keys.bytes.len());
+            }
+            keys
         }
-    }
 
-    /// Adapter for slice::sort_by which expects an Ordering.
-    pub(crate) fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
-        if sort_by_name(a, b) {
-            Ordering::Less
-        } else if sort_by_name(b, a) {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
+        fn get(&self, i: u32) -> &[u8] {
+            &self.bytes[self.offsets[i as usize]..self.offsets[i as usize + 1]]
+        }
+
+        /// Only a root-level `[[...x]]` has `[[...x]]` as its first token.
+        pub(crate) fn takes_empty_path(&self, i: u32) -> bool {
+            self.get(i).first() == Some(&rank(Tag::OptionalCatchAll))
+        }
+
+        /// Static routes first, then dynamic routes by key: the order of Next.js's `getSortedRoutes`.
+        pub(crate) fn compare(&self, routes: &[Box<Route>], a: u32, b: u32) -> Ordering {
+            let (x, y) = (&routes[a as usize], &routes[b as usize]);
+            (x.kind != Tag::Static)
+                .cmp(&(y.kind != Tag::Static))
+                .then_with(|| match x.kind {
+                    Tag::Static => Ordering::Equal,
+                    // Keys are short and differ early, so a loop costs less than a call to `memcmp`.
+                    _ => self.get(a).iter().cmp(self.get(b)),
+                })
+                .then_with(|| sort_by_name_string(x.match_name.as_bytes(), y.match_name.as_bytes()))
+                // Only case differs from here. Lowercase first: the file Next.js serves for the lowercase URL.
+                .then_with(|| y.name.cmp(x.name))
         }
     }
 }
@@ -1112,6 +1134,12 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
+                        // `[x]` takes one segment that is not empty, as `([^/]+?)` does in Next.js.
+                        if path_.is_empty() || path_[0] == b'/' {
+                            params.clear();
+                            return false;
+                        }
+
                         if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
@@ -1198,12 +1226,10 @@ pub mod pattern {
             }
 
             let mut count: u16 = 0;
-            let mut offset: RoutePathInt = 0;
             debug_assert!(!input.is_empty());
             let mut kind = Tag::Static;
-            let end = (input.len() - 1) as u32;
-            while (offset as u32) < end {
-                let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
+            for pattern in Pattern::tokens(input) {
+                let pattern: Pattern = match pattern {
                     Ok(p) => p,
                     Err(err) => {
                         let source = bun_ast::Source::init_empty_file(input);
@@ -1258,7 +1284,6 @@ pub mod pattern {
                         return None;
                     }
                 };
-                offset = pattern.len;
                 let tag = pattern.value.tag();
                 if (tag as u8) > (kind as u8) {
                     kind = tag;
@@ -1269,6 +1294,25 @@ pub mod pattern {
             Some(ValidationResult {
                 param_count: count,
                 kind,
+            })
+        }
+
+        /// The tokens of a route name. It ends after an error.
+        pub(crate) fn tokens(
+            input: &[u8],
+        ) -> impl Iterator<Item = Result<Pattern, PatternParseError>> + '_ {
+            let mut offset: usize = 0;
+            core::iter::from_fn(move || {
+                // `init` clamps a `len` to the last byte, so an offset there means that no token is left.
+                if offset + 1 >= input.len() {
+                    return None;
+                }
+                let token = Pattern::init_unhashed(input, offset as RoutePathInt);
+                offset = match &token {
+                    Ok(pattern) => pattern.len as usize,
+                    Err(_) => input.len(),
+                };
+                Some(token)
             })
         }
 
@@ -1435,7 +1479,7 @@ pub mod pattern {
             }
             Ok(Pattern {
                 len: i,
-                value: Value::Static(HashedString::init(&input[offset as usize..i as usize])),
+                value: Value::Static(init_hashed_string(&input[offset as usize..i as usize])),
             })
         }
     }

@@ -1,8 +1,10 @@
 #include "config.h"
 #include "JSWasmStreamingCompiler.h"
 
+#include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "JSCTaskScheduler.h"
 #include "JSDOMBinding.h"
 #include "JSDOMOperation.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -158,6 +160,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes, (JSG
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_finalizeBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
 {
+    // The compiler has every byte, so its ticket (WorkType::AtSomePoint: no event loop ref) is now certain to be scheduled.
+    Bun::JSCTaskScheduler::refEventLoopForPendingWork(WebCore::clientData(JSC::getVM(lexicalGlobalObject)), castedThis->ticket());
     castedThis->wrapped().finalize(lexicalGlobalObject);
     return encodedJSUndefined();
 }

@@ -2269,6 +2269,7 @@ test.concurrent.each([true, false])(
         const servers = {
           none: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile }),
           undefined: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: e => void codes.push(e.code) }),
+          deferred: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: () => new Promise(r => setImmediate(r)) }),
           response: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: e => new Response(e.code, { status: 410 }) }),
         };
         for (const [name, server] of Object.entries(servers)) {
@@ -2296,16 +2297,20 @@ test.concurrent.each([true, false])(
     ];
     // Windows reports a path below a regular file as ENOENT.
     const codes = ["ENOENT", ...(isWindows ? ["ENOENT"] : ["ENOTDIR", "EISDIR"]), ...(canDeny ? ["EACCES"] : [])];
-    expect({ stdout: stdout.split("\n"), stderr }).toEqual({
+    expect({
+      stdout: stdout.split("\n"),
+      stderr: development ? stderr.match(/(?<=code: ")\w+/g) : stderr,
+    }).toEqual({
       stdout: [
         ...defaults("none"),
         ...defaults("undefined"),
+        ...defaults("deferred"),
         "response /ok.txt 200 OK 2 ok",
         ...codes.map((code, i) => `response ${paths[i + 1]} 410 Gone ${code.length} ${code}`),
         codes.join(),
         "",
       ],
-      stderr: "",
+      stderr: development ? [...codes, ...codes, ...codes] : "",
     });
     expect(exitCode).toBe(0);
   },
@@ -2477,7 +2482,7 @@ test.skipIf(!isLinux)(
       // lands between the partial header write and the first sendfile call.
       // The file is all 0xEE and the header block is ASCII, so any 0xEE before
       // the header terminator means sendfile bytes jumped ahead of the tail.
-      import { dlopen, ptr } from "bun:ffi";
+      import { dlopen, ptr, read } from "bun:ffi";
 
       const port = Number(process.env.PORT);
       const padSize = Number(process.env.PAD_SIZE);
@@ -2491,6 +2496,7 @@ test.skipIf(!isLinux)(
         recv: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
         setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
         close: { args: ["i32"], returns: "i32" },
+        __errno_location: { args: [], returns: "ptr" },
       } as const;
       function openLibc() {
         for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1"]) {
@@ -2555,6 +2561,8 @@ test.skipIf(!isLinux)(
           let corrupt = "";
           while (total < expected && total < wire.length) {
             const n = Number(libc.recv(fd, ptr(wire, total), Math.min(256 * 1024, wire.length - total), 0));
+            // JSC suspends threads with a signal, and a recv with SO_RCVTIMEO is never restarted after one.
+            if (n === -1 && read.i32(libc.__errno_location()) === 4 /* EINTR */) continue;
             if (n <= 0) break; // EOF, error, or SO_RCVTIMEO after a 10s stall
             total += n;
             if (hdrEnd !== -1) continue;

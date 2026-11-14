@@ -8,7 +8,7 @@ use bun_collections::HashMap;
 use bun_http_types::h2::flow_control::{RecvWindow, SendWindow};
 use bun_http_types::h2::frame::ErrorCode;
 use bun_http_types::h2::stream::{Event, State, TransitionError, transition};
-use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue, StrongOptional, Weak};
 use bun_ptr::JsCell;
 
 /// Request methods that change how the response body is framed (nghttp2's METH_HEAD and METH_CONNECT flags).
@@ -80,12 +80,14 @@ pub(crate) struct Stream {
     pub reset: Cell<Option<ResetBy>>,
     /// The JS `Http2Stream`.
     pub js_context: JsCell<StrongOptional>,
-    /// JS destroyed its `Http2Stream`.
+    /// JS destroyed its `Http2Stream`, or only waits for someone to read it.
     released: Cell<bool>,
     /// The handler that tells JS about the close has run, or is running for a close that JS asked for.
     pub close_delivered: Cell<bool>,
     /// `StreamTable::read_count` when the stream closed, or 0 if no read was being parsed.
     closed_in_read: Cell<u32>,
+    /// What the request that opened the stream adds to `StreamTable::open_request_bytes`.
+    request_bytes: Cell<usize>,
 
     pub recv_window: Cell<RecvWindow>,
     /// The id is in `Connection::half_used_windows`.
@@ -106,6 +108,8 @@ pub(crate) struct Stream {
     pub request_method: Cell<Option<RequestMethod>>,
 
     pub send_window: Cell<SendWindow>,
+    /// The request or the final response went out.
+    pub sent_final_headers: Cell<bool>,
     /// END_STREAM goes out on the trailers, not on the last DATA frame.
     pub wait_for_trailers: Cell<bool>,
     pub padding_strategy: Cell<PaddingStrategy>,
@@ -129,6 +133,7 @@ impl Stream {
             released: Cell::new(false),
             close_delivered: Cell::new(false),
             closed_in_read: Cell::new(0),
+            request_bytes: Cell::new(0),
             replenish_queued: Cell::new(false),
             recv_window: Cell::new(RecvWindow::new(initial_recv)),
             reading_paused: Cell::new(false),
@@ -139,6 +144,7 @@ impl Stream {
             opened_after_goaway: Cell::new(false),
             request_method: Cell::new(None),
             send_window: Cell::new(SendWindow::new(initial_send)),
+            sent_final_headers: Cell::new(false),
             wait_for_trailers: Cell::new(false),
             padding_strategy: Cell::new(PaddingStrategy::None),
             queue: JsCell::new(VecDeque::new()),
@@ -229,18 +235,22 @@ impl Stream {
     }
 }
 
-/// A session's streams: the open ones, and the closed ones that JS still has an `Http2Stream` for. Entries are shared, so a caller can hold one across JS that removes it.
+/// A session's streams: the open ones, and the closed ones that JS hasn't released yet. Entries are shared, so a caller can hold one across JS that removes it.
 #[derive(Default)]
 pub(crate) struct StreamTable {
     map: JsCell<HashMap<u32, Rc<Stream>>>,
     /// The entries that aren't closed, by who opened them (RFC 9113 §5.1.2).
     open_local: Cell<u32>,
     open_peer: Cell<u32>,
+    /// The header list sizes of the requests the peer has open.
+    open_request_bytes: Cell<usize>,
     /// The reads that are being parsed, one inside the other. Nothing is forgotten meanwhile.
     read_depth: Cell<u32>,
     read_count: Cell<u32>,
     /// `end_read` has entries to forget.
     has_forgettable: Cell<bool>,
+    /// The `Http2Stream`s that closed with unread data. Weak, because their reader may never come.
+    unread: JsCell<Vec<Weak<()>>>,
 }
 
 impl StreamTable {
@@ -257,16 +267,24 @@ impl StreamTable {
         })
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.map.get().len()
-    }
-
     pub(crate) fn open_local(&self) -> u32 {
         self.open_local.get()
     }
 
     pub(crate) fn open_peer(&self) -> u32 {
         self.open_peer.get()
+    }
+
+    pub(crate) fn open_request_bytes(&self) -> usize {
+        self.open_request_bytes.get()
+    }
+
+    /// The peer's request for `stream` was delivered. It counts until the stream closes.
+    pub(crate) fn note_request(&self, stream: &Stream, list_size: usize) {
+        if !stream.is_closed() {
+            stream.request_bytes.set(list_size);
+            update(&self.open_request_bytes, |bytes| *bytes += list_size);
+        }
     }
 
     fn open_count(&self, stream: &Stream) -> &Cell<u32> {
@@ -304,6 +322,9 @@ impl StreamTable {
         }
         let open = self.open_count(stream);
         open.set(open.get() - 1);
+        update(&self.open_request_bytes, |bytes| {
+            *bytes -= stream.request_bytes.get();
+        });
         if self.is_reading() {
             stream.closed_in_read.set(self.read_count.get());
         }
@@ -316,6 +337,29 @@ impl StreamTable {
         stream.released.set(true);
         self.forget_if_done(stream);
         stream.is_closed()
+    }
+
+    /// Remembers the `Http2Stream` of `stream` past its release, for as long as something else keeps it alive.
+    pub(crate) fn remember_unread(&self, stream: &Stream, global: &JSGlobalObject) {
+        let Some(context) = stream.js_context.get().get() else {
+            return;
+        };
+        let weak = Weak::create_passive(context, global);
+        self.unread.with_mut(|unread| {
+            if unread.len() == unread.capacity() {
+                unread.retain(|weak| weak.get().is_some());
+                unread.reserve(unread.len());
+            }
+            unread.push(weak);
+        });
+    }
+
+    pub(crate) fn unread_len(&self) -> usize {
+        self.unread.get().len()
+    }
+
+    pub(crate) fn unread_at(&self, index: usize) -> Option<JSValue> {
+        self.unread.get().get(index)?.get()
     }
 
     fn forget_if_done(&self, stream: &Stream) {
@@ -349,11 +393,14 @@ impl StreamTable {
         }
     }
 
-    /// Forgets every stream, open or not.
+    /// Forgets every stream, open or not. An entry that a caller still holds is closed, so it isn't counted down again.
     pub(crate) fn clear(&self) {
+        self.for_each(|stream| stream.state.set(State::Closed));
         drop(self.map.take());
+        drop(self.unread.take());
         self.open_local.set(0);
         self.open_peer.set(0);
+        self.open_request_bytes.set(0);
         self.has_forgettable.set(false);
     }
 

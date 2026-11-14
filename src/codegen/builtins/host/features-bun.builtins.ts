@@ -45,6 +45,8 @@ const s3PathUses = (operand: b.OperandName) =>
 const usesWhenOptionsHave = (names: readonly string[], ...features: readonly b.FeatureName[]) =>
   features.flatMap(feature => names.map(name => ({ feature, when: b.whenOperandHasProperty("options", name) })));
 
+const writersOfExecutables = ["Check", "AotCompiler", "ImageCompiler", "JIT"] satisfies b.FeatureName[];
+
 // ServerConfig::from_js reads the TLS options from `tls`.
 const serverTlsOptions = ["tls", ...TLSOptions.names];
 
@@ -81,6 +83,11 @@ const bytes = b.union(
 
 // The store of the file keeps a path that is a buffer, and reads its bytes again when the file is opened.
 const pathOfAnyKind = [b.retained, b.readsContents(), b.runs("ToPrimitive")];
+// credentials_jsc.rs: an option that is no string is refused, and the message reads its constructor's name.
+const bagWithS3Options = (...names: readonly string[]) => [
+  ...b.optionBag([...names, ...s3Options]),
+  ...s3Options.map(name => b.memberStoredIn([name], b.nativeMemory)),
+];
 
 // An "s3://" path makes an S3File, whose prototype has members of its own in front of Blob.prototype.
 const newFile = b.union(b.instance("Blob"), b.instance("S3File")).fresh;
@@ -140,10 +147,20 @@ export default b.declarations(
     ),
   ),
   extendAll(["InternalForTesting", "FsStats"], ...nativeBindings("Bindgen", "Stat.bind.ts", "createStatsForIno")),
+  extendAll(["InternalForTesting", "Test"], ...nativeBindings("Bindgen", "FakeTimers.bind.ts", "fakeLibraryTimers")),
   extendAll(["InternalForTesting", "Buffer"], ...nativeBindings("Bindgen", "memory_pressure.bind.ts", "psiTrigger")),
 
-  extendAll(["Test", ...runtimeTranspilerFeatures, "DeepEquals"], "Bun.jest", "bun:test", "%Expect%"),
-  extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult")),
+  extendAll(
+    ["Test", ...runtimeTranspilerFeatures, "DeepEquals"],
+    "Bun.jest",
+    "bun:test",
+    "bun:test/vitest",
+    "%Expect%",
+  ),
+  extendAll(
+    ["Test"],
+    ...nativeBindings("Bindgen", "jest.bind.ts", "askedByCompiledTestFile", "fileGeneration", "nodeTestMarkResult"),
+  ),
   extendAll(
     bundlerFeatures,
     ...nativeBindings(
@@ -173,6 +190,12 @@ export default b.declarations(
     "%ExpectTypeOf%",
     "%ScopeFunctions%",
     "%DoneCallback%",
+    "%ExpectDeferred%",
+    "%TestContext%",
+    "%AroundHook%",
+    "%TestFixtures%",
+    "%ActiveFixture%",
+    "%ViWait%",
   ),
 
   extendAll(["WebView", "ChildProcess", "X509", ...tlsSocketFeatures], "Bun.WebView"),
@@ -182,9 +205,19 @@ export default b.declarations(
   extendAll(
     ["Ffi", ...nativeAddonFeatures],
     "Bun.FFI",
-    ...nativeBindings("Bindgen", "ffi.bind.ts", "cc", "closeCallback"),
+    ...nativeBindings(
+      "Bindgen",
+      "ffi.bind.ts",
+      "cc",
+      "closeCallback",
+      "linkLibrary",
+      "makeCallback",
+      "makeFunction",
+      "openLibrary",
+      "printSource",
+    ),
   ),
-  extendAll(["Ffi"], "bun:ffi", "%FFI%"),
+  extendAll(["Ffi"], "bun:ffi", "%FFI%", "%FFICallback%"),
 
   extendAll(["Plugin", ...runtimeTranspilerFeatures], "Bun.plugin"),
 
@@ -290,7 +323,20 @@ export default b.declarations(
 
   extendAll([...runtimeTranspilerFeatures, ...interpreterFeatures], "Bun.Transpiler", "Bun.registerMacro"),
 
-  extendAll(bundlerFeatures, "Bun.build"),
+  // JSBundler.rs from_js(): `check` and `dts` enter the type checker. `compile`, and a `target` that starts with "bun-", enter the compiler, which checks types,
+  // or copy this executable for a program that runs on the JIT compilers. A plugin may change the options before they are read.
+  extendAll(
+    [
+      ...bundlerFeatures,
+      ...usesWhenOptionsHave(["check", "dts"], "Check"),
+      ...usesWhenOptionsHave(["compile", "plugins"], ...writersOfExecutables),
+      ...writersOfExecutables.map(feature => ({
+        feature,
+        when: b.whenPropertyOfOperandStartsWith("options", "target", "bun-"),
+      })),
+    ],
+    "Bun.build",
+  ),
   extendAll(["Bundler"], "%HTMLBundle%", "%FrameworkFileSystemRouter%", "%BuildArtifact%"),
 
   extendAll(nativeAddonFeatures, "process.dlopen"),
@@ -327,6 +373,7 @@ export default b.declarations(
       "dgramCloseFd",
       "dgramGetSockNameFd",
       "dgramGuessHandleType",
+      "dgramIsFdAdopted",
       "dgramListenFd",
       "dgramNewSocketFd",
       "disconnect",
@@ -364,7 +411,8 @@ export default b.declarations(
   extendAll(
     ["Sockets"],
     "%Listener%",
-    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBytesRead", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBytesRead", "hasPendingRead", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "httpConnectionOf"),
   ),
 
   extendAll(
@@ -453,14 +501,12 @@ export default b.declarations(
       "NodeTLS.cpp",
       "getBundledRootCertificates",
       "getExtraCACertificates",
+      "getOpenSSLDefaultCertificates",
+      "getSystemCACertificates",
       "loadExtraCACertificates",
       "parseCACertificates",
       "selectServerName",
     ),
-  ),
-  extendAll(
-    ["Tls", "SystemCaCertificates"],
-    ...nativeBindings("NewCppFunction", "NodeTLS.cpp", "getSystemCACertificates"),
   ),
 
   // reload() changes none of these: the server stays what its first options made it.
@@ -496,7 +542,7 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { path: pathOfAnyKind, options: b.hostOptionBag(["lastModified", ...s3Options]) },
+      uses: { path: pathOfAnyKind, options: bagWithS3Options("lastModified") },
       reads: [...viewHeaps, ...externalState],
       // A view that is kept as the path gets an ArrayBuffer, and its bytes move there.
       writes: ["TypedArrayStorage"],
@@ -513,7 +559,7 @@ export default b.declarations(
       returns: newPromiseOf(byteCountOrCopy),
       capability: "heap",
       throws: true,
-      uses: { destination: b.inspected, input: [b.readAsCharacters, b.readsContents()] },
+      uses: { destination: b.inspected, input: [b.readsContents()] },
       reads: externalState,
       writes: externalState,
       usesFeature: ["BunFile", ...s3PathUses("destination")],
@@ -531,7 +577,7 @@ export default b.declarations(
           b.readsContents(),
           b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
         ],
-        options: b.hostOptionBag(["createPath", "mode", ...s3Options]),
+        options: bagWithS3Options("createPath", "mode"),
       },
       reads: [...viewHeaps, ...externalState],
       writes: externalState,

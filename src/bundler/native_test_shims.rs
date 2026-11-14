@@ -86,7 +86,7 @@ extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
 // No text is a URL here: whoever asks goes on as behind a text that does not parse.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-extern "C" fn URL__getHref(_text: &bun_core::String) -> bun_core::String {
+extern "C" fn URL__getHref(_text: &bun_core::String, _exclude_fragment: bool) -> bun_core::String {
     bun_core::String::DEAD
 }
 
@@ -95,6 +95,7 @@ extern "C" fn URL__getHref(_text: &bun_core::String) -> bun_core::String {
 extern "C" fn URL__getHrefJoin(
     _base: &bun_core::String,
     _relative: &bun_core::String,
+    _exclude_fragment: bool,
 ) -> bun_core::String {
     bun_core::String::DEAD
 }
@@ -105,7 +106,7 @@ const SIZE_OF_LOOP: usize = 64 * 1024;
 #[linkage = "weak"]
 extern "C" fn uws_get_loop() -> *mut c_void {
     thread_local! {
-        static LOOP: *mut c_void = Box::leak(vec![0u64; SIZE_OF_LOOP / 8].into_boxed_slice()).as_mut_ptr().cast();
+        static LOOP: *mut c_void = Box::leak(vec![0u128; SIZE_OF_LOOP / 16].into_boxed_slice()).as_mut_ptr().cast();
     }
     LOOP.with(|event_loop| *event_loop)
 }

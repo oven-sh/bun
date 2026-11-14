@@ -428,7 +428,7 @@ impl PackageJSON {
         // So we cannot free these
         // (allocator dropped — global mimalloc)
 
-        let mut entry = match r.caches.fs.read_file_with_allocator(
+        let entry = match r.caches.fs.read_file_with_allocator(
             package_json_path,
             dirname_fd,
             false,
@@ -452,19 +452,15 @@ impl PackageJSON {
                 return None;
             }
         };
-        // Reshaped for borrowck — `mem::take` the contents (leaving
-        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
+        let _file = entry.fd.unwrap_valid().map(bun_sys::File::from_fd);
         // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
         // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
         // in practice (the catch-all copy is unreachable but defensive).
-        let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
+        let entry_contents: Box<[u8]> = match entry.contents {
             crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
             crate::cache::Contents::Empty => Box::default(),
             other => Box::from(other.as_slice()),
         };
-        let _close_guard = scopeguard::guard(entry, |mut e| {
-            let _ = e.close_fd();
-        });
 
         if let Some(debug) = r.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -1365,7 +1361,7 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
-fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
+pub(crate) fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
     let star = bun_core::strings::index_of_char_usize(text, b'*')?;
     Some((&text[..star], &text[star + 1..]))
 }

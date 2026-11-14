@@ -389,6 +389,7 @@ declare module "node:net" {
       connectionListener?: () => void,
     ): this;
     server: Server | null;
+    _server: Server | undefined;
   }
 
   interface Server {
@@ -1335,11 +1336,12 @@ declare namespace $Node {
     hasOpenStreams(): boolean;
     hasRejectedSend(): boolean;
     isStreamClosed(streamId: number): boolean;
-    releaseStream(streamId: number): boolean;
+    /** `unread`: the stream is closed and waits for a reader. */
+    releaseStream(streamId: number, unread?: boolean): boolean;
     bufferSize(): number;
     setNextStreamID(id: number): undefined;
-    /** `closed`: the closed streams. Otherwise those whose close was not delivered yet. Only streams with a context. */
-    forEachStream(callback: (stream: never, isClosed: boolean) => void, closed?: boolean): undefined;
+    /** `unread`: the streams released as such that are still alive. Otherwise those whose close was not delivered yet. Only streams with a context. */
+    forEachStream(callback: (stream: never, isClosed: boolean) => void, unread?: boolean): undefined;
     emitErrorToAllStreams(code: number): undefined;
     /** -1: the ids have run out. 0: the peer's limit of concurrent streams is reached. */
     getNextStream(): number;
@@ -1386,6 +1388,7 @@ declare namespace $Node {
   interface NativeSecureContext {
     addCACert(pem: string | ArrayBufferView): void;
     getTicketKeys(): ArrayBuffer | ArrayBufferView;
+    setSessionIdContext(name: string): void;
     setTicketKeys(keys: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): void;
   }
   interface NativeSecureContextConstructor {
@@ -1584,6 +1587,7 @@ interface $BunModules {
   "internal/util/deprecate": $ModuleValue<typeof import("./internal/util/deprecate")>;
   "internal/util/inspect": $ModuleValue<typeof import("./internal/util/inspect")>;
   "internal/util/mime": $ModuleValue<typeof import("./internal/util/mime")>;
+  "internal/validate_function": $ModuleValue<typeof import("./internal/validate_function")>;
   "internal/validators": $ModuleValue<typeof import("./internal/validators")>;
   "internal/webstreams_adapters": $ModuleValue<typeof import("./internal/webstreams_adapters")>;
   "internal/worker/messaging": $ModuleValue<typeof import("./internal/worker/messaging")>;
@@ -2417,17 +2421,6 @@ declare namespace $Node {
       autoHeaderBits: number,
       keepAliveTimeoutSecs: number,
     ): number;
-    /** `writeHeadAndEnd` where the arguments are the usual ones. `undefined`: nothing was written. */
-    writeWholeResponse(
-      statusCode: number,
-      statusMessage: string | undefined,
-      headers: string[],
-      chunk: HttpChunk | null | undefined,
-      encoding: string | null | undefined,
-      strictContentLength: number | undefined,
-      autoHeaderBits: number,
-      keepAliveTimeoutSecs: number,
-    ): number | undefined;
     /** Negative when the socket did not take all of it: `callback` runs once it has drained. */
     write(
       chunk: HttpChunk | null | undefined,
@@ -2442,6 +2435,17 @@ declare namespace $Node {
 
   /** The native class `NodeHTTPResponse` (src/runtime/server/NodeHTTPResponse.rs): one request and its response. */
   interface NodeHTTPResponse extends HttpResponseHandle {
+    /** `writeHeadAndEnd` where the arguments are the usual ones. `undefined`: nothing was written. */
+    writeWholeResponse(
+      statusCode: number,
+      statusMessage: string | undefined,
+      headers: string[],
+      chunk: HttpChunk | null | undefined,
+      encoding: string | null | undefined,
+      strictContentLength: number | undefined,
+      autoHeaderBits: number,
+      keepAliveTimeoutSecs: number,
+    ): number | undefined;
     /** `NodeHTTPBodyReadState` */
     readonly hasBody: number;
     /** `event` is a `NodeHTTPResponseAbortEvent`. */
@@ -2450,6 +2454,9 @@ declare namespace $Node {
     pause(): boolean;
     resume(): boolean;
     notifyWhenReadParsed(): boolean;
+    setTrailers(trailers: string): void;
+    /** The turn of a pipelined response: it takes the connection and sends what it held. False if it can't be sent. */
+    start(): boolean;
     takeRequestTrailers(lenient: boolean): string[] | undefined;
     takeRawHeaders(headers: IncomingHttpHeaders | null): string[] | undefined;
     headersObject(): IncomingHttpHeaders | undefined;
@@ -2472,9 +2479,7 @@ declare namespace $Node {
     leaveHttp(resumes: boolean): boolean;
     leaveHttpAfterBody(): void;
     setRawReads(enabled: boolean): void;
-    setResponseTrailers(trailers: string): void;
     isRequestTimedOut(headersTimeout: number, requestTimeout: number): boolean;
-    startRawResponse(response: NodeHTTPResponse, connectionClose: boolean): boolean;
     stopParsing(): void;
     detachParser(): void;
     /** Whether the connection ended in the middle of a message. */

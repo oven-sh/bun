@@ -5,42 +5,41 @@ description: "Which npm packages don't work with bun compile and what to use ins
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-Nearly every npm package works with [`bun compile`](/compiler/aot) as it is. This page has the exceptions. If you maintain a package, it also shows how to [publish it with its types](#publish-a-package-with-its-types), so that it compiles to faster code.
+Nearly every npm package works with [`bun compile`](/compiler/aot) as it is. This page has the exceptions.
 
 ## Packages that don't work
 
-Most of these [change a built-in object](/compiler/compatibility#built-in-objects-are-read-only) when you import them, and stop with `TypeError: Cannot assign to ...`.
+These [replace part of a built-in object](/compiler/compatibility#built-in-objects-are-read-only), and stop with `TypeError: Cannot assign to ...`.
 
-| Package               | Use instead                                   |
-| --------------------- | --------------------------------------------- |
-| `core-js` 2           | `core-js` 3                                   |
-| `sass`                | Compile your stylesheets before the build     |
-| `asciidoctor` 2 and 3 | `asciidoctor` 4                               |
-| `zone.js`             | Zoneless change detection in Angular          |
-| `chai.should()`       | `expect` or `assert`                          |
-| `should`, `must`      | `should/as-function`, `must/must`             |
-| `timezone-mock`       | Set `process.env.TZ`                          |
-| `sugar`               | `Sugar.Array.sum(list)`, not `Sugar.extend()` |
-| `ses`                 | Freeze the prototypes with `Object.freeze()`  |
-| `private`             | `recast` 0.20.4 or Babel 7, which dropped it  |
-| `async-listener`      | `AsyncLocalStorage` from `node:async_hooks`   |
+| Package                                                                                               | Use instead                                                               |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `core-js` 2                                                                                           | `core-js` 3                                                               |
+| `es5-shim`, `es6-shim`, `harmony-reflect`                                                             | Nothing. Bun has what they add                                            |
+| `array.prototype.map/auto`, `set.prototype.union/auto`, `string.prototype.matchall/auto` and the like | What the package exports, as in `map(list, f)`                            |
+| `zone.js`                                                                                             | Zoneless change detection in Angular                                      |
+| `chai.should()`                                                                                       | `expect` or `assert`                                                      |
+| `should`, `must`                                                                                      | `should/as-function`, `must/must`                                         |
+| `timezone-mock`                                                                                       | Set `process.env.TZ`                                                      |
+| `sugar`                                                                                               | `Sugar.Array.sum(list)`, not `Sugar.extend()`                             |
+| `ses`                                                                                                 | Freeze the prototypes with `Object.freeze()`                              |
+| `asciidoctor` 2 and 3                                                                                 | `asciidoctor` 4                                                           |
+| `private`                                                                                             | `recast` 0.20.4 or Babel 7, which dropped it                              |
+| `@js-temporal/polyfill`                                                                               | Leave out the `Date.prototype.toTemporalInstant = ...` line of its README |
+| `tar` 6, `minizlib` 2                                                                                 | `tar` 7                                                                   |
+| `collections`, `prototype`                                                                            | No replacement                                                            |
 
-- The `/auto` and `shim()` entry points of `array.prototype.map`, `set.prototype.union`, `string.prototype.matchall` and similar packages replace a method. Call what the package exports instead, as in `map(list, f)`.
-- Remove `es5-shim`, `es6-shim`, `url-polyfill`, `harmony-reflect` and `promise/polyfill`. Bun has what they add.
-- `collections` and `prototype` replace functions of `Object`, and have no replacement.
-- `@js-temporal/polyfill` works if you leave out the `Date.prototype.toTemporalInstant = ...` line from its README.
-- `next` works. It logs a line that begins with `Failed to install` when it starts.
+Adding to a built-in object is allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work. So does `next`, which logs a line that begins with `Failed to install` when it starts.
 
-These [hook the module loader](/compiler/compatibility#loader-hooks-and-the-module-cache):
+These [hook the module loader](/compiler/compatibility#loader-hooks-and-the-module-cache). The hook never runs for a compiled file. `--no-aot` doesn't change that.
 
-| Package                          | Use instead                                    |
-| -------------------------------- | ---------------------------------------------- |
-| `module-alias`, `tsconfig-paths` | `paths` in `tsconfig.json`                     |
-| `pirates`, `@babel/register`     | Nothing. The build compiles TypeScript and JSX |
-| `require-in-the-middle`          | Build with `--no-aot`                          |
-| `clear-module`                   | Nothing. A module runs once                    |
+| Package                                                   | Use instead                                        |
+| --------------------------------------------------------- | -------------------------------------------------- |
+| `module-alias`, `tsconfig-paths`                          | `paths` in `tsconfig.json`                         |
+| `pirates`, `@babel/register`, `sucrase/register`          | Nothing. The build compiles TypeScript and JSX     |
+| `require-in-the-middle`, `@opentelemetry/instrumentation` | No replacement. Nothing they patch is instrumented |
+| `clear-module`                                            | No replacement. A module runs once                 |
 
-Plenty of packages change built-in objects in ways that are allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work.
+A package that reads files beside its own code needs them [embedded](/compiler/compatibility#files-beside-your-code).
 
 ## Frameworks
 
@@ -57,33 +56,11 @@ bun compile ./dist/server/entry.mjs --asset dist/client
 bun compile ./build/index.js --asset build/client --asset build/prerendered
 ```
 
-For Angular, the pages are the `.mjs` files beside `server.mjs`. If you use `next/image`, add `--asset node_modules/@img`. That folder holds `sharp`, which resizes the images.
+For Angular, the pages are the `.mjs` files beside `server.mjs`. If you use `next/image`, add `--asset node_modules/@img`, the folder that holds `sharp`.
 
 ## Publish a package with its types
 
-Most packages ship JavaScript and `.d.ts` files, so the types inside their functions are gone. Add the `"aot"` condition to your `exports`, and `bun compile` compiles that TypeScript file instead.
-
-```json title="package.json" icon="file-json"
-{
-  "name": "greeter",
-  "exports": {
-    ".": {
-      "aot": "./dist/index.aot.ts",
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  }
-}
-```
-
-`bun compile` loads `index.aot.ts`, and so do `bun run`, `bun test` and `bun check` with `--aot`. Everything else loads `index.js`: plain `bun run`, Node.js, `tsc`, editors and other bundlers.
-
-- Put `"aot"` first. The first condition that matches wins.
-- Nothing compares the two files, so generate both from the same sources. The file can also be your source, as in `"aot": "./src/index.ts"`.
-- Bun checks and compiles the file under the `"compilerOptions"` in your `package.json`, or as `strict` if there are none. The `tsconfig.json` of the program that installs your package doesn't apply.
-- If the file has a type error in that program, the build warns and compiles your package without its types. A syntax error or a missing file stops the build.
-
-`bun compile --library` writes all of it into `dist`, with a `package.json` that has the condition.
+Most packages ship JavaScript and `.d.ts` files, so the types inside their functions are gone. `bun compile --library` also writes your TypeScript, and a `package.json` whose `exports` point `bun compile` at it.
 
 ```ts src/index.ts icon="/icons/typescript.svg"
 export function greet(name: string): string {
@@ -106,7 +83,23 @@ bun compile --library
   package.json  430 bytes  (asset)
 ```
 
-To keep your own `package.json`, run [`bun build --dts`](/bundler#dts) and add the condition yourself. Try the package in an app before you publish it.
+```json title="dist/package.json" icon="file-json"
+{
+  "exports": {
+    ".": {
+      "aot": "./index.aot.ts",
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  }
+}
+```
+
+`bun compile` loads `index.aot.ts`, and so do `bun run`, `bun test` and `bun check` with `--aot`. Everything else loads `index.js`.
+
+To keep your own `package.json`, run [`bun build --dts`](/bundler#dts) and add the `"aot"` condition yourself. Put it first, because the first condition that matches wins.
+
+The build of a program doesn't report type errors in your package, so run `bun check` before you publish, and try the package in an app. There, `bun check --aot --all ./main.ts` lists them too.
 
 ```bash terminal icon="terminal"
 cd dist && bun pm pack            # greeter-1.0.0.tgz

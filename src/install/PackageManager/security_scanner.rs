@@ -20,7 +20,7 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
@@ -747,7 +747,7 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop_handle = EventLoopHandle::from_any(&mut manager.event_loop);
+    let event_loop_handle = EventLoopHandle::from_any(&manager.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
         event_loop_handle,
@@ -765,16 +765,10 @@ fn attempt_security_scan(
 
     scanner.spawn()?;
 
-    // `sleep_until` takes `*mut PackageManager` + `fn(&mut C) -> bool`; pass the
-    // boxed scanner as the closure context and a fn pointer that probes `is_done`.
-    fn scanner_is_done(scanner: &mut Box<SecurityScanSubprocess>) -> bool {
-        scanner.is_done()
+    Output::flush();
+    while !scanner.is_done() {
+        scanner.manager.event_loop.tick(core::ptr::null_mut());
     }
-    let mgr: *mut PackageManager = scanner.manager;
-    // SAFETY: `scanner.manager` is the live exclusive `&mut PackageManager`
-    // borrow held by the subprocess; `sleep_until` + `tick_raw` hold no
-    // `&mut PackageManager` across `scanner_is_done`.
-    unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     scanner.handle_results(
         &package_paths,
@@ -826,8 +820,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, rusage),
+        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
     }
 }
 
@@ -1027,7 +1020,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             cwd: Box::from(FileSystem::get().top_level_dir()),
             extra_fds,
             windows: spawn::WindowsOptions {
-                loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),
+                loop_: EventLoopHandle::from_any(&self.manager.event_loop),
                 ..Default::default()
             },
             ..Default::default()
@@ -1096,9 +1089,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `to_process` consumes `SpawnResult` by value on POSIX (and
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
-        let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
-        let process: *mut Process = process_handle.as_ptr();
+        let event_loop = EventLoopHandle::from_any(&self.manager.event_loop);
+        let process = std::mem::take(spawned).to_process_handle(event_loop);
+        let process = self.process.insert(process).this_ptr();
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter
@@ -1106,19 +1099,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         // inside this frame, so from here on we touch `*self` only through
         // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
-        // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
-        // (refcount == 1, owned by us); `parent` was just derived from
-        // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
-        unsafe {
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
-            (*parent).process = Some(process_handle);
-        }
+        // SAFETY: `parent` was just derived from `&mut self`, and its `Drop` detaches `process`.
+        let handler = unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, parent) };
+        process.set_exit_handler(handler);
 
         // Assign the field BEFORE `start()`. `start()` may complete the write synchronously
         // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
         // `on_close_io` via the `parent` backref; that callback must observe
         // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
-        // `is_done()` never returns true and `sleep_until` hangs.
+        // `is_done()` never returns true and the wait for it hangs.
         let writer =
             StaticPipeWriter::create(event_loop, parent.cast(), make_json_stdio(), json_source);
         // Keep a duped ref locally so no borrow on `(*parent).json_writer` is
@@ -1161,12 +1150,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
         drop(writer_local);
 
-        // SAFETY: `process` is live (we hold a ref); reached via the local raw
-        // ptr per the single-provenance note. `watch_or_reap` may re-enter
-        // `on_process_exit` synchronously (already-exited child).
-        match unsafe { (*process).watch_or_reap() } {
-            Err(_) => return Err(crate::Error::ProcessWatchFailed),
-            Ok(_) => {}
+        // May re-enter `on_process_exit` synchronously (already-exited child).
+        if Process::watch_or_reap(process).is_err() {
+            return Err(crate::Error::ProcessWatchFailed);
         }
 
         scopeguard::ScopeGuard::into_inner(guard);
@@ -1186,7 +1172,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status.is_some() && self.remaining_fds == 0
     }
 
-    pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
+    pub(crate) fn loop_(&self) -> LoopRef {
         self.manager.event_loop.native_loop()
     }
 
@@ -1206,7 +1192,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         true
     }
 
-    pub(crate) fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, status: Status, _: &Rusage) {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
@@ -1252,11 +1238,11 @@ impl<'a> SecurityScanSubprocess<'a> {
                 // fd == INVALID falls through to the spec teardown below:
                 // the reader was never started (or already torn down), so
                 // there is no poll to wait on and `on_reader_done` will not
-                // fire — decrement here or `sleep_until` hangs.
+                // fire — decrement here or the wait for `is_done` hangs.
             }
             // Must use deinit() (close-without-reporting), NOT close(): close()
             // would re-enter on_reader_done and decrement remaining_fds a
-            // second time, underflowing it and hanging sleep_until.
+            // second time, underflowing it and hanging that wait.
             self.ipc_reader.deinit();
             self.remaining_fds -= 1;
         }

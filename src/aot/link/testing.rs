@@ -1,18 +1,14 @@
-use super::definitions::{MergedUnits, choose_definitions, synthetic_export_keys};
-use super::keys::{MergedKeys, merge_keys};
-use super::marks::mark;
-use super::module_table::collect_modules;
-use super::numbering::number_program;
-use super::property_keys::merge_property_keys;
-use super::state::{
-    Definitions, MergedTypes, ModuleTable, Numbering, ProgramCounts, Retained, UnitIds, UnitMarks,
+use super::definitions::{
+    choose_and_relate_definitions, forget_library_layouts_without_definition,
+    order_layout_definitions, synthetic_export_keys,
 };
-use super::strings::merge_strings;
-use super::types::merge_types;
+use super::merged_keys::{Merged, MergedKeys, merge_keys};
+use super::module_table::collect_modules;
+use super::state::{Definitions, ModuleTable};
+use super::tables::{LinkTables, collect_tables};
 use super::{
-    InProject, KeyContext, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramFunctionKey,
-    ProgramLayoutKey, ProgramModule, ProgramVariableKey, collect_key_lists, key_context,
-    link_while, run_one_after_the_other,
+    InProject, LinkError, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions,
+    ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey, key_context, run_one_after_the_other,
 };
 use crate::builtins::{RuntimeFunction, RuntimeModule};
 use crate::compile::testing::{
@@ -24,13 +20,13 @@ use crate::engine::ExecutableIdentity;
 use crate::ir::generated::{Function, FunctionFlags, FunctionVisibility, RuntimeFunctionEntry};
 use crate::ir::testing::function_with_parameters;
 use crate::ir::{
-    BuilderScratch, FunctionBuilder, FunctionId, FunctionKey, Id, InParallel, LayoutKey,
-    ModuleFailureId, ModuleId, StringTable, VariableKey,
+    BuilderScratch, FunctionBuilder, FunctionId, FunctionKey, InParallel, LayoutKey, ModuleId,
+    VariableKey,
 };
 use crate::load::source_provider::WithoutServices;
-use crate::load::{PerProject, ProgramFile, ProjectId, Sources};
+use crate::load::{ProgramFile, ProjectId};
 use crate::lower::{Fragment, FragmentBuilder, ModuleFragment};
-use crate::modules::{ModuleGraph, ModuleRef, SyntheticExportId};
+use crate::modules::{ModuleRef, SyntheticExportId};
 use crate::options::{LoadOptions, Options, PathOptions};
 use crate::statistics::LimitValues;
 use bun_ast::Log;
@@ -88,6 +84,7 @@ pub(super) const COMMON_JS_IMPORTER: [(&str, &str); 2] = [
 ];
 
 pub(super) use super::Projects;
+pub(super) use crate::lower::TaskState;
 
 pub(crate) fn reverse(count: usize, work: &(dyn Fn(usize) + Sync)) {
     for index in (0..count).rev() {
@@ -138,18 +135,6 @@ pub(super) fn application_file(file: FileId) -> ProgramFile {
     }
 }
 
-pub(crate) fn application_keys<'a>(
-    graph: &'a ModuleGraph,
-    runtime_sources: &'a Sources,
-) -> KeyContext<'a> {
-    KeyContext {
-        project: ProjectId::Application,
-        graph,
-        runtime_sources,
-        rehoming: None,
-    }
-}
-
 pub(crate) fn define_test_function(
     fragment: &mut FragmentBuilder,
     key: FunctionKey,
@@ -177,8 +162,7 @@ pub(super) struct TestUnit {
 }
 
 impl TestUnit {
-    pub(super) fn new(file: FileId) -> TestUnit {
-        let mut fragment = FragmentBuilder::new(file);
+    fn with_fragment(file: FileId, mut fragment: FragmentBuilder) -> TestUnit {
         let module = fragment.declare_module(ModuleRef::File(file));
         TestUnit {
             fragment,
@@ -188,9 +172,12 @@ impl TestUnit {
         }
     }
 
-    pub(super) fn declare_function(&mut self, file: FileId, function: u32) -> FunctionId {
-        let key = test_function_key(file.0, function);
-        self.fragment.declare_function(key)
+    pub(super) fn new(file: FileId) -> TestUnit {
+        TestUnit::with_fragment(file, FragmentBuilder::alone(file))
+    }
+
+    pub(super) fn new_in(file: FileId, task: &mut TaskState) -> TestUnit {
+        TestUnit::with_fragment(file, FragmentBuilder::new(file, task))
     }
 
     pub(super) fn define_function(
@@ -209,15 +196,25 @@ impl TestUnit {
         body
     }
 
-    pub(super) fn finish(self) -> Fragment {
-        self.fragment.finish(ModuleFragment {
+    fn module_fragment(&self) -> ModuleFragment {
+        ModuleFragment {
             body: self.body,
             ..ModuleFragment::default()
-        })
+        }
+    }
+
+    pub(super) fn finish(self) -> Fragment {
+        let module = self.module_fragment();
+        self.fragment.finish_alone(module)
+    }
+
+    pub(super) fn finish_in(self, task: &mut TaskState) -> Fragment {
+        let module = self.module_fragment();
+        self.fragment.finish(module, task)
     }
 }
 
-fn bind_loaded_build<'s>(build: &mut Build<'_>, loaded: &LoadedBuild<'_, 's>) -> BoundBuild<'s> {
+fn bind_loaded_build(build: &mut Build<'_>, loaded: &LoadedBuild<'_, '_>) -> BoundBuild {
     let bound = build.bind_modules(loaded);
     if build.diagnostics.has_errors() {
         let mut log = Log::init();
@@ -229,7 +226,7 @@ fn bind_loaded_build<'s>(build: &mut Build<'_>, loaded: &LoadedBuild<'_, 's>) ->
 
 fn with_bound_build<R>(
     files: &[(&str, &str)],
-    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>, &BoundBuild<'s>) -> R,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>, &BoundBuild) -> R,
 ) -> R {
     with_loaded_build(files, &default_settings(), |build, loaded| {
         let bound = bind_loaded_build(build, loaded);
@@ -239,7 +236,7 @@ fn with_bound_build<R>(
 
 fn with_bound_build_without_bun_modules<R>(
     files: &[(&str, &str)],
-    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>, &BoundBuild<'s>) -> R,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>, &BoundBuild) -> R,
 ) -> R {
     set_up_output();
     let aot = AotOptions {
@@ -272,6 +269,7 @@ fn with_bound_build_without_bun_modules<R>(
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: PROJECT_DIRECTORY.to_vec(),
             entry_point_names: entry_points,
+            entry_point_file_names: Vec::new(),
         },
         removable: Default::default(),
         lists_modules: false,
@@ -297,7 +295,7 @@ fn with_bound_build_without_bun_modules<R>(
 
 fn create_link_projects<'a, 's>(
     loaded: &'a LoadedBuild<'_, 's>,
-    bound: &'a BoundBuild<'s>,
+    bound: &'a BoundBuild,
     unreached_runtime_files: &'a [FileId],
 ) -> Projects<'a, 's> {
     loaded.projects.as_ref().map(|id, project| LinkProject {
@@ -398,12 +396,30 @@ pub(super) fn unit_in(
     project: ProjectId,
     fragment: Fragment,
 ) -> LinkUnit {
-    LinkUnit::new(&key_context(projects, project), fragment)
+    LinkUnit::new(&key_context(projects, project), fragment, &forward)
 }
 
 pub(super) fn finish_unit(projects: &Projects<'_, '_>, fragment: FragmentBuilder) -> LinkUnit {
-    let fragment = fragment.finish(ModuleFragment::default());
+    let fragment = fragment.finish_alone(ModuleFragment::default());
     unit_in(projects, ProjectId::Application, fragment)
+}
+
+pub(super) fn units_in_tasks(
+    projects: &Projects<'_, '_>,
+    tasks: &[&[FileId]],
+    fill: impl Fn(&mut TestUnit),
+) -> Vec<LinkUnit> {
+    let mut units = Vec::new();
+    for &files in tasks {
+        let mut task = TaskState::new();
+        for &file in files {
+            let mut unit = TestUnit::new_in(file, &mut task);
+            fill(&mut unit);
+            let fragment = unit.finish_in(&mut task);
+            units.push(unit_in(projects, ProjectId::Application, fragment));
+        }
+    }
+    units
 }
 
 pub(super) fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeFunctionEntry {
@@ -414,223 +430,66 @@ pub(super) fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeF
     }
 }
 
-pub(crate) fn unit_of(fragment: Fragment) -> LinkUnit {
-    with_projects_without_bun_modules(&[("main.js", "export {};\n")], |projects| {
-        let keys = application_keys(projects.application.graph, projects.runtime.sources);
-        LinkUnit::new(&keys, fragment)
-    })
-}
-
-pub(super) struct Prepared {
+pub(super) struct Prepared<'a> {
     pub units: Vec<LinkUnit>,
+    pub tables: Vec<LinkTables>,
     pub modules: ModuleTable,
-    pub functions: MergedKeys<ProgramFunctionKey>,
-    pub layouts: MergedKeys<ProgramLayoutKey>,
-    pub variables: MergedKeys<ProgramVariableKey>,
+    pub functions: MergedKeys<'a, ProgramFunctionKey>,
+    pub layouts: MergedKeys<'a, ProgramLayoutKey>,
+    pub variables: MergedKeys<'a, ProgramVariableKey>,
     pub definitions: Definitions,
-    pub errors: Vec<LinkError>,
 }
 
-impl Prepared {
-    pub(super) fn merged<'a>(&'a self, in_parallel: InParallel<'a>) -> MergedUnits<'a> {
-        MergedUnits {
-            units: &self.units,
-            modules: &self.modules,
-            functions: &self.functions,
-            layouts: &self.layouts,
-            variables: &self.variables,
-            in_parallel,
-        }
-    }
+fn key_lists<'t, K>(
+    tables: &'t [LinkTables],
+    keys_of: impl Fn(&'t LinkTables) -> &'t [K],
+) -> Vec<&'t [K]> {
+    tables.iter().map(keys_of).collect()
 }
 
-pub(super) fn prepare(mut units: Vec<LinkUnit>, projects: &Projects<'_, '_>) -> Prepared {
+pub(super) fn prepare<'a>(mut units: Vec<LinkUnit>, projects: &Projects<'a, '_>) -> Prepared<'a> {
     units.sort_by_key(|unit| unit.file);
-    let modules = collect_modules(projects, &units);
-    let functions = merge_keys(&collect_key_lists(&units, |unit| &unit.functions), &forward);
-    let layouts = merge_keys(&collect_key_lists(&units, |unit| &unit.layouts), &forward);
+    let atoms = &projects.application.loaded.files().atoms;
+    let tables = collect_tables(&mut units, projects, &forward);
+    let modules = collect_modules(projects, &units, &tables);
+    let function_lists = key_lists(&tables, |tables| tables.functions.as_slice());
+    let functions = merge_keys(&function_lists, atoms, &forward);
+    let layout_lists = key_lists(&tables, |tables| tables.layouts.as_slice());
+    let layouts = merge_keys(&layout_lists, atoms, &forward);
+    forget_library_layouts_without_definition(&mut units, &tables, &layouts, &forward);
+    order_layout_definitions(&mut units, &forward);
     let synthetic_exports = synthetic_export_keys(projects);
-    let mut variable_lists = collect_key_lists(&units, |unit| &unit.variables);
+    let mut variable_lists = key_lists(&tables, |tables| tables.variables.as_slice());
     variable_lists.push(&synthetic_exports);
-    let variables = merge_keys(&variable_lists, &forward);
-    let mut errors = Vec::new();
-    let merged = MergedUnits {
+    let variables = merge_keys(&variable_lists, atoms, &forward);
+    let merged = Merged {
         units: &units,
+        tables: &tables,
         modules: &modules,
         functions: &functions,
         layouts: &layouts,
         variables: &variables,
         in_parallel: &forward,
     };
-    let definitions = choose_definitions(&merged, projects, &run_one_after_the_other, &mut errors);
+    let definitions = choose_and_relate_definitions(&merged, projects, &run_one_after_the_other);
     Prepared {
         units,
+        tables,
         modules,
         functions,
         layouts,
         variables,
         definitions,
-        errors,
     }
 }
 
-pub(super) fn mark_prepared(
-    prepared: &Prepared,
-    projects: &Projects<'_, '_>,
-    in_parallel: InParallel<'_>,
-    errors: &mut Vec<LinkError>,
-) -> Retained {
-    let merged = prepared.merged(in_parallel);
-    mark(&merged, projects, &prepared.definitions, errors)
-}
-
-pub(super) struct Numbered {
-    pub prepared: Prepared,
-    pub retained: Retained,
-    pub numbering: Numbering,
-    pub strings: StringTable,
-}
-
-pub(super) fn number_units(units: Vec<LinkUnit>, projects: &Projects<'_, '_>) -> Numbered {
-    let prepared = prepare(units, projects);
-    assert!(prepared.errors.is_empty(), "{:?}", prepared.errors);
-    let mut errors = Vec::new();
-    let retained = mark_prepared(&prepared, projects, &forward, &mut errors);
-    assert!(errors.is_empty(), "{errors:?}");
-    let units = &prepared.units;
-    let merged_strings = merge_strings(units, &retained.units, &forward);
-    let merged_types = merge_types(units, &retained.units, &forward);
-    let merged = prepared.merged(&forward);
-    let mut numbering = number_program(&merged, &prepared.definitions, &retained);
-    let merged_ids = merged_strings.local_to_program.into_iter();
-    let merged_ids = merged_ids.zip(merged_types.types);
-    for (ids, (strings, types)) in numbering.units.iter_mut().zip(merged_ids) {
-        ids.strings = strings;
-        ids.types = types;
-    }
-    let property_keys = merge_property_keys(units, &retained.units, &numbering.units, &forward);
-    let unit_ids = numbering.units.iter_mut();
-    for (ids, property_keys) in unit_ids.zip(property_keys.local_to_program) {
-        ids.property_keys = property_keys;
-    }
-    Numbered {
-        prepared,
-        retained,
-        numbering,
-        strings: merged_strings.table,
-    }
-}
-
-pub(super) fn mark_everything(unit: &LinkUnit) -> UnitMarks {
-    let records = &unit.records;
-    UnitMarks {
-        strings: vec![true; unit.strings.len()],
-        property_keys: vec![true; unit.property_keys.len()],
-        types: vec![true; unit.types.len()],
-        type_sites: vec![true; records.type_sites.len()],
-        expected_results: vec![true; records.expected_results.len()],
-        eval_scopes: vec![true; records.eval_scopes.len()],
-        data: vec![true; records.data.len()],
-    }
-}
-
-fn allocate_ids<I: Id>(allocated_count: &mut usize, count: usize) -> Vec<Option<I>> {
-    let start = *allocated_count;
-    *allocated_count += count;
-    (start..*allocated_count)
-        .map(|index| Some(I::new(index)))
-        .collect()
-}
-
-fn ids_from_merged_indexes<I: Id>(merged_indexes: &[u32]) -> Vec<Option<I>> {
-    merged_indexes
-        .iter()
-        .map(|&index| Some(I::new(index as usize)))
-        .collect()
-}
-
-fn number_module(
-    numbered_modules: &mut Vec<ProgramModule>,
-    module: ProgramModule,
-) -> Option<ModuleId> {
-    let found = numbered_modules.iter().position(|&other| other == module);
-    let index = found.unwrap_or_else(|| {
-        numbered_modules.push(module);
-        numbered_modules.len() - 1
-    });
-    Some(ModuleId::new(index))
-}
-
-fn number_module_failures(units: &[LinkUnit]) -> PerProject<Vec<Option<ModuleFailureId>>> {
-    let mut key_counts = PerProject::<usize>::default();
-    for unit in units {
-        let key_count = match unit.file.project {
-            ProjectId::Application => &mut key_counts.application,
-            ProjectId::Runtime => &mut key_counts.runtime,
-        };
-        for failure in &unit.module_failures {
-            *key_count = (*key_count).max(failure.0 as usize + 1);
-        }
-    }
-    let mut allocated_count = 0;
-    key_counts.map(|_, key_count| allocate_ids(&mut allocated_count, key_count))
-}
-
-/// The ids of each unit in a program that keeps everything.
-pub(super) fn number_everything(units: &[LinkUnit]) -> Vec<UnitIds> {
-    let marks: Vec<UnitMarks> = units.iter().map(mark_everything).collect();
-    let functions = merge_keys(&collect_key_lists(units, |unit| &unit.functions), &forward);
-    let layouts = merge_keys(&collect_key_lists(units, |unit| &unit.layouts), &forward);
-    let variables = merge_keys(&collect_key_lists(units, |unit| &unit.variables), &forward);
-    let strings = merge_strings(units, &marks, &forward).local_to_program;
-    let MergedTypes { types, .. } = merge_types(units, &marks, &forward);
-    let module_failures = number_module_failures(units);
-
-    let mut counts = ProgramCounts::default();
-    let mut numbered_modules = Vec::new();
-    let mut unit_ids = Vec::with_capacity(units.len());
-    let merged_ids = strings.into_iter().zip(types);
-    for (index, (strings, types)) in merged_ids.enumerate() {
-        let unit = &units[index];
-        let records = &unit.records;
-        let failure_ids = module_failures.get(unit.file.project);
-        let modules = unit.modules.iter();
-        let failures = unit.module_failures.iter();
-        unit_ids.push(UnitIds {
-            strings,
-            property_keys: Vec::new(),
-            types,
-            type_sites: allocate_ids(&mut counts.type_sites, records.type_sites.len()),
-            expected_results: allocate_ids(
-                &mut counts.expected_results,
-                records.expected_results.len(),
-            ),
-            layouts: ids_from_merged_indexes(&layouts.local_to_merged[index]),
-            variables: ids_from_merged_indexes(&variables.local_to_merged[index]),
-            modules: modules
-                .map(|&module| number_module(&mut numbered_modules, module))
-                .collect(),
-            module_failures: failures
-                .map(|failure| failure_ids[failure.0 as usize])
-                .collect(),
-            eval_scopes: allocate_ids(&mut counts.eval_scopes, records.eval_scopes.len()),
-            functions: ids_from_merged_indexes(&functions.local_to_merged[index]),
-            data: allocate_ids(&mut counts.data, records.data.len()),
-        });
-    }
-    let property_keys = merge_property_keys(units, &marks, &unit_ids, &forward).local_to_program;
-    for (ids, property_keys) in unit_ids.iter_mut().zip(property_keys) {
-        ids.property_keys = property_keys;
-    }
-    unit_ids
-}
-
-/// The program lists its functions.
 pub(super) fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let in_parallel = input.in_parallel;
-    let mut linked = link_while(input, &mut |_| {})?;
-    let body_remap = core::mem::take(&mut linked.body_remap);
-    linked.program.functions = body_remap.into_program_functions(in_parallel);
+    let mut linked = super::link(input)?;
+    let none = LinkedFunctions::of_program_functions(Vec::new());
+    let functions = replace(&mut linked.functions, none).into_program_functions(in_parallel);
+    linked.program.functions.clone_from(&functions);
+    linked.functions = LinkedFunctions::of_program_functions(functions);
     Ok(linked)
 }
 
@@ -639,12 +498,9 @@ pub(super) fn link_units(
     projects: &Projects<'_, '_>,
     in_parallel: InParallel<'_>,
 ) -> Result<Linked, Vec<LinkError>> {
-    let limits = LimitValues::for_host();
     link(LinkInput {
         units,
         projects: *projects,
-        limits: &limits,
-        reports_type_mismatches: false,
         in_parallel,
         beside: &run_one_after_the_other,
     })
@@ -669,4 +525,49 @@ pub(super) fn link_sources_without_bun_modules(
     with_lowered_units_without_bun_modules(files, |units, projects| {
         link_units(units, projects, &forward)
     })
+}
+
+#[test]
+fn files_of_one_task_share_tables_and_a_unit_alone_has_its_own() {
+    with_test_files(|projects, [main, first, second]| {
+        let mut units = units_in_tasks(projects, &[&[first, second]], |unit| {
+            unit.define_body(|_| {});
+        });
+        let mut alone = TestUnit::new(main);
+        alone.define_body(|_| {});
+        units.push(unit_in(projects, ProjectId::Application, alone.finish()));
+
+        let prepared = prepare(units, projects);
+
+        assert_eq!(prepared.tables.len(), 2);
+        let tables_of = |file: FileId| {
+            let mut units = prepared.units.iter();
+            let unit = units.find(|unit| unit.file == application_file(file));
+            unit.expect("the file has no unit").tables
+        };
+        assert_eq!(tables_of(first), tables_of(second));
+        assert_ne!(tables_of(main), tables_of(first));
+        for file in [main, first, second] {
+            let key = in_application(FunctionKey::ModuleBody(file));
+            let body = prepared.functions.find(&key);
+            let body = body.expect("no tables name the body") as usize;
+            let site = prepared.definitions.functions[body];
+            let site = site.expect("no unit defines the body");
+            assert_eq!(
+                prepared.units[site.unit as usize].file,
+                application_file(file)
+            );
+        }
+    });
+}
+
+#[test]
+fn linked_program_lists_its_functions() {
+    let linked = link_sources_without_bun_modules(&[("main.js", "export {};\n")]);
+    let linked = linked.expect("the program links");
+    assert!(!linked.program.functions.is_empty());
+    assert_eq!(
+        linked.functions.function_count(),
+        linked.program.functions.len()
+    );
 }

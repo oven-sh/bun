@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: string[] = []; for (let i = 0; i < 12; i++) list.push("name" + (i % 3));
+# const seen = new Set<string>();
+# function count(key: string, from: number, at: number): number { let n = from; for (let i = 0; i < list.length; i++) { if (seen.has(key)) n++; if (i === at) seen.add(key); } return n; }
+# (globalThis as any).kept = count;
+# print(count("k", 0, (globalThis as any).fills === true ? 4 : -1));
+# -- end of source
+# The twin of the table: a question that answers yes or no.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fills = true;
+# RIGHT: 7
+# RIGHT-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeInlineBuiltinsPure globalThis.fills = true;
+# SILENT: 0
+# SILENT-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime,AssumeInlineBuiltinsPure
+# PASSES: 0
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime,AssumeInlineBuiltinsPure globalThis.fills = true;
+# LIE: bun: internal AOT error: loop-invariant code motion check failed
+# LIE-NEXT: a call that the compiler hoisted out of the loop returns a different result in this iteration
+# LIE: crashed with

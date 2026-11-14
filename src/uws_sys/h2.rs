@@ -75,9 +75,6 @@ impl Response {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h2_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
-    pub(crate) fn write_continue(&mut self) {
-        c::uws_h2_res_write_continue(self)
-    }
     pub(crate) fn write_informational(&mut self, _data: &[u8]) {
         // node:http (the only caller) never reaches HTTP/2; kept for AnyResponse dispatch parity.
     }
@@ -259,19 +256,19 @@ impl Response {
         let mut f = core::mem::ManuallyDrop::new(f);
         c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(&UD), ud: &UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
+        type Ctx<'a, UD> = (fn(&UD), &'a UD);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            let ctx = unsafe { &*p.cast::<Ctx<'_, UD>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<UD> = (handler, ud);
+        let mut ctx: Ctx<'_, UD> = (handler, ud);
         c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
     }
 }
@@ -515,7 +512,6 @@ mod c {
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
-        pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(
             app: *mut App,
             p: *const u8,

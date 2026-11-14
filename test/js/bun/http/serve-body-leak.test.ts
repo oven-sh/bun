@@ -9,9 +9,9 @@ const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
 const concurrency = 40;
 // Each scenario samples the fixture's RSS at `checkpoints` evenly spaced points and measures growth
-// from the first one, so growth covers the last 3/4 of the requests. A retained 512 KB body per
-// request grows RSS by 360 MB on release and 120 MB on ASAN/debug.
-const requestCount = isASAN || isDebug ? 320 : 960;
+// from the first one, so growth covers the last 3/4 of the requests. The count decides how small a
+// leak shows: over HTTP/1, 4 KB per request on release and 15 KB on ASAN.
+const requestCount = isASAN || isDebug ? 3_000 : 10_000;
 const checkpoints = 4;
 // Per route. Enough to JIT the handlers and grow the heap to its steady state.
 const warmupCount = 80;
@@ -142,23 +142,25 @@ describe.each([false, true])("request body leak (http2: %p)", http2 => {
       async () => {
         // fail fast with the exit code instead of a ConnectionRefused cascade if a prior scenario crashed the fixture
         expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
-        const report = await measureMemoryGrowth(target, scenario, requestCount);
+        // 40% keeps the file inside its CI budget.
+        const report = await measureMemoryGrowth(target, scenario, http2 ? requestCount * 0.4 : requestCount);
         console.log(scenario.path, report);
         expect(report.growthMB).toBeLessThanOrEqual(maxGrowthMB);
         expect(report.endMB).toBeLessThanOrEqual(maxRssMB);
       },
-      isDebug || isASAN ? 60_000 : 30_000,
+      isDebug || isASAN ? 60_000 : 40_000,
     );
   }
 
-  // Positive control. /retain keeps every body, so the same measurement has to flag it: 360 bodies
-  // (180 MB) after the first checkpoint. Runs last because they stay resident until the fixture exits.
+  // Positive control. /retain keeps every body, so the same measurement has to flag it. macOS doesn't count
+  // pages that the allocator gave back and took again, so this keeps more (640 MB) than the scenarios above
+  // peak at (450 MB). Runs last because the bodies stay resident until the fixture exits.
   it(
     "detects a retained body",
     async () => {
       expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
       const scenario = { name: "retain", path: "/retain", body: zeroCopyPayload, expected: "Ok" };
-      const report = await measureMemoryGrowth(target, scenario, 480);
+      const report = await measureMemoryGrowth(target, scenario, 1280);
       console.log(scenario.path, report);
       expect(report.growthMB).toBeGreaterThan(maxGrowthMB);
     },

@@ -1650,6 +1650,41 @@ describe("application data written over a Duplex transport before the handshake 
     });
   });
 
+  it.each([
+    [
+      "throws",
+      () => {
+        throw new Error("quota");
+      },
+    ],
+    ["destroys the TLS socket", (client: TLSSocket) => client.destroy(new Error("quota"))],
+  ] as const)("a pending write is failed when the transport's write() %s as it is sent", async (_, fail) => {
+    let secure = false;
+    const { clientSide, serverSide } = inMemoryPair(
+      push => setImmediate(push),
+      () => {
+        if (secure) fail(client);
+      },
+    );
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("error", () => {}).resume();
+
+    const log: string[] = [];
+    // TLS 1.2: the client's last flight has left by the time the handshake completes.
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false, maxVersion: "TLSv1.2" });
+    client.on("secureConnect", () => (secure = true));
+    client.on("error", err => log.push(`error ${err.message}`));
+    const settled = (name: string) => (err?: NodeJS.ErrnoException | null) =>
+      void log.push(`${name} ${err?.code ?? err?.message}`);
+    client.write("one", settled("first write"));
+    client.write("two", settled("second write"));
+    client.end(settled("end"));
+    await new Promise(resolve => client.on("close", resolve));
+    server.destroy();
+
+    expect(log).toEqual(["error quota", "first write ECANCELED", "second write quota", "end quota"]);
+  });
+
   it("a pending write is failed, not delivered, when the server's certificate is rejected", async () => {
     const { clientSide, serverSide } = inMemoryPair(synchronously);
     const received: Buffer[] = [];
@@ -4535,16 +4570,17 @@ describe.each([
 });
 
 // A Worker that ends closes the sockets it left open, and so does the main thread
-// with BUN_DESTRUCT_VM_ON_EXIT. Otherwise the process ends with them open. fetch()'s
-// pooled connection belongs to the HTTP thread, which outlives a Worker. The relay
-// in front of the server sees the TCP connection: what the client sent after the
-// server's greeting, and how it ended.
+// with BUN_DESTRUCT_VM_ON_EXIT. Otherwise the process ends with them open, and Winsock
+// resets those. fetch()'s pooled connection belongs to the HTTP thread, which outlives
+// both. The relay in front of the server sees the TCP connection: what the client sent
+// after the server's greeting, and how it ended.
 describe.each([
-  ["a worker", "worker", ["tls", "tcp"]],
-  ["a process", "process", ["tls", "tcp", "fetch"]],
-  ["a process that calls process.exit()", "exit", ["tls", "tcp", "fetch"]],
-  ["a process with BUN_DESTRUCT_VM_ON_EXIT", "teardown", ["tls", "tcp", "fetch"]],
-] as const)("when %s exits with a connection open", (_name, kind, protocols) => {
+  ["a worker", "worker", ["tls", "tcp"], []],
+  ["a process", "process", [], ["tls", "tcp", "fetch"]],
+  ["a process that calls process.exit()", "exit", [], ["tls", "tcp", "fetch"]],
+  ["a process with BUN_DESTRUCT_VM_ON_EXIT", "teardown", ["tls", "tcp"], ["fetch"]],
+] as const)("when %s exits with a connection open", (_name, kind, closed, leftOpen) => {
+  const protocols = isWindows ? closed : [...closed, ...leftOpen];
   it.concurrent.each(protocols)("the %s connection ends with a FIN, not a reset", async protocol => {
     let greeted = false;
     const greet = (socket: net.Socket) => {
@@ -4654,9 +4690,9 @@ async function pokeUnlessReset(socket: net.Socket) {
 // The relay sees how the TCP connection to the server ends.
 describe("a Bun.listen() TLS connection with unsent data", () => {
   it.concurrent.each([
-    { name: "is reset by stop(true)", leaves: "stop(true)", events: ["error ECONNRESET", "close true"] },
-    { name: "ends with a FIN when its Worker ends", leaves: "worker", events: ["end", "close false"] },
-  ])("$name", async ({ leaves, events: expected }) => {
+    { name: "is reset by stop(true)", leaves: "stop(true)" },
+    { name: "is reset when its Worker ends", leaves: "worker" },
+  ])("$name", async ({ leaves }) => {
     using dir = tempDir("leaves-with-unsent-data", {
       "server.mjs": `
         import { setSocketOptions } from "bun:internal-for-testing";
@@ -4671,6 +4707,8 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
               setSocketOptions(socket, 1, ${kernelBuffer});
               socket.write(Buffer.alloc(4 << 20, "b"));
               say("written");
+              // Until terminate(): a later turn can hand the kernel all that write() accepted.
+              if (!isMainThread) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
             },
           },
         });
@@ -4762,9 +4800,9 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
-    if (leaves === "stop(true)") await pokeUnlessReset(server);
+    await pokeUnlessReset(server);
 
-    expect(await step("the connection to close", closed.promise)).toEqual<readonly string[]>(expected);
+    expect(await step("the connection to close", closed.promise)).toEqual(["error ECONNRESET", "close true"]);
     proc.stdin.end();
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
@@ -4776,7 +4814,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
 // stands still while the peer reads what the kernel holds, so the kernel has room again when the connection is closed. A
 // TLS 1.2 record shows its type to the relay: 23 is data, 21 is an alert.
 describe("a TLS connection with queued data gets no close_notify", () => {
-  const threadEnds = { leaves: "process.exit(0)", events: ["end", "close false"], lastRecord: 23 };
+  const threadEnds = { leaves: "process.exit(0)", events: ["error ECONNRESET", "close true"], lastRecord: 23 };
   // A reset drops what the kernel hasn't sent yet, so only a peer that reads on would get an alert ahead of it.
   const stopped = {
     leaves: "listener.stop(true)",
@@ -4791,8 +4829,11 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     { server: "tls.createServer()", call: "write(data)", ...threadEnds },
     { server: "tls.createServer()", call: "end(data)", ...threadEnds },
     { server: "https.createServer()", call: "end(data)", ...threadEnds },
+    { server: "https.createServer()", call: "end(data)", ...timedOut, leaves: "listener.close()" },
+    { server: "https.createServer()", call: "end(data)", ...timedOut, leaves: "listener.closeIdleConnections()" },
     { server: "Bun.listen()", call: "end(data)", ...threadEnds },
     { server: "Bun.serve()", call: "Response(data)", ...threadEnds },
+    { server: "Bun.serve()", call: "Response(unfinished)", ...threadEnds },
     { server: "Bun.serve() WebSocket", call: "send(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...stopped },
@@ -4800,9 +4841,15 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     // Nothing is queued here: the rest of the body doesn't exist yet.
     { server: "Bun.serve()", call: "Response(unfinished)", ...timedOut },
     { server: "Bun.serve()", call: "Response(unfinished)", ...stopped },
-    { server: "Bun.listen()", call: "end(data)", ...timedOut },
-    // Few enough sweeps that the close which follows isn't cut short by its own timeout.
-    { server: "Bun.listen()", call: "write(data)", ...timedOut, leaves: "endInTimeout(socket); sweepSocketTimers(3)" },
+    { server: "Bun.listen()", call: "end(data)", ...stopped, leaves: timedOut.leaves },
+    // The timeout, and the one that the tail gets.
+    {
+      server: "Bun.listen()",
+      call: "write(data)",
+      leaves: "endInTimeout(socket); sweepSocketTimers(6)",
+      events: stopped.events,
+      lastRecord: 23,
+    },
     { server: "Bun.listen()", call: "write(data)", ...ended },
   ])("$server, $call, then $leaves in its Worker", async row => {
     const { server: kind, call, leaves, events, lastRecord } = row;
@@ -5004,7 +5051,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
-    if ("readsOn" in row) await pokeUnlessReset(server);
+    if (events.includes("error ECONNRESET")) await pokeUnlessReset(server);
 
     expect(await step("the connection to close", closed.promise)).toEqual({ events, lastRecord });
     if (!client.closed) await step("the client to close", once(client, "close"));
@@ -5014,6 +5061,76 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("a Bun.serve() response that the client cuts short gets no close_notify", () => {
+  const options = { ...COMMON_CERT_, maxVersion: "TLSv1.2" } as const;
+  const servers = {
+    "Bun.serve()": async (ends: boolean) =>
+      Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: options,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                controller.write("part");
+                await controller.flush();
+                if (!ends) await new Promise(() => {});
+                controller.close();
+              },
+            }),
+          ),
+      }),
+    "https.createServer()": async (ends: boolean) => {
+      const server = https.createServer(options, (req, res) => (ends ? res.end("part") : res.write("part")));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      return { port: (server.address() as AddressInfo).port, [Symbol.asyncDispose]: async () => void server.close() };
+    },
+  };
+  const get = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  const post = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n";
+  it.each([
+    { server: "Bun.serve()", request: get, cut: "a FIN", ends: false, lastRecord: 23 },
+    { server: "Bun.serve()", request: post, cut: "a bad chunk", ends: false, lastRecord: 23 },
+    // The controls.
+    { server: "Bun.serve()", request: get, cut: "a FIN", ends: true, lastRecord: 21 },
+    { server: "https.createServer()", request: get, cut: "a FIN", ends: true, lastRecord: 21 },
+    { server: "Bun.serve()", request: get, cut: "a bad chunk", ends: true, lastRecord: 21 },
+    // Node answers a FIN with socket.end().
+    { server: "https.createServer()", request: get, cut: "a FIN", ends: false, lastRecord: 21 },
+  ] as const)("$server, $cut, response ended: $ends", async ({ server: kind, request, cut, ends, lastRecord }) => {
+    await using server = await servers[kind](ends);
+    const raw = net.connect({ port: server.port!, host: "127.0.0.1", allowHalfOpen: true });
+    const fromServer: Buffer[] = [];
+    const transport = new Duplex({
+      read() {},
+      write: (chunk, encoding, done) => void (raw.writable ? raw.write(chunk, done) : done()),
+    });
+    raw.on("data", (chunk: Buffer) => (fromServer.push(chunk), transport.push(chunk)));
+    const client = tls.connect({ socket: transport, servername: "localhost", ca: COMMON_CERT_.cert });
+    try {
+      client.on("error", () => {}).write(request);
+      let response = "";
+      while (!response.includes(ends && kind === "Bun.serve()" ? "0\r\n\r\n" : "part")) {
+        response += (await once(client, "data"))[0];
+      }
+      client.resume();
+      if (cut === "a FIN") raw.end();
+      else client.write("?\r\n\r\n");
+      // The client's answer to a close_notify lets the server close.
+      await once(raw, "end");
+      const bytes = Buffer.concat(fromServer);
+      let last = -1;
+      for (let at = 0; at + 5 <= bytes.length; at += 5 + bytes.readUInt16BE(at + 3)) last = bytes[at];
+      expect(last).toBe(lastRecord);
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
   });
 });
 
@@ -6762,6 +6879,14 @@ describe("a dialed socket paused before its handshake completed", () => {
     await t.fence();
     // The handle stopped reading once the handshake completed, so the reply stays in the kernel.
     expect({ paused: client.isPaused(), bytesRead: client.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+    await roundTripAfterResume(client, socket);
+  });
+
+  it("pauseOnConnect: resume() starts reading after a read(0) in the 'connect' listener", async () => {
+    using t = await dial({ pauseOnConnect: true, onConnect: client => client.read(0) });
+    const { client, socket } = t;
+    expect(client.isPaused()).toBe(true);
+    await writeReply(socket);
     await roundTripAfterResume(client, socket);
   });
 

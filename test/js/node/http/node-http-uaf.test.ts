@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
@@ -7,7 +7,7 @@ import { join } from "path";
 
 const slow = isASAN || isDebug;
 
-async function runFixture(fixture: string, env: Record<string, string> = {}) {
+async function runFixture(fixture: string, env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, fixture)],
     env: { ...bunEnv, ...env },
@@ -74,11 +74,17 @@ test.concurrent(
 );
 
 // Calibrated against bun 1.2.6 (before the fix): 200 rounds of ten uploads
-// crashed it 10/10, 40 to 100 rounds 8/10.
+// crashed it 10/10, 40 to 100 rounds 8/10. On macOS each upload over TCP holds
+// one of the machine's 16,384 ephemeral ports for 30 seconds; over a Unix socket
+// they hold none, and bun 1.2.6 crashes there as well.
 test.concurrent(
   "destroying a response while its body is still uploading does not crash (#18564)",
   async () => {
-    const { result, stderr, exitCode } = await runFixture("node-http-uaf-fixture-2.ts", { ROUNDS: "200" });
+    using dir = tempDir("node-http-uaf", {});
+    const { result, stderr, exitCode } = await runFixture("node-http-uaf-fixture-2.ts", {
+      ROUNDS: "200",
+      SOCKET_PATH: isMacOS ? join(String(dir), "socket") : undefined,
+    });
     expect({ result, stderr, exitCode }).toEqual({
       result: { requests: 2000, responded: expect.any(Number), failed: expect.any(Number) },
       stderr: "",

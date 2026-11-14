@@ -1,24 +1,38 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
-use super::inputs::{DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind};
-use super::run_order::{ReadOrder, RunOrder};
+use super::inputs::{
+    DefinePath, DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
+};
+use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, ScopeKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, PatParent, ScopeKind,
+    SymbolId,
 };
-use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
+use crate::hir::{Chain, ExprId, ExprKind, Flags, FnId, ImportId, MemberKey, NodeData, UnOp};
+use crate::hir_from_data::DataValue;
 use crate::import_sites::is_in_with_scope;
-use crate::module_format::main_module_operand;
+use crate::module_format::settled_main_module_operand;
+use std::cell::Cell;
 
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_ident(&mut self, e: ExprId, name: Atom) -> Folded {
-        match self.bound.binding(e) {
+        let binding = self.bound.binding(e);
+        let is_bound_through_name_in_place = self.is_bound_through_name_in_place(binding, name);
+        if is_bound_through_name_in_place
+            && let Some(root) = self.inputs.root(DefineRoot::Global(name))
+            && let Some(DefineValue::GlobalPath(path @ &[_, _, ..])) = self.inputs.value_of(root)
+        {
+            return self.decide(e, Decision::GlobalPath(path));
+        }
+        match binding {
             Binding::Free
             | Binding::CommonJs(
                 CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname,
-            ) if self.is_define_root(e) => {
+            ) if self.is_define_root(e) && !is_bound_through_name_in_place => {
                 let root = self.inputs.root(DefineRoot::Global(name));
+                let root = root.filter(|_| self.may_be_replaced(e, name));
                 let state = root.map(|root| PathState {
                     has_dynamic_root: !self.has_static_lookup(e),
                     ..root
@@ -28,21 +42,119 @@ impl<'s> Folder<'_, 's> {
                     None => self.fold_loader_name(e),
                 }
             }
-            Binding::Symbol(symbol) if self.is_process_import(symbol) && self.is_define_root(e) => {
+            Binding::Symbol(symbol) => self.fold_symbol_read(e, symbol),
+            Binding::CommonJs(_) => self.fold_loader_name(e),
+            Binding::Free | Binding::Arguments(_) => Folded::UNKNOWN,
+        }
+    }
+
+    fn may_be_replaced(&self, e: ExprId, name: Atom) -> bool {
+        matches!(name, known::undefined | known::NaN | known::Infinity)
+            || !self.hir.is_in_known_evaluation(self.hir[e].pos)
+    }
+
+    fn fold_symbol_read(&mut self, e: ExprId, symbol: SymbolId) -> Folded {
+        let kind = self.bound.binding_kind(symbol);
+        if kind == BindingKind::Import {
+            if self.is_process_import(symbol)
+                && self.is_define_root(e)
+                && !self.hir.is_in_known_evaluation(self.hir[e].pos)
+            {
                 let root = DefineRoot::Global(self.atoms.intern(b"process"));
                 let state = self.inputs.root(root).map(|root| PathState {
                     has_optional_link: true,
                     has_dynamic_root: !self.has_static_lookup(e),
                     ..root
                 });
-                self.try_decide_define(e, state).unwrap_or(Folded::UNKNOWN)
+                return self.try_decide_define(e, state).unwrap_or(Folded::UNKNOWN);
             }
-            Binding::Symbol(symbol) => match self.fold_import_read(e, symbol) {
-                Some(folded) => folded,
-                None => self.fold_const_read(e, symbol),
-            },
-            Binding::CommonJs(_) => self.fold_loader_name(e),
-            Binding::Free | Binding::Arguments(_) => Folded::UNKNOWN,
+            if let Some(folded) = self.fold_import_read(e, symbol) {
+                return folded;
+            }
+        }
+        if kind == BindingKind::Parameter
+            && self.names_of_undefined().binary_search(&symbol).is_ok()
+            && self.has_static_lookup(e)
+            && !self.is_assignment_target(e)
+            && !self.is_delete_operand(e)
+        {
+            self.mark_folded_by_build_alone(e);
+            return self.decide(e, Decision::Constant(Constant::Undefined));
+        }
+        match self.fold_enum_member_named(e, symbol) {
+            Some(folded) => folded,
+            None => self.fold_const_read(e, symbol, kind),
+        }
+    }
+
+    /// Parameters that no argument is passed for.
+    fn names_of_undefined(&self) -> &[SymbolId] {
+        self.names_of_undefined.get_or_init(|| {
+            let (hir, bound) = (self.hir, self.bound);
+            let mut names: Vec<SymbolId> = Vec::new();
+            for function in (0..hir.fns.len() as u32).map(FnId) {
+                let call = bound.get_immediately_invoked_function_expression(hir, function);
+                if call.is_some_and(|call| hir[call].args.len() < hir[function].params.len()) {
+                    let parameters = hir[function].params.iter();
+                    let symbols = parameters
+                        .filter_map(|it| bound.declared_symbol(Decl::Param(hir[it].pat)).some());
+                    names.extend(symbols.filter(|&it| self.is_parameter_without_argument(it)));
+                }
+            }
+            names.sort_unstable();
+            names
+        })
+    }
+
+    /// The only call of the function stands where the function is written, and passes fewer arguments.
+    fn is_parameter_without_argument(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
+            return false;
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+            return false;
+        };
+        let function = bound.param_fn[parameter.idx()];
+        let record = hir[parameter];
+        if record.default.is_some()
+            || record.flags.contains(Flags::REST)
+            || !bound.is_called_only_where_written(hir, function)
+            || !bound.is_stable_binding(symbol)
+        {
+            return false;
+        }
+        let call = bound.get_immediately_invoked_function_expression(hir, function);
+        let Some(call) = call.map(|call| hir[call]) else {
+            return false;
+        };
+        let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
+        let Some(index) = hir[function].params.iter().position(|it| it == parameter) else {
+            return false;
+        };
+        let mut parameters_in_front = hir[function].params.iter().take(index);
+        call.chain == Chain::No
+            && !hir.ids(call.args).any(is_spread)
+            && call.args.len() <= index
+            && parameters_in_front.all(|it| {
+                let name = bound.declared_symbol(Decl::Param(hir[it].pat));
+                hir[it].default.is_none() && name.some().is_some()
+            })
+    }
+
+    fn is_bound_through_name_in_place(&self, binding: Binding, name: Atom) -> bool {
+        let written = DefinePath {
+            root: DefineRoot::Global(name),
+            members: &[],
+        };
+        let mut names_in_place = self.inputs.names_in_place.iter();
+        if !names_in_place.any(|it| it.path == written) {
+            return false;
+        }
+        match binding {
+            Binding::Free => false,
+            Binding::Symbol(symbol) => self.bound.symbol(symbol).name != name,
+            Binding::Arguments(_) | Binding::CommonJs(_) => true,
         }
     }
 
@@ -67,22 +179,37 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn fold_member(&mut self, e: ExprId, chain: Chain) -> Folded {
         let hir = self.hir;
         let Some((obj, MemberKey::Name(name))) = hir.member_key(e) else {
-            return Folded::UNKNOWN;
+            return self.fold_read_out_of_literal(e, chain);
         };
         let is_in_chain = chain != Chain::No;
         let form = LinkForm {
             is_in_optional_chain: is_in_chain,
-            is_index: hir.is_written_in_brackets(e),
+            is_index: hir.is_written_in_brackets(e) && !self.is_hot_of_import_meta(obj),
         };
         let object_state = self.path_states.get(&obj);
         let object_state =
             object_state.filter(|_| hir.is_name_resolved_by_transpiler(e, self.atoms.bytes(name)));
         let state = object_state.and_then(|&state| self.inputs.child(state, name, form));
-        if let Some(folded) = self.try_decide_define(e, state) {
+        if state.is_some()
+            && let Some(folded) = self.try_decide_define(e, state)
+        {
             return folded;
         }
         if let Some(folded) = self.fold_imported_member(e, obj, name) {
             return folded;
+        }
+        if let Some(folded) = self.fold_enum_member_read(e) {
+            return folded;
+        }
+        if name == known::hot
+            && self.is_hot_of_import_meta(e)
+            && !is_in_chain
+            && !self.is_assignment_target(e)
+            && !self.is_delete_operand(e)
+        {
+            self.mark_folded_by_build_alone(e);
+            self.conditions_told_by_shape.insert(e.idx());
+            return self.decide(e, Decision::Constant(Constant::Undefined));
         }
         let object_kind = hir[hir.skip_type_assertions(obj)].kind;
         let is_main_access = matches!(object_kind, ExprKind::ImportMeta) && name == known::main;
@@ -91,12 +218,49 @@ impl<'s> Folder<'_, 's> {
             && !self.is_assignment_target(e)
             && !self.is_delete_operand(e);
         match self.file.import_meta_main {
-            Some(is_main) if is_main_read => {
+            Some(is_main) if is_main_read && !self.is_main_of_import_meta_written() => {
                 self.mark_folded_by_build_alone(e);
                 self.decide(e, Decision::Constant(Constant::Boolean(is_main)))
             }
-            Some(_) | None => Folded::UNKNOWN,
+            Some(_) | None => self.fold_read_out_of_literal(e, chain),
         }
+    }
+
+    pub(super) fn may_read_main_of_import_meta(&self, meta: ExprId) -> bool {
+        let meta = self.find_outermost_cast(meta);
+        let member = self
+            .parent_expr(meta)
+            .and_then(|parent| self.hir.member_key(parent));
+        match member {
+            Some((object, MemberKey::Name(name))) if object == meta => name == known::main,
+            Some(_) | None => true,
+        }
+    }
+
+    fn is_main_of_import_meta_written(&self) -> bool {
+        *self.is_main_of_import_meta_written.get_or_init(|| {
+            let mut exprs = (0..self.hir.exprs.len()).map(|index| ExprId(index as u32));
+            exprs.any(|e| {
+                if !matches!(self.hir[e].kind, ExprKind::ImportMeta) {
+                    return false;
+                }
+                let meta = self.find_outermost_cast(e);
+                let Some(member) = self.parent_expr(meta) else {
+                    return true;
+                };
+                match self.hir.member_key(member) {
+                    Some((object, MemberKey::Name(name)))
+                        if object == meta && name != known::main =>
+                    {
+                        false
+                    }
+                    Some((object, _)) if object == meta => {
+                        self.is_assignment_target(member) || self.is_delete_operand(member)
+                    }
+                    Some(_) | None => true,
+                }
+            })
+        })
     }
 
     pub(super) fn fold_short_circuit(
@@ -127,32 +291,103 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn find_main_module_equality(&self, comparison: ExprId) -> Option<bool> {
         let is_main = self.file.import_meta_main?;
-        main_module_operand(self.hir, self.bound, comparison).map(|_| is_main)
+        settled_main_module_operand(self.hir, self.bound, comparison).map(|_| is_main)
     }
 
     pub(super) fn find_const_initializer(&self, ident: ExprId) -> Option<ExprId> {
-        self.find_only_initializer(ident, &[BindingKind::Const])
-    }
-
-    fn find_only_initializer(&self, ident: ExprId, kinds: &[BindingKind]) -> Option<ExprId> {
-        let bound = self.bound;
-        let symbol = match bound.binding(ident) {
+        let symbol = match self.bound.binding(ident) {
             Binding::Symbol(symbol) => symbol,
             Binding::Free | Binding::Arguments(_) | Binding::CommonJs(_) => return None,
         };
-        let kind = bound.binding_kind(symbol);
-        let is_initialized_once = kinds.contains(&kind)
-            && bound.is_stable_binding(symbol)
-            && self.has_static_lookup(ident);
-        if !is_initialized_once {
+        match self.bound.binding_kind(symbol) {
+            kind @ BindingKind::Const => self.find_only_initializer(ident, symbol, kind),
+            _ => None,
+        }
+    }
+
+    fn find_only_initializer(
+        &self,
+        ident: ExprId,
+        symbol: SymbolId,
+        kind: BindingKind,
+    ) -> Option<ExprId> {
+        let init = self.find_initializer_of_stable_binding(symbol)?;
+        if init >= ident || !self.has_static_lookup(ident) {
             return None;
         }
-        match bound.binding_initializer(self.hir, symbol) {
-            BindingInitializer::Expression(init) if init < ident => {
-                let is_read_behind = kind != BindingKind::Var || self.is_read_behind(ident, init);
-                is_read_behind.then_some(init)
-            }
-            _ => None,
+        let is_read_behind = kind != BindingKind::Var || self.is_read_behind(ident, init);
+        let holds_initializer = is_read_behind
+            && (!self.is_stored_by_mocks(symbol)
+                || self.is_inlined_by_plain_bun(ident, symbol, init));
+        holds_initializer.then_some(init)
+    }
+
+    fn find_initializer_of_stable_binding(&self, symbol: SymbolId) -> Option<ExprId> {
+        let known = self.initializers_of_stable_bindings.get(symbol.idx());
+        if let Some(found) = known.and_then(Cell::get) {
+            return found;
+        }
+        let bound = self.bound;
+        let found = match bound.is_stable_binding(symbol) {
+            true => match bound.binding_initializer(self.hir, symbol) {
+                BindingInitializer::Expression(init) => Some(init),
+                _ => None,
+            },
+            false => None,
+        };
+        if let Some(known) = known {
+            known.set(Some(found));
+        }
+        found
+    }
+
+    fn is_stored_by_mocks(&self, symbol: SymbolId) -> bool {
+        match self.inputs.stored_by_mocks {
+            _ if self.file.is_library => false,
+            StoredByMocks::Nothing => false,
+            StoredByMocks::Variables(variables) => variables.binary_search(&symbol).is_ok(),
+            StoredByMocks::EveryExport => self.is_exported_variable(symbol),
+        }
+    }
+
+    pub(super) fn is_exported_variable(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let variables = self.exported_variables.get_or_init(|| {
+            let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+            let declarations = exports.iter().flat_map(|it| bound.symbol(it.1).decls);
+            let mut variables: Vec<SymbolId> = declarations
+                .filter_map(|&declaration| match declaration {
+                    Decl::Var(_) => Some(bound.declared_symbol(declaration)),
+                    Decl::ExportSpec(spec) if !hir[hir[spec].export].has_module_specifier => {
+                        match bound.exported_binding(spec) {
+                            Binding::Symbol(local) => Some(local),
+                            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
+            variables.sort_unstable();
+            variables
+        });
+        variables.binary_search(&symbol).is_ok()
+    }
+
+    fn is_inlined_by_bun_run(&self, ident: ExprId, symbol: SymbolId, init: ExprId) -> bool {
+        self.minifies_syntax()
+            && self.bound.binding_kind(symbol) == BindingKind::Const
+            && self.can_be_const_value(init)
+            && self.is_folded_by_bun_run(init)
+            && self.is_in_constant_prefix(init)
+            && !self.is_in_enum_beside(ident, init)
+    }
+
+    fn is_inlined_by_plain_bun(&self, ident: ExprId, symbol: SymbolId, init: ExprId) -> bool {
+        match self.inputs.runs_in_place {
+            true => self.holds_under_minify_syntax(|folder| {
+                folder.is_inlined_by_bun_run(ident, symbol, init)
+            }),
+            false => self.is_inlined_by_bun_run(ident, symbol, init),
         }
     }
 
@@ -162,40 +397,81 @@ impl<'s> Folder<'_, 's> {
             return false;
         }
         let order = self.run_order.get_or_init(|| RunOrder::new(self.hir));
-        match order.order_of_read(self.hir, self.bound, ident, init) {
-            ReadOrder::MayComeFirst => false,
-            ReadOrder::Behind => true,
-            ReadOrder::BehindUnlessCalledByImporter => {
-                let is_behind = !self.inputs.is_called_before_it_runs;
-                if is_behind {
-                    self.relies_on_running_before_calls.set(true);
-                }
-                is_behind
-            }
+        order.is_read_behind(self.hir, ident, init)
+    }
+
+    pub(super) fn is_constant_read_behind_its_declaration(&self, read: ExprId) -> bool {
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (self.hir[read].kind, self.bound.binding(read))
+        else {
+            return false;
+        };
+        let kind = self.bound.binding_kind(symbol);
+        let initializer = self.find_only_initializer(read, symbol, kind);
+        kind == BindingKind::Const && initializer.is_some_and(|it| self.is_read_behind(read, it))
+    }
+
+    fn note_constant_read(&mut self, ident: ExprId, symbol: SymbolId) {
+        let Some(init) = self.find_initializer_of_stable_binding(symbol) else {
+            return;
+        };
+        if init >= ident
+            || !self.has_static_lookup(ident)
+            || self.is_assignment_target(ident)
+            || (self.is_stored_by_mocks(symbol)
+                && !self.is_inlined_by_plain_bun(ident, symbol, init))
+        {
+            return;
+        }
+        let FoldedValue::Constant(constant) = self.folded_value(init) else {
+            return;
+        };
+        let order = self.run_order.get_or_init(|| RunOrder::new(self.hir));
+        if order.is_initialized_at(self.hir, self.bound, ident, init) {
+            self.constant_reads.push((ident, constant));
         }
     }
 
-    fn fold_const_read(&mut self, ident: ExprId, symbol: SymbolId) -> Folded {
-        let kinds = [BindingKind::Const, BindingKind::Let, BindingKind::Var];
-        let Some(init) = self.find_only_initializer(ident, &kinds) else {
+    fn fold_const_read(&mut self, ident: ExprId, symbol: SymbolId, kind: BindingKind) -> Folded {
+        if let BindingKind::Const | BindingKind::Let | BindingKind::Var = kind {
+            self.note_constant_read(ident, symbol);
+        }
+        let init = match kind {
+            BindingKind::Const | BindingKind::Let | BindingKind::Var => {
+                self.find_only_initializer(ident, symbol, kind)
+            }
+            _ => None,
+        };
+        let Some(init) = init else {
             return Folded::UNKNOWN;
         };
-        let is_const = self.bound.binding_kind(symbol) == BindingKind::Const;
-        let is_primitive = matches!(self.folded(init).value, Value::Known(_));
-        let is_inlined_by_bun_run = is_const
-            && is_primitive
-            && self.is_folded_by_bun_run(init)
-            && self.is_in_constant_prefix(init);
-        if !is_inlined_by_bun_run {
+        if kind == BindingKind::Let
+            && !self.is_assignment_target(ident)
+            && let FoldedValue::Constant(constant) = self.folded_value(init)
+        {
+            self.constants_of_lets.push((ident, constant));
+        }
+        let is_const = kind == BindingKind::Const;
+        let is_inlined = self.is_inlined_by_bun_run(ident, symbol, init);
+        if !is_inlined {
             self.mark_folded_by_build_alone(ident);
+            self.mark_folded_under_minify_syntax_if(ident, |folder| {
+                folder.is_inlined_by_bun_run(ident, symbol, init)
+            });
         }
         match self.folded_value(init) {
-            FoldedValue::Constant(constant) if is_const && self.is_library_binding(symbol) => {
+            FoldedValue::Constant(constant)
+                if (is_inlined || (is_const && self.is_library_binding(symbol)))
+                    && !self.is_assignment_target(ident) =>
+            {
                 self.decide(ident, Decision::Constant(constant))
             }
             _ => {
                 self.copy_condition(ident, init);
                 let effects = match is_const {
+                    true if self.note_constant_of_enum_member(ident, init) => {
+                        self.folded(init).effects
+                    }
                     true => Effects::DeadZoneCheck,
                     false => Effects::Unknown,
                 };
@@ -219,13 +495,20 @@ impl<'s> Folder<'_, 's> {
             return None;
         }
         let constant_globals = [known::undefined, known::NaN, known::Infinity];
-        if !matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name)) {
+        let is_constant_global =
+            matches!(self.hir[e].kind, ExprKind::Ident(name) if constant_globals.contains(&name));
+        if !is_constant_global && !self.inputs.is_user_defined(state) {
             self.mark_folded_by_build_alone(e);
         }
         Some(match value {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),
             DefineValue::GlobalPath(path) => self.decide(e, Decision::GlobalPath(path)),
-            DefineValue::Data(data) => self.decide(e, Decision::of_data(data)),
+            DefineValue::Data(data) => {
+                if let DataValue::Array(_) | DataValue::Object(_) = data {
+                    self.conditions.insert(e, true);
+                }
+                self.decide(e, Decision::of_data(data))
+            }
             DefineValue::RuntimeValue(_) => {
                 let folded = self.note_loader_value(e);
                 self.effects[e.idx()] = self.effects_of_path(e);

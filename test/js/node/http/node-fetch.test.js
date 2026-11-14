@@ -672,6 +672,20 @@ test("node-fetch FetchError and AbortError have node-fetch's name, type, code an
   expect(aborted.type).toBe("aborted");
 });
 
+test("node-fetch FetchError's name can be assigned", () => {
+  class RetryError extends FetchError {
+    constructor() {
+      super("gave up", "system");
+      this.name = "GaveUp";
+    }
+  }
+  expect(String(new RetryError())).toBe("GaveUp: gave up");
+
+  const error = new FetchError("failed", "system");
+  error.name = "Renamed";
+  expect([error.name, new FetchError("failed", "system").name]).toEqual(["Renamed", "FetchError"]);
+});
+
 test("node-fetch request body streams properly", async () => {
   let responseResolve;
   const responsePromise = new Promise(resolve => {

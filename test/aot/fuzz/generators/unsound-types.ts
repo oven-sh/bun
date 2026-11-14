@@ -1,16 +1,6 @@
-// Small TypeScript programs that the checker accepts under `strict`, with no cast, no `any` written out and no `!`, and in which a value still ends up where its type says it
-// cannot be, or an object stops being what its type says. A compiled program prints what plain Bun prints, whatever the types promised.
-//
-// A program is one HOLE of the type system, tried in a few cases. A case has its own declarations and is put together at random from
-//   the type under attack   a number, a string, a function, an array, a tuple, an enum, a union, or an object type in one of a dozen forms (`forms`) with fields of every kind
-//   the hole                a delivery (a value of any kind reaches a position of the type: `deliveries`), an impostor (an expression of the type that no constructor of the type made:
-//                           `impostors`), or a mutation (an honest object is changed behind its type: `mutations`)
-//   the value that arrives  `valuesOf`
-//   where the reference is held while it is used (`places`), in what kind of function (`contexts`), how errors are caught (`styles`), and when the victim comes (`times`)
-//   the uses                every field is read, then arithmetic, string methods, calls, stores, keys, JSON, spread, loops, instanceof, a typed helper that has honest callers too
-// Every use prints one line, `c<case>.<stage>.<number>:<use> <typeof and value, or the class of the error>`.
-//
-// `filed` lists the parts that run into a bug that is filed already. They are not drawn. Take a line out when its fix is in.
+// Small TypeScript programs that type-check under `strict` with no cast, no explicit `any` and no `!`, in which a value
+// still ends up where its type says it cannot be, or an object stops matching its type. A compiled program must print
+// what plain Bun prints, whatever the types claim.
 //
 //   bun unsound-types.ts <folder> [--count=<programs>] [--seed=<first seed>] [--holes=a,b] [--with-filed] [--cases=<cases in a program>]    writes <folder>/<seed>-<hole>.ts and a tsconfig.json
 //   bun unsound-types.ts --list                                                                                                            the holes, one on a line
@@ -20,20 +10,15 @@ import { Random } from "../random";
 
 export const tsconfig = JSON.stringify({ compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, strict: true, types: [] } });
 
-/** A hole, a form or a use, and the bug it runs into. */
-export const filed: Record<string, string> = {
-  "kinds-of-values-of-a-spread": "every element of Object.values(<an object made by a spread or by the rest of a pattern>) is undefined to a callback and to for-of: programs/structural-types/typeof-of-each-value-of-a-spread-copy.ts",
-  "values-of-a-spread-walked": "the same: programs/structural-types/the-values-of-a-spread-copy-are-walked-and-turned-into-strings.ts",
-  "kinds-of-values-of-the-rest": "the same: programs/structural-types/the-values-of-the-rest-of-a-pattern-are-turned-into-strings.ts",
-  "typeof-is-object": "`typeof value === \"object\"` in a closure over a captured parameter answers by the declared type, or traps: programs/structural-types/a-closure-asks-whether-its-number-parameter-is-an-object.ts",
-};
+/** A hole, a form or a use, and the bug it hits. */
+export const filed: Record<string, string> = {};
 
 type Kind = "number" | "string" | "boolean" | "inner" | "function" | "numbers" | "texts" | "enum" | "tuple" | "union" | "shape" | "maybe-inner" | "maybe-number" | "number-or-text";
 
 interface Type {
   kind: Kind;
   text: string;
-  /** Expressions that each make another honest value. They stand where the type is expected. */
+  /** Expressions that each create a new honest value. They go where the type is expected. */
   honest: string[];
   /** A test by which TypeScript narrows `unknown` to the type, true of every honest value. */
   check?: (expression: string) => string;
@@ -52,7 +37,7 @@ interface Field {
   /** Its type is a type parameter inside the class. */
   isGeneric?: boolean;
   isAccessor?: boolean;
-  /** Its setter takes a string too. */
+  /** Its setter also accepts a string. */
   hasWiderSetter?: boolean;
 }
 
@@ -99,15 +84,18 @@ interface Reference {
 }
 
 class Case {
-  /** Declarations ahead of the type under attack, and behind it. */
+  /** Declarations before the type under attack, and after it. */
   early: string[] = [];
   top: string[] = [];
-  /** Declarations behind the function that uses the victim: what runs a constructor of the type. */
+  /** Declarations after the function that uses the victim: code that runs a constructor of the type. */
   late: string[] = [];
   parts: string[] = [];
-  /** A kind of field that the object type has to have. */
+  /** A kind of field that the object type must have. */
   wantedField?: string;
-  /** A constructor of the type runs the function that uses the victim, so nothing that function needs may be initialized with an instance. */
+  /**
+   * A constructor of the type runs the function that uses the victim, so nothing that function needs may be initialized
+   * with an instance.
+   */
   isUsedWhileConstructed = false;
   #declared = new Set<string>();
 
@@ -207,7 +195,7 @@ const valuesOf = (c: Case): Value[] => [
   { name: "object-with-to-primitive", text: `({ [Symbol.toPrimitive](hint: string): string | number { ${c.conversions()}.push(hint); return hint === "number" ? 7 : "primitive"; } })`, kinds: [] },
 ];
 
-/** Values that are close to an object type and are not of it. */
+/** Values that are close to an object type but do not satisfy it. */
 function nearValues(c: Case, type: Type): Value[] {
   const shape = type.shape;
   if (!shape) return [];
@@ -225,7 +213,9 @@ function wrongValue(c: Case, type: Type, accepts: (value: Value) => boolean = ()
   return near.length && c.random.chance(0.4) ? c.random.pick(near) : c.random.pick(valuesOf(c).filter(value => !value.kinds.includes(type.kind) && accepts(value)));
 }
 
-/** How the value gets into the constant of type unknown: in plain sight, or through something that the compiler does not look through. */
+/**
+ * How the value gets into the constant of type unknown: visibly, or through something the compiler cannot see through.
+ */
 const arrivals: { name: string; fits?: (value: Value) => boolean; from: (text: string) => string }[] = [
   { name: "in-sight", from: text => text },
   { name: "in-sight", from: text => text },
@@ -404,7 +394,9 @@ function drawShape(c: Case, wanted: string[] = forms): Shape {
 
 const shapeType = (shape: Shape): Type => ({ kind: "shape", text: shape.typeText, honest: [shape.make], shape, check: shape.isClass ? e => `${e} instanceof ${shape.name}` : undefined });
 
-/** A class of another name that satisfies the type: the same members in the reverse order, and methods with other answers. */
+/**
+ * A class with another name that satisfies the type: the same members in reverse order, and methods with other results.
+ */
 function twinOf(c: Case, shape: Shape, hasGetters: boolean): string {
   const name = c.name("Twin");
   const fields = [...shape.fields].reverse().filter(isStored);
@@ -416,7 +408,7 @@ function twinOf(c: Case, shape: Shape, hasGetters: boolean): string {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // The uses.
 
-/** Tests whose answer the declared type seems to give away. */
+/** Tests whose result the declared type seems to determine. */
 const typeTests: Use[] = [
   ...["undefined", "number", "string", "boolean", "object", "function", "bigint", "symbol"].map(name => ({ name: `typeof-is-${name}`, look: (r: string) => `typeof ${r} === "${name}"` })),
   { name: "is-undefined", look: r => `${r} === undefined` },
@@ -920,7 +912,7 @@ function probeOf(c: Case, type: Type, focus: Field | undefined, hasBetween: bool
     : lines; // prettier-ignore
   const parameters = `v: ${T}${hasBetween ? ", between: () => void" : ""}`;
   const given = hasBetween ? "v, between" : "v";
-  // The closures of the deferred style run when every one of them has been made.
+  // The closures of the deferred style run once all of them have been created.
   const [first, atLast] = style === "deferred" ? [["const checks: [string, () => unknown][] = [];"], [`for (const [label, run] of checks) out += "\\n" + label + " " + see(run);${context === "generator" ? " yield out;" : ""}`]] : [[], []];
   const body = (last: string) => ['let out = "";', ...first, ...(setup ? [setup] : []), ...wrapped, ...atLast, ...(last ? [last] : [])].map(line => `  ${line}\n`).join("");
   const text =
@@ -949,12 +941,15 @@ interface Delivery {
   /** It brings a value of its own (undefined, mostly). */
   hasOwnValue?: boolean;
   carries?: (value: Value) => boolean;
-  /** Statements of the case function. `raw` is a constant of type unknown and `honest` one of the type. Nothing where the type does not fit. */
+  /**
+   * Statements of the case function. `raw` is a constant of type unknown and `honest` one of the type. Nothing if the
+   * type does not fit.
+   */
   open(c: Case, type: Type, then: Then): string | undefined;
 }
 
 const classOf = (type: Type) => (type.shape?.isClass ? type.shape : undefined);
-/** A class whose text a hole may add members to. */
+/** A class whose source a hole may add members to. */
 const openClassOf = (type: Type) => (type.shape && classForms.includes(type.shape.form) ? type.shape : undefined);
 
 export const deliveries: Delivery[] = [
@@ -1203,7 +1198,8 @@ export const deliveries: Delivery[] = [
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-// Impostors: an expression of the type whose value no constructor of the type made, or made in another way.
+// Impostors: an expression of the type whose value was not created by a constructor of the type, or was created in
+// another way.
 
 interface Impostor {
   name: string;
@@ -1364,11 +1360,11 @@ function thinShape(c: Case): Shape {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-// Mutations: an honest object is changed behind its type.
+// Mutations: an honest object is mutated in a way its type does not show.
 
 interface Mutation {
   name: string;
-  /** Statements that change what `ref`, an expression of the type, refers to. */
+  /** Statements that mutate what `ref`, an expression of the type, refers to. */
   change(c: Case, type: Type): { focus?: Field; change: (ref: string) => string } | undefined;
 }
 
@@ -1399,7 +1395,7 @@ const onObject =
   (c, type) =>
     isObjectKind(type) ? { change: change(c) } : undefined;
 
-/** The name of the field as a constant, or put together while the program runs. */
+/** The field's name as a constant, or computed at run time. */
 const keyOf = (c: Case, field: Field) => (c.random.chance(0.4) ? `spell("${field.name}")` : `"${field.name}"`);
 const memberOf = (c: Case, field: Field) => (c.random.chance(0.4) ? `[spell("${field.name}")]` : field.name);
 
@@ -1561,8 +1557,9 @@ const table: number[] = [10, 20, 30];
 const lookup: Record<string, number> = { ab: 1, cd: 2, text: 3 };
 `;
 
-// What the compiler believes about a built-in function is the sum of what every call in the program tells it, and a describe() that lists the keys of whatever it is given tells it a lot.
-// A lean program has one that asks for the kind and the text of a value and for nothing else, so that a false belief is not hidden by the program's own way of printing.
+// What the compiler believes about a built-in function is the union of what every call in the program tells it, and a
+// describe() that lists the keys of any argument tells it a lot. A lean program has a describe() that only reads a
+// value's type and string form, so that a false belief is not hidden by the program's own printing.
 const leanPrelude = prelude.replace(
   /function describe\([\s\S]*?\n}\n/,
   `function describe(value: unknown, depth: number = 0): string {
@@ -1602,13 +1599,15 @@ function drawType(c: Case, wantedForms?: string[], wantedKinds?: Kind[]): Type {
       return c.inner();
     case "union":
       return c.figure();
+    default:
+      throw new Error(`no type of kind ${kind}`);
   }
 }
 
 const formsFor: Record<string, string[]> = { "instance-of-a-second-evaluation": ["factory-class"], "extends-parameter": ["extends-parameter"], "three-mixins": ["three-mixins"], "primitive-for-an-object-type": ["thin"] };
 
 const arrays: Kind[] = ["numbers", "numbers", "texts", "shape"];
-/** The kinds of types that a hole is about, where it is not about all of them. */
+/** The kinds of types a hole applies to, if not all of them. */
 const kindsFor: Record<string, Kind[]> = {
   "tag-stored-alone": ["union"],
   "inner-object-changed": ["shape"],
@@ -1669,7 +1668,7 @@ function caseOf(id: number, random: Random, hole: string, isAllowed: (part: stri
     focus = found.focus;
     const time = random.pick(["first", "after-2000", "after-2000", "mid-loop", "mid-body", "mid-body-after-2000"]);
     const isInCallee = random.chance(0.3);
-    // A second change behind the same reference, now and then.
+    // Occasionally a second mutation through the same reference.
     const second = random.chance(0.15) ? random.pick(mutations.filter(each => isAllowed(each.name) && each !== mutation)) : undefined;
     const more = second?.change(c, type);
     if (more) c.parts.push(`and ${second!.name}`);
@@ -1708,7 +1707,7 @@ function caseOf(id: number, random: Random, hole: string, isAllowed: (part: stri
     c.parts.push(time);
     probe = probeOf(c, type, focus, false);
     body.push(`const honest: ${T} = ${random.pick(type.honest)};`);
-    // What a constructor of the type itself hands to the probe comes first.
+    // What a constructor of the type itself passes to the probe comes first.
     body.push(flush.replace(".victim", ".early"));
     warmUp("honest", time);
     body.push(attempt(id, "arrival", arrival), flush, attempt(id, "honest-after", `report("c${id}.honest-after", ${probe.call("honest")});`));
@@ -1729,22 +1728,22 @@ function caseOf(id: number, random: Random, hole: string, isAllowed: (part: stri
 }
 
 export interface Options {
-  /** Draws the parts that `filed` lists too. */
+  /** Also uses the parts listed in `filed`. */
   withFiled?: boolean;
-  /** The holes to draw from. */
+  /** The holes to choose from. */
   holes?: string[];
-  /** How many cases a program has; one to four where absent, one or two in a lean program. */
+  /** The number of cases per program; by default one to four, or one or two in a lean program. */
   cases?: number;
-  /** Whether the program prints with the lean describe(); one program in three where absent. */
+  /** Whether the program prints with the lean describe(); by default one program in three. */
   isLean?: boolean;
 }
 
 export interface Program {
   hole: string;
   text: string;
-  /** What each case is put together from. */
+  /** The parts of each case. */
   parts: string[][];
-  /** Each case as a program of its own, with the lines it prints in the whole. */
+  /** Each case as its own program, with the lines it prints in the whole program. */
   alone: string[];
 }
 

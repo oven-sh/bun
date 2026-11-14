@@ -734,6 +734,24 @@ bun::N_AVX3_ZEN4::BSwap64Impl                                                  [
 
 
 # ----------------------------------------------------------------------------
+# Bun's packing of words (src/jsc/bindings/highway_strings.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::PackWordsImpl                                                     [AVX, AVX2]
+bun::N_AVX2::UnpackWordsImpl                                                   [AVX, AVX2]
+bun::N_AVX3::PackWordsImpl                                                     [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3::UnpackWordsImpl                                                   [AVX, AVX2]
+bun::N_AVX3_DL::PackWordsImpl                                                  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_DL::UnpackWordsImpl                                                [AVX, AVX2]
+bun::N_AVX3_SPR::PackWordsImpl                                                 [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_SPR::UnpackWordsImpl                                               [AVX, AVX2]
+bun::N_AVX3_ZEN4::PackWordsImpl                                                [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_ZEN4::UnpackWordsImpl                                              [AVX, AVX2]
+bun::N_AVX10_2::PackWordsImpl                                                  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX10_2::UnpackWordsImpl                                                [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
 # ----------------------------------------------------------------------------
@@ -749,6 +767,15 @@ bun::N_AVX3_SPR::CountDelimsImpl                                     [AVX, AVX2,
 bun::N_AVX3_SPR::ParseMappingsImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::CountDelimsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
+# Bun PNG scanline filters (src/jsc/bindings/highway_png.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::PngFilterRgba                                           [AVX, AVX2]
+bun::N_AVX2::PngUnfilter                                             [AVX, AVX2]
+bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
@@ -1249,6 +1276,22 @@ jsimd_ycc_extrgbx_convert_avx2           [AVX, AVX2]
 jsimd_ycc_extxbgr_convert_avx2           [AVX, AVX2]
 jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
 jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks
+# CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+JSC::AOT::findWithAVX2  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of a Latin-1 string for another. Gate:
+# operationAOTStringFind8() asks CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+JSC::AOT::findStringWithAVX2  [AVX, AVX2]
+
 
 # ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.

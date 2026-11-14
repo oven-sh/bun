@@ -1,0 +1,1 @@
+import * as holder from "./spaces.mjs"; export const read = () => [holder.gauge.word, holder.gauge.bump()].join(); export const space = holder.gauge;

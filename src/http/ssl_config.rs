@@ -89,9 +89,12 @@ impl core::ops::Deref for SharedPtr {
 }
 
 /// The TLS options a caller gave. `VirtualMachine::tls_config` fills in the rest, and is the only way to an [`SSLConfig`].
+#[derive(Clone)]
 pub struct Builder {
     config: SSLConfig,
     pub reject_unauthorized: Option<bool>,
+    /// `ca: []`, which means the built-in store.
+    pub ca_is_empty: bool,
 }
 
 impl Default for Builder {
@@ -99,6 +102,7 @@ impl Default for Builder {
         Self {
             config: SSLConfig::ZERO,
             reject_unauthorized: None,
+            ca_is_empty: false,
         }
     }
 }
@@ -144,9 +148,12 @@ impl Builder {
             && config.ca_file_name.is_null()
             && let Some(certs) = default_ca
         {
-            config.ca = Some(certs.iter().map(|cert| bun_core::dupe_z(cert)).collect());
-            config.ca_is_default = true;
+            // A client's shared context may have the list, or lack it.
             config.requires_custom_request_ctx = true;
+            if !self.ca_is_empty {
+                config.ca = Some(certs.iter().map(|cert| bun_core::dupe_z(cert)).collect());
+                config.ca_is_default = true;
+            }
         }
         config
     }

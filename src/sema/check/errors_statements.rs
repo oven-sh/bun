@@ -123,9 +123,6 @@ fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32
     parts
 }
 
-/// The diagnostics of binder.go. The binder visits every node, whether or not the checker does. 1184 isn't included:
-/// the binder only reports it for `export as namespace`, and wherever it's reported here it comes from the checker
-/// (`reportObviousModifierErrors`).
 pub(super) fn is_binder_diagnostic(code: u32) -> bool {
     matches!(
         code,
@@ -212,6 +209,12 @@ impl Checker<'_, '_> {
     /// removed.
     pub(super) fn never_check(&self, start: u32, end: u32) {
         self.never_checked.borrow_mut().push((start, end));
+    }
+
+    /// The ranges of `never_check` in the file that was checked last, where `Files::brings_declarations`. In a build they hold
+    /// the code that it leaves out.
+    pub fn never_checked_ranges(&self) -> &[(u32, u32)] {
+        &self.never_checked_in_last_file
     }
 
     /// `checkStrictModeWithStatement`, `checkStrictModeLabeledStatement`: 1101 1344. The binder visits every node,
@@ -543,7 +546,10 @@ impl Checker<'_, '_> {
         // `checkGrammarForDisallowedTrailingComma`: in a file without syntax errors no other comma can follow the last
         // declaration.
         let end = self.end_of_var_decl_list(file, decls);
-        let comma = skip_trivia(&hir.text, end as usize) as u32;
+        let comma = match hir.text.get(end as usize) {
+            Some(b';') => end,
+            _ => skip_trivia(&hir.text, end as usize) as u32,
+        };
         if hir.text.get(comma as usize) == Some(&b',') {
             return self.early_grammar_error_at((file, comma, comma + 1), 1009, &[]);
         }
@@ -698,11 +704,32 @@ impl Checker<'_, '_> {
 
     /// `checkAwaitExpression`, before the operand.
     pub(super) fn check_grammar_await_expression(&mut self, file: FileId, e: ExprId) {
+        if self.is_in_body_of_async_function(file, e) {
+            return;
+        }
         let hir = self.hir(file);
         let start = hir[e].pos;
         if is_word_at(&hir.text, start as usize, b"await") {
             let end = |c: &Self| c.end_inside_parentheses(file, e);
             self.check_grammar_await_or_await_using(file, hir.node(e), start, end, true);
+        }
+    }
+
+    /// True if only expressions and statements are between `e` and the body of an `async` function: `await` is always
+    /// allowed there.
+    fn is_in_body_of_async_function(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = bound.parent_of_expr(e);
+        loop {
+            at = match at {
+                Parent::Expr(above) => bound.parent_of_expr(above),
+                Parent::Stmt(above) if above.is_some() => bound.parent_of_stmt(above),
+                Parent::VarInit(declaration) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+                Parent::Prop(property) => Parent::Expr(bound.prop_owner[property.idx()]),
+                Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+                Parent::FnBody(function) => return hir[function].flags.contains(Flags::ASYNC),
+                _ => return false,
+            };
         }
     }
 

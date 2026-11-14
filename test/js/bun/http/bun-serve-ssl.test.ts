@@ -845,7 +845,7 @@ describe("tls.minVersion and tls.maxVersion take node:tls's version names", () =
   });
 });
 
-// In a child, under `bun test`: expect().resolves is what runs the event loop from inside a handler.
+// Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.
 test("stop(true) survives a handler that closes other connections and runs the event loop", async () => {
   using dir = tempDir("serve-stop-nested-tick", {
     "stop.test.js": /* js */ `
@@ -857,6 +857,7 @@ test("stop(true) survives a handler that closes other connections and runs the e
         const count = 6;
         const controllers = [];
         const stopped = Promise.withResolvers();
+        let aborted = false;
         let ranLoop = false;
         const server = Bun.serve({
           hostname: "127.0.0.1",
@@ -865,11 +866,16 @@ test("stop(true) survives a handler that closes other connections and runs the e
           idleTimeout: 0,
           fetch(request) {
             request.signal.addEventListener("abort", () => {
-              if (ranLoop) return;
-              ranLoop = true;
+              if (aborted) return;
+              aborted = true;
               // "Connection: close": the end of a response closes its connection, once the peer has answered.
               for (const controller of controllers) controller.end();
-              expect(new Promise(resolve => setTimeout(resolve, 400, 1))).resolves.toBe(1);
+              let waited = false;
+              Bun.build({
+                entrypoints: ["./none.js"],
+                plugins: [{ name: "nested tick", setup: () => Bun.sleep(400).then(() => void (waited = true)) }],
+              }).catch(() => {});
+              ranLoop = waited;
             });
             return new Response(
               new ReadableStream({

@@ -3,12 +3,13 @@ import { socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
 import { join } from "path";
+import { frames, tamperingRelay } from "../../node/quic/tampering-relay";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -215,6 +216,33 @@ function serveFixture(dir: string, { http1 = true } = {}) {
     },
   });
 }
+
+// The test needs a machine where nearly all UDP ports are taken: a network namespace with a hundred ports.
+const canUnshare = isLinux && Bun.spawnSync(["sh", "-c", "unshare -Urn true"], { stderr: "ignore" }).success;
+test.skipIf(!canUnshare)("port 0 finds the port that is free for TCP and UDP", async () => {
+  using dir = tempDir("serve-http3-free-port", {
+    "server.mjs": `
+      import { writeFileSync } from "node:fs";
+      writeFileSync("/proc/sys/net/ipv4/ip_local_port_range", "40000 40099");
+      const taken = [];
+      for (let port = 40000; port < 40100; port++) {
+        if (port !== 40042) taken.push(await Bun.udpSocket({ port, hostname: "::" }));
+      }
+      const server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response() });
+      console.log(server.port);
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: ["unshare", "-Urn", bunExe(), "server.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "40042\n", exitCode: 0 });
+});
 
 // The request/response tests share one server for the whole file.
 let fixtureDir: ReturnType<typeof tempDir> | undefined;
@@ -1701,6 +1729,30 @@ describe.concurrent("Bun.serve HTTP/3 lifecycle", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  test("server.stop() resolves as soon as the last H3 connection has closed", async () => {
+    const script = `
+      let answered;
+      const server = Bun.serve({
+        port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+        async fetch() {
+          // From a timer, so that no packet leads up to the response.
+          await Bun.sleep(1);
+          server.stop().then(() => console.error("STOPPED", performance.now() - answered < 500 ? "promptly" : "late"));
+          await Bun.sleep(50);
+          answered = performance.now();
+          return new Response("ok");
+        },
+      });
+      console.error("PORT=" + server.port);
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      expect(await fetchH3(port, "/").then(r => r.text())).toBe("ok");
+      // A loop that overlooks the close sleeps until the next one-second timer.
+      expect((await waitForStderr(/STOPPED (\w+)/))[1]).toBe("promptly");
+    });
+  });
+
   // The HEADERS of the first response on a connection wait for the QPACK encoder
   // stream, and lsquic takes no DATA until they are out. A small streamed body is
   // therefore written, and the response ended, from the stream's writable
@@ -3127,6 +3179,71 @@ describe("Bun.serve HTTP/3 request body that isn't read yet", () => {
   });
 });
 
+describe("Bun.serve HTTP/3 request that ends early", () => {
+  function serve() {
+    const body = Promise.withResolvers<string>();
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        body.resolve(req.text().catch(e => e.name));
+        return new Response(await body.promise);
+      },
+    });
+    return { server, body: body.promise };
+  }
+  const dial = async (port: number, options?: object) => {
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint: new QuicEndpoint(),
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+      ...options,
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    return client;
+  };
+
+  test.each([
+    [3, "abc", "abc"],
+    [0, "", ""],
+    [10, "", "AbortError"],
+    [10, "abc", "AbortError"],
+    [2, "abc", "AbortError"],
+  ])("content-length %d with the body %j reads as %j", async (length, sent, expected) => {
+    const { server, body } = serve();
+    const client = await dial(server.port!);
+    const stream = await client.createBidirectionalStream({
+      headers: requestHeaders("/", { ":method": "POST", "content-length": String(length) }),
+      body: Buffer.from(sent),
+    });
+    stream.closed.catch(() => {});
+    const received = await body;
+    client.destroy();
+    await server.stop(true);
+    expect(received).toBe(expected);
+  });
+
+  test.each([
+    ["wholeData", "abc"],
+    ["dataThenCutFrameHeader", "AbortError"],
+    ["dataCutInItsPayload", "AbortError"],
+  ] as const)("a FIN after %s reads as %j", async (frame, expected) => {
+    const { server, body } = serve();
+    using relay = await tamperingRelay(server.port!);
+    const client = await dial(relay.port, { keylog: true, onkeylog: relay.keylog });
+    relay.sendStream0("server", Buffer.from([...frames.post, ...frames[frame]]));
+    const received = await body;
+    client.destroy();
+    await server.stop(true);
+    expect(received).toBe(expected);
+  });
+});
+
 // Only a FIN completes an HTTP/3 message, so a body that fails after the status
 // was sent has to end with RESET_STREAM. HTTP/1 closes the socket without the
 // last chunk.
@@ -3613,3 +3730,60 @@ test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is runnin
     signalCode: null,
   });
 }, 30_000);
+
+test("Bun.serve HTTP/3 sleeps while a handler that runs the event loop has packets waiting", async () => {
+  const script = `
+    const server = Bun.serve({
+      port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+      routes: {
+        "/build": () => {
+          let share;
+          Bun.build({
+            entrypoints: [import.meta.path],
+            plugins: [{
+              name: "wait",
+              async setup() {
+                console.error("WAITING");
+                await sent.promise;
+                const [cpu, start] = [process.cpuUsage(), performance.now()];
+                await Bun.sleep(200);
+                const { user, system } = process.cpuUsage(cpu);
+                share = (user + system) / 1000 / (performance.now() - start);
+              },
+            }],
+          }).catch(() => {});
+          return new Response(share < 0.5 ? "slept" : "spun");
+        },
+        "/second": () => new Response("second"),
+      },
+    });
+    const sent = Promise.withResolvers();
+    console.error("PORT=" + server.port);
+    ${STDIN_HELPERS}stopOnStdinEnd(sent.resolve);
+  `;
+  await withCustomServer(script, async (port, send, waitForStderr) => {
+    await using endpoint = new QuicEndpoint();
+    const session = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+    } as SessionOptions);
+    session.closed.catch(() => {});
+    await session.opened;
+    async function request(path: string) {
+      const stream = await session.createBidirectionalStream({ headers: requestHeaders(path) });
+      stream.closed.catch(() => {});
+      return Array.fromAsync(stream as AsyncIterable<Uint8Array[]>);
+    }
+    const build = request("/build");
+    await waitForStderr(/WAITING/);
+    const stats = session.stats as unknown as { pktSent: bigint };
+    const before = stats.pktSent;
+    const second = request("/second");
+    while (stats.pktSent === before) await new Promise(resolve => setImmediate(resolve));
+    send("sent");
+    const bodies = (await Promise.all([build, second])).map(batches => Buffer.concat(batches.flat()).toString());
+    session.destroy();
+    expect(bodies).toEqual(["slept", "second"]);
+  });
+});

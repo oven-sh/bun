@@ -205,6 +205,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.uncommonHeaders().appendVector(otherHeaders.internalHeaders().uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.internalHeaders().getSetCookieHeaders());
         setInternalHeaders(WTF::move(headers));
+        m_bodyFacts = otherHeaders.m_bodyFacts;
         return {};
     }
 
@@ -219,6 +220,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 
 ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 {
+    willStore(name);
     return appendToHeaderMap(name, value, m_headers.willChange());
 }
 
@@ -281,6 +283,8 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
     if (valid.hasException())
         return valid.releaseException();
 
+    if (name == HTTPHeaderName::ContentEncoding || name == HTTPHeaderName::ContentLength)
+        m_bodyFacts = 0;
     m_headers.willChange().set(name, normalizedValue);
 
     return {};
@@ -293,6 +297,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     if (valid.hasException())
         return valid.releaseException();
 
+    willStore(name);
     m_headers.willChange().set(name, normalizedValue);
 
     return {};

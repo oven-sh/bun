@@ -50,7 +50,11 @@ function Worker(this: ClusterWorker, options?: { id?: number; state?: string; pr
   const workerProcess = options.process;
   if (workerProcess) {
     this.process = workerProcess;
-    workerProcess.on("error", (code: unknown, signal: unknown) => this.emit("error", code, signal));
+    workerProcess.on("error", (code: unknown, signal: unknown) => {
+      // This listener is not the program's. As in ChildProcess, a lost message is no 'error' that nobody listens for.
+      if ((code as NodeJS.ErrnoException | undefined)?.code === "EPIPE" && this.listenerCount("error") === 0) return;
+      this.emit("error", code, signal);
+    });
     workerProcess.on("message", (message: unknown, handle: unknown) => this.emit("message", message, handle));
   }
 }

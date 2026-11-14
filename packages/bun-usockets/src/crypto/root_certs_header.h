@@ -5,6 +5,7 @@
 #include <openssl/x509.h>
 
 #ifdef __cplusplus
+#include <vector>
 #define CPPDECL extern "C"
 
 STACK_OF(X509) *us_get_root_extra_cert_instances();
@@ -19,12 +20,17 @@ struct us_system_certs_t {
 };
 const us_system_certs_t &us_get_root_system_certs();
 
+// What the default store takes from OpenSSL's default file and hashed directory. The certificates live as long as the process.
+std::vector<X509 *> us_get_openssl_default_certs();
+
 #else
 #define CPPDECL extern
 #endif
 
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();
+// SHA256_DIGEST_LENGTH bytes, the same in two processes only if their default stores hold the same.
+CPPDECL const uint8_t *us_get_default_ca_store_digest();
 
 // blocked_spkis.cpp
 // After X509_verify_cert: X509_V_OK, or the error of a chain that holds a blocked public key.

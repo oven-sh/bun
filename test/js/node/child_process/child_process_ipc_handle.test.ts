@@ -382,6 +382,45 @@ process.on('message', (m, server) => {
       });
     });
 
+  test.concurrent("the receiver of an http.Server's 'connection' socket gets the first request", async () => {
+    using dir = tempDir("ipc-handle-http-connection", {
+      "parent.js": `
+const child = require('node:child_process').fork('child.js');
+const server = require('node:http').createServer((req, res) => res.end('parent'));
+server.on('connection', socket => child.send('take', socket));
+child.once('message', () => server.listen(0, '127.0.0.1', () => {
+  const client = require('node:net').connect(server.address().port, '127.0.0.1');
+  let received = '';
+  client.on('data', chunk => (received += chunk));
+  client.on('close', () => {
+    console.log(received);
+    child.disconnect();
+    server.getConnections((err, count) => console.log('connections: ' + count));
+    server.close();
+  });
+  client.write('GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n');
+}));
+`,
+      "child.js": `
+process.on('message', (message, socket) => socket.once('data', chunk => socket.end('child: ' + String(chunk).slice(0, 5))));
+process.send('ready');
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "child: GET /\nconnections: 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("net.Socket handle sent with {keepOpen: true} stays open in the sender", async () => {
     using dir = tempDir("ipc-handle-keepopen", {
       "parent.js": `
@@ -954,6 +993,59 @@ process.on('message', (message, socket) => {
     }
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The handle stays with the sender until the receiver acks, and goes on sending the chunk it holds.
+describe.skipIf(isWindows).each([
+  ["bun", bunExe()],
+  ["node", node],
+])("a net.Socket that is sent with a write in flight, under %s", (_, exe) => {
+  const canceled = ["in flight: ECANCELED", "queued: ECANCELED", "error: ECANCELED", "close"];
+  const flushed = ["in flight: ok", "queued: ERR_SOCKET_CLOSED", "error: ERR_SOCKET_CLOSED", "close"];
+  test.concurrent.skipIf(!exe).each([
+    { module: "net", first: "ack", log: canceled },
+    { module: "net", first: "read", log: flushed },
+    { module: "http", first: "ack", log: canceled },
+    { module: "http", first: "read", log: flushed },
+  ])("hears how it ended: node:$module, the $first comes first", async ({ module, first, log }) => {
+    using dir = tempDir("ipc-handle-write-in-flight", {
+      "parent.js": `
+const [module_, first] = process.argv.slice(2);
+const child = require('node:child_process').fork('child.js', { stdio: ['pipe', 'inherit', 'inherit', 'ipc'] });
+const server = require('node:' + module_).createServer().listen('s.sock', () => {
+  const peer = require('node:net').connect('s.sock').pause();
+  server.on('connection', socket => {
+    socket.on('error', err => console.log('error:', err.code));
+    socket.on('close', () => {
+      console.log('close');
+      child.kill();
+      process.exit(0);
+    });
+    socket.write(Buffer.alloc(8 * 1024 * 1024), err => console.log('in flight:', err?.code ?? 'ok'));
+    socket.write('x', err => console.log('queued:', err?.code ?? 'ok'));
+    child.send('socket', socket);
+    if (first === 'ack') child.stdin.write('x');
+    else peer.resume();
+  });
+});
+`,
+      "child.js": `
+process.on('message', () => {});
+// It reads nothing from the channel, so it acks nothing, until it's told to.
+require('node:fs').readSync(0, Buffer.alloc(1));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [exe!, "parent.js", module, first],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ log: stdout.trim().split("\n"), stderr }).toEqual({ log, stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

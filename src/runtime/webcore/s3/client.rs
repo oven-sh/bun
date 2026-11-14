@@ -61,6 +61,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
+#[inline(never)]
 pub(crate) fn stat(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -69,6 +70,7 @@ pub(crate) fn stat(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, stat);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -84,6 +86,7 @@ pub(crate) fn stat(
     )
 }
 
+#[inline(never)]
 pub(crate) fn download(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -92,6 +95,7 @@ pub(crate) fn download(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, download);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -107,6 +111,7 @@ pub(crate) fn download(
     )
 }
 
+#[inline(never)]
 pub(crate) fn download_slice(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -117,6 +122,7 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, download_slice);
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -151,6 +157,7 @@ pub(crate) fn download_slice(
     )
 }
 
+#[inline(never)]
 pub(crate) fn delete(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -159,6 +166,7 @@ pub(crate) fn delete(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, delete);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -312,33 +320,25 @@ pub(crate) fn list_objects(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     }));
-    // SAFETY: just allocated, non-null
-    let task = unsafe { &mut *task_ptr };
+    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
+    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
+    // never writes again. They are stored in `task.http`, an `AsyncHTTP<'static>` that the HTTP
+    // thread reads, and remain valid until `task` is dropped in `on_response`.
+    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
-    // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
-    // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+    let url = bun_url::URL::parse(&task.sign_result.url);
+    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
+        Some(bun_url::URL::parse(&task.proxy_url))
     } else {
         None
     };
     // JS thread (request setup): read options from the current VM.
     let vm = VirtualMachine::get();
 
-    task.http.write(bun_http::AsyncHTTP::init(
+    let http = task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -365,8 +365,7 @@ pub(crate) fn list_objects(
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+    http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
@@ -377,6 +376,7 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
+#[inline(never)]
 pub(crate) fn upload(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -391,6 +391,7 @@ pub(crate) fn upload(
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, upload);
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
@@ -414,6 +415,7 @@ pub(crate) fn upload(
 /// returns a writable stream that writes to the s3 path
 ///
 /// `credentials` is moved into the `MultiPartUpload`.
+#[inline(never)]
 pub(crate) fn writable_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],
@@ -425,6 +427,7 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
+    bun_removable_features::removable_definition!(S3Client, writable_stream);
     // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
@@ -439,11 +442,7 @@ pub(crate) fn writable_stream(
             .expect("NetworkSink.global_this set at construction");
         let global = global.get();
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
-            // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
-            let event_loop = global.bun_vm().as_mut().event_loop();
-            // SAFETY: event_loop is initialised for the lifetime of the VM.
-            // RAII: `enter()` now, `exit()` on drop.
-            let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+            let _exit_guard = global.bun_vm().enter_event_loop_scope();
             match result {
                 S3UploadResult::Success => {
                     if sink.flush_promise.has_value() {
@@ -511,7 +510,7 @@ pub(crate) fn writable_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -534,13 +533,11 @@ pub(crate) fn writable_stream(
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
-    // SAFETY: `task_ptr` is the fresh, non-null allocation root.
-    unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
+    task.root.set(core::ptr::NonNull::new(task_ptr));
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
@@ -774,6 +771,7 @@ impl Drop for S3UploadStreamWrapper {
 /// consumes the readable stream and upload to s3
 ///
 /// `credentials` is moved into the `MultiPartUpload`.
+#[inline(never)]
 pub(crate) fn upload_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],
@@ -790,6 +788,7 @@ pub(crate) fn upload_stream(
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
+    bun_removable_features::removable_definition!(S3Client, upload_stream);
     if readable_stream.is_disturbed(cx.global()) {
         return Ok(bun_jsc::JSPromise::rejected_promise(
             cx.global(),
@@ -897,7 +896,7 @@ pub(crate) fn upload_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -919,13 +918,11 @@ pub(crate) fn upload_stream(
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
-    // SAFETY: `task_ptr` is the fresh, non-null allocation root.
-    unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
+    task.root.set(core::ptr::NonNull::new(task_ptr));
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
@@ -1210,24 +1207,17 @@ fn download_stream(
             abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
         },
     ));
-    // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
-    // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
-    let task = unsafe { &mut *task_ptr };
+    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
+    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
+    // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
+    // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
+    let task: &'static mut S3HttpDownloadStreamingTask = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    // SAFETY: lifetime extension — `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
-    // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+    let url = bun_url::URL::parse(&task.sign_result.url);
+    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
+        Some(bun_url::URL::parse(&task.proxy_url))
     } else {
         None
     };
@@ -1238,7 +1228,7 @@ fn download_stream(
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
 
-    task.http.write(bun_http::AsyncHTTP::init(
+    let http = task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -1261,8 +1251,6 @@ fn download_stream(
             ..Default::default()
         },
     ));
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    let http = unsafe { task.http.assume_init_mut() };
     task.async_http_id = http.async_http_id;
     // enable streaming
     http.enable_response_body_streaming();
@@ -1437,6 +1425,7 @@ impl S3DownloadStreamWrapper {
 }
 
 /// returns a readable stream that reads from the s3 path
+#[inline(never)]
 pub(crate) fn readable_stream(
     this: &S3Credentials,
     path: &[u8],
@@ -1445,6 +1434,7 @@ pub(crate) fn readable_stream(
     request_payer: bool,
     cx: &bun_jsc::JsThread<'_>,
 ) -> JsResult<JSValue> {
+    bun_removable_features::removable_definition!(S3Client, readable_stream);
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
     // owns the readable stream which keeps the wrapper reachable via the producer handle);
     // store as `'static` for the heap-allocated wrapper.
@@ -1452,16 +1442,14 @@ pub(crate) fn readable_stream(
 
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper via
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
-    let reader: *mut crate::webcore::byte_stream::Source =
-        crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
+    let reader =
+        crate::webcore::byte_stream::Source::new_mut(crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             ..Default::default()
         });
-    // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
-    let reader_mut = unsafe { &mut *reader };
 
-    let readable_value = reader_mut.to_readable_stream(cx)?;
+    let readable_value = reader.to_readable_stream(cx)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
         stream: Default::default(),
@@ -1470,9 +1458,9 @@ pub(crate) fn readable_stream(
         task: Cell::new(core::ptr::null_mut()),
     });
     // SAFETY: `reader` is the live source made above; `wrapper` the live heap allocation.
-    unsafe { (*wrapper).stream.hold(&raw mut reader_mut.context) };
+    unsafe { (*wrapper).stream.hold(&raw mut reader.context) };
 
-    reader_mut
+    reader
         .producer
         .set(crate::webcore::streams::SourceHandle::S3DownloadBody(
             // SAFETY: `wrapper` is the live heap allocation; cleared from the producer slot before

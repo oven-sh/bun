@@ -43,10 +43,7 @@ impl HmrSocket {
     }
 
     pub(crate) fn on_open(&mut self, ws: AnyWebSocket) {
-        // SAFETY: JS-thread only; sole `&mut DevServer` for this scope. Derived
-        // via the BackRef accessor (lifetime-detached from `&self`) so we can
-        // assign `self.underlying` below while `dev` is still live.
-        let dev = unsafe { self.dev() };
+        let dev = self.dev;
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);
@@ -114,33 +111,21 @@ impl HmrSocket {
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
                                     dev.emit_incremental_visualizer_events += 1;
-                                    dev.emit_visualizer_message_if_needed();
                                 }
                                 HmrTopic::MemoryVisualizer => {
                                     dev.emit_memory_visualizer_events += 1;
                                     dev.emit_memory_visualizer_message();
                                     if dev.emit_memory_visualizer_events == 1 {
                                         debug_assert!(
-                                            dev.memory_visualizer_timer.state
+                                            dev.memory_visualizer_timer.state.get()
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
-                                        // low-tier `VirtualMachine`; the real `timer::All`
-                                        // lives in `RuntimeState` (see jsc_hooks.rs).
-                                        let state = crate::jsc_hooks::runtime_state();
                                         let next = bun_core::Timespec::ms_from_now(
                                             bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
-                                        // SAFETY: `runtime_state()` is non-null after
-                                        // `bun_runtime::init()`; JS-thread only, sole
-                                        // `&mut` to `timer` in this scope.
-                                        unsafe {
-                                            (*state).timer.update(
-                                                &raw mut dev.memory_visualizer_timer,
-                                                &next,
-                                            );
-                                        }
+                                        crate::jsc_hooks::timer_all()
+                                            .update(&raw mut dev.memory_visualizer_timer, &next);
                                     }
                                 }
                                 _ => {}
@@ -247,8 +232,7 @@ impl HmrSocket {
                 };
 
                 let data = &msg[2..];
-                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                let dev = unsafe { self.dev() };
+                let dev = self.dev;
 
                 if let Some(agent) = dev.inspector() {
                     let log_str = bun_core::StringView::from_bytes(data);
@@ -302,16 +286,9 @@ impl HmrSocket {
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
                 if dev.emit_memory_visualizer_events == 0
-                    && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
+                    && dev.memory_visualizer_timer.state.get() == EventLoopTimerState::ACTIVE
                 {
-                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
-                    // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
-                    let state = crate::jsc_hooks::runtime_state();
-                    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-                    // JS-thread only, sole `&mut` to `timer` in this scope.
-                    unsafe {
-                        (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
-                    }
+                    crate::jsc_hooks::timer_all().remove(&dev.memory_visualizer_timer);
                 }
             }
         }
@@ -415,13 +392,12 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         debug_assert_eq!(id, 0);
         // Note: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
-        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`
-        // → `HmrSocket::dev()`, which materializes a second `&mut DevServer`
-        // from the socket's backref, so no `&mut DevServer` may span it — the
-        // pre-upgrade borrows below are scoped to their statements. uWS
-        // guarantees `res` is non-null and live for the upgrade callback
-        // (`Response<SSL>` is an opaque handle); every `&mut *res` below is
-        // likewise statement-scoped.
+        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`,
+        // which reads the DevServer through the socket's backref, so no
+        // `&mut DevServer` may span it — the pre-upgrade borrows below are
+        // scoped to their statements. uWS guarantees `res` is non-null and live
+        // for the upgrade callback (`Response<SSL>` is an opaque handle); every
+        // `&mut *res` below is likewise statement-scoped.
         //
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {

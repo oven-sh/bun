@@ -1,0 +1,27 @@
+# -- source: main.js
+# class A { k = 1; }
+# class B { k = 2; }
+# let sum = 0;
+# for (let i = 0; i < globalThis.count; i++) { const C = i & 1 ? A : B; const o = new C(); sum += o.k; }
+# print(sum);
+# -- end of source
+# Two classes that no family holds meet at a place that is only constructed. If they were lost there, their class objects would count as open, their instances as escaped, and `o.k` as anything. The construction is a caller of each: new.target is the class itself, and what it gives is what the two give.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 callers-known {{*}}result=L0
+# CHECK: function f2 callers-known {{*}}result=L1
+# CHECK: field L0.0 "k" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# CHECK: field L1.0 "k" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# The construction has two callees: no row names one, and neither takes what a walk leaves at a call.
+# RUN(NEVER): link functions calls mechanisms=all
+# NEVER-NOT: function f1 callers-known one-callee
+# NEVER-NOT: function f2 callers-known one-callee
+# NEVER-NOT: -> f1
+# NEVER-NOT: -> f2
+# RUN(ANSWER): run-in-shell globalThis.count = 5;
+# ANSWER: 8
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.count = 5;
+# CHECKED: 8
+# CHECKED-NEXT: exited with 0

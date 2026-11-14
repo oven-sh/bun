@@ -27,7 +27,7 @@ use {
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },
-    bun_sys::{self, Fd, FdExt as _},
+    bun_sys::{self, Fd},
     core::ffi::c_char,
 };
 
@@ -58,9 +58,7 @@ extern "C" fn Bun__WebViewHost__kill() {
             .load(core::sync::atomic::Ordering::Relaxed)
             .as_mut()
         {
-            // SAFETY: INSTANCE is set to a live heap-allocated pointer in
-            // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = (*i.process.as_ptr()).kill(9);
+            let _ = i.process.kill(9);
         }
     }
 }
@@ -105,13 +103,7 @@ extern "C" fn Bun__WebViewHost__ensure(
             return -1; // C++ already holds the fd
         }
 
-        // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
-        // `*mut` because it threads through C ABI / event-loop dispatch.
-        let fd = match spawn(
-            std::ptr::from_ref(global.bun_vm()).cast_mut(),
-            stdout_inherit,
-            stderr_inherit,
-        ) {
+        let fd = match spawn(global.bun_vm(), stdout_inherit, stderr_inherit) {
             Ok(fd) => fd,
             Err(err) => {
                 scoped_log!(WebViewHost, "spawn failed: {}", err.name());
@@ -127,7 +119,7 @@ bun_spawn::link_impl_ProcessExit! {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
         // pending promises and mark the host dead.
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
             // A retired host was already unpublished by Bun__WebViewHost__retire.
             if !(*this).retired {
@@ -148,7 +140,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 #[cfg(target_os = "macos")]
-fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
+fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
     // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
     // again after dup2 (socketpair flags are per-fd, not per-pair).
     let fds: [Fd; 2] = bun_sys::socketpair(
@@ -157,8 +149,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         0,
         true, // .nonblocking
     )?;
-    // fd0_guard rolls back fds[0] on any error below.
-    let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());
+    let parent_end = bun_sys::File::from_fd(fds[0]);
     // fds[1] is closed by spawnProcess after dup2 into the child.
 
     let exe = bun_core::self_exe_path()?;
@@ -166,9 +157,12 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
     // signal; no argv changes so `ps` shows a normal `bun` invocation.
     // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
-    // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
-    // `transpiler.env` is set during VM init and lives for VM lifetime.
-    let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+    // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
+    let base = unsafe {
+        (*vm.transpiler.get().env)
+            .map
+            .create_null_delimited_env_map()
+    }?;
     let base_slice = base.as_slice();
     // base_slice already has a trailing None sentinel; drop it, append our
     // var, then re-terminate.
@@ -204,9 +198,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     // argv[0] non-null; valid for this call.
     let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-    // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
-    // per-thread `jsc::EventLoop`.
-    let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
+    let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
     let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
         process: spawned.to_process_handle(event_loop),
         retired: false,
@@ -215,33 +207,32 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     // and outlives it.
     let process = unsafe {
         let process = &(*self_ptr).process;
-        process
-            .process_mut()
-            .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+        bun_spawn::Process::set_exit_handler(
+            process,
+            ProcessExit::new(ProcessExitKind::HostProcess, self_ptr),
+        );
         process
     };
-    match process.process_mut().watch() {
+    match process.watch() {
         Ok(()) => {
             // Weak handle: parent exits when no views + nothing pending,
             // child gets socket EOF and exits, EVFILT_PROC fires into a
             // dead process (kernel discards). If we ref'd, parent would
             // stay alive forever waiting on a child that is waiting on us.
             // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
-            process.process_mut().disable_keeping_event_loop_alive();
+            process.disable_keeping_event_loop_alive();
         }
         Err(e) => {
             scoped_log!(WebViewHost, "watch failed: {}", e);
             // SAFETY: reclaim the Box (drops our process ref).
             drop(unsafe { bun_core::heap::take(self_ptr) });
-            // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
             return Err(crate::Error::WatchFailed);
         }
     }
     INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
     // fd handed to C++ which adopts it into usockets. Not stored here —
     // usockets owns the socket; Rust only owns process lifetime.
-    let fd0 = scopeguard::ScopeGuard::into_inner(fd0_guard);
-    Ok(fd0)
+    Ok(parent_end.into_raw())
 }
 
 // Implemented in WebKitBackend.cpp. Rejects all pending promises, marks the

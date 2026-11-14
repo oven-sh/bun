@@ -1,0 +1,12 @@
+# f1 = count
+# -- source: main.ts
+# // @ts-nocheck
+# const o = { a: 1, b: 2 };
+# function count(w, n) { let s = 0; for (let k = 0; k < n; k++) s += o.hasOwnProperty(w[k % 3]) ? 1 : 0; return s; }
+# print(count(["a", "x", "b"], 9));
+# -- end of source
+# The only names that the literal has are told apart in the iteration. Any other string is none of them.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: SwitchString {{*}}strings=["a", "b"]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6

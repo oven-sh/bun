@@ -36,7 +36,7 @@ typedef void* zig_mutex_t;
 struct us_quic_driver_s;
 
 /* A socket that us_socket_resume() failed to re-register with the kernel, and
- * its close code. */
+ * its close code. With the code 0, a plain socket whose send was rejected. */
 struct us_internal_unresumable_socket_t {
     struct us_socket_t *socket;
     int code;

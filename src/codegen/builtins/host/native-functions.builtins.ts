@@ -1,6 +1,7 @@
 // The native functions that Bun's own modules make with $newCppFunction, each from the code of the function.
 import * as b from "bun-builtins-table";
-import { framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
+import { framesOfModuleGraphsCell, linkAboveNativeEmitterCell, moduleGraphsCell } from "./native-cells.ts";
+import { answering, comparedDeeply, comparedDeeplyCalling, deepComparison } from "./native-code.ts";
 
 const cpp = (file: string, symbol: string): b.BuiltinPath => `native:NewCppFunction:${file}:${symbol}`;
 
@@ -37,21 +38,17 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Functions on which the host puts members that have no entry yet: fetch.preconnect, Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
+// Functions on which the host puts members that have no entry yet: Bun.peek.status, Bun.cron.parse .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
+  "%ModuleRequirePrototype%.resolve",
   "Bun.$",
   "Bun.cron",
-  "Bun.fetch",
-  "Bun.inspect",
   "Bun.peek",
   "Bun.sql",
-  "fetch",
-  "process.hrtime",
-  "process.memoryUsage",
 ];
 
-const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "Bun.$", "Bun.sql"];
+const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "%ModuleRequirePrototype%.resolve", "Bun.$", "Bun.sql"];
 
 // src/jsc/modules/NodeUtilTypesModule.cpp. Each looks at the type or the C++ class of a cell, isAsyncFunction also at what lies above a function.
 const typeTestsOfNode = [
@@ -152,7 +149,26 @@ const testOf = (name: string) => {
   return { ...testsKindOfCell, answersWhetherInstance: { value: b.union(first, ...others) } };
 };
 
+// What the code of each answers.
+const answersOfNativeFunctions: readonly (readonly [b.BuiltinPath, b.TableType])[] = [
+  [cpp("BunDebugger.cpp", "jsFunction_closeNodeInspector"), b.undefined],
+  // The error is handed back for open() to throw.
+  [
+    cpp("BunDebugger.cpp", "jsFunction_openNodeInspector"),
+    b.union(b.string, b.null, b.undefined, b.instance("EvalError")),
+  ],
+  [cpp("BunDebugger.cpp", "jsFunction_postNodeInspectorControl"), b.bool],
+  [cpp("BunDebugger.cpp", "jsFunction_waitForNodeInspectorConnection"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage"), b.union(b.string, b.null)],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler"), b.string],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage"), b.undefined],
+  [cpp("Worker.cpp", "jsFunctionPostMessage"), b.undefined],
+];
+
 export default b.declarations(
+  answersOfNativeFunctions.flatMap(([path, returns]) => b.static(path, answering(returns, b.hostCall))),
   typeTestsOfNode.flatMap(name => b.static(`node:util/types.${name}`, { ...testOf(name), implementation: b.generic })),
   // Nothing leads from the realm to a member of a module: its native code tells which function it is. That of these two belongs to the functions below.
   typeTestsOfNode
@@ -182,6 +198,27 @@ export default b.declarations(
     uses: { value: [b.runs("PrototypeChain")] },
     implementation: b.hostCall,
   }),
+  // Bun__deepEquals() in bindings.cpp with checkPrototypes: what Bun.deepEquals does, and of each object it reads `constructor` and @@toStringTag and asks what stands above it. Two KeyObjects are compared by their handles.
+  b.static(
+    cpp("NodeUtilTypesModule.cpp", "jsFunctionIsDeepStrictEqual"),
+    deepComparison(
+      { actual: b.any.optional, expected: b.any.optional, skipsPrototypes: b.any.optional },
+      { actual: comparedDeeply, expected: comparedDeeply, skipsPrototypes: b.inspected },
+    ),
+  ),
+  // compareBranch(): of two KeyObjects, wherever it meets them, it calls `equals` of the one in `actual` with the one in `expected`.
+  b.static(
+    cpp("NodeUtilTypesModule.cpp", "jsFunctionPartialDeepStrictEqual"),
+    deepComparison(
+      { actual: b.any.optional, expected: b.any.optional },
+      {
+        actual: comparedDeeplyCalling("equals"),
+        expected: [...comparedDeeply, b.retained, b.reachableValuesStoredIn(b.nativeMemory)],
+      },
+    ),
+  ),
+  // src/runtime/node/node_assert.rs, emit(): what printMyersDiff of node_assert_binding.bind.ts answers.
+  b.layout("PrintedMyersDiff", { message: b.string, skipped: b.bool }),
   b.static(cpp("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties"), {
     ...operandCodeOnly,
     args: { object: b.any.optional, filter: b.any.optional },
@@ -190,6 +227,7 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
+  // The list holds keys of the holder and, behind each, the function that the holder has under it: no function but those.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
     args: { holder: b.object, except: b.object, receiver: b.any.optional },
     returns: b.instance("Array").fresh.dense,
@@ -203,8 +241,9 @@ export default b.declarations(
           times: "Repeatedly",
           this: b.operand("receiver"),
           args: [],
-          result: "Escapes",
+          result: "AskedWhetherIterable",
         }),
+        b.createdIn(b.union(b.string, b.symbol), b.resultSlot("element")),
         b.contentsStoredIn(b.resultSlot("element")),
       ],
       except: b.ownPropertyTraps,
@@ -213,7 +252,7 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // It lists the own keys of the source and asks first the target, then the source and then `replacements` for the property under each: no getter of any runs. What the target lacks is defined on it as it stands on the source, a value with the value that `replacements` has under the key.
-  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut"), {
+  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineMissingProperties"), {
     ...operandCodeOnly,
     args: { target: b.object, source: b.object, replacements: b.union(b.object, b.undefined) },
     returns: b.undefined,
@@ -232,6 +271,7 @@ export default b.declarations(
     args: { symbol: b.symbol, prepare: b.callable },
     returns: b.undefined,
     capability: "none",
+    marks: ["RegistersPreparationOfHolders"],
     uses: {
       symbol: b.inspected,
       prepare: [
@@ -246,6 +286,43 @@ export default b.declarations(
       ],
     },
     writes: externalState,
+    implementation: b.hostCall,
+  }),
+  // It keeps the function. The process object calls it when the process or the worker starts to exit: inside process.exit() and process.reallyExit(), and when nothing is left to do.
+  b.static(cpp("BunProcess.cpp", "jsFunctionRunWhenProcessExits"), {
+    // It refuses nothing: what is no object is as good as nothing.
+    args: { run: b.any },
+    returns: b.undefined,
+    capability: "none",
+    uses: {
+      run: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: b.undefined,
+          args: [],
+          result: "Ignored",
+        }),
+      ],
+    },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
+  // It asks what stands above `process`. Unless that is Object.prototype, or has the operand above it already, the operand goes above it: from then on whoever climbs from `process` or
+  // from a native emitter comes by the operand. `process` is the object of the realm, whatever the global of that name holds. Code runs only where a program has laid a proxy above `process`.
+  b.static(cpp("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom"), {
+    // It refuses nothing: what is no object goes nowhere.
+    args: { prototype: b.any.optional, processIfReachable: b.any.optional },
+    returns: b.undefined,
+    capability: "js",
+    // It compares the first operand with what stands above `process` and makes it a link: it reads no member of it, calls nothing of it and hands it to nobody.
+    // Whoever walks up from `process` later, this function at its next call among them, walks on from the operand.
+    uses: {
+      prototype: [b.storedIn(b.nativeCell(linkAboveNativeEmitterCell)), b.runs("PrototypeChain")],
+      processIfReachable: [b.retained],
+    },
+    marks: ["LaysOperandAbovePrototype"],
     implementation: b.hostCall,
   }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {
@@ -269,15 +346,20 @@ export default b.declarations(
     args: { stream: b.any.optional },
     returns: b.any,
     capability: "heap",
-    uses: { stream: b.handedOver },
+    uses: { stream: b.retainedByNativeCode },
     writes: externalState,
     implementation: b.hostCall,
   }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
+  // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and
+  // `new Bun.ModuleGraph()` in another. So the answer is an object whoever reads Bun.ModuleGraph.
   b.static(
     cpp("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame"),
-    looksForModuleGraph(b.union(b.object, b.undefined), [b.returnedFrom(moduleGraphsCell)]),
+    looksForModuleGraph(b.union(b.object, b.undefined), [
+      b.createdIn(b.object, b.nativeCell(moduleGraphsCell)),
+      b.returnedFrom(moduleGraphsCell),
+    ]),
   ),
   // The frame it answers is the operand or one below it: one that native code has made, or the copy of one that node:async_hooks has made.
   b.static(
@@ -292,14 +374,15 @@ export default b.declarations(
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {
     args: { filename: b.any.optional },
-    returns: b.object,
+    returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
-    uses: { filename: b.inspected },
+    uses: { filename: converted },
     implementation: b.hostCall,
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getExtraCACertificates"), listsCertificates),
+  b.static(cpp("NodeTLS.cpp", "getOpenSSLDefaultCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getSystemCACertificates"), listsCertificates),
   // The value under the name that fits best, of a Map that is walked without its iterator.
   b.static(cpp("NodeTLS.cpp", "selectServerName"), [

@@ -365,11 +365,11 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu & Windows.
   await Bun.sleep(16);
   const end2 = process.hrtime();
 
-  expect(end2[1] > start[1]).toBe(true);
+  // A second may begin in between.
+  expect(end2[0] * 1e9 + end2[1]).toBeGreaterThan(start[0] * 1e9 + start[1]);
 });
 
 it("process.hrtime.bigint()", () => {
@@ -633,10 +633,10 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",
-  "linux-x64": "78.3",
-  "linux-arm64": "78.3",
-  "win32-x64": "78.3",
-  "win32-arm64": "78.3",
+  "linux-x64": "79.1",
+  "linux-arm64": "79.1",
+  "win32-x64": "79.1",
+  "win32-arm64": "79.1",
 };
 
 it("ICU version does not regress", () => {
@@ -644,7 +644,9 @@ it("ICU version does not regress", () => {
   if (!min) {
     throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
   }
-  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
+  // As many parts as the floor has: macOS may report four, and Bun.semver.order reads a missing part as the highest.
+  const version = process.versions.icu.split(".").slice(0, 2).join(".");
+  expect(Bun.semver.order(version, min)).toBeGreaterThanOrEqual(0);
 });
 
 it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {
@@ -3302,6 +3304,36 @@ describe("default 'warning' listener is registered at startup", () => {
       /^\(node:\d+\) Warning: shown\n\(Use `.*--trace-warnings \.\.\.` to show where the warning was created\)\nuser-listener\n$/,
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent("the first warning does not call a replaced path.basename", async () => {
+    const { stdout, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       const original = path.basename;
+       let calls = 0;
+       path.basename = function (...args) {
+         calls++;
+         return original.apply(this, args);
+       };
+       process.emitWarning("made up");
+       setImmediate(() => console.log(calls));`,
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
+  });
+
+  it.concurrent("the first warning passes an argv0 that is not a string to path.basename", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       path.basename = function (name) {
+         return this === path && name === 5 ? "REPLACED" : "WRONG";
+       };
+       process.argv0 = 5;
+       process.emitWarning("made up");`,
+    ]);
+    expect(stderr).toMatch(/^\(node:\d+\) Warning: made up\n\(Use `REPLACED --trace-warnings/);
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {

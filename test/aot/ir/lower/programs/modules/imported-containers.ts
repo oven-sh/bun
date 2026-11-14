@@ -516,73 +516,64 @@ export function reach(name) { return store[name]; }
 
 // GENERATED: alterPrototype told show
 // CHECK-LABEL: function {{*}}name="alterPrototype"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|Array<undefined|null|string> site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Builtin builtin=Object
 // CHECK-NEXT: v3 = Builtin builtin=ObjectGetPrototypeOf
 // CHECK-NEXT: v4 = Call v3, v2, v0 calleeName="Object.getPrototypeOf"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v6 = Builtin builtin=Object
-// CHECK-NEXT: v7 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v8 = Call v7, v6, v5 calleeName="Object.create"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v10 = IteratorOpen v1
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v12 = IteratorResume v10
-// CHECK-NEXT: v13 = ResultAt v12
-// CHECK-NEXT: v14 = ResultAt v12 index=1
-// CHECK-NEXT: Branch v13 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v15 = Builtin builtin=Object
-// CHECK-NEXT: v16 = Builtin builtin=ObjectSetPrototypeOf
-// CHECK-NEXT: v17 = Call v16, v15, v0, v9 calleeName="Object.setPrototypeOf"
-// CHECK-NEXT: v18 = Undefined
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v19 = Convert v14 declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v21 = String string="inherited"
-// CHECK-NEXT: v22 = Call v20, -, v21, v19, v5 calleeName="wrapper"
-// CHECK-NEXT: ElemSet v9, v19, v22
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v10:
-// CHECK-NEXT: v24 = CatchException
-// CHECK-NEXT: IteratorClose v10 completion=Throw
-// CHECK-NEXT: Rethrow v24
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="told"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
+// CHECK-NEXT: v5 = Builtin builtin=Object
+// CHECK-NEXT: v6 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v7 = Call v6, v5, v4 calleeName="Object.create"
+// CHECK-NEXT: v8 = IteratorOpen v1
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: LoopHint
+// CHECK-NEXT: v10 = IteratorResume v8
+// CHECK-NEXT: v11 = ResultAt v10
+// CHECK-NEXT: v12 = ResultAt v10 index=1
+// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v13 = Builtin builtin=Object
+// CHECK-NEXT: v14 = Builtin builtin=ObjectSetPrototypeOf
+// CHECK-NEXT: v15 = Call v14, v13, v0, v7 calleeName="Object.setPrototypeOf"
+// CHECK-NEXT: v16 = Undefined
+// CHECK-NEXT: Return v16
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Jump -> next b4()
+// CHECK-NEXT: b4() handler=b5():
+// CHECK-NEXT: v17 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_1]]
+// CHECK-NEXT: v19 = String string="inherited"
+// CHECK-NEXT: v20 = Call v18, -, v19, v17, v4 calleeName="wrapper"
+// CHECK-NEXT: ElemSet v7, v17, v20
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b5() role=IterationCleanup subject=v8:
+// CHECK-NEXT: v22 = CatchException
+// CHECK-NEXT: IteratorClose v8 completion=Throw
+// CHECK-NEXT: Rethrow v22
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="told"
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0():
+// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="notes"
 // CHECK-NEXT: v2 = PropGet v1 key="join"
 // CHECK-NEXT: v3 = String string=", "
 // CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="join" calleeName="notes.join"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v7 = CheckInitialized v6 name="notes"
 // CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: PropSet v7, v9 key="length"
+// CHECK-NEXT: PropSet v7, v8 key="length"
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=JSON
 // CHECK-NEXT: v2 = PropGet v1 key="stringify"
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v4 = NewClosure function=[[f_10]]
+// CHECK-NEXT: v4 = NewClosure function=[[f_3]]
 // CHECK-NEXT: v5 = Call v3, v1, v0, v4 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }

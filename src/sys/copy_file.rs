@@ -179,17 +179,14 @@ pub fn copy_file_with_state(
         // FreeBSD 13+ has copy_file_range(2). Unlike Linux, we don't need
         // kernel-version probing — our minimum is 14.0.
         loop {
-            // SAFETY: FFI call; fds are valid, offset ptrs are null (kernel uses file position)
-            let rc = unsafe {
-                libc::copy_file_range(
-                    in_.native(),
-                    core::ptr::null_mut(),
-                    out.native(),
-                    core::ptr::null_mut(),
-                    (i32::MAX - 1) as usize,
-                    0,
-                )
-            };
+            let rc = crate::freebsd::copy_file_range(
+                in_.native(),
+                None,
+                out.native(),
+                None,
+                (i32::MAX - 1) as usize,
+                0,
+            );
             crate::syslog!(
                 "copy_file_range({}, {}) = {}",
                 in_.native(),
@@ -227,8 +224,7 @@ pub fn copy_file_with_state(
     {
         // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
         #[cfg(target_os = "freebsd")]
-        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
-        let _ = unsafe { libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+        let _ = crate::safe_libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL);
 
         loop {
             {
@@ -352,17 +348,7 @@ pub(crate) fn copy_file_range(
         && !copy_file_state.contains(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED)
     {
         loop {
-            // SAFETY: raw syscall; fds valid, offset ptrs null
-            let rc = unsafe {
-                crate::linux::copy_file_range(
-                    in_,
-                    core::ptr::null_mut(),
-                    out,
-                    core::ptr::null_mut(),
-                    len,
-                    flags,
-                )
-            };
+            let rc = crate::linux::copy_file_range(in_, None, out, None, len, flags);
             crate::syslog!("copy_file_range({}, {}, {}) = {}", in_, out, len, rc);
             match crate::get_errno(rc) {
                 E::SUCCESS => return Ok(rc as usize),
@@ -394,8 +380,7 @@ pub(crate) fn copy_file_range(
     }
 
     while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
-        // SAFETY: raw syscall; fds valid, offset ptr null
-        let rc = unsafe { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
+        let rc = crate::linux::sendfile(out, in_, None, len);
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(rc as usize),
@@ -426,8 +411,7 @@ pub(crate) fn copy_file_range(
         copy_file_state.insert(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
         // The read/write loop below is called once per 32 KiB chunk; hint once
         // up front so the kernel doubles its readahead window. Best-effort.
-        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
-        let _ = unsafe { libc::posix_fadvise(in_, 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+        let _ = crate::safe_libc::posix_fadvise(in_, 0, 0, libc::POSIX_FADV_SEQUENTIAL);
     }
 
     copy_file_read_write_loop(in_, out, len)

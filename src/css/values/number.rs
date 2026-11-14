@@ -8,7 +8,7 @@ pub type CSSNumber = f32;
 pub struct CSSNumberFns;
 
 impl CSSNumberFns {
-    pub fn parse(input: &mut Parser) -> CssResult<CSSNumber> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, CSSNumber> {
         if let Ok(calc_value) = input.try_parse(Calc::<f32>::parse) {
             match calc_value {
                 Calc::Value(v) => return Ok(*v),
@@ -52,7 +52,7 @@ pub type CSSInteger = i32;
 pub struct CSSIntegerFns;
 
 impl CSSIntegerFns {
-    pub fn parse(input: &mut Parser) -> CssResult<CSSInteger> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, CSSInteger> {
         // TODO: calc??
         input.expect_integer()
     }

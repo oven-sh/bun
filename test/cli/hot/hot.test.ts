@@ -920,9 +920,7 @@ it.each([
   };
   await line("first load");
   // What is left on the stack can keep it alive, and differs with where a collection starts from.
-  writeFileSync(
-    join(String(dir), "main.js"),
-    `
+  const second = `
       globalThis.kept = [];
       require("fs").readFile(__filename, () => {
         Bun.gc(true);
@@ -939,10 +937,11 @@ it.each([
           });
         });
       });
-    `,
-  );
+    `;
+  writeFileSync(join(String(dir), "main.js"), second);
   await line("collected");
-  writeFileSync(join(String(dir), "main.js"), `console.log("third load"); process.exit(0);`);
+  // writeFileSync() cuts a longer file off behind the write: a load in between would read the rest of the second text.
+  writeFileSync(join(String(dir), "main.js"), `console.log("third load"); process.exit(0);`.padEnd(second.length));
   await line("third load");
   const stderr = (await runner.stderr.text()).split("\n").filter(line => line && !line.startsWith("DEBUG: "));
   expect({ stdout: stdout.split("\n"), stderr }).toEqual({
@@ -1495,6 +1494,54 @@ it(
   timeout,
 );
 
+it.each([
+  ["net.Server", "net.Server"],
+  ["net.Server", "Bun.listen()"],
+  ["Bun.listen()", "net.Server"],
+])(
+  "should leave the previous run's %s its address when a %s asks for it",
+  async (first, second) => {
+    const source = (api: string) => `
+      import { once } from "node:events";
+      import net from "node:net";
+
+      const generation = (globalThis.generation = (globalThis.generation ?? 0) + 1);
+      if (!globalThis.port) {
+        const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        globalThis.port = probe.port;
+        probe.stop(true);
+      }
+      const { port } = globalThis;
+      let code;
+      try {
+        if (${JSON.stringify(api)} === "net.Server") {
+          await once(net.createServer(socket => socket.end("run " + generation)).listen(port, "127.0.0.1"), "listening");
+        } else {
+          Bun.listen({ hostname: "127.0.0.1", port, socket: { open: socket => void socket.end("run " + generation), data() {} } });
+        }
+      } catch (error) {
+        code = error.code;
+      }
+      const [reply] = await once(net.connect(port, "127.0.0.1"), "data");
+      console.log(JSON.stringify({ code, reply: String(reply) }));
+    `;
+    using dir = tempDir("hot-listen-net", { "index.ts": source(first) });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const runs = lines(runner.stdout);
+    expect(JSON.parse((await runs.next()).value!)).toEqual({ reply: "run 1" });
+    writeFileSync(join(String(dir), "index.ts"), source(second) + "// second");
+    expect(JSON.parse((await runs.next()).value!)).toEqual({ code: "EADDRINUSE", reply: "run 1" });
+  },
+  timeout,
+);
+
 // How get-port, portfinder and detect-port look for a free port.
 it(
   "should report EADDRINUSE when one --hot run listens on the same port twice",
@@ -1523,7 +1570,16 @@ it(
           client.on("data", data => resolve(data.toString()));
           client.on("error", err => resolve(err.code));
         });
-        console.log(JSON.stringify({ probed, reply }));
+        app.close();
+
+        Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        let again = "free";
+        try {
+          Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        } catch (err) {
+          again = err.code;
+        }
+        console.log(JSON.stringify({ probed, reply, again }));
         process.exit(0);
       `,
     });
@@ -1536,7 +1592,7 @@ it(
       stdin: "ignore",
     });
     const [stdout, exitCode] = await Promise.all([runner.stdout.text(), runner.exited]);
-    expect(stdout).toBe(JSON.stringify({ probed: "EADDRINUSE", reply: "app" }) + "\n");
+    expect(stdout).toBe(JSON.stringify({ probed: "EADDRINUSE", reply: "app", again: "EADDRINUSE" }) + "\n");
     expect(exitCode).toBe(0);
   },
   timeout,

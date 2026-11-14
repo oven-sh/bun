@@ -43,7 +43,8 @@ struct lsquic_conn;
 /* Before `loop` polls, after it has dispatched what the poll returned, and after a microtask drain. */
 enum us_quic_pass_point { US_QUIC_BEFORE_POLL, US_QUIC_AFTER_POLL, US_QUIC_AFTER_MICROTASKS };
 
-/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver. */
+/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver.
+ * The poll's timeout predates US_QUIC_BEFORE_POLL, so a pass that ran the application's code there returns 0. */
 typedef int (*us_quic_pass_fn)(us_quic_driver_t *d, enum us_quic_pass_point point);
 
 /* `pass` runs at each point, but after a microtask drain only if the driver is pending. */
@@ -58,6 +59,8 @@ struct lsquic_engine *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned fl
     const struct lsquic_stream_if *stream_if, void *stream_if_ctx,
     const struct lsquic_hset_if *hset_if, void *hset_ctx,
     struct ssl_ctx_st *(*lookup_cert)(void *, const struct sockaddr *, const char *), void *lookup_cert_ctx);
+/* Destroys one of the driver's engines. No engine may be on the stack. */
+void us_quic_driver_remove_engine(us_quic_driver_t *d, struct lsquic_engine *engine);
 /* lsquic_engine_process_conns on every engine. Does nothing while an engine is on the stack. */
 void us_quic_driver_process(us_quic_driver_t *d);
 /* The soonest lsquic_engine_earliest_adv_tick in µs from now, or -1. */
@@ -223,6 +226,8 @@ void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s);
 /* The peer sent RESET_STREAM. on_stream_close can still read it. */
 int us_quic_stream_reset_received(us_quic_stream_t *s);
+/* lsquic is closing the stream's connection over an error. on_stream_data still gets the FIN of the message that caused it. */
+int us_quic_stream_connection_failed(us_quic_stream_t *s);
 /* The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
  * The RFC says the same of the request at the id, but servers on stock lsquic name
  * the last request they accepted. on_stream_close can still read it. */

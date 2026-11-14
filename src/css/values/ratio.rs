@@ -10,7 +10,7 @@ pub struct Ratio {
 }
 
 impl Ratio {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Ratio> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Ratio> {
         let first = CSSNumberFns::parse(input)?;
         let second = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             CSSNumberFns::parse(input)?
@@ -25,7 +25,7 @@ impl Ratio {
     }
 
     /// Parses a ratio where both operands are required.
-    pub(crate) fn parse_required(input: &mut Parser) -> Result<Ratio> {
+    pub(crate) fn parse_required<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Ratio> {
         let first = CSSNumberFns::parse(input)?;
         input.expect_delim(b'/')?;
         let second = CSSNumberFns::parse(input)?;

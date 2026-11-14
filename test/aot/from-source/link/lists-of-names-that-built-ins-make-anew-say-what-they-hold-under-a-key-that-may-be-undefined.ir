@@ -1,0 +1,14 @@
+# The lists that Object.keys, Object.getOwnPropertyNames, Reflect.ownKeys, a split by a RegExp, Object.values of a text and Object.entries make are lists themselves: read under a key that is a number or undefined they stay in sight, and the read gives what the row says they hold.
+# Each line is the read of one of the six, in the order of the source; with a list that went out the read has no line at all.
+# RUN: link accesses mechanisms=all
+# CHECK: proven=undefined|string
+# CHECK: proven=undefined|string
+# CHECK: proven=undefined|string|symbol
+# CHECK: proven=undefined|string
+# CHECK: proven=undefined|string
+# CHECK: proven=undefined|Array
+# -- source: lists-of-names-that-built-ins-make-anew-say-what-they-hold-under-a-key-that-may-be-undefined.ts
+# const queue: number[] = [0];
+# const keys = Object.keys({ x: 1 }), names = Object.getOwnPropertyNames({ x: 1 }), own = Reflect.ownKeys({ x: 1 }), cut = "a1b".split(/\d/), letters = Object.values("ab"), pairs = Object.entries({ x: 1 });
+# console.log(keys[queue.shift()!]?.length, names[queue[0]!]?.length, String(own[queue[0]!]), cut[queue[0]!]?.length, letters[queue[0]!]?.length, pairs[queue[0]!]?.length);
+# -- end of source

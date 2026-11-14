@@ -1,0 +1,96 @@
+# WHAT MANY CALLS DO ALIKE IS DONE ONCE. 200 classes below one class, which all have a method `m` and a static method `make` of their own, 200 functions that call `x.m()` and 200 that call `C.make()`,
+# each on what may be any object or any class object of the family. One shared call for each name enters the 201 methods, and each call lays an edge for each operand to it: members + calls.
+# Each call by itself makes members x calls: 166,689 edges and 164,003 observers here, and four times that with twice the classes.
+# class A { m() {} static make() {} }  class B1 extends A { m() {} static make() {} } ..  function f(x) { return x.m(); } f(new B7); f(new B1); ..  function g(C) { return C.make(); } g(B7); g(B1); ..
+# Each field of a layout of the table of built-ins is one edge in every program: a layout more in the table moves the number by its fields.
+# RUN: link counts mechanisms=all
+# CHECK: counts flow | nodes {{*}} | edges 8082 | observers 4211 |
+# CHECK: counts who may name a function | groups 1 | referrers 2410 |
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+# REPEAT: i = 1..200
+layout L%(i) kind=Instance name="B%(i)" module=m0 base=L0 constructor=f%(i*3+1) supertypes=[L0] flags=[HasHeritage]
+# END REPEAT
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 side=Static index=1 key="make"
+    v6 = FinishClass v1 layout=L0
+# REPEAT: i = 1..200
+    v%(i*9-2) = ResolveHeritage v6
+    v%(i*9-1) = NewClosure function=f%(i*3+1)
+    v%(i*9) = NewClass v%(i*9-1), v6, v%(i*9-2) layout=L%(i)
+    v%(i*9+1) = NewClosure function=f%(i*3+2)
+    DefineMethod v%(i*9), v%(i*9+1) layout=L%(i) key="m"
+    v%(i*9+3) = NewClosure function=f%(i*3+3)
+    DefineMethod v%(i*9), v%(i*9+3) layout=L%(i) side=Static index=1 key="make"
+    v%(i*9+5) = FinishClass v%(i*9) layout=L%(i)
+    v%(i*9+6) = Construct v%(i*9+5)
+# END REPEAT
+# REPEAT: j = 0..199
+    v%(j*6+1807) = NewClosure function=f%(j+604)
+    v%(j*6+1808) = Call v%(j*6+1807), -, v%(j*9+15)
+    v%(j*6+1809) = Call v%(j*6+1807), -, v15
+    v%(j*6+1810) = NewClosure function=f%(j+804)
+    v%(j*6+1811) = Call v%(j*6+1810), -, v%(j*9+14)
+    v%(j*6+1812) = Call v%(j*6+1810), -, v14
+# END REPEAT
+    v3007 = Undefined
+    Return v3007
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="make" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}
+# REPEAT: i = 1..200
+function f%(i*3+1) name="B%(i)" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L%(i) {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L%(i)
+    Return v3
+}
+function f%(i*3+2) name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=%(i*3+2)
+    Return v0
+}
+function f%(i*3+3) name="make" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=%(i*3+3)
+    Return v0
+}
+# END REPEAT
+# REPEAT: j = 0..199
+function f%(j+604) module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+# END REPEAT
+# REPEAT: j = 0..199
+function f%(j+804) module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="make"
+    v2 = Call v1, v0 calleeKey="make"
+    Return v2
+}
+# END REPEAT

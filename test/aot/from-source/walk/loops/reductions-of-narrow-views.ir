@@ -1,0 +1,9 @@
+# -- source: main.ts
+# function hash(bytes: Uint8Array): number { let sum = 0; for (let i = 0; i < bytes.length; i++) sum ^= i * bytes[i]; return sum; }
+# function total(halves: Int16Array): number { let sum = 0; for (let i = 0; i < halves.length; i++) sum = (sum + halves[i]) | 0; return sum; }
+# const size = process.argv.length * 1000;
+# console.log(hash(new Uint8Array(size)), total(new Int16Array(size)));
+# -- end of source
+# Bytes and halfwords that a loop reduces are widened to words, four at a time.
+# RUN: compile LoopsInVectors mechanisms=all
+# CHECK: statistic LoopsInVectors 2

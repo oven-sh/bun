@@ -1,0 +1,17 @@
+# -- source: main.js
+# function Base() { this.tag = 1; }
+# function Below() { this.tag = 2; }
+# Below.prototype = Object.create(Base.prototype);
+# Base.prototype.weigh = function () { return "weigh " + this.tag; };
+# const first = new Base(), second = new Below();
+# function lay(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Base.prototype.kind = value; Below.prototype.size = value + 1; Below.prototype.weigh = Base.prototype.weigh; return work; }
+# lay(3);
+# print(first.kind, second.kind, first.size, second.size, second.weigh());
+# -- end of source
+# Behind the first object of each of two constructor functions in a row, a name is laid on the prototype object above, another on the one below, and the method found above is laid below under its own name.
+# RUN: run-in-shell
+# CHECK: 3 3 undefined 4 weigh 2
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 3 3 undefined 4 weigh 2
+# CALLED-NEXT: exited with 0

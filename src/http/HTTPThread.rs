@@ -63,12 +63,8 @@ use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
-    /// Per-thread `MiniEventLoop` singleton — published by
-    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
-    pub(crate) loop_: *const MiniEventLoop,
-    /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
-    /// can `SocketGroup::init` without naming MiniEventLoop.
-    pub(crate) uws_loop: *mut uws::Loop,
+    /// The uSockets loop of the HTTP thread, for `wakeup()`.
+    uws_loop: *const uws::Loop,
     pub(crate) http_context: NewHttpContext<false>,
     pub(crate) https_context: NewHttpContext<true>,
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
@@ -97,8 +93,6 @@ pub struct HttpThread {
     /// aborted tasks when `active >= max`; without it the common at-capacity
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
-    /// How many requests had been created when `ask_for_slots` last asked.
-    slots_asked_at: u32,
 
     pub(crate) queued_shutdowns: Vec<ShutdownMessage>,
     pub(crate) queued_writes: Vec<WriteMessage>,
@@ -137,13 +131,12 @@ pub struct HttpThread {
 }
 
 impl HttpThread {
-    /// `loop_`/`uws_loop` are filled in by
+    /// `uws_loop` is filled in by
     /// `on_start` on the spawned thread; `timer` is started on the calling
     /// thread.
     fn new() -> Self {
         Self {
-            loop_: core::ptr::null(),
-            uws_loop: core::ptr::null_mut(),
+            uws_loop: core::ptr::null(),
             http_context: NewHttpContext::<false> {
                 ref_count: Cell::new(1),
                 pending_sockets: crate::http_context::LazyPool::new(),
@@ -170,7 +163,6 @@ impl HttpThread {
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            slots_asked_at: 0,
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
@@ -241,14 +233,14 @@ pub struct LibdeflateState {
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
-    /// Mutable access to the libdeflate decompressor handle.
+    /// The libdeflate decompressor handle.
     ///
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
-            .as_deref_mut()
+            .as_deref()
             .expect("set in HttpThread::deflater()")
     }
 }
@@ -263,7 +255,7 @@ pub struct InitOpts {
     // NUL-terminated C strings borrowed from caller config; the pointers are
     // copied into the spawned thread and only read there (see the Send SAFETY note).
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
-    pub abs_ca_file_name: &'static [u8],
+    pub abs_ca_file_name: &'static bun_core::ZStr,
 
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
@@ -277,7 +269,7 @@ impl Default for InitOpts {
     fn default() -> Self {
         Self {
             ca: Vec::new(),
-            abs_ca_file_name: b"",
+            abs_ca_file_name: bun_core::ZStr::EMPTY,
             on_init_error: on_init_error_noop,
         }
     }
@@ -286,16 +278,7 @@ impl Default for InitOpts {
 fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
     match err {
         InitError::LoadCAFile => {
-            // SAFETY: `abs_ca_file_name` is NUL-terminated by
-            // contract — already passed as a C string to BoringSSL via
-            // `init_with_thread_opts`, so `ptr[len] == 0` holds.
-            let path = unsafe {
-                bun_core::ZStr::from_raw(
-                    opts.abs_ca_file_name.as_ptr(),
-                    opts.abs_ca_file_name.len(),
-                )
-            };
-            if !bun_sys::exists_z(path) {
+            if !bun_sys::exists_z(opts.abs_ca_file_name) {
                 Output::err(
                     "HTTPThread",
                     "failed to find CA file: '{}'",
@@ -330,25 +313,6 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
 }
 
 impl HttpThread {
-    /// Raw uSockets loop for `SocketGroup::init`. Split from `loop_` so
-    /// HTTPContext doesn't need to name the higher-tier MiniEventLoop type.
-    #[inline]
-    pub(crate) fn uws_loop(&self) -> *mut uws::Loop {
-        self.uws_loop
-    }
-
-    /// The live uSockets event loop.
-    ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. HTTP-thread-only
-    /// at every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead.
-    #[inline]
-    fn uws_loop_ref(&self) -> &uws::Loop {
-        // SAFETY: see INVARIANT above.
-        unsafe { &*self.uws_loop }
-    }
-
     /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
     /// overflows only after ~584 years of process uptime.
     #[inline]
@@ -423,17 +387,24 @@ impl HttpThread {
             .expect("init_with_config sets `secure` or fails"))
     }
 
-    /// The `SSL_CTX` of this config's HTTP/3 connections. `None` if the config can't be loaded.
-    pub(crate) fn quic_ssl_ctx(&mut self, tls: &ssl_config::SharedPtr) -> Option<OwnedSslCtx> {
+    /// The `SSL_CTX` of this config's HTTP/3 connections. Fails like `custom_https_context`.
+    pub(crate) fn quic_ssl_ctx(
+        &mut self,
+        tls: &ssl_config::SharedPtr,
+    ) -> crate::Result<OwnedSslCtx> {
         let entry = self.ssl_context_cache_entry(tls);
+        let mut err = uws::create_bun_socket_error_t::none;
         if entry.quic.is_none() {
             entry.quic = tls
                 .get()
                 .as_usockets_for_client_verification()
-                .create_ssl_context(&mut uws::create_bun_socket_error_t::none)
+                .create_ssl_context(&mut err)
                 .inspect(uws::quic::context::prepare_client_ssl_ctx);
         }
-        entry.quic.clone()
+        entry.quic.clone().ok_or(match err {
+            uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
+            _ => crate::Error::FailedToOpenSocket,
+        })
     }
 
     /// The context of this config's TCP connections.
@@ -700,25 +671,6 @@ impl HttpThread {
         self.deferred_tasks.insert(first_that_yields, http);
     }
 
-    /// Every slot is taken. A response that was dropped with its body unread holds one until a garbage collection finds it, and an idle heap is rarely collected.
-    #[cold]
-    fn ask_for_slots(&mut self, max: usize) {
-        if self.deferred_tasks.is_empty() && self.queued_tasks.is_empty() {
-            return;
-        }
-        // Asking again is worth it once the program has run: it has when it made more requests.
-        let created = crate::ASYNC_HTTP_ID_MONOTONIC.load(Ordering::Relaxed);
-        if (created.wrapping_sub(self.slots_asked_at) as usize) < (max / 4).max(1) {
-            return;
-        }
-        self.slots_asked_at = created;
-        for &id in self.in_flight.keys() {
-            if let Some(client) = self.request(id) {
-                HttpClient::report_slot_wanted(client);
-            }
-        }
-    }
-
     pub(crate) fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -744,7 +696,6 @@ impl HttpThread {
         // tracker. If that's clear, there's nothing to fail-fast and nothing can
         // start, so don't walk the lists.
         if active >= max && !self.has_pending_queued_abort {
-            self.ask_for_slots(max);
             return;
         }
 
@@ -1101,9 +1052,9 @@ use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`
-// for `loop_.loop_.{tick,inc,dec,num_polls}` (`on_start` calls
+// (`on_start` calls
 // `mini_event_loop::init_global` and drives the thread's event loop). The
-// wakeup path above still uses the raw `*mut uws::Loop` directly.
+// wakeup path above still uses the raw `*const uws::Loop` directly.
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {
@@ -1131,7 +1082,7 @@ mod _event_loop_draft {
         // Initialize the global (with timer
         // started on the calling thread) BEFORE spawning, so `on_start`'s
         // `crate::http_thread_mut()` finds `Some(..)` and can fill in
-        // `loop_`/`uws_loop`/contexts.
+        // `uws_loop`/contexts.
         // SAFETY: `init_once` runs under `Once`; no other thread reads
         // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
         unsafe {
@@ -1187,14 +1138,7 @@ mod _event_loop_draft {
         // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
         // panics with `Parent loop not set - pointer is null`, which aborts
         // the process — `bun install` SIGABRT on the first uncached lookup.
-        let loop_ = mini_event_loop::init_global(None, None);
-        // `init_global` returns the heap-allocated thread-local singleton (never
-        // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
-        // a stable field via `&self`, so a `ParentRef` shared deref suffices.
-        let uws_loop = bun_ptr::ParentRef::from(
-            NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
-        )
-        .loop_ptr();
+        let loop_ = mini_event_loop::init_global(None);
 
         #[cfg(windows)]
         {
@@ -1213,8 +1157,7 @@ mod _event_loop_draft {
         }
 
         let thread = crate::http_thread_mut();
-        thread.loop_ = loop_;
-        thread.uws_loop = uws_loop;
+        thread.uws_loop = loop_.loop_;
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
         // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
@@ -1239,15 +1182,15 @@ mod _event_loop_draft {
             // none).
             thread.lazy_https_init = Some(opts);
         }
-        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
+        // Release: publishes `uws_loop` to cross-thread `wakeup()`
         // readers (which Acquire-load `has_awoken`).
         thread.has_awoken.store(true, Ordering::Release);
-        thread.process_events();
+        thread.process_events(loop_);
     }
 
     impl HttpThread {
-        fn process_events(&mut self) -> ! {
-            let uws_loop = self.uws_loop_ref();
+        fn process_events(&mut self, loop_: &MiniEventLoop) -> ! {
+            let uws_loop = loop_.loop_;
             #[cfg(unix)]
             {
                 uws_loop.num_polls.set(uws_loop.num_polls.get().max(2));
@@ -1277,19 +1220,13 @@ mod _event_loop_draft {
                 assert_request_sockets_alive(self);
                 Output::flush();
 
-                let uws_loop = self.uws_loop_ref();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
                 // Run the deferred-free thunk (`Store::process_deferred_frees`)
                 // like `MiniEventLoop::tick_once` does after its raw tick; the
                 // FilePoll hive slots freed during this tick are reclaimed here.
-                // SAFETY: `loop_` was born `*mut` (`init_global`), so `cast_mut`
-                // keeps its provenance; it is HTTP-thread-only and disjoint from
-                // the C `us_loop_t` behind `uws_loop`, and no other `&`/`&mut`
-                // to this `MiniEventLoop` is live here (`uws_loop` re-derived
-                // per iteration, last used above).
-                unsafe { (*self.loop_.cast_mut()).on_after_event_loop() };
+                loop_.on_after_event_loop();
                 assert_request_sockets_alive(self);
 
                 if cfg!(debug_assertions) {

@@ -342,7 +342,7 @@ impl Route {
         let global = this.bundle.global.get();
         let server = this.server.get().expect("server set");
         let development = server.config().development;
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
         let mut config = JSBundlerConfig::default();
         // `Config` owns its fields and
@@ -355,7 +355,7 @@ impl Route {
             )],
             loaders: vec![bun_options_types::schema::api::Loader::html],
         });
-        let xform = &vm.transpiler.options.transform_options;
+        let xform = &vm.transpiler.get().options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
                 config.public_path.append_slice(public_path)?;
@@ -415,11 +415,7 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        // `[serve.static] define` comes last so it overrides a top-level define with the same key.
-        for define in [&cli.args.define, &cli.args.serve_define]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
             // profile if hot.

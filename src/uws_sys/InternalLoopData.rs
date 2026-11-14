@@ -81,6 +81,12 @@ impl InternalLoopData {
         self.head.get()
     }
 
+    /// A tick is on the stack, so one of its handlers may be too.
+    #[inline]
+    pub fn is_ticking(&self) -> bool {
+        self.tick_depth.get() > 0
+    }
+
     #[inline]
     pub(crate) fn has_quic(&self) -> bool {
         !self.quic_head.get().is_null()

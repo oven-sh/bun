@@ -594,7 +594,7 @@ impl ServerConfig {
             bundler_options,
         };
 
-        let o = &vm.transpiler.options.transform_options;
+        let o = &vm.transpiler.get().options.transform_options;
 
         match o.serve_env_behavior {
             DotEnvBehavior::prefix => {
@@ -614,15 +614,11 @@ impl ServerConfig {
             _ => {}
         }
 
-        // `[serve.static] define` comes last so it overrides a top-level define with the same key.
-        let mut define = o.define.clone().unwrap_or_default();
-        if let Some(serve_define) = &o.serve_define {
-            define.keys.extend_from_slice(&serve_define.keys);
-            define.values.extend_from_slice(&serve_define.values);
+        if let Some(define) = &o.serve_define {
+            user_options.bundler_options.client.define = define.clone();
+            user_options.bundler_options.server.define = define.clone();
+            user_options.bundler_options.ssr.define = define.clone();
         }
-        user_options.bundler_options.client.define = define.clone();
-        user_options.bundler_options.server.define = define.clone();
-        user_options.bundler_options.ssr.define = define;
 
         user_options
     }
@@ -642,8 +638,10 @@ impl ServerConfig {
         }
         self.bake = new_config.bake.take();
         if self.bake.is_none() {
-            let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-            let framework = crate::bake::Framework::auto(resolver, Vec::new());
+            let framework = global
+                .bun_vm()
+                .transpiler
+                .with_mut(|t| crate::bake::Framework::auto(&mut t.resolver, Vec::new()));
             self.bake = Some(Self::dev_server_options(
                 global.bun_vm(),
                 framework,
@@ -666,10 +664,11 @@ impl ServerConfig {
         let env = vm.env_loader();
         // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
         // of the default one. Taken first: it is for this one call, even when an option throws.
-        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
+        let bake_pages = vm.bake_pages.take();
 
         let mut args = ServerConfig {
-            development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
+            development: if let Some(hmr) = vm.transpiler.get().options.transform_options.serve_hmr
+            {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
                 } else {
@@ -691,7 +690,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if vm.transpiler.options.production || process_env_is_production(global)? {
+        if vm.transpiler.get().options.production || process_env_is_production(global)? {
             args.development = DevelopmentOption::Production;
         }
 
@@ -707,14 +706,14 @@ impl ServerConfig {
                 }
             }
 
-            if let Some(port) = vm.transpiler.options.transform_options.port {
+            if let Some(port) = vm.transpiler.get().options.transform_options.port {
                 break 'brk port;
             }
 
             3000
         };
 
-        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler.get().options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
@@ -975,11 +974,9 @@ impl ServerConfig {
                 && (!is_removed(Feature::Bundler) || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
                     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-                    let bake_framework = global.bun_vm().bake_framework.get();
-                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+                    let bake_framework = vm.bake_framework.get().get();
+                    let transpiler = &vm.transpiler;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
                             match crate::bake::Framework::from_js(
@@ -994,11 +991,14 @@ impl ServerConfig {
                                 }
                             }
                         }
-                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
-                        _ => crate::bake::Framework::auto(
-                            resolver,
-                            core::mem::take(&mut init_ctx.framework_router_list),
-                        ),
+                        _ if bake_pages => transpiler
+                            .with_mut(|t| crate::bake::Framework::bake_pages(&mut t.resolver)),
+                        _ => transpiler.with_mut(|t| {
+                            crate::bake::Framework::auto(
+                                &mut t.resolver,
+                                core::mem::take(&mut init_ctx.framework_router_list),
+                            )
+                        }),
                     };
 
                     args.bake = Some(Self::dev_server_options(vm, framework, bundler_options));
@@ -1133,6 +1133,14 @@ impl ServerConfig {
                     if is_removed(Feature::Bundler) {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
+                        )));
+                    }
+                    // The compiler counts on this option only where the object that is passed was written with it.
+                    if bun_jsc::compiled_program::compiled_program().is_some_and(|program| {
+                        !bun_jsc::compiled_program::admits_unknown_javascript(program)
+                    }) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: this executable only runs code that was compiled into it, and the build didn't see your code pass this option. Write it in the object that Bun.serve() is called with"
                         )));
                     }
                     if args.bake.is_some() {

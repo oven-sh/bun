@@ -311,23 +311,20 @@ pub(crate) enum WritableFuture {
 }
 
 impl WritablePending {
-    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
         self.state = PendingState::Pending;
 
         match &self.future {
-            WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
+            WritableFuture::Promise { strong, .. } => strong.value(),
             _ => {
+                let strong = JSPromiseStrong::init(cx.global());
+                let value = strong.value();
                 self.future = WritableFuture::Promise {
-                    strong: JSPromiseStrong::init(cx.global()),
+                    strong,
                     global: BackRef::new(cx.global()),
                     context: cx.context().id(),
                 };
-                match &self.future {
-                    WritableFuture::Promise { strong, .. } => {
-                        std::ptr::from_mut::<JSPromise>(strong.get())
-                    }
-                    _ => unreachable!(),
-                }
+                value
             }
         }
     }
@@ -401,9 +398,7 @@ impl Writable {
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let prom = unsafe { (*pending).promise(cx) };
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                JSPromise::opaque_ref(prom).to_js()
+                unsafe { (*pending).promise(cx) }
             }
         }
     }
@@ -462,11 +457,9 @@ impl Pending {
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
-        // VM event loop is a singleton; temporary `&mut` is the sole borrow
-        // for the duration of `enqueue_task` (no re-entry into Rust).
         // `Task::from_boxed` owns the `Box → *mut` leak; the matching
         // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
-        vm.event_loop_ref()
+        vm.event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
 
@@ -598,13 +591,7 @@ impl StreamResult {
         promise: *mut JSPromise,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        // dropped (only used for read-only `event_loop()`) before any re-entrant call.
         let vm = cx.vm();
-        // A long-lived `&mut EventLoop` / `&mut JSPromise` held across
-        // re-entrant resolve/reject would alias any
-        // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
-        // same promise. `event_loop_ref()` is the audited safe accessor that forms a
-        // fresh temporary `&mut EventLoop` per call so no two `&mut` are live at once.
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
@@ -1357,7 +1344,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `res` is `Copy` (raw uWS handle); see the note in
         // `send_without_auto_flusher` re: holding it across `on_first_write`.
 
-        if self.requested_end && !res.state().is_http_write_called() {
+        // Over HTTP/1 the head can be out before the first byte of the body, and `try_end` continues either framing.
+        let can_try_end = matches!(res, uws::AnyResponse::SSL(_) | uws::AnyResponse::TCP(_))
+            || !res.state().is_http_write_called();
+        if self.requested_end && can_try_end {
             self.handle_first_write_if_necessary();
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
@@ -2513,7 +2503,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, None)
+        NetworkSinkJSSink::create_object(global_this, NonNull::from(self), None)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -2589,8 +2579,6 @@ pub enum BufferActionTag {
     Blob,
     Bytes,
     Json,
-    /// [`AnyBlob::to_json_source`].
-    JsonSource,
 }
 
 impl BufferAction {

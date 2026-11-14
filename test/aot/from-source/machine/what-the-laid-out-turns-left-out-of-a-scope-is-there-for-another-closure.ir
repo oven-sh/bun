@@ -1,0 +1,59 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function unseen<T>(value: T): T;
+# function make() {
+#   let total = 0;
+#   let last = 5.5;
+#   function add(n: number): void {
+#     for (let i = 0; i < n; i++) total += i & 7;
+#   }
+#   function addUntilNine(view: Int32Array, n: number): number {
+#     let t = 0.25;
+#     for (let i = 0; i < n; i++) {
+#       if (view[i] === 9) break;
+#       t = t + view[i] * 0.5;
+#       last = t;
+#     }
+#     return t;
+#   }
+#   function look(): string {
+#     return total + " " + last;
+#   }
+#   function reset(): void {
+#     total = 0;
+#     last = 5.5;
+#   }
+#   return { add, addUntilNine, look, reset };
+# }
+# const one = make();
+# const other = make();
+# for (const n of [0, 7, 8, 40, 43]) {
+#   one.reset();
+#   unseen(one.add)(n);
+#   print(n, unseen(one.look)(), unseen(other.look)());
+# }
+# const view = new Int32Array(64);
+# for (const stop of [0, 1, 7, 8, 9, 63]) {
+#   view.fill(3);
+#   view[stop] = 9;
+#   one.reset();
+#   print(stop, unseen(one.addUntilNine)(unseen(view), 64), unseen(one.look)(), unseen(other.look)());
+# }
+# -- end of source
+# Another closure over the same scope reads the variables behind the loop; a second scope of the same make() stays as it was. Behind no turn, fewer than eight, eight, five times eight and a rest; and
+# behind a laid-out turn that leaves by a break: at 0 no turn has run and `last` keeps its 5.5; from 1 on it holds what the turn in front stored.
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 2
+# RUN(RIGHT): run-in-shell globalThis.unseen = (value) => value;
+# RIGHT: 0 0 5.5 0 5.5
+# RIGHT-NEXT: 7 21 5.5 0 5.5
+# RIGHT-NEXT: 8 28 5.5 0 5.5
+# RIGHT-NEXT: 40 140 5.5 0 5.5
+# RIGHT-NEXT: 43 143 5.5 0 5.5
+# RIGHT-NEXT: 0 0.25 0 5.5 0 5.5
+# RIGHT-NEXT: 1 1.75 0 1.75 0 5.5
+# RIGHT-NEXT: 7 10.75 0 10.75 0 5.5
+# RIGHT-NEXT: 8 12.25 0 12.25 0 5.5
+# RIGHT-NEXT: 9 13.75 0 13.75 0 5.5
+# RIGHT-NEXT: 63 94.75 0 94.75 0 5.5
+# RIGHT-NEXT: exited with 0

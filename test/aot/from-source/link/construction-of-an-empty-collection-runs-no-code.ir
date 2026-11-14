@@ -1,0 +1,16 @@
+# f1 = emptyMap, f2 = emptySet, f3 = setOfUndefined, f4 = mapOfPairs, f5 = setOfText
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function emptyMap() { return new Map(); }
+# function emptySet() { return new Set(); }
+# function setOfUndefined() { return new WeakSet(undefined); }
+# function mapOfPairs(pairs: any) { return new Map(pairs); }
+# function setOfText() { return new Set("ab"); }
+# sink(emptyMap, emptySet, setOfUndefined, mapOfPairs, setOfText);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f2 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f3 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f4 {{*}}mayCallUnknownCode
+# CHECK: function f5 {{*}}mayCallUnknownCode

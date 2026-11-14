@@ -1,12 +1,9 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
-use core::ffi::{c_char, c_void};
-
 // `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` fn below.
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
-use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{
@@ -120,17 +117,22 @@ macro_rules! extern_crypto_job {
                     this: &mut Self,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
+                    // Jobs report what they find on the error queue of a thread they share.
+                    boringssl::c::ERR_clear_error();
                     // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
                         this.global.under_ticket(done.ticket())
                     });
+                    boringssl::c::ERR_clear_error();
                     Some(done)
                 }
 
                 fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
                     let global = cx.global();
                     let mut args = JsCallbackArgs::EMPTY;
+                    // The job ran on another thread: this one's queue is not its error stack.
+                    boringssl::c::ERR_clear_error();
                     let produced = jsc::from_js_host_call_generic(global, || {
                         ctx_run_from_js(Ctx::opaque_ref(this.ctx.0), global, &mut args);
                     });
@@ -138,7 +140,7 @@ macro_rules! extern_crypto_job {
                     // JS; free the ctx first, then invoke.
                     drop(this);
                     produced?;
-                    global.bun_vm().event_loop_mut().run_callback(
+                    global.bun_vm().event_loop().run_callback(
                         bun_event_loop::ContextId::NONE,
                         callback.get(),
                         global,
@@ -263,7 +265,7 @@ impl JobContext for RandomFillJob {
                 args = [error.to_js(), JSValue::UNDEFINED];
             }
         }
-        global.bun_vm().event_loop_mut().run_callback(
+        global.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             js.callback.get(),
             global,
@@ -384,11 +386,9 @@ fn random_int<'a>(
     let res: i64 = {
         let range = (max - min) as u64;
         debug_assert!(range > 0);
-        let rare_data = global.bun_vm().as_mut().rare_data();
-        let mut buf = [0u8; 8];
+        let rare_data = global.bun_vm().rare_data();
         let x = loop {
-            buf.copy_from_slice(rare_data.entropy_slice(8));
-            let x = u64::from_ne_bytes(buf);
+            let x = u64::from_ne_bytes(rare_data.entropy());
             let m = (x as u128).wrapping_mul(range as u128);
             let l = m as u64;
             if l < range {
@@ -424,7 +424,7 @@ pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> Bun
     } else {
         // SAFETY: it only leads to the VM's entropy cache.
         let global = unsafe { heap.global() };
-        global.bun_vm().as_mut().rare_data().next_uuid()
+        global.bun_vm().rare_data().next_uuid()
     };
 
     uuid.print(
@@ -446,7 +446,7 @@ pub(crate) fn random_uuid_v7(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> 
     if options.disable_entropy_cache {
         boringssl::rand_bytes(&mut entropy);
     } else {
-        entropy.copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
+        entropy = global.bun_vm().rare_data().entropy();
     }
     let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 
@@ -792,7 +792,9 @@ impl Scrypt {
         };
 
         if res == 0 {
-            return Some(boringssl::c::ERR_peek_last_error());
+            let err = boringssl::c::ERR_peek_last_error();
+            boringssl::c::ERR_clear_error();
+            return Some(err);
         }
         None
     }
@@ -829,7 +831,7 @@ impl JobContext for ScryptJob {
 
     fn then(this: Self, js: ScryptJs, cx: &JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
         let callback = js.callback.get();
 
         if let Some(err) = this.err {
@@ -870,7 +872,7 @@ impl JobContext for ScryptJob {
             callback,
             global,
             JSValue::UNDEFINED,
-            &[JSValue::UNDEFINED, js.buf.get()],
+            &[JSValue::NULL, js.buf.get()],
         );
         Ok(())
     }
@@ -912,7 +914,7 @@ pub(crate) fn pbkdf2<'a>(
             JSValue::UNDEFINED,
         ));
     };
-    let algorithm = pbkdf2::algorithm_from_digest(cx.global(), digest)?;
+    let digest = pbkdf2::digest_by_name(cx.global(), digest)?;
 
     let password = isolate_for_job(cx, password)?;
     let salt = isolate_for_job(cx, salt)?;
@@ -922,7 +924,7 @@ pub(crate) fn pbkdf2<'a>(
         salt.slice(),
         iterations,
         keylen as usize,
-        algorithm,
+        digest,
     )?;
     pbkdf2::create_job(&cx.js_thread(), data, password, salt, callback.to_js());
     Ok(())
@@ -952,14 +954,14 @@ pub(crate) fn pbkdf2_sync(
 ) -> JsResult<JSValue> {
     // SAFETY: it only allocates the result and throws, and nothing borrowed is read after a throw.
     let global_this = unsafe { heap.global() };
-    let algorithm = pbkdf2::algorithm_from_digest(global_this, digest)?;
+    let digest = pbkdf2::digest_by_name(global_this, digest)?;
     let data = PBKDF2::new(
         global_this,
         password,
         salt,
         iterations,
         keylen as usize,
-        algorithm,
+        digest,
     )?;
     // `create_buffer_from_length` → `JSBuffer__bufferFromLength`, which constructs
     // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
@@ -992,38 +994,6 @@ pub(crate) fn set_engine<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, ()> {
         ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
         format_args!("Custom engines not supported by BoringSSL"),
     ))
-}
-
-extern "C" fn for_each_hash(
-    _: *const boringssl::c::EVP_MD,
-    maybe_from: *const c_char,
-    _: *const c_char,
-    ctx: *mut c_void,
-) {
-    if maybe_from.is_null() {
-        return;
-    }
-    // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
-    let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-        unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
-    // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
-    // from BoringSSL's static tables.
-    let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
-    bun_core::handle_oom(hashes.put(from_bytes, ()));
-}
-
-pub(crate) fn get_hashes() -> Vec<Box<[u8]>> {
-    let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
-        CaseInsensitiveAsciiStringArrayHashMap::new();
-
-    // Perf idea (dylan-conway): cache the names
-    // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
-    // for the duration of the call.
-    unsafe {
-        boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
-    }
-
-    core::mem::take(&mut *hashes).into_entries().0
 }
 
 pub(crate) fn scrypt<'a>(
@@ -1193,7 +1163,7 @@ impl JobContext for Argon2<Vec<u8>> {
 
     fn then(mut this: Self, js: Argon2Js, cx: &JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
         let callback = js.callback.get();
         if this.failed {
             let exception = global.create_error_instance(format_args!("Argon2 derivation failed"));

@@ -70,19 +70,16 @@ impl ClientContext {
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub(crate) fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get_or_create() -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
-        let qctx = unsafe {
-            quic::Context::create_client(
-                loop_.as_ptr(),
-                0,
-                core::mem::size_of::<*mut ClientSession>() as c_uint,
-                core::mem::size_of::<*mut Stream>() as c_uint,
-            )
-        }?;
+        let qctx = quic::Context::create_client(
+            UwsLoop::get(),
+            0,
+            core::mem::size_of::<*mut ClientSession>() as c_uint,
+            core::mem::size_of::<*mut Stream>() as c_uint,
+        )?;
         let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
 
         // Process-lifetime singleton — published into `INSTANCE` below and
@@ -103,8 +100,13 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    /// `false` leaves `client` on no session, for the caller to fail.
-    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    /// An error leaves `client` on no session, for the caller to fail.
+    pub(crate) fn connect(
+        &mut self,
+        client: &mut HTTPClient,
+        hostname: &[u8],
+        port: u16,
+    ) -> crate::Result<()> {
         let reject = client.flags.reject_unauthorized;
         // Same gate as `HTTPThread::connect`: `rejectUnauthorized` alone stays on the default context.
         let tls_props = client
@@ -126,7 +128,7 @@ impl ClientContext {
                     port,
                 );
                 s.enqueue(client);
-                return true;
+                return Ok(());
             }
         }
 
@@ -134,18 +136,15 @@ impl ClientContext {
         // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
         // it as a C string so an interior NUL truncates on the C side. This is
         // deliberately not `CString::new`, which would reject interior NUL
-        // and diverge by returning `false`.
+        // and diverge by failing.
         // Resolution and certificate verification name an IPv6 literal without its brackets.
         let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let ssl_ctx = match tls_props.as_ref() {
-            Some(tls) => match crate::http_thread().quic_ssl_ctx(tls) {
-                Some(ssl_ctx) => Some(ssl_ctx),
-                None => return false,
-            },
-            None => None,
-        };
+        let ssl_ctx = tls_props
+            .as_ref()
+            .map(|tls| crate::http_thread().quic_ssl_ctx(tls))
+            .transpose()?;
         let sni = tls_props
             .as_ref()
             .and_then(|tls| tls.get().server_name_cstr())
@@ -207,10 +206,10 @@ impl ClientContext {
                 }
                 self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-                return false;
+                return Err(crate::Error::ConnectionRefused);
             }
         }
-        true
+        Ok(())
     }
 
     pub(crate) fn unregister(&mut self, session: &mut ClientSession) {

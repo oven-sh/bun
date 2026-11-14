@@ -24,8 +24,6 @@ const buffered = {
   blob: read,
   bytes: read,
   json: read,
-  /** What `json` parses, for the JSON parser of a compiled program. */
-  jsonSource: read,
   text: read,
 } as const;
 
@@ -37,7 +35,6 @@ const bufferedSource = {
   drain: members.drain,
   isClosed: members.isClosed,
   json: buffered.json,
-  jsonSource: buffered.jsonSource,
   pull: members.pull,
   start: members.start,
   text: buffered.text,
@@ -79,11 +76,4 @@ export const BytesInternalReadableStreamSource = b.class({
   rustPath: "crate::webcore::byte_stream::Source",
   internalFields: [...internalFields, "lockedStream"],
   proto: bufferedSource,
-});
-
-/** For `undici`. The stream is a body that `fetch()` decoded, so `Content-Encoding` and `Content-Length` describe other bytes. */
-export const isDecodedBody = b.fn({
-  args: { stream: b.any },
-  returns: b.bool,
-  rustPath: "crate::webcore::readable_stream::is_decoded_body",
 });

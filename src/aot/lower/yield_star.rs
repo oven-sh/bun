@@ -2,7 +2,7 @@ use bun_sema::hir::ExprId;
 
 use super::{FunctionLowering, convert};
 use crate::ir::generated::{IteratorKind, ResumeMode};
-use crate::ir::{BlockId, ContentsSlot, Edge, ValueId};
+use crate::ir::{BlockId, Edge, ValueId};
 
 #[derive(Copy, Clone)]
 struct ValueBlock {
@@ -14,15 +14,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn lower_yield_star(&mut self, expression: ExprId, operand: ExprId) -> ValueId {
         let iterable = self.lower_expression(operand);
         let yielded = self.yielded_position();
-        self.file
-            .record_contents_flow(operand, ContentsSlot::Element, yielded);
-        // JSC reports the iteration at the end of `yield*`.
-        let position = match self.file.begins_with_parenthesis(operand) {
-            _ if self.file.runs_as_written() => self.file.hir[operand].pos,
-            true => self.file.hir[expression].pos,
-            false => self.file.first_position(operand),
-        };
-        self.set_position(position);
+        self.set_position(self.file.hir[expression].pos);
+        self.quote_if_next_fails(expression);
         let kind = match self.is_async_generator() {
             true => IteratorKind::Async,
             false => IteratorKind::Sync,
@@ -54,6 +47,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
 
         self.builder.switch_to(resume_next.block);
+        self.builder.loop_hint();
         emit_resume(self, ResumeMode::Next, exit.block);
 
         self.builder.switch_to(suspend.block);

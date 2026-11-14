@@ -1,0 +1,51 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function poke(value: any): void;
+# declare const which: number;
+# class Gauge { level: number; constructor(level: number) { this.level = level; } get twice(): number { return this.level * 2; } rise(): number { return ++this.level; } }
+# function makeBox(n: number): { held: number; tag: number } { return { held: n, tag: n + 1 }; }
+# function double(n: number): number { return n * 2; }
+# const box = makeBox(1);
+# const gauge = new Gauge(3);
+# if (which === 0) poke(box);
+# if (which === 1) poke(gauge);
+# if (which === 2) poke(double);
+# if (which === 3) poke(Gauge.prototype);
+# if (which === 4) poke(Gauge);
+# print(box.held + box.tag + gauge.twice + gauge.rise() + double(4));
+# print("went on");
+# -- end of source
+# With testing=CheckProofsAtRunTime, the stub that enters a function of the engine checks `this` and each argument:
+# did the compiler assume that the value never reaches code that the compiler has not read?
+# Fault injection, testing=AssumeArgumentsNeverEscape: Link adds no edge from an argument of a call to unseen code to the node for unseen code.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeArgumentsNeverEscape
+# RUN(RECORD): run-in-shell mechanisms=all globalThis.which = 0; globalThis.poke = (handed) => { };
+# RECORD: bun: internal AOT error: escape check failed
+# RECORD-NEXT: {{*}} was passed to code that the compiler did not see, but the compiler proved that it never escapes
+# RECORD-NOT: went on
+# RECORD: crashed
+# RECORD: with
+# RUN(INSTANCE): run-in-shell mechanisms=all globalThis.which = 1; globalThis.poke = (handed) => { };
+# INSTANCE: bun: internal AOT error: escape check failed
+# INSTANCE-NEXT: {{*}} was passed to code that the compiler did not see, but the compiler proved that it never escapes
+# INSTANCE-NOT: went on
+# INSTANCE: crashed
+# INSTANCE: with
+# RUN(CLOSURE): run-in-shell mechanisms=all globalThis.which = 2; globalThis.poke = (handed) => { };
+# CLOSURE: bun: internal AOT error: escape check failed
+# CLOSURE-NEXT: a closure of {{*}} was passed to code that the compiler did not see, but the compiler proved that it never escapes
+# CLOSURE-NOT: went on
+# CLOSURE: crashed
+# CLOSURE: with
+# RUN(PROTOTYPE): run-in-shell mechanisms=all globalThis.which = 3; globalThis.poke = (handed) => { };
+# PROTOTYPE: bun: internal AOT error: escape check failed
+# PROTOTYPE-NEXT: the prototype of {{*}} was passed to code that the compiler did not see, but the compiler proved that it never escapes
+# PROTOTYPE-NOT: went on
+# PROTOTYPE: crashed
+# PROTOTYPE: with
+# RUN(CLASS): run-in-shell mechanisms=all globalThis.which = 4; globalThis.poke = (handed) => { };
+# CLASS: bun: internal AOT error: escape check failed
+# CLASS-NEXT: a closure of {{*}} was passed to code that the compiler did not see, but the compiler proved that it never escapes
+# CLASS-NOT: went on
+# CLASS: crashed
+# CLASS: with

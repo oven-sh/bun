@@ -41,6 +41,7 @@
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uWS {
@@ -701,7 +702,8 @@ struct Http2Context {
         *(Http2Connection **) us_socket_ext(s) = conn;
         s->flags.allow_half_open = 0;
         conn->idleTimeoutS = idleTimeoutS;
-        conn->touch();
+        /* The first stream arms the connection's own timeout. */
+        conn->idleTimer.arm(s, stopping ? timeoutAfterStop(idleTimeoutS) : idleTimeoutS);
         conn->writeSettings();
         if (initialLength > 0) {
             conn->onData(initialData, (size_t) initialLength);
@@ -754,6 +756,12 @@ struct Http2Context {
         });
     }
 
+    void reportGone(Http2Connection *conn) {
+        if (notifyParentClosed) {
+            notifyParentClosed(parent, conn->s, std::exchange(conn->filteredOpen, false), std::exchange(conn->filteredAccept, false));
+        }
+    }
+
     /* Close connections with nothing in flight (after a GOAWAY). With
      * `closeWhenIdle`, busy connections also get GOAWAY so no new streams
      * start and they close once their last stream retires (graceful stop);
@@ -763,13 +771,16 @@ struct Http2Context {
         if (closeWhenIdle) stopping = true;
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
-            if (us_socket_is_shut_down(conn->s) || (!conn->streams.empty() && !closeWhenIdle)) return;
-            if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
-            conn->flush();
-            if (conn->drainedAfterGoaway()) {
+            if (!conn->streams.empty() && !closeWhenIdle) return;
+            if (!us_socket_is_shut_down(conn->s)) {
+                if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
+                conn->flush();
+                if (!conn->drainedAfterGoaway()) return;
                 conn->finish();
                 closedNow++;
             }
+            /* Only the graceful stop waits for the peer's answer. */
+            if (!closeWhenIdle) reportGone(conn);
         });
         return closedNow;
     }
@@ -906,9 +917,7 @@ private:
                 cb(stream, stream->data.userData);
             }
         }
-        if (ctx->notifyParentClosed) {
-            ctx->notifyParentClosed(ctx->parent, s, conn->filteredOpen, conn->filteredAccept);
-        }
+        ctx->reportGone(conn);
         conn->busy--;
         if (conn->busy == 0) delete conn;
         return s;

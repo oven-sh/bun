@@ -16,7 +16,8 @@
 // resume, and the next iteration reads 5 and parks the rest. The sweep is run by hand, which
 // turns no loop iteration, so the queue keeps those 15 for as many ticks as a step needs.
 //
-// With the argument "again" the fixture runs only the step whose sockets are parked four times.
+// With the argument "again" the fixture runs only the step whose sockets are parked four times,
+// and with "ended" only the one whose clients have sent their FIN.
 import type { Socket } from "bun";
 import { getEventLoopStats, sweepSocketTimers } from "bun:internal-for-testing";
 import { tls as certs } from "harness";
@@ -48,6 +49,8 @@ const summary = {
   parkedTooLong: [] as number[],
   // One timeout, four stays of 10 ticks in the queue: [in the first two, in the last two].
   parkedAgain: [] as number[],
+  // The clients ended behind their unread piece: [one sweep early, when due].
+  peerEnded: [] as number[],
   errors: 0,
 };
 
@@ -104,7 +107,9 @@ const clients: Socket[] = [];
 async function park(seconds?: number) {
   for (const s of accepted) s.resume();
   await afterIterations(1);
-  if (seconds === undefined) return;
+  if (seconds !== undefined) arm(seconds);
+}
+function arm(seconds: number) {
   sweepSocketTimers(1);
   for (const s of accepted) s.timeout(seconds);
   takeTimeouts();
@@ -138,6 +143,21 @@ try {
   await until(`${N} connections`, () => accepted.length === N && clientOpens === N);
   // One more turn and every record head is in the server's receive queue.
   await afterIterations(2);
+
+  if (process.argv[2] === "ended") {
+    await park();
+    for (const c of clients) c.shutdown();
+    // Windows can deliver a FIN after shutdown() has returned, and a loop iteration would empty the queue.
+    // Every round arms a new timeout, so the 30 ticks start again.
+    for (const deadline = Date.now() + 2_000; summary.peerEnded[1] !== N && Date.now() < deadline; Bun.sleepSync(1)) {
+      arm(TIMEOUT_SECONDS);
+      sweepSocketTimers(TIMEOUT_TICKS - 1);
+      const early = takeTimeouts();
+      sweepSocketTimers(1);
+      summary.peerEnded = [early, takeTimeouts()];
+    }
+    report();
+  }
 
   if (process.argv[2] === "again") {
     await park(TIMEOUT_SECONDS);

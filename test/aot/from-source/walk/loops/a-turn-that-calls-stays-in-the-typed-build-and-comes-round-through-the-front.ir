@@ -1,0 +1,53 @@
+# f3 = readEscape, f4 = readQuoted
+# -- source: a-turn-that-calls-stays-in-the-typed-build-and-comes-round-through-the-front.ts
+# declare function print(...values: unknown[]): void;
+# function makeReader(words: string) {
+#   let text: string = words, at = 0, end = words.length, escapes = 0;
+#   function unitAt(i: number): number { return text.charCodeAt(i); }
+#   function readEscape(depth: number): string { if (depth > 0) return readEscape(depth - 1); escapes++; at += 2; return "<" + text.charAt(at - 1) + ">"; }
+#   function readQuoted(): string {
+#     const quote = unitAt(at);
+#     at++;
+#     let result = "";
+#     let start = at;
+#     while (true) {
+#       if (at >= end) { result += text.substring(start, at); break; }
+#       const unit = unitAt(at);
+#       if (unit === quote) { result += text.substring(start, at); at++; break; }
+#       if (unit === 92) { result += text.substring(start, at); result += readEscape(2); start = at; continue; }
+#       at++;
+#     }
+#     return result;
+#   }
+#   function take(next: unknown, length: number): void { text = next as string; at = 0; end = length; }
+#   return { readQuoted, take, seen: () => escapes + ":" + at };
+# }
+# const reader = makeReader("'ab\\ncd\\tef' x");
+# (globalThis as any).readers = [reader];
+# print(reader.readQuoted(), reader.seen());
+# -- end of source
+# Most turns of the loop run no other code; the turn that meets an escape calls, and comes round. The loop is built twice. What the call does stands IN the typed build, copied: its way comes round through the head.
+# `at`, which every turn reads and stores, and `escapes`, which the copied call stores, are parameters of the head. `end` and `text`, which no turn stores, are read and asked once, in front.
+# RUN: walk f4 mechanisms=all
+# CHECK: [[entry]](v{{*}}) frequency=Rare:
+# CHECK: [[head]]({{*}}, {{*}}: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true:
+# CHECK-NOT: GetEnvironmentField {{*}}field=1
+# CHECK: [[leaves]]() frequency=Rare isInLoop=true:
+# CHECK-NEXT: Jump -> next [[entry]](
+# CHECK-NOT: GetEnvironmentField {{*}}field=1
+# CHECK: Jump -> next [[head]](
+# CHECK-NOT: GetEnvironmentField
+# CHECK: PutEnvironmentField {{*}}field=1
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Jump -> next [[head]](
+# CHECK-NOT: = CallDirect
+# CHECK-NOT: GetEnvironmentField
+# CHECK: PutEnvironmentField {{*}}field=3
+# CHECK-NOT: = CallDirect
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Jump -> next [[head]](
+# No quiet turn appends to `result`: every append stands in a turn that leaves the loop or calls. So the text lies in no string builder, which would forbid the second build.
+# RUN(TEXT): walk f4 mechanisms=all
+# TEXT-NOT: StringBuilder
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: ab<n>cd<t>ef 2:12

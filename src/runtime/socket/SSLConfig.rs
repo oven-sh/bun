@@ -167,6 +167,16 @@ impl ParsedTls {
         generated: &generated::TLSOptions,
         is_server: bool,
     ) -> JsResult<Self> {
+        let given = Self::given(global, generated, is_server)?;
+        Ok(Self(given.map(|given| vm.tls_config(given, is_server))))
+    }
+
+    /// The options without the defaults, for an owner that outlives a change of them.
+    pub(crate) fn given(
+        global: &JSGlobalObject,
+        generated: &generated::TLSOptions,
+        is_server: bool,
+    ) -> JsResult<Option<bun_http::ssl_config::Builder>> {
         let mut result = bun_http::ssl_config::Builder::default();
         // `result` cleanup handled by Drop on error-path `?`
         let mut any = false;
@@ -224,6 +234,10 @@ impl ParsedTls {
             || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
+        result.ca_is_empty =
+            matches!(&generated.ca, generated::TLSOptionsFile::Array(list) if list.is_empty());
+        // It doesn't turn a server's TLS on.
+        any = any || (result.ca_is_empty && !is_server);
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
         result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
@@ -257,8 +271,7 @@ impl ParsedTls {
             generated::ALPNProtocols::None => core::ptr::null(),
             generated::ALPNProtocols::String(val) => zbox_into_raw(&val.to_owned_slice_z()),
             generated::ALPNProtocols::Buffer(val) => {
-                // SAFETY: `generated` holds a ref on the buffer, and nothing else borrows it here.
-                let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
+                let buffer: jsc::ArrayBuffer = val.as_array_buffer();
                 dupe_z(buffer.byte_slice())
             }
         };
@@ -278,10 +291,7 @@ impl ParsedTls {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
-        if !any {
-            return Ok(Self(None));
-        }
-        Ok(Self(Some(vm.tls_config(result, is_server))))
+        Ok(any.then_some(result))
     }
 }
 
@@ -292,14 +302,16 @@ pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_
     }
     // `NODE_TLS_REJECT_UNAUTHORIZED` can change between requests.
     let reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
-    let cached = vm.as_mut().rare_data().http_client_tls_defaults.clone();
+    let cached = vm.rare_data().http_client_tls_defaults.get().clone();
     if let Some(config) = cached.filter(|config| config.reject_unauthorized == reject_unauthorized)
     {
         return Some(config);
     }
     let config =
         bun_http::ssl_config::global_registry::intern(vm.tls_config(Default::default(), false));
-    vm.as_mut().rare_data().http_client_tls_defaults = Some(config.clone());
+    vm.rare_data()
+        .http_client_tls_defaults
+        .set(Some(config.clone()));
     Some(config)
 }
 
@@ -391,14 +403,8 @@ fn handle_file(
         match file {
             generated::TLSOptionsFile::None => return Ok(None),
             generated::TLSOptionsFile::String(val) => SingleFile::String(val),
-            generated::TLSOptionsFile::Buffer(val) => {
-                // SAFETY: `file` holds a ref on the buffer, and nothing else borrows it here.
-                SingleFile::Buffer(unsafe { &mut *val.get() })
-            }
-            generated::TLSOptionsFile::File(val) => {
-                // SAFETY: as above, for the `Blob`.
-                SingleFile::File(unsafe { &mut *val.get() })
-            }
+            generated::TLSOptionsFile::Buffer(val) => SingleFile::Buffer(val),
+            generated::TLSOptionsFile::File(val) => SingleFile::File(val),
             generated::TLSOptionsFile::Array(list) => {
                 return handle_file_array(global, list);
             }
@@ -430,14 +436,8 @@ fn handle_file_array(
             global,
             match elem {
                 generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
-                generated::TLSOptionsSingleFile::Buffer(val) => {
-                    // SAFETY: see `handle_file`.
-                    SingleFile::Buffer(unsafe { &mut *val.get() })
-                }
-                generated::TLSOptionsSingleFile::File(val) => {
-                    // SAFETY: see `handle_file`.
-                    SingleFile::File(unsafe { &mut *val.get() })
-                }
+                generated::TLSOptionsSingleFile::Buffer(val) => SingleFile::Buffer(val),
+                generated::TLSOptionsSingleFile::File(val) => SingleFile::File(val),
             },
         )?);
     }
@@ -445,10 +445,11 @@ fn handle_file_array(
     Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
+#[derive(Clone, Copy)]
 enum SingleFile<'a> {
     String(&'a bun_core::String),
-    Buffer(&'a mut jsc::JSCArrayBuffer),
-    File(&'a mut crate::webcore::Blob),
+    Buffer(&'a jsc::JSCArrayBuffer),
+    File(&'a crate::webcore::Blob),
 }
 
 fn handle_single_file(

@@ -17,7 +17,6 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
@@ -457,7 +456,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 pub struct PackageManager {
     pub(crate) cache_directory: Option<bun_sys::Dir>,
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
-    pub root_dir: &'static mut fs::DirEntry,
+    pub root_dir: &'static fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
@@ -589,6 +588,9 @@ pub struct PackageManager {
     // relative to the workspace root, but the path provided is relative to the
     // workspace package. We keep track of the original here.
     pub original_package_json_path: ZBox,
+
+    /// `<top_level_dir>/package.json`. Empty for auto-install, which does not call `init`.
+    pub root_package_json_path: &'static ZStr,
 
     // null means root. Used during `cleanWithLogger` to identifier which
     // workspace is adding/removing packages
@@ -1012,7 +1014,8 @@ mod holder {
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
     /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
-    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<bun_core::ZBox> =
+        std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
     /// (never freed). The HTTP thread
@@ -1022,12 +1025,11 @@ mod holder {
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
-// RacyCell. `ROOT_PACKAGE_JSON_PATH` is a slice into the buf above it; written
-// once in `init()`, read on main + CLI commands afterwards.
+// RacyCell. `PackageManager::root_package_json_path` is a slice into
+// `ROOT_PACKAGE_JSON_PATH_BUF`, which `init()` writes once.
 static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
-pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -1107,7 +1109,7 @@ impl PackageManager {
     ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
         // Compute once and return the cached value on
         // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
-        // `linker.options = &options`), so cache by pointer in a process-static.
+        // `macro_context`), so cache by pointer in a process-static.
         // SAFETY: `PackageManager` is a leaked singleton; main-thread-only call site.
         let mut ptr = CONFIGURE_ENV_FOR_SCRIPTS_ONCE.load(core::sync::atomic::Ordering::Acquire);
         if ptr.is_null() {
@@ -1176,76 +1178,34 @@ impl PackageManager {
     /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
     /// receives the raw `*mut`;
     /// `event_loop.wakeup()` is the cross-thread signal and is
-    /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
-    /// covers only the event-loop field, never the whole `PackageManager`.
+    /// internally synchronized; the borrow covers only the event-loop field.
     ///
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub(crate) unsafe fn wake_raw(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
-        // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
+        // only form field pointers via `addr_of!` (no whole-struct
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
                 // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
                 (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
-            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            (*core::ptr::addr_of!((*this).event_loop)).wakeup();
             if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
                 crate::auto_installer::Parked::wake_all();
             }
         }
     }
 
-    /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
-    /// `is_done_fn` body in this crate reborrows the *whole* `PackageManager`
-    /// from a raw pointer stashed in `C` (`&mut *closure.manager`). If this
-    /// were a `&mut self` method, that whole-struct Unique retag would pop
-    /// `self`'s tag (and the `&mut self.event_loop` borrow `tick` holds) under
-    /// Stacked Borrows, making the next loop-iteration deref UB.
-    ///
-    /// SAFETY: `this` must be valid for `&mut` access between callback
-    /// invocations; while `is_done_fn` runs, the callback owns the unique
-    /// `&mut PackageManager` and `sleep_until`/`tick_raw` hold no borrow.
-    pub(crate) unsafe fn sleep_until<C>(
-        this: *mut PackageManager,
-        closure: &mut C,
-        is_done_fn: fn(&mut C) -> bool,
-    ) {
+    /// Runs the event loop until `is_done`.
+    pub(crate) fn sleep_until(&mut self, mut is_done: impl FnMut(&mut Self) -> bool) {
         Output::flush();
-        // `AnyEventLoop::tick_raw` takes the type-erased
-        // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
-        // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
-        struct Erased<'c, C> {
-            ctx: &'c mut C,
-            is_done: fn(&mut C) -> bool,
+        while !is_done(self) {
+            // No task reads it. It lets `self` escape, because exit handlers write to the manager.
+            let ctx = core::ptr::from_mut(self).cast::<c_void>();
+            self.event_loop.tick(ctx);
         }
-        fn trampoline<C>(p: *mut c_void) -> bool {
-            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below, which
-            // nothing else touches until `tick_raw` returns.
-            let erased = unsafe { bun_ptr::callback_ctx::<Erased<'_, C>>(p) };
-            (erased.is_done)(erased.ctx)
-        }
-        let mut erased = Erased {
-            ctx: closure,
-            is_done: is_done_fn,
-        };
-        // Derive the event-loop pointer through `this`'s raw provenance (NOT
-        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
-        // and survives the callback's `&mut *this` retag.
-        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
-        // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
-        // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
-        // calls (never across them), so the callback's `&mut PackageManager`
-        // never overlaps a live `&mut AnyEventLoop`.
-        unsafe {
-            AnyEventLoop::tick_raw(
-                event_loop,
-                (&raw mut erased).cast::<c_void>(),
-                trampoline::<C>,
-            )
-        };
     }
 
     pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
@@ -1509,18 +1469,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 }
 
 fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {
-    // `opts.abs_ca_file_name` is NUL-terminated by contract —
-    // populated in `init()` from a `ZBox` via `into_vec_with_nul()`, so the
-    // stored slice length INCLUDES the trailing NUL. Re-derive the `&ZStr`
-    // (NUL-stripped) once and use it for both the path resolver and the error
-    // message so we don't print a literal `\0`.
-    // SAFETY: trailing-NUL invariant established by `init()` for any non-empty
-    // value; the empty default (`b""`) maps to `ZStr::EMPTY`.
-    let abs_ca_z: &ZStr = if opts.abs_ca_file_name.is_empty() {
-        ZStr::EMPTY
-    } else {
-        ZStr::from_slice_with_nul(opts.abs_ca_file_name)
-    };
+    let abs_ca_z: &ZStr = opts.abs_ca_file_name;
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
@@ -1566,10 +1515,11 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 fn allocate_package_manager(
     options: Options,
     log: *mut bun_ast::Log,
-    root_dir: &'static mut fs::DirEntry,
+    root_dir: &'static fs::DirEntry,
     env: &mut dot_env::Loader,
     // NUL-terminated
     original_package_json_path: Vec<u8>,
+    root_package_json_path: &'static ZStr,
     workspace_package_json_cache: WorkspacePackageJSONCache,
     workspace_name_hash: Option<PackageNameHash>,
     subcommand: Subcommand,
@@ -1611,13 +1561,7 @@ fn allocate_package_manager(
         wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(options, options);
-        wr!(
-            active_lifecycle_scripts,
-            crate::lifecycle_script_runner::List {
-                root: core::ptr::null_mut(),
-                context: crate::lifecycle_script_runner::StartedAtCtx,
-            }
-        );
+        wr!(active_lifecycle_scripts, Default::default());
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(retry_queue, Default::default());
         wr!(patch_task_fifo, PatchTaskFifo::init());
@@ -1646,6 +1590,7 @@ fn allocate_package_manager(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
         );
+        wr!(root_package_json_path, root_package_json_path);
         wr!(workspace_package_json_cache, workspace_package_json_cache);
         wr!(workspace_name_hash, workspace_name_hash);
         wr!(subcommand, subcommand);
@@ -2128,15 +2073,8 @@ fn find_workspace_root_above<'a>(
         let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
         let json_len = json_file.pread_all(&mut json_buf, 0)?;
         // Keep the path that was opened. The real path of the file descriptor may be on another
-        // drive or outside the project. SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only
-        // touched by the thread that creates the process's one manager; `&raw mut` + explicit
-        // reborrow avoids the 2024 `static_mut_refs` deny.
-        let json_path: &[u8] = unsafe {
-            let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-            root_buf[..walk.path.len()].copy_from_slice(&walk.path);
-            &root_buf[..walk.path.len()]
-        };
-        let json_source = bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
+        // drive or outside the project.
+        let json_source = bun_ast::Source::init_path_string(&walk.path, &json_buf[..json_len]);
         initialize_store();
         let parsed = crate::bun_json::ParsedJson::parse_package_json(&json_source, log)?;
         let json = parsed.root;
@@ -2419,31 +2357,6 @@ pub fn init(
     let fs = FileSystem::get();
     // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
     let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
-    // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
-    // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
-    unsafe {
-        let cwd_ptr = CWD_BUF.get().cast::<u8>();
-        #[cfg(windows)]
-        {
-            let _ = bun_paths::path_to_posix_buf::<u8>(
-                top_level_dir_no_trailing_slash,
-                &mut *CWD_BUF.get(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            // Avoid memcpy alias when source and dest are the same
-            if cwd_ptr.cast_const() != top_level_dir_no_trailing_slash.as_ptr() {
-                core::ptr::copy_nonoverlapping(
-                    top_level_dir_no_trailing_slash.as_ptr(),
-                    cwd_ptr,
-                    top_level_dir_no_trailing_slash.len(),
-                );
-            }
-        }
-        #[cfg(windows)]
-        let _ = cwd_ptr;
-    }
 
     // Per-cfg const literal, no runtime alloc.
     #[cfg(windows)]
@@ -2457,16 +2370,10 @@ pub fn init(
     push_package_json(&mut original_package_json_path_buf);
 
     let path_len = original_package_json_path_buf.len() - 1;
-    // SAFETY: NUL written at `path_len` above. Not `from_buf`: this borrow is
-    // intentionally detached — `original_package_json_path_buf` is mutated and
-    // re-sliced below (the directory-walk rewrites the tail in place), and
-    // borrowck cannot see that `original_package_json_path` is reassigned
-    // before the next use after each mutation.
     let mut original_package_json_path =
-        unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
-    let original_cwd =
-        &original_package_json_path.as_bytes()[..top_level_dir_no_trailing_slash.len()];
-    let original_cwd_clone = Box::<[u8]>::from(original_cwd);
+        ZStr::from_buf(&original_package_json_path_buf[..], path_len);
+    let original_cwd_clone = Box::<[u8]>::from(top_level_dir_no_trailing_slash);
+    let original_cwd: &[u8] = &original_cwd_clone;
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
@@ -2484,7 +2391,7 @@ pub fn init(
         let this_cwd: &[u8];
         let mut created_package_json = false;
         let mut walk = PackageJsonWalk::new(original_cwd);
-        let child_json: bun_sys::File = 'child: {
+        let child_json: Option<bun_sys::File> = 'child: {
             // --dry-run and --no-save clear `Do::WRITE_PACKAGE_JSON` once the options load.
             let need_write = subcommand.writes_package_json(cli.positionals.len() > 1)
                 && !cli.dry_run
@@ -2503,7 +2410,7 @@ pub fn init(
                 match opened {
                     Ok(f) => {
                         this_cwd = without_trailing_slash_windows_path(dir);
-                        break 'child f;
+                        break 'child Some(f);
                     }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
                     Err(e) if e.get_errno() == bun_sys::E::EACCES => {
@@ -2547,7 +2454,7 @@ pub fn init(
                 )?;
                 this_cwd = original_cwd;
                 no_project = true;
-                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                break 'child None;
             }
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 && cli.filters.is_empty() {
@@ -2557,14 +2464,14 @@ pub fn init(
                     // `bun add <pkg>` works in an empty directory.
                     this_cwd = original_cwd;
                     created_package_json = true;
-                    break 'child attempt_to_create_package_json_and_open()?;
+                    break 'child Some(attempt_to_create_package_json_and_open()?);
                 }
             }
             if cli.no_project_ok {
                 // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
                 this_cwd = original_cwd;
                 no_project = true;
-                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                break 'child None;
             }
             return Err(crate::Error::MissingPackageJSON);
         };
@@ -2606,7 +2513,6 @@ pub fn init(
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
                 // The root was found above the path as the user typed it. The root reads the
                 // workspace's package.json under that path, so the same spelling is used here.
@@ -2615,7 +2521,7 @@ pub fn init(
                     push_package_json(&mut typed);
                     original_package_json_path_buf = typed;
                 }
-                break 'root_package_json_file json_file;
+                break 'root_package_json_file Some(json_file);
             }
         }
 
@@ -2633,7 +2539,7 @@ pub fn init(
         ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
     // SAFETY: main-thread global
-    unsafe {
+    let root_package_json_path: &'static ZStr = unsafe {
         let tld = fs.top_level_dir();
         let cwd = &mut *CWD_BUF.get();
         cwd[..tld.len()].copy_from_slice(tld);
@@ -2651,24 +2557,18 @@ pub fn init(
         root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
         root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
         root_buf[plen] = 0;
-        ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
-    }
+        ZStr::from_raw(root_buf.as_ptr(), plen)
+    };
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.
-    let _ = root_package_json_file.close();
+    drop(root_package_json_file);
 
     let top_level_dir = fs.top_level_dir();
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
-        fs::EntriesOption::Entries(e) => {
-            // SAFETY: the BSSMap singleton owns `*e` for the process
-            // lifetime, and `init()` runs single-threaded before any other
-            // access — sole exclusive borrow is sound.
-            unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
-        }
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-    };
+    let entries_option = FileSystem::instance()
+        .read_directory(top_level_dir, 0, true)?
+        .try_entries()?;
 
     env.load_process()?;
     // This is read before the project's `.env` files are loaded, so they cannot set it.
@@ -2762,6 +2662,7 @@ pub fn init(
         entries_option,
         env,
         original_package_json_path_buf,
+        root_package_json_path,
         workspace_package_json_cache,
         workspace_name_hash,
         subcommand,
@@ -2776,15 +2677,11 @@ pub fn init(
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        // `r#loop()` returns the process-global `*mut uws::Loop`; build the
-        // handle from `&mut manager.event_loop` and write it back as the loop's
+        // Build the handle from `manager.event_loop` and write it back as the loop's
         // parent so uSockets timers / lifecycle subprocess waiters can find the
         // mini event loop on tick.
         let uws_loop = manager.event_loop.r#loop();
-        // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
-        // the handle's backref is `manager.event_loop`, owned by the singleton.
-        let uws_loop = unsafe { &mut *uws_loop };
-        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        EventLoopHandle::from_any(&manager.event_loop).set_as_parent_of(uws_loop);
     }
     {
         // make sure folder packages can find the root package without creating a new one
@@ -2792,8 +2689,7 @@ pub fn init(
         // separators: the folder resolver's `Key` has `/` only; on Windows this path has `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
-        // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
-        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
+        let raw: &[u8] = root_package_json_path.as_bytes();
         let mut buf = bun_paths::path_buffer_pool::get();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
@@ -2812,22 +2708,11 @@ pub fn init(
     // Set the thread-local global to point at the embedded mini loop
     // (`bun_event_loop::mini_event_loop::GLOBAL`).
     {
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
+        // SAFETY: singleton fully initialized and never freed; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
-            let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
-            // Set ONLY `MiniEventLoop.global`,
-            // NOT `globalInitialized`. The distinction is load-bearing: a later
-            // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
-            // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
-            // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
-            // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
-            // `init_global`'s uv-loop setup. The shell's IOWriter then opens
-            // stdout/stderr against an under-initialised loop → EBADF (exit 9).
-            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+            // This loop has no `env`, so a later `init_global` makes its own.
+            mini_event_loop::GLOBAL.with(|g| g.set(Some(mini)));
         }
     }
     {
@@ -2928,18 +2813,15 @@ pub fn init(
             .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
             .unwrap_or_default()
     };
-    // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
+    // `InitOpts.abs_ca_file_name: &'static ZStr` — process-lifetime config
     // string. Park it in
-    // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
-    // (never `Box::leak` to mint `&'static`). `init()` runs once on
-    // the main thread, so `.set()` cannot race; ignore the already-set case for
-    // hot-reload re-entry (the existing CA path stays valid for the process).
-    let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
-        b""
+    // `holder::ABS_CA_FILE_NAME: OnceLock<ZBox>` per PORTING.md §Forbidden
+    // (never `Box::leak` to mint `&'static`). If it is already set
+    // (hot-reload re-entry), the existing CA path stays.
+    let abs_ca_file_name_static: &'static ZStr = if abs_ca_file_name.is_empty() {
+        ZStr::EMPTY
     } else {
-        let _ =
-            holder::ABS_CA_FILE_NAME.set(abs_ca_file_name.into_vec_with_nul().into_boxed_slice());
-        holder::ABS_CA_FILE_NAME.get().map(|b| &**b).unwrap_or(b"")
+        holder::ABS_CA_FILE_NAME.get_or_init(|| abs_ca_file_name)
     };
     http::http_thread::init(&http::http_thread::InitOpts {
         ca: ca_ptrs,
@@ -3024,12 +2906,9 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let top_level_dir = FileSystem::get().top_level_dir();
-    let root_dir = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
-        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-        // and runtime init runs once on the main thread before any other access.
-        fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-    };
+    let root_dir = FileSystem::instance()
+        .read_directory(top_level_dir, 0, true)?
+        .try_entries()?;
 
     // A file inside `node_modules` belongs to the project that installed the package.
     let importer_dir = match strings::index_of(importer_dir, bun_paths::NODE_MODULES_NEEDLE) {
@@ -3150,6 +3029,7 @@ fn init_with_runtime_once(
         root_dir,
         env,
         original_package_json_path,
+        ZStr::EMPTY,
         workspace_package_json_cache,
         None,
         Subcommand::Install,
@@ -3211,7 +3091,7 @@ fn init_with_runtime_once(
         // Workspace paths are relative to `root_dir`. A lockfile records them relative to its own
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
-            manager.root_dir = &mut **entries;
+            manager.root_dir = entries;
             // Auto-install ignores an override that points away from the registry, so it also drops
             // what such an override resolved to in the lockfile.
             use crate::lockfile_real::package::PackageColumns as _;

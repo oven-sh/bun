@@ -52,15 +52,16 @@ describe("node:http client timeout", () => {
     }
   });
 
-  it("should emit timeout while the socket is still connecting", async () => {
-    // A lookup that never answers keeps the socket connecting.
-    const req = request({ host: "stalled.invalid", port: 80, timeout: 1, lookup: () => {} });
+  it("should emit timeout event while the connection is being made", async () => {
+    const neverAnswers = () => {};
+    const req = request({ host: "localhost", port: 1, lookup: neverAnswers, timeout: 1 });
+    req.on("error", () => {});
     try {
       req.end();
       await once(req, "timeout");
-      expect(req.socket!.connecting).toBe(true);
+      expect(req.socket?.connecting).toBe(true);
     } finally {
-      req.on("error", () => {}).destroy();
+      req.destroy();
     }
   });
 

@@ -30,13 +30,10 @@
 
 // GENERATED: arrow
 // CHECK-LABEL: function {{*}}name="arrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything}, {type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything variableName="this"}, {type=object flags=[IsFromCompiler] variableName="arguments"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = GetMappedArgument v1 index=2
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(ModuleObject) flags=[IsExpected]}
 // CHECK-NEXT: v4 = StrictEq v0, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v5
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }

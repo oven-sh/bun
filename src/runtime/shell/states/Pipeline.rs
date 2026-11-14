@@ -1,7 +1,9 @@
+use bun_ptr::AliasableBox;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
+    Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, closefd, log,
 };
 use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -24,7 +26,11 @@ pub(crate) struct Pipeline {
 }
 
 pub(crate) enum CmdOrResult {
-    Cmd(NodeId),
+    Cmd {
+        id: NodeId,
+        /// What the member's `base.shell` points to.
+        _env: AliasableBox<ShellExecEnv>,
+    },
     Result(ExitCode),
 }
 
@@ -115,7 +121,7 @@ impl Pipeline {
             let me = interp.as_pipeline(this);
             let cmds = me.cmds.as_deref().expect("set by setup_commands");
             cmds.get(idx as usize).map(|slot| match slot {
-                CmdOrResult::Cmd(id) => *id,
+                CmdOrResult::Cmd { id, .. } => *id,
                 CmdOrResult::Result(_) => {
                     unreachable!("pipeline child {} finished before it was started", idx)
                 }
@@ -178,7 +184,6 @@ impl Pipeline {
             }
         }
 
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
@@ -193,7 +198,7 @@ impl Pipeline {
                     me.io.stdin.clone()
                 } else {
                     let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                    r.set_interp(interp_ptr);
+                    r.set_interp(interp);
                     InKind::Fd(r)
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
@@ -210,7 +215,7 @@ impl Pipeline {
                         },
                         evtloop,
                     );
-                    w.set_interp(interp_ptr);
+                    w.set_interp(interp);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,
@@ -227,7 +232,7 @@ impl Pipeline {
             // inside a pipeline must not leak to siblings or the parent).
             // SAFETY: `parent_shell` is a live env owned by this pipeline's
             // parent state.
-            let duped = match unsafe {
+            let env = match unsafe {
                 (*parent_shell).dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
             } {
                 Ok(d) => d,
@@ -250,14 +255,15 @@ impl Pipeline {
                 }
             };
 
-            let child = match *item {
-                ast::PipelineItem::Cmd(c) => Cmd::init(interp, duped, c, this, child_io),
-                ast::PipelineItem::Subshell(s) => Subshell::init(interp, duped, s, this, child_io),
-                ast::PipelineItem::If(f) => If::init(interp, duped, f, this, child_io),
-                ast::PipelineItem::CondExpr(c) => CondExpr::init(interp, duped, c, this, child_io),
+            let shell = env.as_ptr();
+            let id = match *item {
+                ast::PipelineItem::Cmd(c) => Cmd::init(interp, shell, c, this, child_io),
+                ast::PipelineItem::Subshell(s) => Subshell::init(interp, shell, s, this, child_io),
+                ast::PipelineItem::If(f) => If::init(interp, shell, f, this, child_io),
+                ast::PipelineItem::CondExpr(c) => CondExpr::init(interp, shell, c, this, child_io),
                 ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
             };
-            cmds.push(CmdOrResult::Cmd(child));
+            cmds.push(CmdOrResult::Cmd { id, _env: env });
         }
         interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
         None
@@ -338,13 +344,9 @@ impl Pipeline {
             child,
             exit_code
         );
+        interp.deinit_node(child);
         // Find the child in `cmds` and replace with its result.
         Self::record_result(interp, this, child, exit_code);
-        // We duped a ShellExecEnv per child in `next_starting`. Cmd/If/CondExpr
-        // do NOT free `base.shell` in their own `deinit`, so free it here.
-        // Subshell frees its own; Assigns is skipped.
-        Self::deinit_child_duped_env(interp, child);
-        interp.deinit_node(child);
         if interp.failed() {
             Self::release_unstarted(interp, this);
         }
@@ -380,7 +382,7 @@ impl Pipeline {
         me.exited_count += 1;
         if let Some(cmds) = &mut me.cmds {
             for slot in cmds.iter_mut() {
-                if matches!(slot, CmdOrResult::Cmd(id) if *id == child) {
+                if matches!(slot, CmdOrResult::Cmd { id, .. } if *id == child) {
                     *slot = CmdOrResult::Result(exit_code);
                     break;
                 }
@@ -401,7 +403,7 @@ impl Pipeline {
                 cmds.iter()
                     .skip(idx as usize)
                     .filter_map(|slot| match slot {
-                        CmdOrResult::Cmd(id) => Some(*id),
+                        CmdOrResult::Cmd { id, .. } => Some(*id),
                         CmdOrResult::Result(_) => None,
                     })
                     .collect()
@@ -409,30 +411,10 @@ impl Pipeline {
             .unwrap_or_default();
         for child in unstarted {
             log!("Pipeline {} release unstarted child {}", this, child);
-            Self::record_result(interp, this, child, 1);
-            Self::deinit_child_duped_env(interp, child);
             interp.deinit_node(child);
+            Self::record_result(interp, this, child, 1);
         }
         interp.as_pipeline_mut(this).state = PipelineState::Pending;
-    }
-
-    /// Free the per-child env duped in `next_starting` for child kinds that
-    /// don't free `base.shell` themselves.
-    fn deinit_child_duped_env(interp: &Interpreter, child: NodeId) {
-        let kind = interp.node(child).kind();
-        if matches!(
-            kind,
-            StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr
-        ) {
-            if let Some(base) = interp.node_mut(child).base_mut() {
-                let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());
-                if !shell.is_null() {
-                    // SAFETY: `shell` is the duped env this pipeline child owned;
-                    // null-checked above and exclusively held here.
-                    ShellExecEnv::deinit_impl(shell);
-                }
-            }
-        }
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
@@ -441,8 +423,7 @@ impl Pipeline {
         let cmds = interp.as_pipeline_mut(this).cmds.take();
         if let Some(cmds) = cmds {
             for c in cmds.into_vec() {
-                if let CmdOrResult::Cmd(id) = c {
-                    Self::deinit_child_duped_env(interp, id);
+                if let CmdOrResult::Cmd { id, .. } = c {
                     interp.deinit_node(id);
                 }
             }

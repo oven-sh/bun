@@ -1,0 +1,8 @@
+// The same loop for a rest parameter behind one parameter. The function is small and is called with written arguments in a loop: it is copied there, and the turns of its loop are written out.
+// STATISTIC: StoresFollowedIntoFreshLists >= 1
+const upTo = JSON.parse("[0,1,2,3,4,5,6]");
+const data = JSON.parse('[{"x":3},{"x":"four"},{"x":5.5},{"x":null}]');
+function copied(first) { for (var _len = arguments.length, rest = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) { rest[_key - 1] = arguments[_key]; } return rest.length + rest[1]; }
+function run(turn) { const out = []; for (let i = 0; i < upTo[4]; i++) out.push(copied(data[i].x, i, turn)); return out.join("|"); }
+globalThis.handed = [run];
+for (let turn = 0; turn < 3; turn++) console.log(run(turn));

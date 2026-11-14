@@ -2,11 +2,17 @@ use crate::mal_prelude::*;
 use core::sync::atomic::Ordering;
 
 use bun_collections::VecExt;
+use bun_core::strings;
 use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
+use crate::bun_css::{
+    BundlerStyleSheet, ImportConditions, ImportInfo, LocalsResultsMap, PrinterOptions, Targets,
+};
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssChunk, CssImportOrderKind};
+use crate::linker_context::prepare_css_asts_for_chunk::{
+    SharedAnonymousConditions, empty_blocks, shared_anonymous_conditions,
+};
 use crate::linker_context_mod::LinkerContext;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index};
@@ -56,6 +62,8 @@ fn generate_compile_result_for_css_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
+    // Rules built from the chunk's import conditions have the chunk's lifetime.
+    let rules_arena = worker.arena();
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
     // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
@@ -82,15 +90,23 @@ fn generate_compile_result_for_css_chunk_impl(
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &c.mangled_props;
     let parse_graph = c.parse_graph();
-    // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
-    // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-    let unique_keys: &[&[u8]] = unsafe {
-        bun_ptr::boxed_slices_as_borrowed(
-            parse_graph
-                .input_files
-                .items_unique_key_for_additional_file(),
-        )
+    let unique_keys = parse_graph
+        .input_files
+        .items_unique_key_for_additional_file();
+
+    let Ok(blocks) =
+        shared_block_edges(c, css_content, imports_in_chunk_index as usize, rules_arena)
+    else {
+        return CompileResult::Css {
+            result: Err(crate::Error::PrintError),
+            source_index: Index::INVALID.get(),
+            source_map: None,
+        };
     };
+    allocating_writer.extend_from_slice(&blocks.open);
+    if !c.options.minify_whitespace && !css.rules.v.is_empty() {
+        allocating_writer.extend(core::iter::repeat_n(b' ', blocks.indent as usize));
+    }
 
     match &css_import.kind {
         CssImportOrderKind::Layers(_) | CssImportOrderKind::ExternalPath(_) => {
@@ -98,6 +114,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
                 targets: Targets::for_bundler_target(c.options.target),
+                indent: blocks.indent,
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -122,6 +139,7 @@ fn generate_compile_result_for_css_chunk_impl(
                     };
                 }
             }
+            blocks.close_into(&mut allocating_writer);
             CompileResult::Css {
                 result: Ok(allocating_writer.into_boxed_slice()),
                 source_index: Index::INVALID.get(),
@@ -135,6 +153,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 minify: c.options.minify_whitespace
                     || c.options.minify_syntax
                     || c.options.minify_identifiers,
+                indent: blocks.indent,
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -158,6 +177,7 @@ fn generate_compile_result_for_css_chunk_impl(
                     };
                 }
             }
+            blocks.close_into(&mut allocating_writer);
             let output = allocating_writer.into_boxed_slice();
             // Update bytesInOutput for this source in the chunk (for metafile)
             // Use atomic operation since multiple threads may update the same counter
@@ -176,4 +196,101 @@ fn generate_compile_result_for_css_chunk_impl(
             }
         }
     }
+}
+
+#[derive(Default)]
+struct SharedBlockEdges {
+    open: Vec<u8>,
+    close: Vec<u8>,
+    indent: u32,
+}
+
+impl SharedBlockEdges {
+    fn close_into(&self, output: &mut Vec<u8>) {
+        if self.indent != 0 {
+            output.truncate((output.trim_ascii_end().len() + 1).min(output.len()));
+            output.extend_from_slice(&self.close);
+        }
+    }
+}
+
+/// An entry that shares blocks with a neighbour prints only the edges that are
+/// its own: it opens what the next entry goes on to use, or closes what the
+/// previous entry opened. Both edges come from one print of the empty blocks,
+/// and every rule printer writes a block the same way.
+fn shared_block_edges<'a>(
+    c: &LinkerContext,
+    css_content: &CssChunk<'a>,
+    i: usize,
+    arena: &'a bun_alloc::Arena,
+) -> Result<SharedBlockEdges, ()> {
+    let order = css_content.imports_in_chunk_in_order.slice();
+    let SharedAnonymousConditions { before, after } = shared_anonymous_conditions(order, i);
+    let (outer, inner) = (before.min(after), before.max(after));
+    if inner == 0 {
+        return Ok(SharedBlockEdges::default());
+    }
+    let conditions = order[i].conditions.slice();
+    let indent_of = |conditions: &[ImportConditions]| -> u32 {
+        conditions
+            .iter()
+            .map(|c| {
+                c.layer.is_some() as u32
+                    + c.supports.is_some() as u32
+                    + !c.media.media_queries.is_empty() as u32
+            })
+            .sum::<u32>()
+            * 2
+    };
+    let mut edges = SharedBlockEdges {
+        indent: indent_of(&conditions[..inner]),
+        ..Default::default()
+    };
+    if outer == inner {
+        return Ok(edges);
+    }
+
+    let minify = c.options.minify_whitespace;
+    let outer_indent = indent_of(&conditions[..outer]);
+    let blocks = empty_blocks(arena, &conditions[outer..inner]);
+    let printer_options = PrinterOptions {
+        minify,
+        targets: Targets::for_bundler_target(c.options.target),
+        indent: outer_indent,
+        ..Default::default()
+    };
+    let mut printed: Vec<u8> = Vec::new();
+    blocks
+        .to_css_with_writer(
+            arena,
+            &mut printed,
+            &printer_options,
+            None,
+            Some(&c.mangled_props),
+            &c.graph.symbols,
+        )
+        .map_err(|_| ())?;
+    let split = strings::last_index_of_char(&printed, b'{').map_or(0, |at| at + 1);
+    let (open, close) = printed.split_at(split);
+    if before < after {
+        if !minify {
+            edges
+                .open
+                .extend(core::iter::repeat_n(b' ', outer_indent as usize));
+        }
+        edges.open.extend_from_slice(open);
+        if !minify {
+            edges.open.push(b'\n');
+        }
+    } else {
+        let first_brace = strings::index_of_char_usize(close, b'}').unwrap_or(0);
+        let line = strings::last_index_of_char(&close[..first_brace], b'\n').map_or(0, |at| at + 1);
+        edges
+            .close
+            .extend_from_slice(close[line..].trim_ascii_end());
+        if !minify {
+            edges.close.push(b'\n');
+        }
+    }
+    Ok(edges)
 }

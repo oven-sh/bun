@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ee755256625c421fe93da11a93c4a3d59aedd27e95ce3eb97e65ededab38a02c.
+// Written against that file with the SHA-256 e711819988cc5c66d009856c4f5973bcfd7e0909a15a207f06610c97f5ddc543.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { validateInteger, validateObject } = require("internal/validators");
@@ -14,10 +14,6 @@ const { Server, ServerResponse, _connectionListener } = require("node:_http_serv
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
 if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
-
-const WebSocket = globalThis.WebSocket;
-const CloseEvent = globalThis.CloseEvent;
-const MessageEvent = globalThis.MessageEvent;
 
 type ServerParameters = Parameters<typeof Server>;
 type ClientRequestParameters = Parameters<typeof ClientRequest>;

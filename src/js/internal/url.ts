@@ -17,11 +17,6 @@ interface HttpOptions {
   auth?: string;
 }
 
-// Node's isURL (lib/internal/url.js). Legacy url.parse() objects set `auth` and `path`, so they don't match.
-function isURL(self) {
-  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
-}
-
 function urlToHttpOptions(url: URL) {
   const options: HttpOptions = {
     __proto__: null,
@@ -48,10 +43,24 @@ function urlToHttpOptions(url: URL) {
   return options;
 }
 
+// Node's isURL (lib/internal/url.js): a duck-type check rather than
+// `instanceof`, so cross-realm URLs and compatible foreign implementations
+// are accepted; `auth`/`path` must be absent to exclude legacy `url.parse`
+// objects, which carry both.
+function isURL(self: any): self is URL {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
+function toPathIfFileURL(fileURLOrPath: any) {
+  if (fileURLOrPath instanceof URL) return Bun.fileURLToPath(fileURLOrPath);
+  return isURL(fileURLOrPath) ? require("node:url").fileURLToPath(fileURLOrPath) : fileURLOrPath;
+}
+
 export default {
   domainToASCII,
   domainToUnicode,
   idnaToASCII,
   isURL,
+  toPathIfFileURL,
   urlToHttpOptions,
 };

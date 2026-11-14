@@ -1,29 +1,37 @@
-use std::time::Instant;
-
 use bun_aot::engine::{
-    EngineModuleId, EngineResult, ExecutableIdentity, TargetImageForm,
-    describe_difference_of_runtime, has_compiler, image_alignment, used_features,
+    EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
+    has_compiler, image_alignment, used_features,
 };
+use bun_aot::statistics::{log_part_outside_stages, log_time_outside_stages};
 use bun_ast::Loader;
-use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
+use bun_bundler::aot::{
+    AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint, FileIdentity, FilesForFileSystem,
+    read_database_with_log,
+};
 use bun_bundler::options::{self, OutputFile};
-use bun_core::ZBox;
+use bun_core::{CodeGenerationFromStrings, ZBox};
 use bun_exe_format::identity::{
-    HostDescription, RuntimeDescription, find_file_identity, find_process_identity,
+    HostDescription, LeftOutOfBuild, RuntimeDescription, find_file_identity, find_process_identity,
     read_stamp_of_builtin_modules,
 };
 use bun_options_types::Format;
+use bun_options_types::aot_options::AotOptions;
 use bun_paths::resolve_path::{self, platform};
+use bun_resolver::compiled_program::{
+    PathForFileSystemAlone, encode_files_for_file_system_alone, folders_up_to,
+};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileResult, ExecutableRequest, GraphRequest, target_base_public_path, to_graph_bytes,
+    CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
+use bun_standalone_graph::executable_request::ExecutableDetails;
 use bun_standalone_graph::{
-    CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
+    CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
+    CompiledProgramInput, with_executable_image,
 };
-use bun_sys::Fd;
-use bun_trim::{TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
+use bun_sys::{Fd, File};
+use bun_trim::TrimPlan;
 
 use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
@@ -51,8 +59,14 @@ pub(crate) fn compile_to_executable(
     if !has_compiler() {
         return Err(CompileFailure::NoCompiler);
     }
+    log_time_outside_stages("before the build");
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
+    // Code from disk finds what it imports as under `bun run`: by the package.json and tsconfig.json files that lie there.
+    if request.options.loads_code_from_disk {
+        let disabled = Flags::DISABLE_AUTOLOAD_PACKAGE_JSON | Flags::DISABLE_AUTOLOAD_TSCONFIG;
+        request.executable.flags.remove(disabled);
+    }
     let _reports_where_it_stops =
         bun_crash_handler::report_stopped_builds(bun_crash_handler::BuildDescribers {
             where_this_thread_stopped: Bun__AOT__describeWhereThisThreadStopped,
@@ -69,21 +83,21 @@ pub(crate) fn compile_to_executable(
     } else {
         target_base_public_path(request.executable.target.os, b"root/")
     };
+    let compiler_called_at = bun_core::time::nano_timestamp();
     let mut build = match build_program(request, bundler, target, module_prefix) {
         Ok(build) => build,
         Err(failure) => {
-            reports::write_failed_build_report(options, &failure, request.log);
             return Err(CompileFailure::Build {
                 files_checked: reports::count_modules(&failure.statistics),
-                refused_entry_points: failure.refused_entry_points,
             });
         }
     };
+    log_part_outside_stages("behind the engine: end of the build");
     let mut used = used_features(&build.engine);
-    for program in &build.further_programs {
-        add_used_features(&mut used, used_features(program));
-    }
-    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
+    // With =strict a Worker runs nothing but compiled code.
+    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code
+        && options.code_generation_from_strings != CodeGenerationFromStrings::Strict;
+    used.can_reach_test_runner |= options.runs_tests || options.loads_code_from_disk;
     let trimming = trimming::decide_trimming(request, &used)?;
     let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
         .get_not_empty()
@@ -92,14 +106,30 @@ pub(crate) fn compile_to_executable(
         Some(outfile) => Some((outfile, trimming::plan_without_trim_flag(request, &used)?)),
         None => None,
     };
-    let mut outcome = reports::collect_reports(&build, options, &used, &trimming);
+    log_part_outside_stages("behind the engine: used features, trimming");
+    let mut outcome =
+        reports::collect_reports(&build, options, &used, &trimming, compiler_called_at);
+    log_part_outside_stages("behind the engine: reports");
 
     let outfile = match request.product {
         CompileProduct::ReportsOnly => None,
+        CompileProduct::Executable { .. } if options.writes_no_executable => None,
         CompileProduct::GraphBytes => Some(None),
+        #[cfg(unix)]
+        CompileProduct::UnnamedFile => Some(None),
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
-    let written = outfile.map_or(Ok(()), |outfile| {
+    if let Some(outfile) = outfile {
+        if let Some(outfile) = outfile {
+            let written = request.entry_points.iter().copied();
+            let sources = build.entry_points.iter().map(|it| &it.source_path[..]);
+            check_entry_points_are_kept(outfile, written, sources)?;
+            if build.is_source_replaced {
+                return Err(CompileFailure::OverwritesSource {
+                    outfile: outfile.to_vec(),
+                });
+            }
+        }
         let product = ProductInputs {
             module_prefix,
             outfile,
@@ -107,13 +137,78 @@ pub(crate) fn compile_to_executable(
             untrimmed: (untrimmed.as_ref()).map(|(outfile, plan)| (*outfile, plan.as_ref())),
         };
         write_product(request, &mut build, product, &mut outcome)?;
+        if outfile.is_some() {
+            log_part_outside_stages("behind the engine: the file");
+        }
         outcome.metafile = outfile.and_then(|outfile| reports::collect_metafile(&build, outfile));
-        Ok(())
-    });
-    // The report names the executable, so it comes last. A build that could not write one still reports.
-    reports::write_build_report(&build, options, &used, &trimming, &outcome)?;
-    written?;
+        log_part_outside_stages("behind the engine: metafile");
+    }
+    drop(build);
+    log_part_outside_stages("behind the engine: drop the build");
+    log_time_outside_stages("behind the engine");
     Ok(outcome)
+}
+
+/// Letter case and `./` spell one place in several ways, so the files themselves are compared. The executable replaces what
+/// is at `outfile`: a link to an entry point is another place, unless it is the entry point as it was `written`.
+pub(crate) fn check_entry_points_are_kept<'a>(
+    outfile: &[u8],
+    mut written: impl Iterator<Item = &'a [u8]>,
+    mut sources: impl Iterator<Item = &'a [u8]>,
+) -> Result<(), CompileFailure> {
+    let path = ZBox::from_bytes(outfile);
+    let (Ok(place), Ok(target)) = (bun_sys::lstat(&path), bun_sys::stat(&path)) else {
+        return Ok(());
+    };
+    let target_identity = identify(&target, || real_path(outfile));
+    let source = sources.find(|path| {
+        bun_sys::stat(&ZBox::from_bytes(path))
+            .is_ok_and(|found| identify(&found, || real_path(path)).is_same_file(&target_identity))
+    });
+    let Some(source) = source else {
+        return Ok(());
+    };
+    let is_overwritten = match bun_sys::S::ISLNK(place.st_mode as _) {
+        // Of a file with several hard links, one is replaced and the others stay.
+        false => target.st_nlink == 1 || real_path(outfile) == real_path(source),
+        true => {
+            let link = identify(&place, || real_path_of_link(outfile));
+            written.any(|path| {
+                bun_sys::lstat(&ZBox::from_bytes(path)).is_ok_and(|found| {
+                    identify(&found, || real_path_of_link(path)).is_same_file(&link)
+                })
+            })
+        }
+    };
+    match is_overwritten {
+        true => Err(CompileFailure::OverwritesEntryPoint {
+            outfile: outfile.to_vec(),
+        }),
+        false => Ok(()),
+    }
+}
+
+/// The regular file that writing `path` replaces. `None` for a symlink, which is replaced itself.
+fn find_replaced_file(path: &[u8]) -> Option<Vec<u8>> {
+    let stat = bun_sys::lstat(&ZBox::from_bytes(path)).ok()?;
+    let is_replaced = bun_sys::S::ISREG(stat.st_mode as _);
+    if is_replaced { real_path(path) } else { None }
+}
+
+fn identify(stat: &bun_sys::Stat, find_path: impl FnOnce() -> Option<Vec<u8>>) -> FileIdentity {
+    FileIdentity::new(stat.st_dev as u64, stat.st_ino as u64, find_path)
+}
+
+/// The path of the link itself.
+fn real_path_of_link(path: &[u8]) -> Option<Vec<u8>> {
+    let folder = bun_paths::dirname(path).filter(|folder| !folder.is_empty());
+    let folder = real_path(folder.unwrap_or(b"."))?;
+    Some([&folder[..], b"/", bun_paths::basename(path)].concat())
+}
+fn real_path(path: &[u8]) -> Option<Vec<u8>> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let found = bun_sys::realpath(&ZBox::from_bytes(path), &mut buffer).ok()?;
+    Some(found.to_vec())
 }
 
 #[allow(clippy::needless_pass_by_value)] // made for this call
@@ -123,33 +218,19 @@ fn write_product(
     product: ProductInputs<'_>,
     outcome: &mut CompileOutcome,
 ) -> Result<(), CompileFailure> {
-    let started = Instant::now();
     let options = request.options;
-    add_assets(
+    let (assets_named_at_root, files_for_file_system_alone) = add_assets(
         request,
         product.outfile,
         &build.root_directory,
+        &build.files_for_file_system,
         &mut build.output_files,
     )?;
-    // A program behind the first begins at one entry point. The first holds all the others.
-    let first_module_id = |program: &EngineResult| program.entry_module_ids().first().copied();
-    let count_of_first = (build.entry_points.len())
-        .checked_sub(build.further_programs.len())
-        .ok_or_else(corrupted_program)?;
-    let ids_of_first = build.engine.entry_module_ids();
-    let ids_of_first = match build.further_programs.len() {
-        0 => Some(ids_of_first),
-        _ => ids_of_first.get(..count_of_first),
-    };
-    let mut module_ids: Vec<EngineModuleId> = ids_of_first.ok_or_else(corrupted_program)?.to_vec();
-    for program in &build.further_programs {
-        module_ids.push(first_module_id(program).ok_or_else(corrupted_program)?);
-    }
-    let mut entry_points =
-        pair_entry_points(&build.entry_points, &module_ids, options.runs_in_place)?;
-    for (index, entry_point) in (1..).zip(entry_points.iter_mut().skip(count_of_first)) {
-        entry_point.image_index = index;
-    }
+    let mut entry_points = pair_entry_points(
+        &build.entry_points,
+        build.engine.entry_module_ids(),
+        options.runs_in_place,
+    )?;
     // In place a file that is embedded keeps the path of its source, which names the entry point already.
     if !options.runs_in_place {
         pair_embedded_copies(
@@ -158,11 +239,6 @@ fn write_product(
             &mut build.output_files,
         )?;
     }
-    let further_images: Vec<&[u8]> = build
-        .further_programs
-        .iter()
-        .map(|program| program.image().ok_or_else(corrupted_program))
-        .collect::<Result<_, _>>()?;
     let package_names: Vec<CompiledPackageNameInput<'_>> = build
         .package_names
         .iter()
@@ -171,9 +247,35 @@ fn write_product(
             required: name.required,
             imported: name.imported,
             hides_other_paths: name.hides_other_paths,
+            is_hidden_from_require: name.is_hidden_from_require,
+            is_hidden_from_import: name.is_hidden_from_import,
         })
         .collect();
+    let path_aliases: Vec<CompiledPathAliasInput<'_>> = build
+        .path_aliases
+        .iter()
+        .map(|alias| CompiledPathAliasInput {
+            folder: &alias.folder,
+            key: &alias.key,
+            target: &alias.target,
+            is_base_url: alias.is_base_url,
+        })
+        .collect();
+    let knows_places = options.loads_code_from_disk && !options.runs_in_place;
+    let root_below_working_directory = match knows_places {
+        true => find_root_below_working_directory(&build.root_directory),
+        false => None,
+    };
+    let root_from_executable = match &request.product {
+        CompileProduct::Executable { outfile } if knows_places => {
+            find_root_from_executable(&build.root_directory, outfile)
+        }
+        _ => None,
+    };
+    #[cfg(unix)]
+    let writes_unnamed_file = matches!(request.product, CompileProduct::UnnamedFile);
     let settings = &mut request.executable;
+    let (image, symbols) = build.engine.image_mut_and_symbols();
     let graph = GraphRequest {
         target: settings.target,
         output_files: &build.output_files,
@@ -183,26 +285,93 @@ fn write_product(
         flags: settings.flags,
         runtime_options: settings.runtime_options,
         compiled_program: Some(CompiledProgramInput {
-            image: build.engine.image().ok_or_else(corrupted_program)?,
-            further_images: &further_images,
+            image: image.ok_or_else(corrupted_program)?,
             image_alignment: image_alignment(),
             entry_points: &entry_points,
             package_names: &package_names,
+            path_aliases: &path_aliases,
+            root_below_working_directory: root_below_working_directory.as_deref(),
+            root_from_executable: root_from_executable.as_deref(),
+            // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
+            root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
+                .then(|| trim_trailing_separators(&build.root_directory)),
+            assets_named_at_root: &assets_named_at_root,
+            refused_data: &build.refused_data,
+            files_for_file_system_alone: &files_for_file_system_alone,
+            loaders_given_to_build: &build.loaders_given_to_build,
+            levels_above_root: build.levels_above_root as u32,
+            further_package_names: &build.further_package_names,
+            root_folders_spelled: match options.runs_in_place {
+                true => b"",
+                false => &build.root_folders_spelled,
+            },
+            allows_code_from_disk: options.loads_code_from_disk,
+            names_plugin: build.names_plugin,
             preserves_source_paths: options.runs_in_place,
-            symbols: build.engine.symbols(),
+            symbols,
         }),
     };
     let Some(outfile) = product.outfile else {
-        outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
-        outcome.executable_time = started.elapsed();
+        #[cfg(unix)]
+        if writes_unnamed_file {
+            use bun_standalone_graph::StandaloneModuleGraph::with_graph_slices;
+            let write = crate::cli::run_compiled::write_program_or_exit;
+            let written = with_graph_slices(&graph, write).map_err(CompileFailure::Graph)?;
+            outcome.unnamed_file = Some(written);
+        }
+        #[cfg(unix)]
+        let length_of_file = outcome.unnamed_file.map(|written| written.length);
+        #[cfg(not(unix))]
+        let length_of_file = None;
+        let length = match length_of_file {
+            Some(length) => length,
+            None => {
+                let bytes = to_graph_bytes(&graph).map_err(CompileFailure::Graph)?;
+                outcome.graph_bytes.insert(bytes).len()
+            }
+        };
+        log_part_outside_stages("behind the engine: the payload");
+        if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            bun_core::print_errorln!("AOT test build | program bytes {}", length);
+        }
         return Ok(());
     };
 
+    // What is asked of the file itself wants the file.
+    let asks_for_this_bun_as_it_is = settings.target.is_this_bun()
+        && settings.executable_path.is_none()
+        && !options.trim.is_enabled()
+        && product.untrimmed.is_none()
+        && !options.obfuscates
+        && !options.emits_symbols;
+    if asks_for_this_bun_as_it_is && crate::cli::run_compiled::writes_program_alone() {
+        let bytes = to_graph_bytes(&graph).map_err(CompileFailure::Graph)?;
+        log_part_outside_stages("behind the engine: the payload");
+        let (directory, path) = executable_location(settings.root_dir, outfile);
+        let build_id = bun_exe_format::build_id::compute(&bytes);
+        crate::cli::run_compiled::write_program_alone(directory, path, &bytes, &build_id).map_err(
+            |error| CompileFailure::FileNotWritten {
+                path: path.to_vec(),
+                error,
+            },
+        )?;
+        outcome.executable = Some(ExecutableDetails {
+            size: bytes.len() as u64,
+            build_id: Some(build_id),
+            ..Default::default()
+        });
+        build.output_files.truncate(1);
+        outcome.output_files = core::mem::take(&mut build.output_files);
+        return Ok(());
+    }
+
+    // SAFETY: the loader outlives the request, and the build, which reads it, has ended.
+    let env = unsafe { &mut *settings.env };
     let mut executable_request = ExecutableRequest {
         graph,
         root_dir: settings.root_dir,
         outfile,
-        env: &mut *settings.env,
+        env,
         windows: settings.windows,
         executable_path: settings.executable_path,
         trim: product.plan,
@@ -244,7 +413,6 @@ fn write_product(
     // The main entry point's file stands for the executable among the artifacts.
     build.output_files.truncate(1);
     outcome.output_files = core::mem::take(&mut build.output_files);
-    outcome.executable_time = started.elapsed();
     Ok(())
 }
 
@@ -265,6 +433,7 @@ pub(super) fn corrupted_program() -> CompileFailure {
 struct Target {
     identity: ExecutableIdentity,
     image_form: Option<TargetImageForm>,
+    left_out: LeftOutOfBuild,
 }
 
 fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFailure> {
@@ -283,6 +452,7 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFail
         .map(|identity| Target {
             identity: ExecutableIdentity(identity),
             image_form: None,
+            left_out: LeftOutOfBuild(Bun__AOT__whatThisBuildLeavesOut()),
         })
         .map_err(CompileFailure::NoIdentity)
 }
@@ -301,7 +471,9 @@ struct BuiltinModulesHeader {
 }
 
 unsafe extern "C" {
-    static bun_internal_modules_header: BuiltinModulesHeader;
+    /// The header of the section with the modules, which nothing writes.
+    safe static bun_internal_modules_header: BuiltinModulesHeader;
+    safe fn Bun__AOT__whatThisBuildLeavesOut() -> u32;
 }
 
 const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
@@ -313,6 +485,11 @@ fn image_form_of(template: &Template) -> Option<TargetImageForm> {
         1 => Some(TargetImageForm::PositionIndependent),
         _ => None,
     }
+}
+
+fn left_out_of(template: &Template) -> LeftOutOfBuild {
+    let record = template.description.record(RuntimeDescription::LEFT_OUT);
+    record.and_then(LeftOutOfBuild::read).unwrap_or_default()
 }
 
 fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
@@ -340,6 +517,7 @@ fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
         None => Ok(Target {
             identity: ExecutableIdentity(template.identity),
             image_form: image_form_of(&template),
+            left_out: left_out_of(&template),
         }),
     }
 }
@@ -361,8 +539,7 @@ fn find_difference(template: &Template) -> Option<Vec<u8>> {
         sentence.extend_from_slice(own_revision);
         return Some(sentence);
     }
-    // SAFETY: the header of the section with the modules, which nothing writes.
-    let own_stamp = unsafe { bun_internal_modules_header.source_stamp };
+    let own_stamp = bun_internal_modules_header.source_stamp;
     if template.stamp_of_builtin_modules != own_stamp {
         return Some(b"its built-in modules have another text".to_vec());
     }
@@ -384,15 +561,50 @@ fn build_program(
     target: Target,
     module_prefix: &[u8],
 ) -> Result<AotBuild, Box<AotBuildFailure>> {
+    let working_directory = bun_sys::getcwd_alloc().ok();
+    let to_absolute = |path: &[u8]| {
+        let folder = working_directory.as_ref()?.as_bytes();
+        Some(resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec())
+    };
+    let outfile = match request.product {
+        CompileProduct::Executable { outfile } => to_absolute(outfile),
+        _ => None,
+    };
+    let maps = outfile
+        .iter()
+        .flat_map(|outfile| [&b".map"[..], b".map.js"].map(|end| [&outfile[..], end].concat()));
+    let metafiles = request.executable.metafiles.into_iter();
+    let metafiles = metafiles.filter(|path| !path.is_empty());
+    let options = AotOptions {
+        omits_foreign_calls: !target.left_out.has_foreign_calls(),
+        code_generation_from_strings: match target.left_out.has_code_from_strings() {
+            true => request.options.code_generation_from_strings,
+            false => CodeGenerationFromStrings::Strict,
+        },
+        other_products: maps.chain(metafiles.filter_map(to_absolute)).collect(),
+        ..request.options.clone()
+    };
+    // Anything but an executable at that path is a file of the user's, which the program may name.
+    let is_executable = |path: &[u8]| {
+        let path = ZBox::from_bytes(path);
+        with_executable_image(&path, |file| find_file_identity(file).is_ok()).unwrap_or(false)
+    };
+    let (outfile, other_file) = match outfile {
+        Some(path) if is_executable(&path) => (Some(path), None),
+        path => (None, path),
+    };
+    let replaced_file = other_file.and_then(|path| find_replaced_file(&path));
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,
         assets: request.executable.assets,
-        options: request.options,
+        options: &options,
         executable_identity: target.identity,
         image_form: target.image_form,
         module_prefix,
-        log: &mut *request.log,
+        outfile: outfile.as_deref(),
+        replaced_file: replaced_file.as_deref(),
+        log: request.log,
         arena: bundler.arena,
         event_loop: bundler.event_loop,
         worker_pool: bundler.worker_pool,
@@ -401,32 +613,409 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        if !request.log.has_errors() {
-            request
-                .log
-                .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
+        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+        let log = unsafe { &mut *request.log };
+        if !log.has_errors() {
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
         }
         Box::new(failure)
     })
 }
 
+/// Returns `CompiledProgram::assets_named_at_root` and `CompiledProgram::files_for_file_system_alone`.
 fn add_assets(
     request: &CompileRequest<'_, '_>,
     outfile: Option<&[u8]>,
     root_directory: &[u8],
+    files_for_file_system: &FilesForFileSystem,
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), CompileFailure> {
+) -> Result<(Vec<u8>, Vec<u8>), CompileFailure> {
     let assets = request.executable.assets;
-    if assets.is_empty() {
-        return Ok(());
+    if request.options.runs_in_place {
+        let added = match assets {
+            [] => Ok(()),
+            assets => add_assets_in_place(assets, output_files),
+        };
+        return added
+            .map(|()| (Vec::new(), Vec::new()))
+            .map_err(CompileFailure::Assets);
     }
-    let added = if request.options.runs_in_place {
-        add_assets_in_place(assets, output_files)
-    } else {
-        let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
-        add_assets_under_root(assets, entry_name, root_directory, output_files)
+    let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
+    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+    let log = unsafe { &mut *request.log };
+    let implicit = &files_for_file_system.implicitly_embedded[..];
+    let asked_about = &files_for_file_system.asked_about[..];
+    let (named_at_root, asset_paths) = match (assets, implicit, asked_about) {
+        ([], [], []) => (Vec::new(), Vec::new()),
+        _ => add_assets_under_root(
+            assets,
+            implicit,
+            asked_about,
+            entry_name,
+            root_directory,
+            output_files,
+            log,
+        )
+        .map_err(CompileFailure::Assets)?,
     };
-    added.map_err(CompileFailure::Assets)
+    let mut fs_only_paths = add_data_files_under_root(
+        files_for_file_system,
+        entry_name,
+        root_directory,
+        output_files,
+    );
+    warn_about_shared_asset_names(&named_at_root, output_files, log);
+    emit_not_embedded_warnings(
+        files_for_file_system,
+        root_directory,
+        &fs_only_paths,
+        output_files,
+        log,
+    );
+    fs_only_paths.extend(asset_paths);
+    set_times_of_folders(&mut fs_only_paths);
+    Ok((
+        named_at_root,
+        encode_files_for_file_system_alone(fs_only_paths),
+    ))
+}
+
+/// The executable searches files below the root, then the folders of `named_at_root` (`CompiledProgram::assets_named_at_root`) in order. The first match shadows the others.
+fn warn_about_shared_asset_names(
+    named_at_root: &[u8],
+    output_files: &[OutputFile],
+    log: &mut bun_ast::Log,
+) {
+    // Each path has its layer: 0 for the root, then the folders in order.
+    let mut paths_by_name: PathsByName = Default::default();
+    let folders = bun_core::strings::split(named_at_root, b"\0");
+    for (place, folder) in folders.filter(|it| !it.is_empty()).enumerate() {
+        for file in output_files {
+            let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+            if let Some(below @ [b'/', ..]) = path.strip_prefix(folder) {
+                let name = [bun_paths::basename(folder), below].concat();
+                let paths = paths_by_name.entry(name).or_default();
+                paths.push((place + 1, path));
+            }
+        }
+    }
+    let shared: Vec<Vec<u8>> = paths_by_name.keys().cloned().collect();
+    for file in output_files {
+        let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+        if !path.starts_with(b"../") {
+            let paths = paths_by_name.entry(path.to_vec()).or_default();
+            paths.insert(0, (0, path));
+        }
+    }
+    let sharers = shared.iter().map(|name| (name, &paths_by_name[name]));
+    for (name, paths) in sharers.filter(|it| it.1.len() > 1) {
+        let quoted: Vec<String> = paths
+            .iter()
+            .map(|it| bun_core::fmt::quote(it.1).to_string())
+            .collect();
+        let resolution = match find_earlier_entry(&paths_by_name, name, paths[0].0) {
+            Some(earlier) => {
+                let earlier = bun_core::fmt::quote(&earlier);
+                format!("none of them: {earlier} comes first")
+            }
+            None => quoted[0].clone(),
+        };
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "assets {} share the path {} in the executable. That path reads {}. Each asset is also at its own path",
+                quoted.join(" and "),
+                bun_core::fmt::quote(name),
+                resolution,
+            ),
+        );
+    }
+}
+
+type PathsByName<'a> = std::collections::BTreeMap<Vec<u8>, Vec<(usize, &'a [u8])>>;
+
+/// The path of the entry that shadows the file `name` of `layer`: a file of an earlier layer at an ancestor of `name`, or a folder of one at `name`. Mirrors `StandaloneModuleGraph::is_unshadowed_by_folder`.
+fn find_earlier_entry<'a>(
+    paths_by_name: &PathsByName<'a>,
+    name: &[u8],
+    layer: usize,
+) -> Option<Vec<u8>> {
+    let earlier = |paths: &Vec<(usize, &'a [u8])>| -> Option<&'a [u8]> {
+        paths.iter().find(|it| it.0 < layer).map(|it| it.1)
+    };
+    let ends = (0..name.len()).filter(|&at| name[at] == b'/');
+    let mut ancestor_files = ends.filter_map(|end| paths_by_name.get(&name[..end]));
+    if let Some(file) = ancestor_files.find_map(earlier) {
+        return Some(file.to_vec());
+    }
+    let start = [name, b"/"].concat();
+    let below = paths_by_name.range(start.clone()..);
+    let mut below = below.take_while(|it| it.0.starts_with(&start));
+    below.find_map(|(held, paths)| {
+        let path = earlier(paths)?;
+        Some(path[..path.len() - (held.len() - name.len())].to_vec())
+    })
+}
+
+fn emit_not_embedded_warnings(
+    files_for_file_system: &FilesForFileSystem,
+    root_directory: &[u8],
+    fs_only_paths: &[PathForFileSystemAlone],
+    output_files: &[OutputFile],
+    log: &mut bun_ast::Log,
+) {
+    let root = with_forward_slashes(trim_trailing_separators(root_directory));
+    let fs_only_paths = fs_only_paths.iter().filter(|it| !it.is_folder);
+    let fs_only_paths = fs_only_paths.map(|it| &it.path_below_root[..]);
+    let is_file = |file: &&OutputFile| file.output_kind.is_file_in_standalone_mode();
+    let with_text = output_files.iter().filter(is_file);
+    let with_text = with_text.filter(|file| !has_no_text(file));
+    let with_text = with_text.map(|it| bun_core::strings::remove_leading_dot_slash(&it.dest_path));
+    let found: std::collections::BTreeSet<&[u8]> = fs_only_paths.chain(with_text).collect();
+    for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
+        let spelled = with_forward_slashes(path);
+        if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
+            log.warnings += 1;
+            log.add_msg(warning.clone());
+        }
+    }
+}
+
+fn with_forward_slashes(path: &[u8]) -> Vec<u8> {
+    let slash = |byte: &u8| match *byte {
+        b'\\' if cfg!(windows) => b'/',
+        byte => byte,
+    };
+    path.iter().map(slash).collect()
+}
+
+fn holds_path_below(paths: &std::collections::BTreeSet<Vec<u8>>, folder: &[u8]) -> bool {
+    let start = [folder, b"/"].concat();
+    let mut from_start = paths.range(start.clone()..);
+    from_start
+        .next()
+        .is_some_and(|path| path.starts_with(&start))
+}
+
+/// The files and the folders below `folder` on the disk of the build, by their paths from it. `None`: it cannot be listed, or holds what is neither.
+fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+    let directory = File::from_fd(bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?);
+    let mut walker = bun_sys::walker_skippable::walk(directory.fd(), &[], &[]).ok()?;
+    walker.resolve_unknown_entry_types = true;
+    let (mut files, mut folders) = (Vec::new(), Vec::new());
+    while let Some(entry) = walker.next().ok()? {
+        #[cfg(windows)]
+        let path = {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            let path = bun_paths::string_paths::from_w_path(&mut buffer[..], entry.path.as_slice());
+            with_forward_slashes(path.as_bytes())
+        };
+        #[cfg(not(windows))]
+        let path = entry.path.as_bytes().to_vec();
+        match entry.kind {
+            bun_sys::EntryKind::File => files.push(path),
+            bun_sys::EntryKind::Directory => folders.push(path),
+            _ => return None,
+        }
+    }
+    Some((files, folders))
+}
+
+/// The same for what lies in `folder` itself.
+fn list_in(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+    let directory = File::from_fd(bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?);
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
+    let (mut files, mut folders) = (Vec::new(), Vec::new());
+    while let Some(entry) = entries.next().ok()? {
+        let name = entry.name.slice_u8().to_vec();
+        match entry.kind {
+            bun_sys::EntryKind::File => files.push(name),
+            bun_sys::EntryKind::Directory => folders.push(name),
+            _ => return None,
+        }
+    }
+    Some((files, folders))
+}
+
+fn modified_at(path: &[u8]) -> Option<i64> {
+    let stat = bun_sys::stat(&ZBox::from_bytes(path)).ok()?;
+    #[cfg(not(windows))]
+    let (seconds, nanoseconds) = (stat.st_mtime as i64, stat.st_mtime_nsec as i64);
+    #[cfg(windows)]
+    let (seconds, nanoseconds) = (stat.mtim.sec as i64, stat.mtim.nsec as i64);
+    Some(seconds * 1000 + nanoseconds / 1_000_000)
+}
+
+/// What `require()` finds by a path made at run time, `node:fs` lists, stats and opens under the same path.
+/// A listing is whole or it is what it was: a folder gets these files only if the executable then holds all that lay in it when the program was built;
+/// for a folder that only they would bring into sight that goes for all that lay below the highest such folder.
+fn add_data_files_under_root(
+    files_for_file_system: &FilesForFileSystem,
+    entry_name: &[u8],
+    root_directory: &[u8],
+    output_files: &mut Vec<OutputFile>,
+) -> Vec<PathForFileSystemAlone> {
+    type Paths = std::collections::BTreeSet<Vec<u8>>;
+    let data_files = &files_for_file_system.data_found_by_patterns;
+    if data_files.is_empty() {
+        return Vec::new();
+    }
+    let root = with_forward_slashes(trim_trailing_separators(root_directory));
+    let code = files_for_file_system.code_seen.iter();
+    let code: Paths = code.map(|it| with_forward_slashes(it)).collect();
+    let mut modules_without_text = modules_without_text(output_files);
+    let taken: Paths = output_files
+        .iter()
+        .filter(|file| !has_no_text(file) && file.output_kind.is_file_in_standalone_mode())
+        .map(|file| bun_core::strings::remove_leading_dot_slash(&file.dest_path).to_vec())
+        .collect();
+    let below_root = |path: &'_ [u8]| path.get(root.len() + 1..).unwrap_or_default().to_vec();
+    let is_in_sight = |folder: &[u8]| {
+        folder.len() == root.len()
+            || holds_path_below(&code, folder)
+            || holds_path_below(&taken, &below_root(folder))
+    };
+    let folder_of = |path: &'_ [u8]| path.len() - bun_paths::basename(path).len() - 1;
+    // What an earlier build left where this one writes its executable is no file of the program.
+    let outfile = bun_sys::getcwd_alloc().ok().map(|working_directory| {
+        let folder = working_directory.as_bytes();
+        with_forward_slashes(resolve_path::join_abs_string::<platform::Auto>(
+            folder,
+            &[entry_name],
+        ))
+    });
+    let is_outfile = |path: &[u8]| {
+        outfile.as_deref().is_some_and(|outfile| {
+            path == outfile || (cfg!(windows) && path.strip_suffix(b".exe") == Some(outfile))
+        })
+    };
+    // `bun run` refuses a `.json` file without a byte in it, and the build reads it as an empty object.
+    let is_read_as_by_bun_run =
+        |file: &OutputFile| file.size > 0 || !file.dest_path.ends_with(b".json");
+
+    let mut data: std::collections::BTreeMap<Vec<u8>, OutputFile> = Default::default();
+    for data_file in data_files {
+        let spelled = with_forward_slashes(data_file);
+        let is_below_root = spelled.starts_with(&root) && spelled.get(root.len()) == Some(&b'/');
+        let under_root = path_from_root(root_directory, b"/", data_file);
+        if !is_below_root || under_root.is_none_or(|it| it != below_root(&spelled)) {
+            continue;
+        }
+        let mut files = Vec::new();
+        if collect_compile_assets(core::slice::from_ref(data_file), b"", &mut files).is_err() {
+            continue;
+        }
+        if let Some(file) = files.pop().filter(is_read_as_by_bun_run) {
+            data.insert(spelled, file);
+        }
+    }
+
+    let mut brought_into_sight: std::collections::BTreeMap<Vec<u8>, bool> = Default::default();
+    let mut length_of_top: std::collections::BTreeMap<Vec<u8>, usize> = Default::default();
+    for spelled in data.keys() {
+        let mut highest_out_of_sight: Option<&[u8]> = None;
+        let mut folder = &spelled[..folder_of(spelled)];
+        while !is_in_sight(folder) {
+            highest_out_of_sight = Some(folder);
+            folder = &folder[..folder_of(folder)];
+        }
+        let Some(folder) = highest_out_of_sight else {
+            continue;
+        };
+        length_of_top.insert(spelled.clone(), folder.len());
+        if brought_into_sight.contains_key(folder) {
+            continue;
+        }
+        let is_whole = list_below(folder).is_some_and(|(files, folders)| {
+            let mut with_files: Paths = Paths::new();
+            for file in &files {
+                let mut inner = &file[..];
+                while let Some(end) = bun_core::strings::last_index_of_char(inner, b'/') {
+                    inner = &inner[..end];
+                    if !with_files.insert(inner.to_vec()) {
+                        break;
+                    }
+                }
+            }
+            let is_data = |file: &Vec<u8>| {
+                let path = [folder, b"/", file].concat();
+                data.contains_key(&path) || is_outfile(&path)
+            };
+            files.iter().all(is_data) && folders.iter().all(|inner| with_files.contains(inner))
+        });
+        brought_into_sight.insert(folder.to_vec(), is_whole);
+    }
+    let comes_into_sight = |folder: &[u8]| brought_into_sight.get(folder) == Some(&true);
+
+    let mut is_held_whole: std::collections::BTreeMap<Vec<u8>, bool> = Default::default();
+    let mut fs_only_paths = Vec::new();
+    let first_name =
+        |path: &'_ [u8]| bun_core::strings::index_of_char_usize(path, b'/').unwrap_or(path.len());
+    let spelled_paths: Vec<Vec<u8>> = data.keys().cloned().collect();
+    for spelled in spelled_paths {
+        let under_root = below_root(&spelled);
+        if &under_root[..first_name(&under_root)] == bun_paths::basename(entry_name)
+            || taken.contains(&under_root)
+        {
+            continue;
+        }
+        let folder = &spelled[..folder_of(&spelled)];
+        let is_whole = match is_in_sight(folder) {
+            true => *is_held_whole.entry(folder.to_vec()).or_insert_with(|| {
+                list_in(folder).is_some_and(|(files, folders)| {
+                    let whole_path = |name: &Vec<u8>| [folder, b"/", name].concat();
+                    let is_held = |name: &Vec<u8>| {
+                        let path = whole_path(name);
+                        data.contains_key(&path)
+                            || is_outfile(&path)
+                            || code.contains(&path)
+                            || taken.contains(&below_root(&path))
+                    };
+                    let is_seen = |name: &Vec<u8>| {
+                        let path = whole_path(name);
+                        is_in_sight(&path) || comes_into_sight(&path)
+                    };
+                    files.iter().all(is_held) && folders.iter().all(is_seen)
+                })
+            }),
+            false => length_of_top
+                .get(&spelled)
+                .is_some_and(|&length| comes_into_sight(&spelled[..length])),
+        };
+        let (Some(mut file), true) = (data.remove(&spelled), is_whole) else {
+            continue;
+        };
+        fs_only_paths.push(PathForFileSystemAlone {
+            path_below_root: under_root.clone(),
+            modified_at: modified_at(&spelled).unwrap_or(0),
+            is_folder: false,
+            is_asset: false,
+            size_without_bytes: None,
+        });
+        file.dest_path = under_root.into_boxed_slice();
+        add_asset(file, &mut modules_without_text, output_files);
+    }
+    let mut folders: Paths = Paths::new();
+    for file in &fs_only_paths {
+        let spelled = [&root[..], b"/", &file.path_below_root].concat();
+        let Some(&length) = length_of_top.get(&spelled) else {
+            continue;
+        };
+        for folder in folders_up_to(&file.path_below_root, length - root.len() - 1) {
+            if !folders.insert(folder.to_vec()) {
+                break;
+            }
+        }
+    }
+    fs_only_paths.extend(folders.into_iter().map(|folder| PathForFileSystemAlone {
+        path_below_root: folder,
+        modified_at: 0,
+        is_folder: true,
+        is_asset: false,
+        size_without_bytes: None,
+    }));
+    fs_only_paths
 }
 
 /// The file of a compiled module is empty: `require()` and `import()` find the code.
@@ -449,6 +1038,8 @@ fn modules_without_text(output_files: &[OutputFile]) -> ModulesWithoutText {
 }
 
 /// An asset at the path of a compiled module gives the module's file its bytes, which `node:fs` and `Bun.file()` read, and its loader: the bytes are stored as they are, not as text that the executable runs.
+const LARGE_FILE_SIZE: usize = 10 * 1024 * 1024;
+
 fn add_asset(
     asset: OutputFile,
     modules_without_text: &mut ModulesWithoutText,
@@ -470,15 +1061,29 @@ fn add_asset(
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AssetOrigin {
+    Explicit,
+    Implicit,
+    AskedAbout,
+}
+
+/// `implicit` is `FilesForFileSystem::implicitly_embedded`, and `asked_about` is the list of that name. Such a file is embedded at its own path only and yields to whatever is already there. One that is only asked about is embedded without its bytes.
 fn add_assets_under_root(
     assets: &[Box<[u8]>],
+    implicit: &[Box<[u8]>],
+    asked_about: &[Box<[u8]>],
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), AssetError> {
+    log: &mut bun_ast::Log,
+) -> Result<(Vec<u8>, Vec<PathForFileSystemAlone>), AssetError> {
     let working_directory =
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
+    let mut paths_of_files_given: Vec<Box<[u8]>> = Vec::new();
+    let mut outside_folders: Vec<Box<[u8]>> = Vec::new();
+    let mut paths: Vec<PathForFileSystemAlone> = Vec::new();
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
@@ -490,30 +1095,97 @@ fn add_assets_under_root(
             )
         })
         .collect();
-    for asset in assets {
+    let explicit = assets.iter().map(|asset| (asset, AssetOrigin::Explicit));
+    let implicit = implicit.iter().map(|path| (path, AssetOrigin::Implicit));
+    let asked_about = asked_about
+        .iter()
+        .map(|path| (path, AssetOrigin::AskedAbout));
+    for (asset, origin) in explicit.chain(implicit).chain(asked_about) {
+        let is_explicit = origin == AssetOrigin::Explicit;
         let mut files = Vec::new();
-        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)
-            .map_err(AssetError::NotCollected)?;
+        let mut size_without_bytes = None;
+        let collected = match origin {
+            AssetOrigin::AskedAbout => {
+                let Ok(stat) = bun_sys::stat(&ZBox::from_bytes(asset)) else {
+                    continue;
+                };
+                size_without_bytes = Some(stat.st_size as u64);
+                let name = to_embedded_name(bun_paths::basename(asset));
+                files.push(asset_output_file(name, Vec::new()));
+                Ok(())
+            }
+            _ => collect_compile_assets(core::slice::from_ref(asset), b"", &mut files),
+        };
+        match collected {
+            Err(_) if !is_explicit => continue,
+            collected => collected.map_err(AssetError::NotCollected)?,
+        }
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
-        let under_root = path_under_root(root_directory, working_directory.as_bytes(), asset_path);
-        let embedded_path = under_root.as_deref().unwrap_or(&asset_name);
+        let from_root = path_from_root(root_directory, working_directory.as_bytes(), asset_path);
+        let embedded_path = from_root.as_deref().unwrap_or(&asset_name);
         let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
             .unwrap_or(embedded_path.len());
-        if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
+        let is_at_entry_point =
+            &embedded_path[..first_name_length] == bun_paths::basename(entry_name);
+        if is_at_entry_point && !is_explicit {
+            continue;
+        }
+        if is_at_entry_point {
             return Err(AssetError::EmbedsAtEntryPoint {
                 asset: asset.clone(),
             });
         }
+        // A folder outside the root directory was embedded under its base name before it kept its path.
+        let folder_given = from_root.as_deref().map(|it| graph_path(it, b""));
+        let is_folder = !files.is_empty()
+            && files
+                .iter()
+                .all(|file| file.dest_path[..] != asset_name[..]);
+        if let Some(folder) = folder_given.filter(|it| is_folder && it.starts_with(b"../")) {
+            outside_folders.push(folder.into_boxed_slice());
+        }
         for mut file in files {
-            if let Some(under_root) = &under_root {
+            let is_file_given = file.dest_path[..] == asset_name[..];
+            let path_below_asset =
+                file.dest_path[asset_name.len().min(file.dest_path.len())..].to_vec();
+            let path_on_disk = [asset_path, &path_below_asset].concat();
+            let contents = file.value.as_slice();
+            if let Some(contents) = read_database_with_log(&path_on_disk, contents) {
+                file = asset_output_file(file.dest_path.into_vec(), contents);
+            }
+            if let Some(from_root) = &from_root {
                 let path_in_asset = file
                     .dest_path
                     .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
-                file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+                file.dest_path = graph_path(from_root, path_in_asset).into_boxed_slice();
             }
+            if !is_explicit && taken.contains_key(&file.dest_path) {
+                continue;
+            }
+            if !is_explicit && file.size > LARGE_FILE_SIZE {
+                log.add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "the executable embeds {}, which a package reads: {} MB",
+                        bun_core::fmt::quote(&file.dest_path),
+                        file.size / (1024 * 1024),
+                    ),
+                );
+            }
+            if is_file_given && is_explicit {
+                paths_of_files_given.push(file.dest_path.clone());
+            }
+            push_asset_paths(
+                &file.dest_path,
+                &path_on_disk,
+                is_explicit,
+                size_without_bytes,
+                &mut paths,
+            );
             let Some(earlier) = taken.insert(file.dest_path.clone(), None) else {
                 add_asset(file, &mut modules_without_text, output_files);
                 continue;
@@ -529,16 +1201,110 @@ fn add_assets_under_root(
             }
         }
     }
-    Ok(())
+    let named_at_root =
+        find_assets_named_at_root(&paths_of_files_given, &outside_folders, output_files);
+    Ok((named_at_root, paths))
 }
 
-fn path_under_root(
+/// Pushes the file at `path_below_root` (`path_on_disk` during the build) and the folders below the root that hold it.
+fn push_asset_paths(
+    path_below_root: &[u8],
+    path_on_disk: &[u8],
+    is_explicit: bool,
+    size_without_bytes: Option<u64>,
+    paths: &mut Vec<PathForFileSystemAlone>,
+) {
+    let path_below_root = bun_core::strings::remove_leading_dot_slash(path_below_root);
+    let is_above_root = path_below_root.starts_with(b"../");
+    // `stat()` has a time for a file above the root only where the program does nothing but ask about the file.
+    let has_time = !is_above_root || size_without_bytes.is_some();
+    paths.push(PathForFileSystemAlone {
+        path_below_root: path_below_root.to_vec(),
+        modified_at: has_time
+            .then(|| modified_at(path_on_disk))
+            .flatten()
+            .unwrap_or(0),
+        is_folder: false,
+        // `Bun.embeddedFiles` lists only explicit assets.
+        is_asset: is_explicit,
+        size_without_bytes,
+    });
+    if is_above_root {
+        return;
+    }
+    paths.extend(
+        folders_up_to(path_below_root, 1).map(|folder| PathForFileSystemAlone {
+            path_below_root: folder.to_vec(),
+            modified_at: 0,
+            is_folder: true,
+            is_asset: true,
+            size_without_bytes: None,
+        }),
+    );
+}
+
+/// The time that the disk has for a folder also moves with files that are no part of the program.
+fn set_times_of_folders(paths: &mut [PathForFileSystemAlone]) {
+    let mut newest: std::collections::BTreeMap<Vec<u8>, i64> = Default::default();
+    for file in paths.iter().filter(|it| !it.is_folder) {
+        for folder in folders_up_to(&file.path_below_root, 1) {
+            let time = newest.entry(folder.to_vec()).or_insert(file.modified_at);
+            *time = file.modified_at.max(*time);
+        }
+    }
+    for folder in paths.iter_mut().filter(|it| it.is_folder) {
+        folder.modified_at = newest.get(&folder.path_below_root).copied().unwrap_or(0);
+    }
+}
+
+/// Folders may share a base name: the executable tries each.
+fn find_assets_named_at_root(
+    paths_of_files_given: &[Box<[u8]>],
+    outside_folders: &[Box<[u8]>],
+    output_files: &[OutputFile],
+) -> Vec<u8> {
+    let is_taken = |base_name: &[u8]| {
+        output_files
+            .iter()
+            .filter(|file| file.output_kind.is_file_in_standalone_mode())
+            .filter_map(|file| {
+                bun_core::strings::remove_leading_dot_slash(&file.dest_path).strip_prefix(base_name)
+            })
+            .any(|rest| matches!(rest, [] | [b'/', ..]))
+    };
+    let is_shared = |base_name: &[u8]| {
+        let base_names = paths_of_files_given
+            .iter()
+            .map(|path| bun_paths::basename(path));
+        base_names.filter(|&name| name == base_name).count() > 1
+    };
+    let files = paths_of_files_given.iter().filter(|path| {
+        let base_name = bun_paths::basename(path);
+        !is_shared(base_name) && !is_taken(base_name)
+    });
+    // A folder below the root may have the same base name. Its files are tried first, as `bun run` does.
+    let is_root_file = |base_name: &[u8]| {
+        output_files
+            .iter()
+            .filter(|file| file.output_kind.is_file_in_standalone_mode())
+            .any(|file| bun_core::strings::remove_leading_dot_slash(&file.dest_path) == base_name)
+    };
+    let folders = outside_folders
+        .iter()
+        .filter(|path| !is_root_file(bun_paths::basename(path)));
+    files
+        .chain(folders)
+        .flat_map(|path| path.iter().copied().chain([0]))
+        .collect()
+}
+
+/// `None` if no relative path leads there, as on another Windows drive.
+fn path_from_root(
     root_directory: &[u8],
     working_directory: &[u8],
     asset_path: &[u8],
 ) -> Option<Vec<u8>> {
-    let written_path =
-        resolve_path::join_abs_string::<platform::Auto>(working_directory, &[asset_path]).to_vec();
+    let written_path = join_file_path(working_directory, asset_path);
     let written_folder = bun_paths::dirname(&written_path)?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     let real_folder =
@@ -550,10 +1316,50 @@ fn path_under_root(
         [b'/' | b'\\', folders @ ..] => Some([folders, b"/"].concat()),
         _ => None,
     };
+    let folders_above_root = |folder: &'_ [u8]| {
+        let relative = relative_file_path(root_directory, folder);
+        relative
+            .starts_with(b"..")
+            .then(|| [&relative[..], b"/"].concat())
+    };
     let folders = real_folder
         .and_then(folders_below_root)
-        .or_else(|| folders_below_root(written_folder))?;
+        .or_else(|| folders_below_root(written_folder))
+        .or_else(|| folders_above_root(real_folder.unwrap_or(written_folder)))?;
     Some([&folders[..], bun_paths::basename(&written_path)].concat())
+}
+
+fn split_file_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bun_core::strings::split(path, b"/").filter(|name| !name.is_empty() && *name != b".")
+}
+
+/// `path.resolve(folder, path)`. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a file's name.
+fn join_file_path(folder: &[u8], path: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        return resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec();
+    }
+    let folder = split_file_path(folder).filter(|_| !path.starts_with(b"/"));
+    let mut names: Vec<&[u8]> = Vec::new();
+    for name in folder.chain(split_file_path(path)) {
+        match name {
+            b".." => drop(names.pop()),
+            _ => names.push(name),
+        }
+    }
+    [b"/", &names.join(&b"/"[..])[..]].concat()
+}
+
+/// `path.relative(from, to)` of two absolute paths, by the same rule.
+fn relative_file_path(from: &[u8], to: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        return resolve_path::relative(from, to).to_vec();
+    }
+    let from: Vec<&[u8]> = split_file_path(from).collect();
+    let to: Vec<&[u8]> = split_file_path(to).collect();
+    let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let up = core::iter::repeat_n(&b".."[..], from.len() - shared);
+    let names: Vec<&[u8]> = up.chain(to[shared..].iter().copied()).collect();
+    names.join(&b"/"[..])
 }
 
 fn add_assets_in_place(
@@ -653,6 +1459,37 @@ pub(super) fn asset_output_file(dest: Vec<u8>, bytes: Vec<u8>) -> OutputFile {
     }
 }
 
+/// Where the root directory of the build lies, seen from the working directory: below it, the same folder, or above it.
+/// An executable that is shipped tells nobody the folders of the machine that built it, so a root that lies elsewhere is not written down.
+fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let root = resolve_path::relative(
+        working_directory.as_bytes(),
+        trim_trailing_separators(root_directory),
+    );
+    let mut names = root.split(|&byte| bun_paths::is_sep_native(byte));
+    let goes_up = names.next() == Some(b"..");
+    (!goes_up || names.all(|name| name == b"..")).then(|| root.to_vec())
+}
+
+/// Where the root directory lies, seen from the folder of the executable: the folders of an installed program keep their places. Nothing is recorded
+/// where the two have no folder in common but the root of the disk, or where the way there names more than two folders: that tells where the program was built.
+fn find_root_from_executable(root_directory: &[u8], outfile: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let outfile =
+        resolve_path::join_abs_string::<platform::Auto>(working_directory.as_bytes(), &[outfile]);
+    let folder = resolve_path::dirname::<platform::Auto>(outfile);
+    let root = resolve_path::relative(folder, trim_trailing_separators(root_directory));
+    if bun_paths::is_absolute(root) {
+        return None;
+    }
+    let is_sep = |&byte: &u8| bun_paths::is_sep_native(byte);
+    let ups = root.split(is_sep).take_while(|name| *name == b"..").count();
+    let names = root.split(is_sep).filter(|name| !name.is_empty()).count() - ups;
+    let depth = folder.split(is_sep).filter(|name| !name.is_empty()).count();
+    (ups < depth && names <= 2).then(|| root.to_vec())
+}
+
 pub(super) fn pair_entry_points<'b>(
     entry_points: &'b [AotEntryPoint],
     module_ids: &[EngineModuleId],
@@ -671,7 +1508,6 @@ pub(super) fn pair_entry_points<'b>(
                 false => &entry_point.module_path,
             },
             module_path: &entry_point.module_path,
-            image_index: 0,
         })
         .collect())
 }
@@ -703,39 +1539,9 @@ pub(super) fn pair_embedded_copies<'b>(
             module_id: compiled.module_id,
             source_path: compiled.source_path,
             module_path: compiled.module_path,
-            image_index: compiled.image_index,
         };
         copy.entry_point_index = Some(u32::try_from(pairs.len()).map_err(|_| corrupted_program())?);
         pairs.push(pair);
     }
     Ok(())
-}
-
-/// The run time holds what any program of the executable uses. A witness is a position in the records of the first program.
-fn add_used_features(used: &mut UsedFeatures, further: UsedFeatures) {
-    for feature in further.features {
-        let is_same = |known: &&mut UsedFeature| known.feature == feature.feature;
-        match used.features.iter_mut().find(is_same) {
-            Some(known) => known.is_named |= feature.is_named,
-            None => used.features.push(UsedFeature {
-                witness: None,
-                ..feature
-            }),
-        }
-    }
-    used.causes
-        .extend(further.causes.into_iter().map(|unseen| UnseenCode {
-            cause: unseen.cause,
-            witness: None,
-        }));
-    used.starts_workers_from_unseen_code |= further.starts_workers_from_unseen_code;
-    match (&mut used.locales, further.locales) {
-        (UsedLocales::Unknown(_), _) => {}
-        (locales, UsedLocales::Unknown(_)) => *locales = UsedLocales::Unknown(None),
-        (UsedLocales::Listed(listed), UsedLocales::Listed(more)) => {
-            listed.extend(more);
-            listed.sort_unstable();
-            listed.dedup();
-        }
-    }
 }

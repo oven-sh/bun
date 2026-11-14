@@ -84,6 +84,12 @@ impl us_socket_t {
         c::us_socket_resume(self);
     }
 
+    #[cfg(not(windows))]
+    pub(crate) fn read_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_read_now({:p})", self);
+        c::us_socket_read_now(self);
+    }
+
     pub fn close(&mut self, code: CloseCode) {
         bun_core::scoped_log!(
             uws,
@@ -100,6 +106,11 @@ impl us_socket_t {
     pub(crate) fn close_now(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_close_now({:p})", self);
         let _ = c::us_socket_close_now(self);
+    }
+
+    pub(crate) fn close_lingering(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_close_lingering({:p})", self);
+        let _ = c::us_socket_close_lingering(self);
     }
 
     pub fn shutdown(&mut self) {
@@ -233,14 +244,14 @@ impl us_socket_t {
         c::us_socket_ext(self).cast::<u8>()
     }
 
-    pub fn group(&mut self) -> &mut SocketGroup {
+    pub fn group(&mut self) -> &SocketGroup {
         unsafe {
             // SAFETY: us_socket_group never returns null for a live socket
-            &mut *c::us_socket_group(self)
+            &*c::us_socket_group(self)
         }
     }
     #[inline]
-    pub fn raw_group(&mut self) -> &mut SocketGroup {
+    pub fn raw_group(&mut self) -> &SocketGroup {
         self.group()
     }
 
@@ -263,7 +274,7 @@ impl us_socket_t {
     // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
     pub fn adopt_tls(
         &mut self,
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
@@ -300,6 +311,10 @@ impl us_socket_t {
     /// Drop the handshake flight that is held across the handshake callback.
     pub fn release_held_flight(&mut self) {
         c::us_socket_release_held_flight(self);
+    }
+
+    pub fn set_owner_holds_tail(&mut self) {
+        c::us_socket_set_owner_holds_tail(self);
     }
 
     /// A shutdown before the first handshake step sends its FIN after that step.
@@ -529,12 +544,15 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        #[cfg(not(windows))]
+        pub(super) safe fn us_socket_read_now(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_close_lingering(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
@@ -563,7 +581,7 @@ mod c {
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
-            group: *mut SocketGroup,
+            group: *const SocketGroup,
             kind: u8,
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
@@ -582,5 +600,6 @@ mod c {
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_owner_holds_tail(s: &mut us_socket_t);
     }
 }

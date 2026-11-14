@@ -1,0 +1,18 @@
+# f1 = total
+# -- source: sum-over-the-keys-of-a-list.ts
+# function total(list: number[]): number {
+#   let sum = 0;
+#   for (const key in list) sum += list[key];
+#   return sum;
+# }
+# declare const input: any;
+# const list: number[] = [];
+# for (let i = 0; i < input; i++) list.push(i + 0.5);
+# (globalThis as any).answer = total(list);
+# -- end of source
+# The compiler before this one: 5 instructions, 1 of them patches, a turn of the written loop steps by 1 ; 26 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 53, patches 5, moves 8, unlikely 43.
+# RUN(X64): loops most:67 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 67

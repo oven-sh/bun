@@ -74,8 +74,8 @@ fn pressure_task(lvl: i32) -> Task {
 }
 
 #[cfg(not(windows))]
-fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<core::ffi::c_void>> {
-    vm.rare_data().memory_pressure_watcher_slot()
+fn slot(vm: &VirtualMachine) -> &core::cell::Cell<Option<NonNull<core::ffi::c_void>>> {
+    &vm.rare_data().memory_pressure_watcher
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ mod posix {
         psi_some_total: u64,
     }
 
-    fn take_watcher(vm: &mut VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
+    fn take_watcher(vm: &VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
         let raw = slot(vm).take()?;
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
         Some(unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) })
@@ -128,9 +128,9 @@ mod posix {
     fn own_cgroup_pressure_path(buf: &mut [u8]) -> Option<&bun_core::ZStr> {
         use bun_sys::O;
         let fd = bun_sys::open(bun_core::zstr!("/proc/self/cgroup"), O::RDONLY, 0).ok()?;
+        let _close = bun_sys::CloseOnDrop::new(fd);
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
-        let _ = bun_sys::close(fd);
         for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
@@ -244,10 +244,8 @@ mod posix {
                     NonNull::<()>::dangling().as_ptr(),
                 ),
             );
-            // SAFETY: `poll` is the fresh hive slot; `platform_event_loop` is the live uws loop.
-            let result = unsafe {
-                (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false)
-            };
+            // SAFETY: `poll` is the fresh hive slot.
+            let result = unsafe { (*poll).register(ctx.loop_(), Flags::MemoryPressure, false) };
             if result.is_err() {
                 // SAFETY: fresh hive slot never handed out.
                 deinit_poll(unsafe { &mut *poll });
@@ -258,8 +256,8 @@ mod posix {
     }
 
     pub(super) fn install(global: &JSGlobalObject) {
-        let vm = global.bun_vm().as_mut();
-        if slot(vm).is_some() {
+        let vm = global.bun_vm();
+        if slot(vm).get().is_some() {
             return;
         }
         let (poll, psi_some_total) = register_os_watch(global).unzip();
@@ -270,14 +268,14 @@ mod posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             psi_some_total: psi_some_total.unwrap_or(0),
         });
-        *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+        slot(vm).set(NonNull::new(bun_core::heap::into_raw(watcher).cast()));
     }
 
     /// Whether the installed watcher holds a live OS source. `install` still
     /// fills the slot when no backend could be registered, so `isInstalled`
     /// alone cannot tell the two apart.
     pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
-        let Some(raw) = *slot(global.bun_vm().as_mut()) else {
+        let Some(raw) = slot(global.bun_vm()).get() else {
             return false;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`,
@@ -287,7 +285,7 @@ mod posix {
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(watcher) = take_watcher(global.bun_vm().as_mut()) else {
+        let Some(watcher) = take_watcher(global.bun_vm()) else {
             return;
         };
         if let Some(mut poll) = watcher.poll {
@@ -301,7 +299,7 @@ mod posix {
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
     pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
-        let vm = VirtualMachine::get_mut();
+        let vm = VirtualMachine::get();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
         // the cgroup was removed). kernfs reports that permanently, so tear
@@ -315,7 +313,7 @@ mod posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let Some(raw) = *slot(vm) else {
+            let Some(raw) = slot(vm).get() else {
                 return;
             };
             // SAFETY: slot is populated only by `install` with a
@@ -398,8 +396,8 @@ mod windows {
         thread: Option<std::thread::JoinHandle<()>>,
     }
 
-    fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<c_void>> {
-        vm.rare_data().memory_pressure_watcher_slot()
+    fn slot(vm: &VirtualMachine) -> &core::cell::Cell<Option<NonNull<c_void>>> {
+        &vm.rare_data().memory_pressure_watcher
     }
 
     fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
@@ -427,8 +425,8 @@ mod windows {
     }
 
     pub(super) fn install(global: &JSGlobalObject) {
-        let vm = global.bun_vm().as_mut();
-        if slot(vm).is_some() {
+        let vm = global.bun_vm();
+        if slot(vm).get().is_some() {
             return;
         }
 
@@ -462,11 +460,11 @@ mod windows {
             shutdown,
             thread: Some(thread),
         });
-        *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+        slot(global.bun_vm()).set(NonNull::new(bun_core::heap::into_raw(watcher).cast()));
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(raw) = slot(global.bun_vm().as_mut()).take() else {
+        let Some(raw) = slot(global.bun_vm()).take() else {
             return;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
@@ -508,9 +506,9 @@ pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl:
 pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
     global
         .bun_vm()
-        .as_mut()
         .rare_data()
-        .memory_pressure_watcher_slot()
+        .memory_pressure_watcher
+        .get()
         .is_some()
 }
 

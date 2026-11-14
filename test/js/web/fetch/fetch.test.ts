@@ -1345,8 +1345,8 @@ describe("Response", () => {
       expect(() => Response.json({ func: function () {} })).not.toThrow();
       expect(() => Response.json({ undef: undefined })).not.toThrow();
 
-      // A BigInt throws JSON.stringify's own error
-      expect(() => Response.json(123n)).toThrow("JSON.stringify cannot serialize BigInt.");
+      // BigInt should throw with Node.js compatible error message
+      expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
     });
   });
   describe("Response.redirect", () => {
@@ -2836,7 +2836,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -2865,7 +2865,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";

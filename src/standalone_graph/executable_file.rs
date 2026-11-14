@@ -1,5 +1,6 @@
 //! Reads and writes an executable file without holding a second copy of it in memory.
 
+use bun_aot::statistics::log_part_outside_stages;
 use bun_core::ZStr;
 use bun_exe_format::builtins::Image;
 use bun_exe_format::elf::{self as bun_elf, ElfFile};
@@ -22,6 +23,92 @@ pub(crate) struct ImageSymbols<'a> {
 pub(crate) struct ImageRange {
     pub(crate) offset: u32,
     pub(crate) length: u32,
+}
+
+/// `ImageHeader::address`, whose offset AOTImageFormat.h asserts.
+const OFFSET_OF_ADDRESS: usize = 56;
+
+/// The payload of an executable: the graph, and in it the image of the compiled program.
+/// The image can lie outside the graph, where the engine left it. Its range of `graph` holds nothing then.
+pub(crate) struct PayloadParts<'a> {
+    graph: &'a mut [u8],
+    image: Option<ImageRange>,
+    image_outside_graph: Option<&'a mut [u8]>,
+}
+
+impl<'a> PayloadParts<'a> {
+    pub(crate) fn new(
+        graph: &'a mut [u8],
+        image: Option<ImageRange>,
+        image_outside_graph: Option<&'a mut [u8]>,
+    ) -> PayloadParts<'a> {
+        let room = image.map(|image| image.length as usize);
+        let length = image_outside_graph.as_deref().map(<[u8]>::len);
+        assert!(length.is_none() || length == room);
+        PayloadParts {
+            graph,
+            image,
+            image_outside_graph,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.graph.len()
+    }
+
+    pub(crate) fn image_range(&self) -> Option<ImageRange> {
+        self.image
+    }
+
+    /// One behind the other they are the payload.
+    pub(crate) fn slices(&self) -> Vec<&[u8]> {
+        match (self.image, self.image_outside_graph.as_deref()) {
+            (Some(range), Some(image)) => {
+                let (front, others) = self.graph.split_at(range.offset as usize);
+                vec![front, image, &others[range.length as usize..]]
+            }
+            _ => vec![&*self.graph],
+        }
+    }
+
+    /// For a writer that takes the payload in one piece.
+    pub(crate) fn joined(&self) -> &[u8] {
+        assert!(
+            self.image_outside_graph.is_none(),
+            "this writer takes the payload in one piece"
+        );
+        &*self.graph
+    }
+
+    fn image_bytes(&self) -> Option<&[u8]> {
+        let range = self.image?;
+        Some(match self.image_outside_graph.as_deref() {
+            Some(image) => image,
+            None => &self.graph[range.offset as usize..][..range.length as usize],
+        })
+    }
+
+    fn image_bytes_mut(&mut self) -> Option<&mut [u8]> {
+        let range = self.image?;
+        Some(match self.image_outside_graph.as_deref_mut() {
+            Some(image) => image,
+            None => &mut self.graph[range.offset as usize..][..range.length as usize],
+        })
+    }
+
+    /// Makes the addresses in the image those of an image whose first byte the loader puts at `address`.
+    fn relocate_image(&mut self, address: u64) {
+        if let Some(image) = self.image_bytes_mut() {
+            relocate_image(image, address);
+        }
+    }
+
+    /// The address that the image outside the graph is made for.
+    fn address_of_image_outside_graph(&self) -> Option<u64> {
+        let image = self.image_outside_graph.as_deref()?;
+        let word = image.get(OFFSET_OF_ADDRESS..)?.first_chunk::<8>()?;
+        Some(u64::from_le_bytes(*word))
+    }
 }
 
 #[derive(Debug)]
@@ -90,6 +177,13 @@ impl UntouchedPages {
             && (start - self.addresses.start) as u64 == position
     }
 
+    /// Where in the file `bytes` begin, if they are a part of the mapping.
+    fn position_of(&self, bytes: &[u8]) -> Option<u64> {
+        let start = bytes.as_ptr() as usize;
+        (start >= self.addresses.start && start + bytes.len() <= self.addresses.end)
+            .then(|| (start - self.addresses.start) as u64)
+    }
+
     /// `bytes` are a part of the mapping.
     fn hold(&self, bytes: &[u8]) -> bool {
         let offset = bytes.as_ptr() as usize - self.addresses.start;
@@ -98,6 +192,33 @@ impl UntouchedPages {
             .iter()
             .all(|&is_untouched| is_untouched)
     }
+}
+
+/// Writes `bytes`, which stand elsewhere in `original` or not in it at all.
+/// What nothing has written to is read from `original`, a block at a time. Read through the mapping, every page of it would stay resident until the mapping goes, and
+/// the symbols and the debug information that a payload pushes back are tens or hundreds of megabytes.
+fn write_moved_blocks(
+    file: &bun_sys::File,
+    position: u64,
+    bytes: &[u8],
+    original: &bun_sys::File,
+    untouched: &UntouchedPages,
+    block: &mut [u8],
+) -> bun_sys::Maybe<()> {
+    let Some(position_in_original) = untouched.position_of(bytes) else {
+        return file.pwrite_all(bytes, position as i64);
+    };
+    let mut start = 0;
+    while start < bytes.len() {
+        let end = bytes.len().min(start + block.len());
+        let held = &mut block[..end - start];
+        let is_read = untouched.hold(&bytes[start..end])
+            && original.pread_all(held, position_in_original + start as u64)? == held.len();
+        let part = if is_read { &*held } else { &bytes[start..end] };
+        file.pwrite_all(part, (position + start as u64) as i64)?;
+        start = end;
+    }
+    Ok(())
 }
 
 fn write_changed_blocks(
@@ -109,8 +230,10 @@ fn write_changed_blocks(
     block: &mut [u8],
 ) -> bun_sys::Maybe<u64> {
     // What has moved, and what the original never held, differs from what stands there.
-    if untouched.is_some_and(|pages| !pages.are_mapped_at(bytes, position)) {
-        file.pwrite_all(bytes, position as i64)?;
+    if let Some(pages) = untouched
+        && !pages.are_mapped_at(bytes, position)
+    {
+        write_moved_blocks(file, position, bytes, original, pages, block)?;
         return Ok(bytes.len() as u64);
     }
     let mut changed_start = 0;
@@ -277,7 +400,14 @@ fn write_pieces<'a>(
                 )
                 .map_err(Write)?;
                 bytes_kept += inside.len() as u64 - written;
-                write_behind_end(file, behind, size + inside.len() as u64).map_err(Write)?;
+                let end = size + inside.len() as u64;
+                match untouched.as_ref() {
+                    Some(pages) if pages.position_of(&behind).is_some() => {
+                        write_moved_blocks(file, end, &behind, original.file, pages, &mut block)
+                    }
+                    _ => write_behind_end(file, behind, end),
+                }
+                .map_err(Write)?;
             }
             (Piece::Bytes(mut behind), None) => {
                 let inside = behind
@@ -317,10 +447,8 @@ fn append_elf_symbols(file: &bun_sys::File, size: u64, symbols: ImageSymbols<'_>
 
 /// What is executed. The data behind it belongs to the image's code part too, and is only read.
 /// Reads `ImageHeader::size`, `ImageHeader::codeOffset` and `ImageHeader::executableSize`, whose offsets AOTImageFormat.h asserts.
-fn find_code_range(payload: &[u8], image: ImageRange) -> Option<core::ops::Range<u64>> {
-    let bytes = payload
-        .get(image.offset as usize..)?
-        .get(..image.length as usize)?;
+fn find_code_range(payload: &PayloadParts<'_>) -> Option<core::ops::Range<u64>> {
+    let (image, bytes) = (payload.image_range()?, payload.image_bytes()?);
     let word_at = |offset: usize| {
         bytes
             .get(offset..)?
@@ -339,49 +467,55 @@ pub(crate) fn write_elf(
     file: Fd,
     mut template: TemplateBytes<'_>,
     original: Option<Original<'_>>,
-    payload: &mut [u8],
-    image: Option<ImageRange>,
+    payload: &mut PayloadParts<'_>,
     symbols: Option<ImageSymbols<'_>>,
 ) -> Result<ElfWritten, ElfWriteError> {
     use ElfWriteError::{Elf, Template};
     let file = bun_sys::File::borrow(&file);
-    if image.is_some() {
+    if payload.image_range().is_some() {
+        log_part_outside_stages("behind the engine: the template");
         let _ = reserve_payload_segments(&mut template);
     }
     let mut elf = ElfFile::over(template).map_err(Template)?;
     elf.normalize_interpreter();
-    // An image that is written for its address shares its pages with the file: nothing is written to them at start.
-    if let Some(image) = image
-        && let Some(address) = elf.payload_address(payload.len() as u64).map_err(Elf)?
-    {
-        // One image behind the other, each as long as `ImageHeader::size` says.
-        let (mut start, end) = (
-            image.offset as usize,
-            (image.offset + image.length) as usize,
-        );
-        while start < end {
-            let bytes = &mut payload[start..end];
-            let size = bytes.get(32..).and_then(|rest| rest.first_chunk::<8>());
-            let size = size.map_or(0, |word| u64::from_le_bytes(*word) as usize);
-            if size == 0 || size > bytes.len() {
-                break;
-            }
-            bun_aot::engine::relocate_image(&mut bytes[..size], address + start as u64);
-            start += size;
+    let made_for = payload.address_of_image_outside_graph();
+    if let Some(image) = payload.image_range() {
+        // An image that is written for its address shares its pages with the file: nothing is written to them at start.
+        if let Some(address) = elf.payload_address(payload.len() as u64).map_err(Elf)? {
+            payload.relocate_image(address + u64::from(image.offset));
         }
+        log_part_outside_stages("behind the engine: addresses in the image");
     }
-    let code = image.and_then(|image| find_code_range(payload, image));
-    let pieces = elf.bun_section_in_pieces(payload, code).map_err(Elf)?;
-    let (size, _) = write_pieces(file, pieces, original)?;
+    let code = find_code_range(payload);
+    let written = elf
+        .bun_section_in_pieces(&payload.slices(), code)
+        .map_err(Elf)
+        .and_then(|pieces| write_pieces(file, pieces, original));
+    // Whoever lent the image has it back as the compiler made it: the next executable is named after the same bytes.
+    if let Some(address) = made_for {
+        payload.relocate_image(address);
+    }
+    let (size, _) = written?;
     let has_symbols = symbols.is_some_and(|symbols| append_elf_symbols(file, size, symbols));
     Ok(ElfWritten { has_symbols })
+}
+
+/// The loader puts the first byte of `image` at `address`. Bytes whose header says another size than they have are no image.
+pub(crate) fn relocate_image(image: &mut [u8], address: u64) {
+    let size = image.get(32..).and_then(|rest| rest.first_chunk::<8>());
+    if size.is_some_and(|word| u64::from_le_bytes(*word) as usize == image.len()) {
+        bun_aot::engine::relocate_image(image, address);
+    }
 }
 
 pub fn with_executable_image<R>(
     path: &ZStr,
     use_image: impl FnOnce(&mut Image<'_>) -> R,
 ) -> bun_sys::Maybe<R> {
-    let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    // Otherwise opening a named pipe waits for a writer.
+    let without_waiting = if cfg!(unix) { bun_sys::O::NONBLOCK } else { 0 };
+    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | without_waiting;
+    let file = bun_sys::File::open(path, flags, 0)?;
     let len = file.get_end_pos()?;
     let mut read = |offset: usize, out: &mut [u8]| matches!(file.pread_all(out, offset as u64), Ok(count) if count == out.len());
     let read = &mut read;
@@ -454,6 +588,74 @@ mod tests {
             assert_eq!(size, expected.len() as u64);
             assert!(read_file(&path) == expected);
         }
+    }
+
+    #[test]
+    fn parts_of_a_payload_are_written_as_the_joined_payload() {
+        let folder = TemporaryFolder::create("parts");
+        let joined: Vec<u8> = (0..(34u32 << 20) + 13)
+            .map(|index| (index / 11) as u8)
+            .collect();
+        let range = ImageRange {
+            offset: 4088,
+            length: 33 << 20,
+        };
+        let start = range.offset as usize;
+        let end = start + range.length as usize;
+        let mut image = joined[start..end].to_vec();
+        let mut graph = joined.clone();
+        graph[start..end].fill(0xEE);
+        let payload = PayloadParts::new(&mut graph, Some(range), Some(&mut image[..]));
+        assert_eq!(payload.len(), joined.len());
+        let slices = payload.slices();
+        assert_eq!(slices.len(), 3);
+        assert!(slices.concat() == joined);
+        assert!(payload.image_bytes().unwrap() == &joined[start..end]);
+
+        let path = folder.write("file", b"head");
+        let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
+        let parts = slices.iter().map(|&slice| kept(slice));
+        let pieces = core::iter::once(kept(b"head")).chain(parts);
+        let (size, _) = write_pieces(&file, pieces, None).unwrap();
+        assert_eq!(size, 4 + joined.len() as u64);
+        assert!(read_file(&path) == [&b"head"[..], &joined].concat());
+    }
+
+    #[test]
+    fn payload_that_holds_its_image_is_one_part() {
+        let mut graph = b"front image behind".to_vec();
+        let range = ImageRange {
+            offset: 6,
+            length: 5,
+        };
+        let payload = PayloadParts::new(&mut graph, Some(range), None);
+        assert_eq!(payload.slices(), [&b"front image behind"[..]]);
+        assert_eq!(payload.joined(), b"front image behind");
+        assert_eq!(payload.image_bytes(), Some(&b"image"[..]));
+        assert_eq!(payload.address_of_image_outside_graph(), None);
+    }
+
+    #[test]
+    fn header_is_read_out_of_the_image_wherever_it_lies() {
+        const PAGE: u64 = 4096;
+        let mut image = vec![0u8; 4 * PAGE as usize];
+        for (offset, word) in [(32, 4 * PAGE), (40, 2 * PAGE), (56, 7), (64, PAGE)] {
+            image[offset..offset + 8].copy_from_slice(&word.to_le_bytes());
+        }
+        let range = ImageRange {
+            offset: PAGE as u32 - 8,
+            length: image.len() as u32,
+        };
+        let code_start = u64::from(range.offset) + 2 * PAGE;
+        let code = Some(code_start..code_start + PAGE);
+        let mut joined = [&vec![1; range.offset as usize][..], &image, b"behind"].concat();
+        let mut with_room = vec![0xEEu8; joined.len()];
+
+        let inside = PayloadParts::new(&mut joined, Some(range), None);
+        assert_eq!(find_code_range(&inside), code);
+        let outside = PayloadParts::new(&mut with_room, Some(range), Some(&mut image[..]));
+        assert_eq!(find_code_range(&outside), code);
+        assert_eq!(outside.address_of_image_outside_graph(), Some(7));
     }
 
     #[cfg(target_os = "linux")]
@@ -541,7 +743,8 @@ mod tests {
         if UntouchedPages::of(addresses.clone()).is_none() {
             return;
         }
-        let expected = [&mapped[..], &mapped[..BLOCK]].concat();
+        // What has moved and nothing has written to is read from the original, not through the mapping.
+        let expected = [&mapped[..], &[0xAA; BLOCK][..]].concat();
         let pieces = [kept(&mapped), kept(&mapped[..BLOCK])];
 
         let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
@@ -567,8 +770,7 @@ mod tests {
             file.handle(),
             TemplateBytes::Kept(&mut template.clone()),
             None,
-            &mut payload,
-            None,
+            &mut PayloadParts::new(&mut payload, None, None),
             None,
         );
         let invalid = bun_elf::ElfError::InvalidElfFile;

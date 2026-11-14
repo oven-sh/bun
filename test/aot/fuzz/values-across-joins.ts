@@ -1,16 +1,6 @@
-// Values of every width and kind that stay alive across joins: what a code generator moves between registers and frame slots where paths meet, and what it has to find again behind a call, a throw or a wait.
-//
-//   values    6 to 900 variables a function, some of them parameters, each of one kind for good: int32, uint32, an integer wider than 32 bits, double, any number in turn, boolean, string, one of four literal strings,
-//             an object of a class, one of three subclasses behind their base, an array of objects, a Map, a typed array of each element width or an array, `T | undefined` and `T | null` of these, anything in turn
-//   edges     the ends of int32 and their neighbors, the ends of the safe integers, -0, NaN with every payload a typed array can hold
-//   joins     both arms of an if, or all arms of a switch, assign the same 6 to 64 variables, mostly by copies of one another; rotations and other permutations of 2 to 40 variables, alone, in loops and in the step of a loop whose test still reads others
-//   flow      if, the same test twice, for, while, do, for-of, switch that falls through, with 16 cases, with cases that share a target, with one to three cases at the end of a loop's body, on strings; labelled blocks and loops; all of it inside try, catch and finally too; return, break and continue that leave through a finally
-//   throws    by a callee, two or three frames below or in the engine itself, with a number, a double, a string or an object, into a handler that reads what was assigned on the way, or out of the function through its finally blocks
-//   calls     functions the compiler cannot look through, with up to 14 parameters of mixed kinds, in tail position too; one that fills the stack below with bytes of every kind; the function itself; an earlier function; closures that write variables
-//   waits     half of the functions are generators, async functions or async generators. Generators are also closed early and thrown into; three calls of an async function are in flight at once
-//
-// Every function is called some hundred times with other arguments. All its variables go into one number at the end, and single ones on the way. Two lines a function.
-// Always TypeScript: the mode `erased` gives the untyped form. A variable of a union type is read through a cast to that type, so that no narrowing of the checker's makes a read an error.
+// Values of every width and type that stay live across control-flow merges: what a code generator moves between
+// registers and stack slots where paths meet, and what it must find again after a call, a throw or a suspension. 6 to
+// 900 variables per function.
 import type { Random } from "./random";
 
 type Kind = "int" | "uint" | "wide" | "double" | "number" | "flag" | "text" | "word" | "box" | "shape" | "boxes" | "table" | "memory" | "maybeInt" | "maybeDouble" | "maybeFlag" | "maybeText" | "maybeBox" | "any";
@@ -311,7 +301,7 @@ export function generate(random: Random): string {
     const int = () => drawn("int")!.name;
     const form: Form = random.weighted([[4, "plain"], [2, "generator"], [2, "async"], [1, "asyncGenerator"]] as const);
     const name = "f" + number;
-    // The first variables are parameters behind `a` and `b`.
+    // The first variables are parameters after `a` and `b`.
     const parameters = variables.slice(0, random.pick([0, 0, 2, 4, 7, 12, 24])).filter(each => each.kind !== "memory");
     let budget = size;
     let names = 0;
@@ -385,7 +375,7 @@ export function generate(random: Random): string {
           return random.pick([a, u, w, d, t, k, o, f, mi, md, mo, "undefined", "null", `opaqueAny(${y})`, `${f} ? ${a} : ${t}`, `${y} ?? ${o}`, `typeof ${y} === "number" ? ${y} + 1 : ${a}`, `odd[${a} & 7]`, random.pick(edgesOfInt), random.pick(edgesOfWide)]);
       }
     };
-    // What is handed to a parameter: mostly a variable as it is.
+    // What is passed as an argument: mostly a plain variable.
     function argument(kind: Kind): string {
       const variable = below(4) ? of(kind) : undefined;
       if (variable) return variable;
@@ -431,7 +421,7 @@ export function generate(random: Random): string {
         `Math.imul(${a}, ${b}) + ${of("wide") ?? a} > ${of("uint") ?? b} * 3`, `(${of("maybeDouble") ?? a} ?? ${of("double") ?? b}) + ${a} > (${of("maybeInt") ?? b} ?? ${int()})`, `${of("wide") ?? a} + ${a} > ${of("wide") ?? b} - ${b} && ${of("double") ?? a} - ${b} < ${of("double") ?? b} + ${a}`,
         of("text") ?? `${a} & 16`, `${of("text") ?? "spare.name"} === ${of("text") ?? "spare.name"}`, `(${drawn("memory")?.name ?? "odd"}[${a} & 7] | 0) > ${b}`]);
     };
-    // The same variables, of one type, moved round by one place; or each given what any of them held before.
+    // The same variables, of one type, rotated by one position; or each assigned what any of them held before.
     const sameType = (most: number) => {
       const one = variables[below(count)];
       return random.sample(variables.filter(each => each.type === one.type && each.kind === one.kind), most); // prettier-ignore
@@ -468,7 +458,7 @@ export function generate(random: Random): string {
       return callee !== name || form === "plain" ? call : form === "async" ? `(await ${call})` : `(yield* ${call})`;
     };
 
-    // `turns`: how often the place runs in one call at most. Loops in loops multiply.
+    // `turns`: the maximum number of times the site runs in one call. Nested loops multiply.
     const statements = (left: number, loops: string[], turns: number): string => {
       let all = "";
       for (let more = 1 + below(4); more-- && budget > 0; ) {
@@ -533,7 +523,8 @@ export function generate(random: Random): string {
             break;
           }
           case 39: case 40: {
-            // One to three cases, the first body right behind the switch; the default is missing, shares a body with a case, or is the way back to the head of a loop.
+            // One to three cases, the first body right after the switch; the default is missing, shares a body with a
+            // case, or is a loop's back edge.
             const labels = random.sample(["0", "1", "2", "3", "5", "6", "7", "-1", "128"], random.between(1, 3));
             const shared = below(3) ? -1 : below(labels.length);
             const small = `switch (${random.pick([`${int()} & 7`, `${int()} & 3`, `${int()} as number`, `(${condition()} ? ${value("int")} : 128) & 7`])}) {${labels.map((each, index) => `case ${each}: ${index === shared ? "default: " : ""}${below(2) ? assign() : arm(random.sample(variables, random.pick([2, 5, 12])))} ${below(4) ? "break;" : ""}`).join("")}}`;
@@ -565,7 +556,7 @@ export function generate(random: Random): string {
           case 29: all += `try {${guarded()} ${int()} = mayThrow(${int()});${guarded()}} catch (thrown) {${arm(random.sample(variables, random.pick([3, 8, 24])))}${int()} = fold(thrown);}`; break; // prettier-ignore
           case 30: all += loops.length ? `try {${inner()} if (${condition()}) ${random.pick(["break", "continue"])} ${random.pick(loops)};${inner()}} finally {${inner()}}` : `try {${inner()} if (${condition()} && ${condition()}) return ${int()};${inner()}} finally {${inner()}}`; break; // prettier-ignore
           case 31: {
-            // The same test again where its answer is known, or would be, had nothing been assigned between.
+            // The same test again where its result is known, or would be if nothing had been assigned in between.
             const test = condition();
             all += `if (${test}) {${below(2) ? assign() : ""}if (${test}) {${inner()}} else {${inner()}}} else {${below(2) ? assign() : ""}if (${below(2) ? test : `!(${test})`}) {${inner()}} else {${assign()}}}`;
             break;
@@ -604,7 +595,7 @@ export function generate(random: Random): string {
       memory: (_, type) => (type === "number[]" ? contents : `new ${type}(${contents})`), maybeInt: index => `(a + ${index}) & 1 ? a : undefined`, maybeDouble: index => `(a + ${index}) & 1 ? a * 0.5 : null`, maybeFlag: index => `(a + ${index}) & 1 ? a > b : undefined`,
       maybeText: index => `(a + ${index}) & 1 ? String(b) : undefined`, maybeBox: index => `(a + ${index}) & 1 ? new Box(a, null) : null`, any: index => random.pick([`a + ${index}`, `String(b)`, "undefined", `new Box(a, null)`, `a * 0.5`, "null"]),
     };
-    // Ways out before the function needs anything.
+    // Early exits before the function needs anything.
     let body = random.pick(["", "", "if ((a & 15) === 3) return b;", "if (b > 60) return (a + b) | 0;", "if (a === 7) return opaqueInt(a, b);if (a === 9) return a;"]);
     body += "const spare = new Box(a, null);const round: Shape = new Disc(b, a * 0.5);const row: Box[] = [spare, spare, spare, spare];const counts = new Map<number, number>([[1, a]]);let sunk = false;";
     variables.forEach((each, index) => parameters.includes(each) || (body += `let ${each.name}: ${each.type} = ${first[each.kind](index, each.type)};`));

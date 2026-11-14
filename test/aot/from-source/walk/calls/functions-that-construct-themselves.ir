@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# function Point(x) { if (!new.target) return new Point(x); this.x = x; }
+# function Vector(x) { if (!(this instanceof Vector)) return new Vector(x); this.x = x; }
+# function run(count) { let sum = 0; for (let i = 0; i < count; i++) sum += Point(i & 3).x; return sum; }
+# function runOlder(count) { let sum = 0; for (let i = 0; i < count; i++) sum += Vector(i & 3).x; return sum; }
+# print(run(10), runOlder(10));
+# -- end of source
+# The called function constructs itself: the constructed one is copied too, and its object is never made.
+# RUN(TARGET): walk f3 mechanisms=all
+# TARGET-NOT: CallDirect
+# TARGET-NOT: NewObject
+# RUN(INSTANCE): walk f4 mechanisms=all
+# INSTANCE-NOT: CallDirect
+# INSTANCE-NOT: NewObject
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 13 13

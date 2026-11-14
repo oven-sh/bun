@@ -274,7 +274,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// A `.then(cb)` can reach the wrapper, so `apply_phase` moves the Strong into the task that resolves the promise.
     pub(crate) all_closed_promise: JsCell<jsc::JSPromiseStrong>,
 
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
 
     terminated: core::cell::Cell<bool>,
 
@@ -434,25 +434,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[inline(always)]
     pub(crate) fn vm(&self) -> &jsc::VirtualMachine {
         self.vm.get()
-    }
-
-    /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
-    /// `&mut`) because the VM is mutated across re-entrant JS callbacks
-    /// (`drain_microtasks`, event-loop ticks) while other `&VirtualMachine`
-    /// borrows may be live; handing out `&mut` here would alias.
-    ///
-    /// Routes through [`jsc::VirtualMachine::get_mut_ptr`] (the thread-local
-    /// raw `*mut`) rather than casting `self.vm` — the field is `*const`
-    /// derived from a `&'static VirtualMachine`, so casting it to `*mut` would
-    /// carry read-only Stacked-Borrows provenance and make any write through
-    /// the result UB.
-    #[inline(always)]
-    pub(crate) fn vm_mut(&self) -> *mut jsc::VirtualMachine {
-        debug_assert!(core::ptr::eq(
-            self.vm.as_const_ptr(),
-            jsc::VirtualMachine::get_mut_ptr()
-        ));
-        jsc::VirtualMachine::get_mut_ptr()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -619,10 +600,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// request that was deferred (bake bundle-then-serve flow).
     ///
     /// # Safety
-    /// `this` must point to a live heap-allocated `NewServer`; `resp` must be
-    /// the live response handle for the request being resumed.
+    /// `resp` must be the live response handle for the request being resumed.
     fn on_saved_request<const ARG_COUNT: usize>(
-        this: *mut Self,
+        &self,
         req: SavedRequestUnion<'_>,
         resp: uws::AnyResponse,
         callback: JSValue,
@@ -632,8 +612,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `pending_requests` increment keeps the wrapper `Strong` (so it is
         // never `Finalized` here), but the VM's script gate can have closed
         // while the bundle was being built.
-        // SAFETY: `this` is the live server backref for this request.
-        let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
+        let Some(server_js) = self.js_value_for_dispatch() else {
             server_body::respond_stopped_503(resp);
             return;
         };
@@ -643,7 +622,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // `&mut uws::Request` lifetime from the `req` match guard.
                 let r = std::ptr::from_ref::<uws::Request>(*r).cast_mut();
                 match Self::prepare_js_request_context::<false>(
-                    this,
+                    self.as_ctx_ptr(),
                     uws::AnyRequest::H1(r),
                     resp,
                     None,
@@ -680,10 +659,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         args.push(prepared.js_request);
         args.extend_from_slice(&extra_args);
 
-        // SAFETY: `this` is the live server backref for this request.
-        let server = unsafe { &*this };
-        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
-        let global = server.global_this();
+        let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
+        let global = self.global_this();
         let response_value = match callback.call(global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -706,7 +683,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref
             .defer_deinit_until_callback_completes
             .set(Some(bun_ptr::BackRef::new(&should_deinit_context)));
-        ctx_ref.on_response(server, prepared.js_request, response_value);
+        ctx_ref.on_response(self, prepared.js_request, response_value);
         ctx_ref
             .defer_deinit_until_callback_completes
             .set(original_state);
@@ -745,18 +722,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
     /// then drive the returned promise / [`NodeHTTPResponse`] through the
     /// completion / abort / error paths.
-    ///
-    /// receiver is `*mut Self` (not `&mut self`) — the body
-    /// re-enters JS (`drain_microtasks`, `then2`) which may call back into
-    /// other server methods, so a long-lived `&mut Self` would alias. Each use
-    /// site below derives a short-lived borrow that ends before the next
-    /// re-entry point.
-    ///
-    /// # Safety
-    /// `this` must point to a live heap-allocated `NewServer` (the userdata
-    /// registered with uWS).
     pub(crate) fn on_node_http_request(
-        this: *mut Self,
+        &self,
         req: &mut uws_sys::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
@@ -765,28 +732,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         jsc::mark_binding!();
 
-        // SAFETY: `this` is the live server backref registered as the uws
-        // userdata; only one borrow derived from it is alive at a time.
-        let this_ref = unsafe { &*this };
-        if this_ref.js_value_for_dispatch().is_none() {
+        if self.js_value_for_dispatch().is_none() {
             server_body::respond_stopped_503(any_response_from::<SSL>(resp));
             return;
         }
-        // SAFETY: same `this` as above.
-        unsafe { (*this).on_pending_request() };
-        // Read-only access goes through `BackRef` (safe `Deref`); each use
-        // materialises a fresh short-lived `&Self`, so the JS-reentrant calls
-        // below never see an outstanding shared borrow.
-        let this_ref = bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
-        );
-        let vm = this_ref.vm_mut();
-        let _entered = this_ref.vm().enter_event_loop_scope_without_checkpoint();
+        self.on_pending_request();
+        let vm = self.vm();
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         // The listener and what it starts continue the script that made the server.
-        let _context = this_ref.vm().enter_context(this_ref.context.get());
+        let _context = vm.enter_context(self.context.get());
         req.set_yield(false);
 
-        let global = this_ref.global_this();
+        let global = self.global_this();
 
         // Compute the JS method-name string up front so the FFI closure
         // doesn't need to reborrow `req` (it's already `&mut`-borrowed below).
@@ -796,7 +753,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // into `Bun__HTTPMethod__toJS`. (`get(..)` falls back to a fresh intern
         // if a future method variant ever indexes past the cache.)
         let method_string = match bun_http::Method::find(req.method()) {
-            Some(m) => match this_ref.method_name_cache.get(m as usize) {
+            Some(m) => match self.method_name_cache.get(m as usize) {
                 Some(slot) => {
                     let cached = slot.get();
                     if cached == JSValue::ZERO {
@@ -811,13 +768,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             None => JSValue::UNDEFINED,
         };
-        let callback = this_ref.config.get().on_node_http_request;
+        let callback = self.config.get().on_node_http_request;
         // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
         // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag);
         // a raw `*mut Self` would zero those bits and trip the dispatch
         // `unreachable!`, so the packed tagged-pointer wire format is needed.
         // Computed once in `init()` (stable heap address) — just load it.
-        let any_server_packed = this_ref.any_server_packed;
+        let any_server_packed = self.any_server_packed;
 
         let mut node_http_response: *mut NodeHTTPResponse = core::ptr::null_mut();
         let mut is_async = false;
@@ -846,12 +803,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // before the response object existed. Nothing adopted the response;
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
-                // SAFETY: `vm` is the process-static VirtualMachine.
-                let _ = unsafe { (*vm).uncaught_exception(global, result, false) };
+                let _ = self.vm().uncaught_exception(global, result, false);
             }
             server_body::respond_stopped_503(any_response_from::<SSL>(resp));
-            // SAFETY: same `this`; balances `on_pending_request` above.
-            unsafe { (*this).on_request_complete() };
+            // Balances `on_pending_request` above.
+            self.on_request_complete();
             return;
         }
         // SAFETY: `on_request_ffi` wrote it and took the ref that `deref()` below drops. Shared: its state is `Cell` / `JsCell`.
@@ -880,8 +836,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if status == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
-                    // SAFETY: `vm` is the process-static VirtualMachine.
-                    unsafe { (*vm).drain_microtasks() };
+                    vm.drain_microtasks();
                     // The drain ran script: an exception it left (a termination
                     // request landing in it) ends this dispatch like a throw
                     // from the handler; nothing below may enter script over it.
@@ -938,46 +893,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
-                // SAFETY: `vm` is the process-static VirtualMachine; `&mut`
-                // scoped to this call.
-                let _ = unsafe {
-                    (*vm).uncaught_exception(
-                        global,
-                        *err,
-                        matches!(http_result, HttpResult::Rejection(_)),
-                    )
-                };
+                let _ = self.vm().uncaught_exception(
+                    global,
+                    *err,
+                    matches!(http_result, HttpResult::Rejection(_)),
+                );
 
-                // A pipelined response stays queued: the connection's state describes the one ahead of it.
-                if nhr.flags.get().contains(NhrFlags::CURRENT) {
-                    let nhr_flags = nhr.flags.get();
-                    if !nhr.is_socket_closed_or_closing() {
-                        if let Some(raw) = nhr.writer() {
-                            if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                                && raw.state().is_response_pending()
-                            {
-                                if raw.state().is_http_status_called() {
-                                    raw.write_status(b"500 Internal Server Error");
-                                    raw.end_without_body(true);
-                                } else {
-                                    raw.end_stream(true);
-                                }
-                            }
-                        }
-                    }
-                    // The handler threw before `res.end()`; we just ended (or
-                    // will never end) the raw response above. Mark ENDED so
-                    // `on_request_complete()` → `mark_request_as_done()` runs
-                    // and releases the `IS_REQUEST_PENDING` ref (one of the
-                    // initial 3). Without this the box leaks: the later
-                    // `on_abort` socket-close path early-returns once
-                    // `REQUEST_HAS_COMPLETED` is set and never balances it.
-                    // An ended response still draining completes from on_drain/on_abort.
-                    if !nhr_flags.contains(NhrFlags::ENDED) {
-                        nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
-                        nhr.on_request_complete();
-                    }
-                }
+                nhr.on_dispatch_threw();
             }
             HttpResult::Success | HttpResult::Pending => {}
         }
@@ -1000,8 +922,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // returns above). Reverse-decl order: strong_promise, drain, deref.
         strong_promise.deinit();
         if needs_to_drain {
-            // SAFETY: `vm` is the process-static VirtualMachine.
-            unsafe { (*vm).drain_microtasks() };
+            vm.drain_microtasks();
         }
         if !is_async {
             nhr.deref();
@@ -1158,12 +1079,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn ref_(&self) {
         // Nothing would unref a closed server again, so a ref taken now would pin the process.
         if !self.is_closed() {
-            self.poll_ref.with_mut(|r| r.ref_(self.vm.loop_ctx()));
+            self.poll_ref.ref_(self.vm.loop_ctx());
         }
     }
 
     pub(crate) fn unref(&self) {
-        self.poll_ref.with_mut(|r| r.unref(self.vm.loop_ctx()));
+        self.poll_ref.unref(self.vm.loop_ctx());
     }
 
     /// Runs `close`, which closes sockets whose close callbacks report back to this server. The caller runs `apply_phase` afterwards.
@@ -1236,12 +1157,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(listener) = listener {
             if !SSL {
-                // SAFETY: `listener` is the live uws ListenSocket just taken from `self.listener`,
-                // and `vm_mut()` is the process-static VM.
-                unsafe {
-                    let fd = (*listener).socket().fd();
-                    (*self.vm_mut()).remove_listening_socket_for_watch_mode(fd);
-                }
+                // SAFETY: `listener` is the live uws ListenSocket just taken from `self.listener`.
+                let fd = unsafe { (*listener).socket().fd() };
+                self.vm().remove_listening_socket_for_watch_mode(fd);
             }
             match &self.config.get().address {
                 // The socket file of an inherited descriptor belongs to the process that bound it.
@@ -1275,11 +1193,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `CloseAsThreadEnds`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
     pub(crate) fn stop(&self, connections: Connections) {
         if self.config.get().allow_hot && !self.config.get().id.is_empty() {
-            // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
-            unsafe {
-                if let Some(hot) = (*self.vm_mut()).hot_map() {
-                    hot.remove(&self.config.get().id);
-                }
+            if let Some(hot) = self.vm().hot_map() {
+                hot.remove(&self.config.get().id);
             }
         }
 
@@ -1296,6 +1211,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     #[cold]
+    #[optimize(size)]
     fn apply_phase_without_listener(&self) {
         let phase = self.phase();
         if phase < Phase::Closed {
@@ -1306,7 +1222,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // At VM shutdown no tick would run the task.
         if self.all_closed_promise.get().has_value() && !self.vm().is_shutting_down() {
-            let vm_ref = jsc::VirtualMachine::get_mut();
+            let vm_ref = self.vm();
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
@@ -1361,12 +1277,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         }
 
-        // SAFETY: `vm_mut()` is the process-static VM. The `&mut` is scoped to this call.
-        unsafe {
-            (*server.vm_mut()).enqueue_task(bun_event_loop::Task::init(
-                this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
-            ));
-        }
+        server.vm().enqueue_task(bun_event_loop::Task::init(
+            this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
+        ));
     }
 
     pub(crate) fn on_listen(
@@ -1383,15 +1296,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.base_url_string_for_joining
                 .set(self.config.get().base_url_string_for_joining(Some(port)));
         }
-        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
-        // for the server's lifetime); single-threaded JS context.
-        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
+        self.vm().event_loop_handle.set(Some(bun_io::Loop::get()));
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
-            // SAFETY: `vm` is a STATIC ref (see `NewServer::vm_mut`) — non-null
-            // for the server's lifetime, so the raw→`&mut` deref is sound.
-            unsafe { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
+            self.vm().add_listening_socket_for_watch_mode(fd);
         }
     }
 
@@ -1464,7 +1373,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // A drain may still be queued for it.
             server
                 .vm()
-                .event_loop_ref()
+                .event_loop()
                 .deferred_tasks
                 .unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
             // SAFETY: live h2::App handle owned by this server; detaches from `app`.
@@ -1524,7 +1433,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // ~816 KB mux pool; `listen()` materializes it on demand.
             mux_request_pool: core::cell::Cell::new(core::ptr::null()),
             all_closed_promise: JsCell::new(jsc::JSPromiseStrong::default()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             terminated: core::cell::Cell::new(false),
             plugins: JsCell::new(None),
             user_routes: JsCell::new(Vec::new()),
@@ -1623,6 +1532,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Register HTTP routes on `self.app` (and `h2_app`/`h3_app` when present). Returns
     /// the JS `RouteList` value for codegen-backed user routes, or `.zero` when
     /// there are none.
+    #[optimize(size)]
     fn set_routes(&self) -> JSValue {
         use bun_http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;
@@ -1855,20 +1765,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 6. Initialize plugins if needed ---
         if needs_plugins && self.plugins.get().is_none() {
-            // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
-            // (non-null for the server's lifetime); single-threaded JS context.
             // Cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
             let vm = jsc::VirtualMachine::get();
             let names = vm
                 .transpiler
+                .get()
                 .options
                 .serve_plugins
                 .clone()
                 .unwrap_or_default();
             // `load_and_resolve_plugins` adds the plugins of `bake.config.ts`.
-            if !names.is_empty() || vm.bake_config_plugins.has() {
+            if !names.is_empty() || vm.bake_config_plugins.get().has() {
                 self.plugins.set(Some(ServePlugins::init(names)));
             }
         }
@@ -1949,22 +1858,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     // ─── listen ──────────────────────────────────────────────────────────────
-    /// `config.http2`: attach an HTTP/2 context to `app`. On failure the
-    /// server is `deinit()`ed with an exception pending and `false` returned.
-    fn attach_http2(this: *mut Self, app: *mut uws_sys::NewApp<SSL>) -> bool
+    /// `config.http2`: attach an HTTP/2 context to `app`. On failure an
+    /// exception is pending and `false` returned.
+    fn attach_http2(&self, app: *mut uws_sys::NewApp<SSL>) -> bool
     where
         Self: ServerPools<SSL, DEBUG>,
     {
-        // SAFETY: `this` is the live boxed server from `init()`; short-lived shared read.
-        let (http2, is_node_http, http1, idle_timeout, max_request_body_size, has_dev_server) = unsafe {
-            let cfg = (*this).config.get();
+        let (http2, is_node_http, http1, idle_timeout, max_request_body_size, has_dev_server) = {
+            let cfg = self.config.get();
             (
                 cfg.http2,
                 cfg.is_node_http_server || !cfg.on_node_http_request.is_empty(),
                 cfg.http1,
                 u32::from(cfg.idle_timeout),
                 cfg.max_request_body_size as u64,
-                (*this).dev_server.get().is_some(),
+                self.dev_server.get().is_some(),
             )
         };
         if !http2 {
@@ -1978,12 +1886,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 "for node:http servers"
             };
             if !http1 {
-                // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
-                let global = unsafe { (*this).global_this() };
-                let _ = global.throw_invalid_arguments(format_args!(
+                let _ = self.global_this().throw_invalid_arguments(format_args!(
                     "http1: false with http2: true is not supported {why}"
                 ));
-                Self::deinit(this);
                 return false;
             }
             bun_core::warn!("http2: true is ignored {}", why);
@@ -1996,12 +1901,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             idle_timeout,
             max_request_body_size,
         ) else {
-            // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
-            let global = unsafe { (*this).global_this() };
+            let global = self.global_this();
             if !global.has_exception() {
                 let _ = global.throw(format_args!("Failed to create HTTP/2 server"));
             }
-            Self::deinit(this);
             return false;
         };
         // Streams parked on socket backpressure by a JS-driven write get their
@@ -2014,17 +1917,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
             }
             jsc::VirtualMachine::get()
-                .event_loop_ref()
+                .event_loop()
                 .deferred_tasks
                 .post_task(core::ptr::NonNull::new(app), drain);
         }
         bun_opaque::opaque_deref_mut(h2).on_schedule_drain(schedule_h2_drain, h2.cast::<c_void>());
-        // SAFETY: `this` is the live boxed server from `init()`.
-        let server = unsafe { &*this };
-        server.h2_app.set(Some(h2));
-        if server.mux_request_pool.get().is_null() {
-            server
-                .mux_request_pool
+        self.h2_app.set(Some(h2));
+        if self.mux_request_pool.get().is_null() {
+            self.mux_request_pool
                 .set(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool());
         }
         true
@@ -2119,7 +2019,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .mux_request_pool
                     .set(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool());
             }
-            if !Self::attach_http2(this, app) {
+            if !this_ref.attach_http2(app) {
+                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                Self::deinit(this);
                 return JSValue::ZERO;
             }
 
@@ -2195,7 +2097,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             app = uws_sys::NewApp::<SSL>::create(None);
             this_ref.app.set(Some(app));
-            if !Self::attach_http2(this, app) {
+            if !this_ref.attach_http2(app) {
+                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                Self::deinit(this);
                 return JSValue::ZERO;
             }
             route_list_value = this_ref.set_routes();
@@ -2222,10 +2126,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
         // points into it, so it has to outlive the listen calls below.
         let mut stripped_hostname: Option<bun_core::ZBox> = None;
-        // The raw pointers reference `config.address`'s backing storage, which `on_listen` and `on_h3_listen` never touch.
-        enum Addr {
+        // `host` and the path reference `config.address`'s backing storage, which `on_listen` and `on_h3_listen` never touch.
+        enum Addr<'a> {
             Tcp { port: u16, host: *const c_char },
-            Unix { ptr: *const u8, len: usize },
+            Unix(&'a bun_core::ZStr),
             Fd(i32),
         }
         let (addr, tcp, options) = {
@@ -2247,10 +2151,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     Addr::Tcp { port: *port, host }
                 }
-                (None, server_config::Address::Unix(unix)) => Addr::Unix {
-                    ptr: unix.as_ptr().cast(),
-                    len: unix.as_bytes().len(),
-                },
+                (None, server_config::Address::Unix(unix)) => Addr::Unix(unix.as_zstr()),
             };
             (addr, cfg.http1 || cfg.http2, cfg.get_usockets_options())
         };
@@ -2265,17 +2166,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
                 // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may
                 // already be held by an unrelated process. When the user asked
-                // for "any port" (0), close TCP:N and retry the whole TCP+UDP
-                // bind so the kernel picks a fresh N. Never retry a
+                // for "any port" (0), keep TCP:N and repeat the whole TCP+UDP
+                // bind, so that the kernel picks another N each time, also
+                // where a whole range of UDP ports is taken. Never retry a
                 // user-specified non-zero port.
-                let max_attempts: u8 = if Self::HAS_H3 && tcp && port == 0 {
-                    3
-                } else {
-                    1
-                };
-                let mut attempt: u8 = 0;
+                const MAX_REFUSED_PORTS: usize = 256;
+                let mut refused_ports: Vec<*mut uws_sys::app::ListenSocket<SSL>> = Vec::new();
                 loop {
-                    attempt += 1;
                     if tcp {
                         // SAFETY: app is a live uws handle owned by this server.
                         let listened = unsafe {
@@ -2312,14 +2209,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 },
                             );
                             if this_ref.h3_listener.get().is_none() {
-                                if attempt < max_attempts {
-                                    // UDP:N is taken — release TCP:N so the next
-                                    // attempt gets a fresh kernel-chosen port.
-                                    // Only retry if TCP actually succeeded.
-                                    if let Some(ls) = this_ref.listener.take() {
-                                        bun_opaque::opaque_deref_mut(ls).close();
-                                        continue;
-                                    }
+                                // Only retry if TCP actually succeeded.
+                                if tcp
+                                    && port == 0
+                                    && refused_ports.len() < MAX_REFUSED_PORTS
+                                    && let Some(ls) = this_ref.listener.take()
+                                {
+                                    refused_ports.push(ls);
+                                    continue;
                                 }
                                 if !global.has_exception() {
                                     let _ = global.throw(format_args!(
@@ -2330,16 +2227,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 }
                             }
                             if !tcp {
-                                // SAFETY: per-thread VM singleton; no aliasing `&mut`.
-                                jsc::VirtualMachine::get().as_mut().event_loop_handle =
-                                    Some(bun_io::Loop::get());
+                                jsc::VirtualMachine::get()
+                                    .event_loop_handle
+                                    .set(Some(bun_io::Loop::get()));
                             }
                         }
                     }
                     break;
                 }
+                for ls in refused_ports {
+                    bun_opaque::opaque_deref_mut(ls).close();
+                }
             }
-            Addr::Unix { ptr, len } => {
+            Addr::Unix(path) => {
                 if Self::HAS_H3 {
                     if let Some(h3a) = this_ref.h3_app.take() {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
@@ -2350,11 +2250,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
                 }
-                // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
-                // sentinel at `ptr[len]` holds for ZStr::from_raw.
-                let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
                 // SAFETY: app is a live uws handle owned by this server.
-                let listened = unsafe { (*app).listen_on_unix_socket(z, options) };
+                let listened = unsafe { (*app).listen_on_unix_socket(path, options) };
                 this_ref.on_listen(listened);
             }
         }
@@ -2389,10 +2286,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// into the slot and dispatch into.
     pub(crate) fn gc_hint_after_listen(&self) {
         let vm = self.vm();
-        if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
+        if vm.aggressive_garbage_collection.get() == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
-            vm.event_loop_ref().perform_gc();
+            vm.event_loop().perform_gc();
         }
     }
 }
@@ -2605,10 +2502,10 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
-        // user_data is the `*mut NewServer<..>` registered in set_routes.
+        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
+        let server = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
-        NewServer::<SSL, DEBUG>::on_node_http_request(
-            user_data.cast(),
+        server.on_node_http_request(
             bun_opaque::opaque_deref_mut(req),
             bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
         );
@@ -2680,10 +2577,7 @@ impl RequestPools {
     fn get<const SSL: bool, const DEBUG: bool, const MUX: bool>(
         slot: &RequestPoolSlot<SSL, DEBUG, MUX>,
     ) -> *const RequestPool<SSL, DEBUG, MUX> {
-        // SAFETY: `new_boxed` leaks a fully initialized `Box` without staging the pool on the stack.
-        &raw const **slot.get_or_init(|| unsafe {
-            bun_core::heap::take(RequestPool::<SSL, DEBUG, MUX>::new_boxed().as_ptr())
-        })
+        &raw const **slot.get_or_init(RequestPool::<SSL, DEBUG, MUX>::new_boxed)
     }
 }
 
@@ -3182,7 +3076,7 @@ impl AnyServer {
         extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
     ) {
         any_server_dispatch!(self, |s| {
-            NewServer::on_saved_request(s.as_ctx_ptr(), req, resp, callback, extra_args)
+            s.on_saved_request(req, resp, callback, extra_args)
         })
     }
 
@@ -3239,20 +3133,22 @@ pub(crate) mod http_server_agent {
 
     /// Assign the server a fresh inspector id and tell the C++ inspector
     /// agent (if attached) that it started, passing its URL and start time.
-    pub(crate) fn notify_server_started(this: &mut HTTPServerAgent, instance: AnyServer) {
-        let Some(agent) = this.agent else { return };
-        this.next_server_id = DebuggerId::init(this.next_server_id.get() + 1);
-        instance.set_inspector_server_id(this.next_server_id);
+    pub(crate) fn notify_server_started(this: &HTTPServerAgent, instance: AnyServer) {
+        let Some(agent) = this.agent.get() else {
+            return;
+        };
+        this.next_server_id
+            .set(DebuggerId::init(this.next_server_id.get().get() + 1));
+        instance.set_inspector_server_id(this.next_server_id.get());
         let url = instance.get_url_as_string();
 
         // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
-        // (set via `Bun__HTTPServerAgent__setEnabled`); `vm()` is the live
-        // process VM backref.
+        // (set via `Bun__HTTPServerAgent__setEnabled`).
         unsafe {
             InspectorHTTPServerAgent::notify_server_started(
                 agent.as_ptr(),
-                this.next_server_id,
-                (*instance.vm()).hot_reload_counter as i32,
+                this.next_server_id.get(),
+                instance.vm().hot_reload_counter.get() as i32,
                 &url,
                 bun_core::time::milli_timestamp() as f64,
                 instance.ptr.cast(),
@@ -3263,7 +3159,9 @@ pub(crate) mod http_server_agent {
     /// Tell the C++ inspector agent (if attached) that the server stopped,
     /// stamped with the current time.
     pub(crate) fn notify_server_stopped(this: &HTTPServerAgent, server: AnyServer) {
-        let Some(agent) = this.agent else { return };
+        let Some(agent) = this.agent.get() else {
+            return;
+        };
         InspectorHTTPServerAgent::notify_server_stopped(
             agent.as_ptr(),
             server.inspector_server_id(),
@@ -3277,7 +3175,7 @@ pub(crate) mod http_server_agent {
         this: &HTTPServerAgent,
         server: AnyServer,
     ) -> Result<(), bun_alloc::AllocError> {
-        let Some(agent) = this.agent else {
+        let Some(agent) = this.agent.get() else {
             return Ok(());
         };
         let config = server.config();
@@ -3322,7 +3220,7 @@ pub(crate) mod http_server_agent {
         InspectorHTTPServerAgent::notify_server_routes_updated(
             agent.as_ptr(),
             server.inspector_server_id(),
-            server.vm().hot_reload_counter as i32,
+            server.vm().hot_reload_counter.get() as i32,
             &mut routes,
         );
         Ok(())
@@ -3379,6 +3277,13 @@ impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
     /// # Safety
     /// `this` is the unique owning server pointer `schedule_deinit` queued.
     pub(crate) unsafe fn run(this: *mut Self) {
+        let vm = jsc::VirtualMachine::get();
+        if vm.uws_loop().internal_loop_data.is_ticking() {
+            // A listener turned the event loop, and the app's handler that called it goes on afterwards.
+            return vm
+                .event_loop()
+                .enqueue_task_for_outermost_tick(bun_event_loop::Task::init(this));
+        }
         NewServer::<SSL, DEBUG>::deinit(this.cast());
     }
 }
@@ -3408,7 +3313,7 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
 }
 
 impl ServerAllConnectionsClosedTask {
-    pub(crate) fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
+    pub(crate) fn schedule(this: Self, vm: &jsc::VirtualMachine) {
         vm.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(this)));
     }
 

@@ -435,11 +435,10 @@ impl Members<'_> {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // The detailed form returns the whole chain the peer presented, each
-        // certificate linking to its issuer through `issuerCertificate`, the way
-        // Node's getPeerCertificate(true) does. SSL_get_peer_cert_chain includes
-        // the leaf on the client side but not on the server side, where the +1
-        // peer certificate above is the leaf instead.
+        // The detailed form links each certificate to its issuer through
+        // `issuerCertificate`, the way Node's getPeerCertificate(true) does.
+        // SSL_get_peer_cert_chain includes the leaf on the client side but not on
+        // the server side, where the +1 peer certificate above is the leaf instead.
         let first_obj = X509::to_js(boringssl::X509::opaque_mut(first_cert), global)?;
         // Link each certificate to its predecessor immediately so every object in
         // the chain is reachable from the stack-rooted `first_obj` before the next
@@ -448,18 +447,24 @@ impl Members<'_> {
         let mut prev_obj: JSValue = first_obj;
         let mut last_cert: *mut boringssl::X509 = first_cert;
         if !cert_chain.is_null() {
-            let mut i: usize = if cert.is_null() { 1 } else { 0 };
-            loop {
-                let next =
-                    ffi::sk_X509_value(boringssl::struct_stack_st_X509::opaque_ref(cert_chain), i);
-                if next.is_null() {
-                    break;
-                }
-                let obj = X509::to_js(boringssl::X509::opaque_mut(next), global)?;
+            // The certificates the peer sent are candidates: each link is the one that
+            // X509_check_issued accepts, like Node's AddIssuerChainToObject
+            // (src/crypto/crypto_common.cc).
+            let chain = boringssl::struct_stack_st_X509::opaque_ref(cert_chain);
+            let mut candidates: Vec<*mut boringssl::X509> = (usize::from(cert.is_null())..)
+                .map(|i| ffi::sk_X509_value(chain, i))
+                .take_while(|candidate| !candidate.is_null())
+                .collect();
+            while let Some(i) = candidates.iter().position(|&candidate| {
+                // SAFETY: `last_cert` and every candidate are live certificates owned by `ssl_ptr`'s
+                // session (or by `_guard`) for the whole call.
+                unsafe { ffi::X509_check_issued(candidate, last_cert) == 0 }
+            }) {
+                let issuer = candidates.remove(i);
+                let obj = X509::to_js(boringssl::X509::opaque_mut(issuer), global)?;
                 prev_obj.put(global, b"issuerCertificate", obj);
                 prev_obj = obj;
-                last_cert = next;
-                i += 1;
+                last_cert = issuer;
             }
         }
 
@@ -811,7 +816,7 @@ impl Members<'_> {
                 // A client keeps no session id context (see `us_internal_ssl_attach`).
                 boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
             } else {
-                let sid_ctx = (*sc).digest.get();
+                let sid_ctx = (*sc).session_id_context();
                 if ffi::us_ssl_set_key_cert(
                     ssl_ptr.cast(),
                     ctx.as_ptr().cast(),
@@ -883,6 +888,7 @@ impl Members<'_> {
             return Ok(JSValue::UNDEFINED);
         };
 
+        boringssl::ERR_clear_error();
         // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context are valid for the lengths passed (context is null with use_context=0).
         let result = unsafe {
             ffi::SSL_export_keying_material(

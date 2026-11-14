@@ -551,21 +551,20 @@ test.concurrent(
       // Blob body is never read, so the Response is the only thing created.
       await fetch(url);
     }
+    async function hits(count) {
+      for (let i = 0; i < count; i++) {
+        await hit();
+        if ((i & 255) === 0) Bun.gc(true);
+      }
+      Bun.gc(true);
+    }
     // Warm up until the heap and allocator have reached their steady state, so
     // the baseline is not taken while they are still growing.
-    for (let i = 0; i < 2000; i++) {
-      await hit();
-      if ((i & 255) === 0) Bun.gc(true);
-    }
-    Bun.gc(true);
+    await hits(10000);
     const baseline = rss();
 
     const ITERS = 20000;
-    for (let i = 0; i < ITERS; i++) {
-      await hit();
-      if ((i & 255) === 0) Bun.gc(true);
-    }
-    Bun.gc(true);
+    await hits(ITERS);
     const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
@@ -574,11 +573,8 @@ test.concurrent(
       finalMB: (final / 1024 / 1024) | 0,
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
-    // Each leaked impl is ~0.9 KiB, so 20000 of them are ~17 MiB raw. Leaking vs
-    // fixed: 26-27 vs 8-10 MiB on debug+ASAN (extra ref re-added), 19-21 vs ~2 MiB
-    // on a release build (leak approximated by retaining one equal-sized string
-    // per call).
-    if (deltaMB > ${isASAN ? 18 : 12}) {
+    // Each leaked impl is ~0.9 KiB, so 20000 of them are ~17 MiB.
+    if (deltaMB > 10) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
   `;
@@ -588,6 +584,7 @@ test.concurrent(
       cwd: String(dir),
       env: {
         ...bunEnv,
+        WebKitMallocForceEnabled: "1",
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",

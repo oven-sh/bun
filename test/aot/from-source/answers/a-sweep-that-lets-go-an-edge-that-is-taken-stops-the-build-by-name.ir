@@ -1,0 +1,11 @@
+# The verifier's stage for edges also runs on swept code, for the blocks that the sweep reached. Each of them ends in edges of its own, and those edges lead to reached blocks.
+# Only the blocks that the sweep skipped break those rules.
+# Fault injection, testing=DropEdgeInSweep: in each unit, the edge of one reached block that ends in a jump loses its `to`, just like the edges that the sweep drops legitimately.
+# Without that stage, the later stages used `to` unchecked: the verifier itself crashed, and no rule was named.
+# -- source: main.js
+# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = x | 0; return to; }
+# print(fill([1.5, 2.5, 3.5].slice(), 7).join() + " " + fill([1, 2, 3].slice(), 7).join());
+# -- end of source
+# OPTIONS: check=Validate testing=DropEdgeInSweep
+# DIAGNOSTIC: OpcodeNotInForm
+# RUN: compile mechanisms=all

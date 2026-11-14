@@ -24,6 +24,7 @@
 #include <errno.h>
 #ifndef WIN32
 #include <fcntl.h>
+#include <poll.h>
 #endif
 
 int us_socket_local_port(struct us_socket_t *s) {
@@ -98,6 +99,8 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+    /* A close that waits has a deadline of its own, which its owner does not put off. */
+    if (UNLIKELY(s->lingering || s->ssl_close_after_spill)) return;
     s->timeout = us_internal_timeout_tick(s->group->loop, seconds);
     s->low_prio_ticks = 0;
 }
@@ -355,18 +358,42 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
 
+#ifndef WIN32
+void us_socket_read_now(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return;
+    }
+    struct pollfd pollfd = { .fd = us_poll_fd(&s->p), .events = POLLIN };
+    int hangup = poll(&pollfd, 1, 0) == 1 && (pollfd.revents & POLLHUP);
+
+    /* A callback can tick the loop, which must not free the socket that this dispatch still reads. */
+    struct us_loop_t *loop = s->group->loop;
+    loop->data.tick_depth++;
+    us_internal_dispatch_ready_poll(&s->p, 0, hangup ? LIBUS_POLL_HANGUP : 0, LIBUS_SOCKET_READABLE);
+    loop->data.tick_depth--;
+}
+#endif
+
+void us_socket_set_owner_holds_tail(struct us_socket_t *s) {
+    s->owner_holds_tail = 1;
+}
+
 struct us_socket_t *us_socket_close_lingering(struct us_socket_t *s) {
-    /* The graceful TLS close waits for the peer's close_notify in the same way. After the peer's FIN there is nothing to wait for. */
-    if (s->ssl || s->read_eof || us_socket_is_closed(s) || !us_socket_is_established(s)) {
+    /* After the peer's FIN there is nothing to wait for. */
+    if ((s->read_eof && !s->ssl) || us_socket_is_closed(s) || !us_socket_is_established(s)) {
+        return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    }
+    us_socket_timeout(s, LIBUS_LINGER_SECONDS);
+    s->lingering = 1;
+    /* The loop doesn't stay alive for it, unless its owner holds it. */
+    us_socket_unref(s);
+    /* The graceful TLS close waits for the peer's close_notify in the same way. */
+    if (s->ssl) {
         return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     }
     us_internal_socket_raw_shutdown(s);
     /* Only a read sees the peer's FIN. */
     us_socket_resume(s);
-    us_socket_timeout(s, LIBUS_LINGER_SECONDS);
-    /* The process doesn't stay alive for it. */
-    us_socket_unref(s);
-    s->lingering = 1;
     return s;
 }
 
@@ -396,7 +423,12 @@ void us_internal_socket_reject_send(struct us_socket_t *s, int error) {
     s->send_rejected = 1;
     s->rejected_send_error = code > 2 && code <= UINT8_MAX ? code : LIBUS_ECONNRESET - US_SEND_ERROR_BASE;
     us_internal_socket_raw_shutdown(s);
-    us_internal_rearm_writable(s);
+    if (s->ssl) {
+        us_internal_rearm_writable(s);
+    } else {
+        /* On Linux a unix socket with a full send buffer stays unwritable after the shutdown. */
+        us_internal_loop_close_unresumable_socket(s->group->loop, s, 0);
+    }
 }
 
 struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socket_t *s) {
@@ -405,7 +437,7 @@ struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socke
     if (s->ssl) {
         return us_internal_ssl_close_after_rejected_send(s, unread);
     }
-    return unread ? s : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+    return unread && !s->flags.is_paused ? s : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
 }
 
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
@@ -471,15 +503,11 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
-    if (bsd_adopt_socket(fd, 0)) {
-        return 0;
-    }
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
     int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
-        bsd_disown_socket(fd);
         us_poll_free(p1, group->loop);
         return 0;
     }

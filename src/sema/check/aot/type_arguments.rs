@@ -1,7 +1,7 @@
 use super::answers::{ClassRef, GaveUp, TypeArgument, TypeParameterRef};
 use super::queries::Queries;
-use crate::hir::{ExprId, ExprKind, TypeParamId};
-use crate::program::{FileId, Sym};
+use crate::hir::{ExprId, ExprKind};
+use crate::program::Sym;
 use crate::types::{MapperId, SigData, SigId, TypeData, TypeId};
 use smallvec::SmallVec;
 
@@ -23,15 +23,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         instance_type: TypeId,
     ) -> Result<&'c [TypeArgument], GaveUp> {
         self.ask(|queries| queries.compute_class_type_arguments(class, instance_type))
-    }
-
-    pub(super) fn compiled_type_parameter(
-        &self,
-        file: FileId,
-        parameter: TypeParamId,
-    ) -> Option<TypeParameterRef> {
-        let is_compiled = self.c.is_compiled_file(file);
-        is_compiled.then_some(TypeParameterRef { file, parameter })
     }
 
     fn compute_call_type_arguments(&mut self, call: ExprId) -> Result<&'c [TypeArgument], GaveUp> {
@@ -61,7 +52,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | SigData::Construct { mapper, .. }
             | SigData::DefaultConstruct { mapper, .. } => mapper,
             SigData::WithReturn { sig: inner, .. } => self.signature_mapper(inner),
-            SigData::Synth { .. } => MapperId::IDENTITY,
+            SigData::Synth(_) => MapperId::IDENTITY,
         }
     }
 
@@ -106,7 +97,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let TypeData::TypeParam(file, parameter, _) = *self.c.data(ty) else {
             return None;
         };
-        self.compiled_type_parameter(file, parameter)
+        let is_compiled = self.c.is_compiled_file(file);
+        is_compiled.then_some(TypeParameterRef { file, parameter })
     }
 
     fn list_type_arguments(

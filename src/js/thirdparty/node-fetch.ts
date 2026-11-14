@@ -305,6 +305,17 @@ class FetchBaseError extends Error {
     return this.constructor.name;
   }
 
+  // In node-fetch v2 `name` is a writable data property.
+  set name(value) {
+    Object.defineProperty(this, "name", {
+      __proto__: null,
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
   get [Symbol.toStringTag]() {
     return this.constructor.name;
   }

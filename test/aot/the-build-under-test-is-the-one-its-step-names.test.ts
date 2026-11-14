@@ -5,6 +5,7 @@ import { bunEnv, bunExe, isASAN } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { hasGuardedPages, isHardened, locksEnvironment } from "./hardened";
+import { namesOfSections } from "./harness/commands";
 import { unsupported } from "./harness/compiler";
 
 const { EXPECTED_PLATFORM_PROFILE: profile, EXPECTED_PLATFORM_CANARY: canary } = process.env;
@@ -34,6 +35,14 @@ test("a symbolizer finds the debug information unpacked in the step that tests a
   expect(directory).toBeString();
   const files = readdirSync(join(directory, ".build-id"), { recursive: true, encoding: "utf8" });
   expect(files.filter(name => name.endsWith(".debug"))).toHaveLength(1);
+});
+
+// Every executable is a copy of the Bun that builds it, and more than half of a Bun with AddressSanitizer is debug information.
+test("it has its table of symbols and no debug information in the step that tests a build with AddressSanitizer", () => {
+  if (profile !== "asan") return;
+  const names = namesOfSections(bunExe());
+  expect(names).toContain(".symtab");
+  expect(names.filter(name => name.startsWith(".debug_"))).toEqual([]);
 });
 
 // scripts/runner.node.ts ends a file at its time limit and tries it again. A build or a server that the first try has started would run on beside the second.

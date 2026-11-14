@@ -285,7 +285,7 @@ fn on_handshake(
     if first_report {
         this.state.response_stage = HTTPStage::ProxyHeaders;
         this.state.request_stage = HTTPStage::ProxyHeaders;
-        this.state.request_sent_len = 0;
+        this.state.rewind_request_head();
     }
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
@@ -574,6 +574,13 @@ impl ProxyTunnel {
         // _guard derefs here.
     }
 
+    /// `write` takes every byte and keeps what the socket refuses, so a body without a bound waits while this is true.
+    pub(crate) fn holds_refused_ciphertext(&self) -> bool {
+        self.wrapper
+            .as_ref()
+            .is_some_and(|wrapper| wrapper.refused_ciphertext() > 0)
+    }
+
     pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.write_data(buf).map_err(|e| match e {
@@ -632,6 +639,6 @@ impl ProxyTunnel {
         client.flags.proxy_tunneling = false;
         client.state.request_stage = HTTPStage::ProxyHeaders;
         client.state.response_stage = HTTPStage::ProxyHeaders;
-        client.state.request_sent_len = 0;
+        client.state.rewind_request_head();
     }
 }

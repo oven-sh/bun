@@ -1,0 +1,12 @@
+# The loop of a gallop (see what-operators-on-bits-and-another-such-parameter-bring-round-starts-as-int32.ir) with `reach` called directly: its parameters are known (a closure, 8).
+# `most` has a known bound, so what comes round is int[-2147483648, 7] and not int32: the head does not start as what comes round, and a walk is undone. With parameters nobody knows none is.
+# -- source: a-loop-whose-bound-is-a-known-integer-is-walked-once.cjs
+# function reach(isFar, length) { let last = 0; let offset = 1; const most = (length - 1) | 0; while (offset < most) { if (isFar(offset)) break; last = offset; offset = (offset * 2 + 1) | 0; if (offset > most) offset = most; } return last * 100 + offset; }
+# const list = [reach, (at) => at > 4, 8];
+# const far = (at) => at > 4;
+# print(reach(far, list.length + 5));
+# -- end of source
+# TODO: the loops of the walk: a walk of the loop is undone where the bound of the loop is a known integer
+# STATISTIC: LoopVisitsUndone <= 0
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 307

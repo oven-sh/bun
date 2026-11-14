@@ -12,7 +12,7 @@ pub struct AlphaValue {
 }
 
 impl AlphaValue {
-    pub(crate) fn parse(input: &mut Parser) -> Result<AlphaValue> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, AlphaValue> {
         let val: NumberOrPercentage = NumberOrPercentage::parse(input)?;
         let final_ = match val {
             NumberOrPercentage::Percentage(percent) => AlphaValue { v: percent.v },

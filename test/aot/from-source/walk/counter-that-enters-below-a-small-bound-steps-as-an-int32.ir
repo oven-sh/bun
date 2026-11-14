@@ -1,0 +1,13 @@
+# -- source: counter-that-enters-below-a-small-bound-steps-as-an-int32.ts
+# declare function sink(value: unknown): void;
+# function every(data: number[], start: number, end: number): number {
+#   let sum = 0;
+#   for (let i = start & 255; i < end; i += 2) sum += data[i]!;
+#   return sum;
+# }
+# const list: number[] = []; for (let i = 0; i < 100; i++) list.push(i * 3);
+# for (const from of list) sink(every(list, from, 50 + from));
+# -- end of source
+# The counter enters as an integer from 0 to 255 and steps past 255 at once. Widened to every exact integer it was held in 64 bits or, beside a bound that is any integer, as a double.
+# RUN: walk f1 mechanisms=all
+# CHECK: int[-2147483646, 2147483647] @Int32) isInLoop=true isLoopHead=true

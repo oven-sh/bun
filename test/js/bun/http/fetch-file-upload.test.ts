@@ -11,11 +11,12 @@ import {
   tls,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import { closeSync, existsSync, openSync, readFileSync, truncateSync } from "node:fs";
+import { open } from "node:fs/promises";
 import net from "node:net";
 import { createServer as createTlsServer } from "node:tls";
-import { tmpdir } from "os";
 import { join } from "path";
 
 test("uploads roundtrip", async () => {
@@ -144,12 +145,12 @@ test("formData uploads roundtrip, without a call to .body", async () => {
 test.todoIf(isBroken && isWindows)(
   "uploads roundtrip with sendfile()",
   async () => {
-    const hugeTxt = Buffer.allocUnsafe(1024 * 1024 * 32 * "huge".length);
-    hugeTxt.fill("huge");
+    // More than the buffers of the two sockets hold, so sendfile() stops and goes on several times.
+    const hugeTxt = Buffer.alloc(16 * 1024 * 1024, "huge");
     const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
 
-    const path = join(tmpdir(), "huge.txt");
-    require("fs").writeFileSync(path, hugeTxt);
+    using dir = tempDir("fetch-file-upload-sendfile", { "huge.txt": hugeTxt });
+    const path = join(String(dir), "huge.txt");
     using server = Bun.serve({
       port: 0,
       development: false,
@@ -281,6 +282,58 @@ describe.skipIf(isWindows)("Bun.stdin fed by a pipe uploads every byte", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// The writer only goes on when the origin has what came before, which it never gets from a client that reads to the end first.
+describe.skipIf(isWindows)("a pipe is uploaded while it's being written", () => {
+  test.concurrent.each(["Bun.stdin", "a FIFO"])("%s", async kind => {
+    using dir = tempDir("fetch-upload-pipe", {});
+    const fifo = join(String(dir), "fifo");
+    if (kind === "a FIFO") mkfifo(fifo);
+    const gotFirst = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        let text = "";
+        for await (const chunk of req.body!) {
+          text += Buffer.from(chunk).toString();
+          gotFirst.resolve();
+        }
+        return new Response(`${req.headers.get("content-type")} ${text}`);
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const [path, url] = process.argv.slice(1);
+         const body = Bun.file(path === "-" ? 0 : path, { type: "text/x-log" });
+         console.log(await (await fetch(url, { method: "POST", body })).text());`,
+        kind === "a FIFO" ? fifo : "-",
+        server.url.href,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (kind === "a FIFO") {
+      await using writer = await open(fifo, "w");
+      await writer.write("first ");
+      // kqueue doesn't report the end of a FIFO, so there it is read whole.
+      if (isLinux) await gotFirst.promise;
+      await writer.write("second");
+    } else {
+      proc.stdin.write("first ");
+      await proc.stdin.flush();
+      await gotFirst.promise;
+      proc.stdin.write("second");
+    }
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "text/x-log first second\n", stderr: "", exitCode: 0 });
   });
 });
 
@@ -469,6 +522,75 @@ test.skipIf(!isLinux)(
     }
   },
 );
+
+// Only on a unix socket does the peer's shutdown(SHUT_RD) fail send() with EPIPE and leave the connection up.
+describe.skipIf(!isLinux)("an origin that shuts its read side down during the upload", () => {
+  const content = Buffer.alloc(4 * 1024 * 1024, "x");
+  const bodies: [string, (path: string) => Bun.BodyInit][] = [
+    ["a Bun.file()", path => Bun.file(path)],
+    ["bytes", () => content],
+    ["a stream", () => new Blob([content]).stream().pipeThrough(new TransformStream())],
+  ];
+
+  test.concurrent.each(bodies)("%s ends there, and gets the answer as it comes", async (_, body) => {
+    using dir = tempDir("fetch-upload-shut-rd", { body: content });
+    const unix = join(String(dir), "origin.sock");
+    const accepted = Promise.withResolvers<Bun.Socket>();
+    using _origin = Bun.listen({
+      unix,
+      allowHalfOpen: true,
+      socket: {
+        open(socket) {
+          socket.write("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 9\r\n\r\ntoo ");
+          socket.shutdown(true);
+          accepted.resolve(socket);
+        },
+        data() {},
+        end() {},
+      },
+    });
+    const res = await fetch("http://localhost/", { unix, method: "PUT", body: body(join(String(dir), "body")) });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    const first = await reader.read();
+    (await accepted.promise).write("large");
+    expect([res.status, first.value, (await reader.read()).value]).toEqual([413, "too ", "large"]);
+  });
+
+  test.concurrent.each(["Bun.file(path)", "await Bun.file(path).bytes()"])(
+    "%s waits for the answer without trying again",
+    async body => {
+      using dir = tempDir("fetch-upload-shut-rd", { body: content });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const path = "body", unix = "origin.sock";
+           const accepted = Promise.withResolvers();
+           Bun.listen({
+             unix,
+             allowHalfOpen: true,
+             socket: { open: socket => (socket.shutdown(true), accepted.resolve(socket)), data() {}, end() {} },
+           });
+           const response = fetch("http://localhost/", { unix, method: "PUT", body: ${body} });
+           const socket = await accepted.promise;
+           const before = process.cpuUsage(), start = performance.now();
+           await Bun.sleep(500);
+           const { user, system } = process.cpuUsage(before);
+           console.log((user + system) / 1000 < (performance.now() - start) / 2 ? "idle" : "busy");
+           socket.write("HTTP/1.1 413 Payload Too Large\\r\\nContent-Length: 0\\r\\n\\r\\n");
+           console.log((await response).status);
+           process.exit();`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "idle\n413\n", stderr: "", exitCode: 0 });
+    },
+  );
+});
 
 // Windows reads the whole file before it sends the head.
 describe.skipIf(isWindows)("a file that becomes shorter during the upload", () => {

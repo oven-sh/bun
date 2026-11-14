@@ -1,0 +1,35 @@
+# An array whose elements Link describes as "integers and whole numbers" is read raw, as a double, and the double is checked to be one of those. This is the failing control of that check.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `half` returns undefined, so it sees an infinity and integers stored into the array. The array holds 0.5.
+# The read that finds 0.5 crashes with a named error, and the code after it never runs. Inside a `try`, the catch never sees the failure.
+# Where the read finds a whole number, the false assumption does no harm.
+# f1 = gap, f2 = guarded
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# -- source: a-fraction-where-link-has-said-whole-numbers-stops-the-raw-read-by-name.ts
+# declare function print(...values: unknown[]): void;
+# declare function half(): number;
+# declare const which: number;
+# function gap(t: number): number { const l: number[] = new Array(4); l[0] = Infinity; l[1] = t & 7; l[2] = half(); return l[t & 3]! - 1; }
+# function guarded(t: number): unknown { try { const l: number[] = new Array(4); l[0] = Infinity; l[1] = t & 7; l[2] = half(); return l[t & 3]! - 1; } catch { return "caught"; } }
+# print(gap(1), guarded(1), gap(0), gap(3));
+# print(which === 1 ? gap(2) : which === 2 ? guarded(2) : "neither");
+# print("went on");
+# -- end of source
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: @OptionalDouble = GetArrayElement
+# RUN(PLAIN): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 1;
+# PLAIN: 0 0 Infinity NaN
+# PLAIN-NEXT: bun: internal AOT error: type check failed
+# PLAIN-NEXT: in an element
+# PLAIN-NOT: went on
+# PLAIN: crashed with
+# RUN(TRY): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 2;
+# TRY: 0 0 Infinity NaN
+# TRY-NEXT: bun: internal AOT error: type check failed
+# TRY-NEXT: in an element
+# TRY-NOT: caught
+# TRY-NOT: went on
+# TRY: crashed with
+# RUN(NEITHER): run-in-shell mechanisms=all globalThis.half = () => 0.5; globalThis.which = 3;
+# NEITHER: 0 0 Infinity NaN
+# NEITHER-NEXT: neither
+# NEITHER-NEXT: went on

@@ -10,7 +10,7 @@ import { isObject, type DumpedEntry } from "../differential/table-description";
 export type { Opened };
 export type Open = (realm: Realm) => Promise<Opened> | Opened;
 
-const keysFolder = join(import.meta.dir, "../../../js/node/test/fixtures/keys");
+const keysFolder = join(process.env.AOT_BUILTINS_FOLDER ?? join(import.meta.dir, ".."), "../../js/node/test/fixtures/keys");
 const readKey = (name: string) => readFileSync(join(keysFolder, name), "utf8");
 const createTLSOptions = () => ({ cert: readKey("agent1-cert.pem"), key: readKey("agent1-key.pem") });
 const noop = () => {};

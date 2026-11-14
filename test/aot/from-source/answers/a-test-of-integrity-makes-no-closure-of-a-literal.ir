@@ -1,0 +1,28 @@
+# -- source: main.js
+# const n = (value) => Number(globalThis.nothingOfThisName ?? value);
+# function frozen(start) { let count = start; const made = { open: () => ++count, shut: () => --count, ajar: () => count }; Object.preventExtensions(made); const answer = Object.isFrozen(made); return answer + "," + (made.open === made.open) + "," + made.open(); }
+# function sealed(start) { let count = start; const made = { left: () => ++count, right: () => --count, middle: () => count }; Object.preventExtensions(made); const answer = Object.isSealed(made); return answer + "," + (made.left === made.left) + "," + made.left(); }
+# function sealedThenAsked(start) { let count = start; const made = { first: () => ++count, second: () => --count, third: () => count }; Object.seal(made); const answer = Object.isFrozen(made); return answer + "," + (made.first === made.first) + "," + made.first(); }
+# for (const start of [n(1), n(5)]) {
+#   print(frozen(start));
+#   print(sealed(start));
+#   print(sealedThenAsked(start));
+# }
+# -- end of source
+# Whether an object that cannot be extended is frozen or sealed hangs on which fields it has, not on what they hold: the closures that the literal left unmade stay unmade, and the rows of the two tests, which write nothing,
+# are true: the net under effects stopped each of the three functions by name while the test read each field.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: false,true,2
+# CHECK-NEXT: false,true,2
+# CHECK-NEXT: false,true,2
+# CHECK-NEXT: false,true,6
+# CHECK-NEXT: false,true,6
+# CHECK-NEXT: false,true,6
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1:Body f2:Body f3:Body mechanisms=all
+# WALK: closureForm=Deferred
+# WALK: overload=ObjectIsFrozen
+# WALK: closureForm=Deferred
+# WALK: overload=ObjectIsSealed
+# WALK: closureForm=Deferred
+# WALK: overload=ObjectIsFrozen

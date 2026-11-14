@@ -1,0 +1,28 @@
+# f1 = read
+# -- source: read-a-private-field-through-a-method.ts
+# function read(meter: Meter): number {
+#   return meter.read();
+# }
+# class Meter {
+#   #level: number;
+#   constructor(level: number) {
+#     this.#level = level;
+#   }
+#   read(): number {
+#     return this.#level;
+#   }
+#   fill(by: number): void {
+#     this.#level += by;
+#   }
+# }
+# declare const input: any;
+# const meter = new Meter(+input);
+# meter.fill(+input);
+# (globalThis as any).answer = read(meter);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 2, patches 1, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:2 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 2

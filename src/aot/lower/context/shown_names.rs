@@ -1,25 +1,23 @@
 use std::iter::successors;
+use std::mem::take;
 
-use bun_builtin_sources::BundledName;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::File;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use super::{FileLowering, LoweringOptions, SourceKind};
 use crate::ir::StringId;
+use crate::load::test_runner_names::written_name_of_local;
 
-/// Under --minify-identifiers a binding that a bundle renames has a short name wherever its name is only shown: in `name` of a function, in a frame, in a message.
-/// An obfuscated executable shows no name of a function, and its source map takes those as they are written: only its messages have the short names.
 #[derive(Default)]
 pub(super) struct ShownNames {
     shortens_bindings: bool,
-    /// In order. A direct eval finds what they declare by what is written.
     scopes_around_evals: Vec<ScopeId>,
-    /// Those handed out so far. None: a function is shown by the name that is written.
+    short_binding_names: Vec<Option<StringId>>,
     short_function_names: Option<FxHashMap<SymbolId, StringId>>,
-    /// Of a module of Bun's own. In order of position.
-    bundled: &'static [BundledName],
+    pub(super) written_function_names: Vec<u8>,
 }
 
 impl ShownNames {
@@ -28,17 +26,13 @@ impl ShownNames {
         source: SourceKind,
         hir: &File<'_>,
         bound: &Bound<'_>,
-        bundled: &'static [BundledName],
     ) -> ShownNames {
         let is_with = |kind| matches!(kind, ScopeKind::With(_));
         if !(options.minifies_identifiers || options.obfuscates)
             || source != SourceKind::Program
             || bound.scopes.iter().any(|scope| is_with(scope.kind))
         {
-            return ShownNames {
-                bundled,
-                ..ShownNames::default()
-            };
+            return ShownNames::default();
         }
         let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
         let evals = bound.runtime.eval_scopes().iter();
@@ -50,8 +44,9 @@ impl ShownNames {
         ShownNames {
             shortens_bindings: true,
             scopes_around_evals,
+            short_binding_names: vec![None; FIRST_CHARACTERS.len()],
             short_function_names: options.minifies_identifiers.then(FxHashMap::default),
-            bundled,
+            written_function_names: Vec::new(),
         }
     }
 }
@@ -60,7 +55,7 @@ const FIRST_CHARACTERS: &[u8; 54] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP
 const LATER_CHARACTERS: &[u8; 64] =
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$0123456789";
 
-fn append_number(mut number: usize, text: &mut Vec<u8>) {
+fn append_number(mut number: usize, text: &mut SmallVec<[u8; 24]>) {
     text.push(FIRST_CHARACTERS[number % FIRST_CHARACTERS.len()]);
     number /= FIRST_CHARACTERS.len();
     while number > 0 {
@@ -71,6 +66,37 @@ fn append_number(mut number: usize, text: &mut Vec<u8>) {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn take_written_function_names(&mut self) -> Vec<u8> {
+        take(&mut self.shown_names.written_function_names)
+    }
+
+    pub(in crate::lower) fn add_written_function_names(&mut self, of_part: &[u8]) {
+        let listed = &mut self.shown_names.written_function_names;
+        listed.extend_from_slice(of_part);
+    }
+
+    pub(in crate::lower) fn names_functions_by_keys(&self) -> bool {
+        !self.inputs.options.obfuscates
+    }
+
+    /// The program evaluates a text as it is.
+    fn is_declared_in_known_evaluation(&self, symbol: SymbolId) -> bool {
+        let hir = self.hir;
+        if hir.known_evaluations.is_empty() {
+            return false;
+        }
+        let mut declarations = self.bound.symbol(symbol).decls.iter();
+        declarations.any(|&it| match it {
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
+                hir.is_in_known_evaluation(hir[pat].pos)
+            }
+            Decl::Fn(function) => hir.is_in_known_evaluation(hir[function].start),
+            Decl::Class(class) => hir.is_in_known_evaluation(hir[class].start),
+            _ => false,
+        })
+    }
+
+    #[inline]
     fn find_shortened_symbol(&self, binding: Binding) -> Option<SymbolId> {
         let Binding::Symbol(symbol) = binding else {
             return None;
@@ -82,88 +108,66 @@ impl FileLowering<'_, '_, '_, '_> {
             && (names.scopes_around_evals.is_empty() || {
                 let scope = self.bound.symbol_scope(symbol);
                 scope.is_some() && names.scopes_around_evals.binary_search(&scope).is_err()
-            });
+            })
+            && !self.is_declared_in_known_evaluation(symbol);
         is_shortened.then_some(symbol)
     }
 
-    /// In a message. One of a few names, so that messages are alike as often as under the names of a bundle. None: the name is shown as it is written.
     pub(crate) fn short_binding_name(&mut self, binding: Binding) -> Option<StringId> {
-        let mut text = Vec::new();
-        self.append_short_binding_name(binding, &mut text)
-            .then(|| self.intern_bytes(&text))
+        let symbol = self.find_shortened_symbol(binding)?;
+        let number = symbol.idx() % FIRST_CHARACTERS.len();
+        if let Some(name) = self.shown_names.short_binding_names[number] {
+            return Some(name);
+        }
+        let name = self.intern_bytes(&[FIRST_CHARACTERS[number]]);
+        self.shown_names.short_binding_names[number] = Some(name);
+        Some(name)
     }
 
     pub(crate) fn append_short_binding_name(&self, binding: Binding, text: &mut Vec<u8>) -> bool {
         let symbol = self.find_shortened_symbol(binding);
         if let Some(symbol) = symbol {
-            append_number(symbol.idx() % FIRST_CHARACTERS.len(), text);
+            text.push(FIRST_CHARACTERS[symbol.idx() % FIRST_CHARACTERS.len()]);
         }
         symbol.is_some()
     }
 
-    fn find_bundled_name(&self, position: u32) -> Option<&'static BundledName> {
-        let names = self.shown_names.bundled;
-        let found = names.binary_search_by_key(&position, |name| name.position);
-        Some(&names[found.ok()?])
+    pub(crate) fn default_export_name(&mut self) -> Option<StringId> {
+        Some(self.intern_atom(known::default))
     }
 
-    /// Of a function or a class that has its name from the identifier at `position`. None: the name is what is written.
-    pub(crate) fn shown_function_name(
-        &mut self,
-        binding: Binding,
-        position: u32,
-    ) -> Option<StringId> {
-        match self.find_bundled_name(position) {
-            Some(BundledName { name, .. }) => Some(self.intern_bytes(name.as_deref()?)),
-            None => self.short_function_name(binding),
-        }
-    }
-
-    /// Of an anonymous function or class behind the `export default` at `position`. None: it has no name.
-    pub(crate) fn default_export_name(&mut self, position: u32) -> Option<StringId> {
-        match self.find_bundled_name(position) {
-            Some(BundledName { name, .. }) => Some(self.intern_bytes(name.as_deref()?)),
-            None => Some(self.intern_atom(known::default)),
-        }
-    }
-
-    /// No variable or property gives an anonymous function its name behind the `export default` at `position`: it has the name from the start.
-    pub(crate) fn is_default_export_name_its_own(&self, position: u32) -> bool {
-        self.find_bundled_name(position)
-            .is_none_or(|name| name.is_own_name)
-    }
-
-    /// The function whose own name is written at `position` is an anonymous one in a variable in the text that `bun run` evaluates.
-    pub(crate) fn is_anonymous_in_bundle(&self, position: u32) -> bool {
-        let name = self.find_bundled_name(position);
-        name.is_some_and(|name| !name.is_own_name)
-    }
-
-    pub(crate) fn intern_function_name(
-        &mut self,
-        binding: Binding,
-        written: Atom,
-        position: u32,
-    ) -> StringId {
-        match self.shown_function_name(binding, position) {
+    pub(crate) fn intern_function_name(&mut self, binding: Binding, written: Atom) -> StringId {
+        match self.short_function_name(binding) {
             Some(name) => name,
-            None => self.intern_atom(written),
+            None => self.intern_written_name(written),
         }
     }
 
-    /// No two bindings of the program give one name: a table with such names for keys holds.
-    fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
+    pub(crate) fn intern_variable_name(&mut self, symbol: SymbolId) -> StringId {
+        match self.short_function_name(Binding::Symbol(symbol)) {
+            Some(name) => name,
+            None => self.intern_atom(self.bound.symbol(symbol).name),
+        }
+    }
+
+    pub(crate) fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
         let names = self.shown_names.short_function_names.as_ref()?;
         let symbol = self.find_shortened_symbol(binding)?;
         if let Some(&name) = names.get(&symbol) {
             return Some(name);
         }
-        let mut text = Vec::new();
+        let mut text = SmallVec::new();
         append_number(
             symbol.idx() * self.inputs.files.len() + self.file.idx(),
             &mut text,
         );
         let name = self.intern_bytes(&text);
+        let written = self.queries.atom_bytes(self.bound.symbol(symbol).name);
+        let listed = &mut self.shown_names.written_function_names;
+        for part in [&text[..], written_name_of_local(written)] {
+            listed.extend_from_slice(part);
+            listed.push(0);
+        }
         let names = self.shown_names.short_function_names.as_mut()?;
         names.insert(symbol, name);
         Some(name)

@@ -503,10 +503,8 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
-    /// The client decodes the body, so `Content-Encoding` no longer describes it.
-    pub did_decompress: bool,
-    /// Nothing about the response changed: another request waits for the slot this one holds with its unread body.
-    pub slot_wanted: bool,
+    /// The `Content-Encoding` that the client takes off the body.
+    pub decoded_from: Encoding,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -1453,6 +1451,16 @@ fn print_response(response: &picohttp::Response<'_>) {
     Output::flush();
 }
 
+/// After a send over a plain socket failed for good. What the peer answers is still delivered.
+fn stop_sending<const IS_SSL: bool>(socket: HttpSocket<IS_SSL>, send_error: i32) {
+    if cfg!(unix) && send_error == bun_errno::SystemErrno::EPIPE as i32 {
+        // The peer may only have shut its read side down. If it is gone, the reads say so.
+        socket.shutdown();
+    } else {
+        socket.reject_send(send_error);
+    }
+}
+
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
 fn write_to_socket<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
@@ -1461,7 +1469,11 @@ fn write_to_socket<const IS_SSL: bool>(
     let mut remaining = data;
     let mut total_written: usize = 0;
     while !remaining.is_empty() {
-        let amount = socket.write(remaining);
+        let (amount, send_error) = socket.write_check_error(remaining);
+        // The TLS layer has done this itself.
+        if send_error != 0 && !IS_SSL {
+            stop_sending(socket, send_error);
+        }
         if amount < 0 {
             return Err(crate::Error::WriteFailed);
         }
@@ -1728,9 +1740,12 @@ impl HTTPClient<'static> {
         }
     }
 
-    /// The consumer of the response body takes bytes again.
+    /// The consumer of the response body takes bytes again, or `body_unread` changed.
     pub(crate) fn receive_resumed(this: NonNull<Self>) {
         let client = Self::from_erased_backref(this);
+        let needs_slot = client.needs_slot();
+        // SAFETY: the request is in `in_flight`, and nothing else borrows it between two messages.
+        unsafe { AsyncHTTP::hold_slot(client.parent_async_http(), needs_slot) };
         match client.carrier {
             Carrier::Tcp(socket) => client.resume_receive::<false>(socket),
             Carrier::Tls(socket) => client.resume_receive::<true>(socket),
@@ -1743,23 +1758,6 @@ impl HTTPClient<'static> {
             }
             Carrier::H2Connect | Carrier::H2Parked(_) => {}
         }
-    }
-
-    /// Tells the owner of a response whose body nobody is taking that a request waits for its slot.
-    pub(crate) fn report_slot_wanted(this: NonNull<Self>) {
-        let client = Self::from_erased_backref(this);
-        let in_body = matches!(
-            client.state.response_stage,
-            ResponseStage::Body | ResponseStage::BodyChunk
-        );
-        if !in_body || !client.signals.is_body_unread() {
-            return;
-        }
-        let mut result = client.to_result();
-        result.slot_wanted = true;
-        client
-            .result_callback
-            .run(client.parent_async_http(), result);
     }
 
     /// The JS `checkServerIdentity` callback approved the certificate.
@@ -2163,7 +2161,12 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
-        if self.has_tls_options_unsupported_by_h3() {
+        // An unreachable alternative costs a whole QUIC handshake timeout before the fallback to TCP.
+        if self
+            .tls_props
+            .as_ref()
+            .is_some_and(|tls| tls.get().requires_custom_request_ctx)
+        {
             return false;
         }
         h3_alt_svc_enabled() && !self.flags.h3_alt_svc_failed
@@ -2289,6 +2292,12 @@ impl<'a> HTTPClient<'a> {
 
     fn is_in_progress(&self) -> bool {
         self.state.stage != Stage::Done && self.state.stage != Stage::Fail
+    }
+
+    /// False while only the program can move the request on: all of the response has arrived, or nothing reads its body.
+    pub(crate) fn needs_slot(&self) -> bool {
+        let arrived = matches!(self.carrier, Carrier::None) && self.state.is_done();
+        !arrived && !self.signals.get(signals::Field::BodyUnread)
     }
 
     /// Whether `on_close` sends the request again: it went out on a reused
@@ -2896,17 +2905,11 @@ impl<'a> HTTPClient<'a> {
                 if let Some(alt_port) =
                     h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
-                    // SAFETY: runs on the HTTP thread after `HTTPThread::init`
-                    // set `uws_loop` to its live `us_loop_t`.
-                    let h3_ctx = h3::ClientContext::get_or_create(unsafe {
-                        NonNull::new_unchecked(http_thread().uws_loop)
-                    });
-                    if let Some(ctx) = h3_ctx {
-                        if h3::ClientContext::as_mut(ctx).connect(
-                            self,
-                            strip_ipv6_brackets(self.url.hostname),
-                            alt_port,
-                        ) && !self.flags.h3_alt_svc_failed
+                    if let Some(ctx) = h3::ClientContext::get_or_create() {
+                        if h3::ClientContext::as_mut(ctx)
+                            .connect(self, strip_ipv6_brackets(self.url.hostname), alt_port)
+                            .is_ok()
+                            && !self.flags.h3_alt_svc_failed
                         {
                             self.complete_connecting_process();
                             return;
@@ -2953,21 +2956,17 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             }
-            // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
-            // `uws_loop` to its live `us_loop_t`.
-            let Some(ctx) = h3::ClientContext::get_or_create(unsafe {
-                NonNull::new_unchecked(http_thread().uws_loop)
-            }) else {
+            let Some(ctx) = h3::ClientContext::get_or_create() else {
                 self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
             };
-            if !h3::ClientContext::as_mut(ctx).connect(
+            if let Err(err) = h3::ClientContext::as_mut(ctx).connect(
                 self,
                 strip_ipv6_brackets(self.url.hostname),
                 self.url.get_port_auto(),
             ) {
-                self.fail(crate::Error::ConnectionRefused);
+                self.fail(err);
             }
             self.complete_connecting_process();
             return;
@@ -3093,6 +3092,16 @@ impl<'a> HTTPClient<'a> {
         count
     }
 
+    /// Call after each write that advances `request_sent_len` through `head`.
+    fn hold_partial_request_head(&mut self, head: &[u8]) {
+        let held = &mut self.state.partial_request_head;
+        if self.state.request_sent_len >= head.len() {
+            *held = Vec::new();
+        } else if held.is_empty() {
+            held.extend_from_slice(head);
+        }
+    }
+
     // This exists as a separate function to reduce the amount of time the request body buffer is kept around.
     #[inline(never)]
     fn send_initial_request_payload<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
@@ -3103,25 +3112,31 @@ impl<'a> HTTPClient<'a> {
 
         let mut temporary_send_buffer = self.get_request_body_send_buffer();
 
-        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
-
         let mut header_overflow = Vec::new();
-        let request = self.build_request(self.body_len_for_send(), &mut header_overflow);
-
-        if self.http_proxy.is_some() {
-            if self.url.is_https() {
-                bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
-                // DO the tunneling!
-                self.flags.proxy_tunneling = true;
-                write_proxy_connect(writer, self);
-            } else {
-                bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
-                // HTTP do not need tunneling with CONNECT just a slightly different version of the request
-                write_proxy_request(writer, &request, self);
-            }
+        let mut rendered = None;
+        if !self.state.partial_request_head.is_empty() {
+            temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
         } else {
-            bun_core::scoped_log!(fetch, "normal request");
-            write_request(writer, &request);
+            let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
+
+            let request = self.build_request(self.body_len_for_send(), &mut header_overflow);
+
+            if self.http_proxy.is_some() {
+                if self.url.is_https() {
+                    bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
+                    // DO the tunneling!
+                    self.flags.proxy_tunneling = true;
+                    write_proxy_connect(writer, self);
+                } else {
+                    bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
+                    // HTTP do not need tunneling with CONNECT just a slightly different version of the request
+                    write_proxy_request(writer, &request, self);
+                }
+            } else {
+                bun_core::scoped_log!(fetch, "normal request");
+                write_request(writer, &request);
+            }
+            rendered = Some(request);
         }
 
         let headers_len = temporary_send_buffer.len();
@@ -3147,6 +3162,8 @@ impl<'a> HTTPClient<'a> {
             return Err(crate::Error::ConnectionClosed);
         }
         let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
+        self.state.request_sent_len += amount;
+        self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
@@ -3159,10 +3176,13 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        self.state.request_sent_len += amount;
         let has_sent_headers = self.state.request_sent_len >= headers_len;
 
         if has_sent_headers && self.verbose != HTTPVerboseLevel::None {
+            let mut header_overflow = Vec::new();
+            let request = rendered.unwrap_or_else(|| {
+                self.build_request(self.body_len_for_send(), &mut header_overflow)
+            });
             print_request(
                 Protocol::Http1_1,
                 &request,
@@ -3237,6 +3257,10 @@ impl<'a> HTTPClient<'a> {
             // on_writable, and a fatal SSL error already ran on_close (and
             // may have freed *self), so bail via Ok(true) without touching
             // self — same as the other ProxyTunnel::write callers.
+            if proxy.holds_refused_ciphertext() {
+                let _ = buffer.write(data);
+                return Ok(true);
+            }
             let pending = buffer.slice().len();
             if pending > 0 {
                 let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
@@ -3325,15 +3349,15 @@ impl<'a> HTTPClient<'a> {
         };
         // ThreadSafeStreamBuffer is owned by the JS-side request body stream
         // and outlives this call (intrusive-refcounted; independent heap
-        // allocation, so `&mut` here does not alias `self`). Route through the
+        // allocation, so the borrow is not tied to `self`). Route through the
         // shared `from_attached` accessor (one centralised unsafe).
         let stream_buffer = ThreadSafeStreamBuffer::from_attached(stream_buffer_ptr);
         if upgrade_state == HTTPUpgradeState::Pending {
             // cannot drain yet, upgrade is waiting for upgrade
             return;
         }
-        let buffer = stream_buffer.acquire();
-        let was_empty = buffer.is_empty() && data.is_empty();
+        let mut locked = stream_buffer.lock();
+        let was_empty = locked.buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
             //
@@ -3342,7 +3366,7 @@ impl<'a> HTTPClient<'a> {
             // keep-alive / redirect pooling gates, matching the
             // `ended && !has_backpressure` exit below.
             self.state.request_stage = RequestStage::Done;
-            stream_buffer.release();
+            drop(locked);
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
                 // for upgraded connections we need to shutdown the socket to signal the end of the connection
@@ -3356,11 +3380,11 @@ impl<'a> HTTPClient<'a> {
         // `write_to_stream_using_buffer` touches only `state.request_sent_len`,
         // disjoint from `original_request_body` and `stream_buffer`.
         let has_backpressure =
-            match self.write_to_stream_using_buffer::<IS_SSL>(socket, buffer, data) {
+            match self.write_to_stream_using_buffer::<IS_SSL>(socket, &mut locked.buffer, data) {
                 Ok(b) => b,
                 Err(err) => {
                     // we got some critical error so we need to fail and close the connection
-                    stream_buffer.release();
+                    drop(locked);
                     self.request_stream_detach();
                     self.close_and_fail::<IS_SSL>(err, socket);
                     return;
@@ -3369,12 +3393,12 @@ impl<'a> HTTPClient<'a> {
 
         if has_backpressure {
             // we have backpressure so just release the buffer and wait for onWritable
-            stream_buffer.release();
+            drop(locked);
         } else {
             if ended {
                 // done sending everything so we can release the buffer and detach the stream
                 self.state.request_stage = RequestStage::Done;
-                stream_buffer.release();
+                drop(locked);
                 self.request_stream_detach();
                 if upgrade_state == HTTPUpgradeState::Upgraded {
                     // for upgraded connections we need to shutdown the socket to signal the end of the connection
@@ -3384,10 +3408,10 @@ impl<'a> HTTPClient<'a> {
             } else {
                 // only report drain if we send everything and previous we had something to send
                 if !was_empty {
-                    stream_buffer.report_drain();
+                    locked.report_drain();
                 }
                 // release the buffer so main thread can use it to send more data
-                stream_buffer.release();
+                drop(locked);
             }
         }
     }
@@ -3542,14 +3566,14 @@ impl<'a> HTTPClient<'a> {
                             }
                             // A short `socket.write()` already polls for writable.
                             crate::send_file::Status::Again if copy => {}
-                            // A peer that is gone is left to the close event, as `socket.write()` leaves it.
-                            crate::send_file::Status::Again
-                            | crate::send_file::Status::Err(crate::Error::Sys(
-                                bun_errno::SystemErrno::EPIPE | bun_errno::SystemErrno::ECONNRESET,
-                            )) => {
+                            crate::send_file::Status::Again => {
                                 uws::SocketTCP::from_any(socket.socket)
                                     .mark_needs_more_for_sendfile();
                             }
+                            crate::send_file::Status::Err(crate::Error::Sys(
+                                errno @ (bun_errno::SystemErrno::EPIPE
+                                | bun_errno::SystemErrno::ECONNRESET),
+                            )) => stop_sending(socket, errno as i32),
                             crate::send_file::Status::Err(err) => {
                                 self.close_and_fail::<IS_SSL>(err, socket);
                                 return;
@@ -3591,12 +3615,7 @@ impl<'a> HTTPClient<'a> {
                         HTTPRequestBody::Sendfile(sendfile) => {
                             let mut tunnel_write_failed = false;
                             let status = sendfile.write_copy(|chunk| {
-                                // The tunnel buffers the ciphertext the socket didn't take. Wait for that to drain.
-                                if proxy
-                                    .wrapper
-                                    .as_ref()
-                                    .is_some_and(|w| w.refused_ciphertext() > 0)
-                                {
+                                if proxy.holds_refused_ciphertext() {
                                     return Ok(0);
                                 }
                                 ProxyTunnel::write(proxy, chunk)
@@ -3636,12 +3655,14 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
-                    let writer = &mut temporary_send_buffer;
-
-                    let mut header_overflow = Vec::new();
-                    let request =
-                        self.build_request(self.body_len_for_send(), &mut header_overflow);
-                    write_request(writer, &request);
+                    if !self.state.partial_request_head.is_empty() {
+                        temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
+                    } else {
+                        let mut header_overflow = Vec::new();
+                        let request =
+                            self.build_request(self.body_len_for_send(), &mut header_overflow);
+                        write_request(&mut temporary_send_buffer, &request);
+                    }
 
                     let headers_len = temporary_send_buffer.len();
                     if !self.request_body().is_empty()
@@ -3679,6 +3700,7 @@ impl<'a> HTTPClient<'a> {
 
                     self.state.request_sent_len += amount;
                     let has_sent_headers = self.state.request_sent_len >= headers_len;
+                    self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
 
                     if has_sent_headers && !self.request_body().is_empty() {
                         self.state.request_body = bun_ptr::RawSlice::new(
@@ -4579,8 +4601,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
-                    did_decompress: self.state.encoding.is_compressed(),
-                    slot_wanted: false,
+                    decoded_from: self.state.encoding,
                 };
             }
         }
@@ -4605,8 +4626,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
-            did_decompress: self.state.encoding.is_compressed(),
-            slot_wanted: false,
+            decoded_from: self.state.encoding,
         }
     }
 

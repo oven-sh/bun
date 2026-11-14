@@ -1,0 +1,21 @@
+# -- source: an-unchanging-operator-in-a-loop-that-an-operator-on-bits-alone-takes-begins-no-path-of-numbers.cjs
+# "use strict";
+# const XS = [4000000000, 4000000001, 4000000002, 4000000003, 4000000004]; const word = JSON.parse('"tally"');
+# const shelf = { count(s) { return s.length + 1; }, text(s) { return String(s); }, wrap(s) { return [s]; }, kind(s) { return typeof s; }, none(s) { return s === null; }, tally(x, turns) { let c = 0; for (let i = 0; i < turns; i++) c = (c + ((x * 1) | 0) + i) & 1023; return c; } };
+# function wide(t) { return shelf[word](XS[t % 5], 10) + t % 2; }
+# const rounds = +JSON.parse('"4"'); let all = 0; for (let t = 0; t < rounds; t++) all = (all + wide(t)) % 1000003; print(Math.floor(all));
+# -- end of source
+# f7 = tally. The product takes x, which comes boxed from in front of the loop, and a written number, and an operator on bits alone takes its answer: it gives the same in every turn,
+# and the cut makes an int32 of whatever it gives. A path of numbers began at it all the same: each turn of the typed copy asked x for an int32 and, for 4,000,000,000, converted it on the
+# other arm. Built by its proven types the product with its cut stands in front of the loop. A sum that another sum takes (t += a + b) keeps its path: there the path keeps int32s.
+# RUN: walk f7 mechanisms=all
+# CHECK: ([[x]]: undefined|int @JSValue
+# CHECK: [[number]]: undefined|int @OptionalDouble = Unbox [[x]]
+# CHECK: [[product]]: int|whole @Double = Mul
+# CHECK: = ToInt32 [[product]]
+# CHECK: isLoopHead=true
+# CHECK-NOT: testedType=i32
+# CHECK-NOT: = ToInt32
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 242
+# ANSWER-NEXT: exited with 0

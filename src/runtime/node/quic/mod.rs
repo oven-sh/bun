@@ -23,20 +23,19 @@ pub(crate) mod callbacks {
     pub(crate) fn set(global: &JSGlobalObject, holder: JSValue) {
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .node_quic_callbacks
-            .set(global, holder);
+            .with_mut(|callbacks| callbacks.set(global, holder));
     }
 
     /// Calls the callback that `setCallbacks()` got under `name`, and reports what it throws as uncaught.
     pub(crate) fn call(global: &JSGlobalObject, name: &str, this: JSValue, args: &[JSValue]) {
-        let vm = global.bun_vm().as_mut();
-        let Some(holder) = vm.rare_data().node_quic_callbacks.get() else {
+        let vm = global.bun_vm();
+        let Some(holder) = vm.rare_data().node_quic_callbacks.get().get() else {
             return;
         };
         if let Ok(Some(callback)) = holder.get(global, name) {
-            vm.event_loop_ref().run_callback(
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,

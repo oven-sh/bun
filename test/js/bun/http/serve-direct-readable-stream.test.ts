@@ -5,6 +5,7 @@ import { bunEnv, bunExe, isASAN, isWindows, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import { Readable } from "node:stream";
+import nodeTls from "node:tls";
 import {
   expected as directExpected,
   observe as directObserve,
@@ -876,19 +877,17 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
   // so most of it stays unsent and end() parks on the drain. The request then
   // waits for that drain, and only for it.
   //
-  // If pull() is still pending after the handler's microtasks, the server sends
-  // the head with Transfer-Encoding: chunked. A later end() doesn't wait for the
-  // drain: the body is one chunk, uWS buffers what the client hasn't read, and
-  // the request is released right away.
-  describe("end() under transport backpressure", () => {
+  // If pull() is still pending after the handler's microtasks, the server has
+  // sent the head by then, so the body is one chunk, or raw bytes in HTTP/1.0.
+  describe("end() parked on transport backpressure", () => {
     const payload = Buffer.alloc(32 * 1024 * 1024, "x");
     const chunkFraming = `${payload.length.toString(16)}\r\n`.length + "\r\n0\r\n\r\n".length;
 
     // Windows takes the first write of a response whole, whatever its size
     // (250 MB to a client that is not reading), so one tryEnd() never parks.
     test.skipIf(isWindows).each([
-      ["waits for the drain when called in the first tick of pull()", false],
-      ["doesn't wait for the drain when called from a later task, after the head was sent", true],
+      ["in the first tick of pull()", false],
+      ["from a later task", true],
     ] as const)("%s", async (_when, fromLaterTask) => {
       const ended = Promise.withResolvers<boolean>();
       await using server = Bun.serve({
@@ -944,21 +943,68 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
         socket.resume();
         const body = await received.promise;
         // The drain that completed the response and the release of its request share one event loop turn; the client sees the last bytes in a later one.
-        expect({ parked, pendingWhileParked, ...body, pendingRequests: server.pendingRequests }).toEqual(
-          fromLaterTask
-            ? {
-                parked: false,
-                pendingWhileParked: 0,
-                chunked: true,
-                bodyBytes: payload.length + chunkFraming,
-                pendingRequests: 0,
-              }
-            : { parked: true, pendingWhileParked: 1, chunked: false, bodyBytes: payload.length, pendingRequests: 0 },
-        );
+        expect({ parked, pendingWhileParked, ...body, pendingRequests: server.pendingRequests }).toEqual({
+          parked: true,
+          pendingWhileParked: 1,
+          chunked: fromLaterTask,
+          bodyBytes: payload.length + (fromLaterTask ? chunkFraming : 0),
+          pendingRequests: 0,
+        });
       } finally {
         socket.destroy();
       }
       await server.stop();
+    });
+
+    test.skipIf(isWindows).each([
+      ["1.1", false],
+      ["1.1", true],
+      ["1.0", false],
+      ["1.0", true],
+    ] as const)("delivers every byte to a client that ends its side (HTTP/%s, tls: %p)", async (version, secure) => {
+      const body = Buffer.alloc(16 * 1024 * 1024, "0123456789abcdefg");
+      const ended = Promise.withResolvers<boolean>();
+      await using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        tls: secure ? tls : undefined,
+        fetch: () =>
+          new Response(
+            new ReadableStream(
+              {
+                type: "direct",
+                async pull(c: any) {
+                  c.write("first");
+                  await c.flush();
+                  await later();
+                  c.write(body);
+                  const end = c.end();
+                  ended.resolve(end instanceof Promise);
+                  await end;
+                },
+              } as any,
+              { highWaterMark: body.length + 1 },
+            ),
+          ),
+      });
+      const options = { port: server.port!, host: "127.0.0.1", allowHalfOpen: true };
+      const socket = secure ? nodeTls.connect({ ...options, ca: tls.cert }) : net.connect(options);
+      try {
+        socket.write(`GET / HTTP/${version}\r\nHost: localhost\r\n\r\n`);
+        const parked = await ended.promise;
+        socket.end();
+        const reply = Buffer.concat(await Array.fromAsync(socket));
+        const expected =
+          version === "1.1"
+            ? [Buffer.from(`5\r\nfirst\r\n${body.length.toString(16)}\r\n`), body, Buffer.from("\r\n0\r\n\r\n")]
+            : [Buffer.from("first"), body];
+        expect({
+          parked,
+          whole: reply.subarray(reply.indexOf("\r\n\r\n") + 4).equals(Buffer.concat(expected)),
+        }).toEqual({ parked: true, whole: true });
+      } finally {
+        socket.destroy();
+      }
     });
   });
 });
@@ -2345,17 +2391,16 @@ describe("direct stream edge cases over Bun.serve", () => {
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
-      fetch: req =>
+      fetch: () =>
         new Response(
           (async function* () {
             try {
               yield "first";
-              // No turn count is enough. macOS delivers loopback packets from another kernel thread.
-              while (!req.signal.aborted) {
+              // No number of turns is enough for the server to see that the client is gone: only the abort ends this.
+              for (;;) {
                 await later();
                 yield "more";
               }
-              events.push("completed");
             } catch (e: any) {
               events.push("catch:" + (e?.message ?? e));
             } finally {

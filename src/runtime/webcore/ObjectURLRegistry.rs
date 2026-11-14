@@ -57,7 +57,7 @@ impl Drop for Entry {
 }
 
 impl ObjectURLRegistry {
-    pub(crate) fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
+    pub(crate) fn register(&self, vm: &VirtualMachine, blob: &Blob) -> UUID {
         let uuid = vm.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
@@ -88,9 +88,10 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname, global_object)?);
-        // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
-        Some(unsafe { (*blob).to_js(global_object) })
+        Some(
+            self.resolve_and_dupe(pathname, global_object)?
+                .into_js(global_object),
+        )
     }
 
     pub(crate) fn revoke(&self, pathname: &[u8]) {
@@ -115,7 +116,7 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
 
 pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get().as_mut(), object.blob());
+    let uuid = registry.register(VirtualMachine::get(), object.blob());
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 

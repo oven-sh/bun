@@ -1,0 +1,25 @@
+# -- source: virtual-tail-call.ts
+# abstract class Rope { abstract at(index: number): number; }
+# class Leaf extends Rope { constructor(readonly text: string) { super(); } at(index: number): number { return this.text.charCodeAt(index); } }
+# class Concat extends Rope { constructor(readonly left: Rope, readonly right: Rope, readonly size: number) { super(); } at(index: number): number { return index < this.size ? this.left.at(index) : this.right.at(index - this.size); } }
+# declare function print(...values: unknown[]): void;
+# let rope: Rope = new Leaf("ab");
+# for (let i = 0; i < 500000; i++) rope = new Concat(rope, new Leaf("c"), i + 2);
+# print(rope.at(0), rope.at(1), rope.at(500001));
+# try { (new Concat(undefined as unknown as Rope, rope, 3)).at(1); } catch (error: any) { print(error.constructor.name); }
+# -- end of source
+# `return this.left.at(index)` over a class family goes through the method table and stays a proper tail call: 500,000 levels do not grow the stack. The abstract base has no such method, so the receiver's shape is
+# checked; what fails the check makes the generic call, which is a tail call too.
+# f5 = Concat.at
+# RUN: walk f5 mechanisms=all
+# CHECK-LABEL: code f5:Body
+# CHECK: = CallTable {{*}}key="at"
+# CHECK-NEXT: ReturnCall
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 97 98 99
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 97 98 99
+# NONE-NEXT: TypeError
+# NONE-NEXT: exited with 0

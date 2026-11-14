@@ -1,8 +1,14 @@
-declare const self: EventTarget & {
+declare const self: Omit<typeof globalThis, "onmessage"> & {
   onmessage: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
   onmessageerror: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
 };
-type WebWorker = globalThis.Worker;
+type WebWorker = InstanceType<typeof globalThis.Worker> & {
+  getHeapSnapshot(options: unknown): Promise<string>;
+  getHeapStatistics(): Promise<Record<string, number | boolean>>;
+  startCpuProfileInternal(): Promise<void>;
+  stopCpuProfileInternal(): Promise<string>;
+  cpuUsageInternal(): Promise<{ user: number; system: number }>;
+};
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
@@ -17,7 +23,7 @@ const {
 
 // node's name handling (lib/internal/worker.js): truthy → validateString + trim,
 // falsy (undefined/null/0/"") → default "". So {name: 0|null} is silently ignored.
-function normalizeWorkerName(rawName: string | null | undefined) {
+function normalizeWorkerName(rawName) {
   if (rawName) {
     validateString(rawName, "options.name");
     return rawName.trim();
@@ -30,12 +36,13 @@ const { isAbsolute: pathIsAbsolute } = require("node:path");
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
-  if (filename instanceof URL) {
-    if (filename.protocol === "data:") return `${filename}`;
-    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
-    return Bun.fileURLToPath(filename);
-  }
   if (typeof filename !== "string") {
+    const { isURL, toPathIfFileURL } = require("internal/url");
+    if (isURL(filename)) {
+      if (filename.protocol === "data:") return `${filename}`;
+      // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
+      return toPathIfFileURL(filename);
+    }
     // Not a string or URL: defer to the native Worker constructor, which
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;
@@ -78,6 +85,7 @@ const {
   13: _MessagePort,
   14: MessageChannel,
   15: BroadcastChannel,
+  16: WebWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -95,39 +103,19 @@ const {
   typeof globalThis.MessagePort,
   typeof globalThis.MessageChannel,
   typeof globalThis.BroadcastChannel,
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
 
-// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads instance.
-type WebWorkerConstructor = new (filename: string | URL, options: object, nodeWorker: Worker) => WebWorker;
-
-interface NodeWorkerOptions {
-  argv?: unknown[];
-  env?: Record<string, string | undefined> | typeof SHARE_ENV;
-  eval?: boolean;
-  execArgv?: string[];
-  name?: string | null;
-  resourceLimits?: Record<string, number>;
-  stdin?: boolean;
-  stdout?: boolean;
-  stderr?: boolean;
-  trackUnmanagedFds?: boolean;
-  transferList?: unknown[];
-  workerData?: unknown;
-  /** For the native constructor: what `env: SHARE_ENV` becomes. */
-  shareEnv?: boolean;
-  // What `packJSTransferables` leaves on the options it answers.
-  [kRestoreJSTransferables]?: () => void;
-  [kFinalizeJSTransferables]?: () => void;
-}
+type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-type Listener = (...args: any[]) => unknown;
-type EventListener = (event: any) => unknown;
-
-function injectFakeEmitter(Class: { prototype: EventTarget }) {
+function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
   // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
   // internal map and off() can find the wrapper a given listener registered.
@@ -136,14 +124,7 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
   // (It has no @get/@set private names, so the $-intrinsics don't apply to it.)
   // Keyed by a module-local symbol, not a WeakMap — WeakMap has neither defence.
   const kListenerRegistry = Symbol("listenerRegistry");
-  type Registry = Map<string, Map<Listener, EventListener>>;
-  type Target = EventTarget & {
-    [kListenerRegistry]?: Registry;
-    [kMaxListeners]?: number;
-    /** Throws: the native function requires a listener. */
-    removeEventListener(type: string): void;
-  };
-  function registryFor(target: Target, create: boolean): Registry | undefined {
+  function registryFor(target, create) {
     let map = target[kListenerRegistry];
     if (!map && create) target[kListenerRegistry] = map = new SafeMap();
     return map;
@@ -157,17 +138,17 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     return event.error;
   }
 
-  function customEventHandler(event: { detail: unknown }) {
+  function customEventHandler(event) {
     return event.detail;
   }
 
-  function wrapped<E>(run: (event: E) => unknown, listener: Listener): EventListener {
-    return function (event: E) {
+  function wrapped(run, listener) {
+    return function (event) {
       return listener(run(event));
     };
   }
 
-  function functionForEventType(event: string, listener: Listener) {
+  function functionForEventType(event, listener) {
     switch (event) {
       case "error":
       case "messageerror": {
@@ -184,7 +165,7 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     }
   }
 
-  function EventClass(eventName: string) {
+  function EventClass(eventName) {
     if (eventName === "error" || eventName === "messageerror") {
       return ErrorEvent;
     }
@@ -195,13 +176,7 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
   // EventTarget dedupes on (type, callback), so in node the FIRST registration of
   // a listener wins outright -- including its once-ness -- and later adds of the
   // same function are no-ops. Keying wrappers per listener reproduces that.
-  function register(
-    target: Target,
-    event: string,
-    listener: Listener,
-    wrapper: EventListener,
-    options: AddEventListenerOptions | undefined,
-  ) {
+  function register(target, event, listener, wrapper, options) {
     const map = registryFor(target, true)!;
     let byListener = map.get(event);
     if (!byListener) map.set(event, (byListener = new SafeMap()));
@@ -211,12 +186,12 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     return true;
   }
 
-  function on(this: Target, event: string, listener: Listener) {
+  function on(event, listener) {
     register(this, event, listener, functionForEventType(event, listener), undefined);
     return this;
   }
 
-  function off(this: Target, event: string, listener?: Listener) {
+  function off(event, listener) {
     if (listener) {
       const byListener = registryFor(this, false)?.get(event);
       const wrapper = byListener?.get(listener) ?? listener;
@@ -228,13 +203,13 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     return this;
   }
 
-  function once(this: Target, event: string, listener: Listener) {
+  function once(event, listener) {
     const wrapper = functionForEventType(event, listener);
     const target = this;
     // EventTarget drops a {once:true} listener natively, without telling the
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.
-    function onceWrapper(ev: unknown) {
+    function onceWrapper(ev) {
       registryFor(target, false)?.get(event)?.delete(listener);
       return wrapper(ev);
     }
@@ -242,7 +217,7 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     return this;
   }
 
-  function emit(this: Target, event: string, ...args: any[]) {
+  function emit(event, ...args) {
     switch (event) {
       case "error":
       case "messageerror":
@@ -259,27 +234,27 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
   }
 
   const kMaxListeners = Symbol("kMaxListeners");
-  function setMaxListeners(this: Target, n: number) {
+  function setMaxListeners(n) {
     this[kMaxListeners] = n;
     return this;
   }
-  function getMaxListeners(this: Target) {
+  function getMaxListeners() {
     return this[kMaxListeners] ?? 10;
   }
-  function listenerCount(this: Target, type: string) {
+  function listenerCount(type) {
     return registryFor(this, false)?.get(type)?.size ?? 0;
   }
-  function eventNames(this: Target) {
+  function eventNames() {
     const map = registryFor(this, false);
     if (!map) return [];
     const out: string[] = [];
     for (const [k, v] of map) if (v.size > 0) out.push(k);
     return out;
   }
-  function removeAllListeners(this: Target, type?: string) {
+  function removeAllListeners(type) {
     const map = registryFor(this, false);
     if (!map) return this;
-    const removeType = (t: string) => {
+    const removeType = t => {
       const byListener = map.get(t);
       if (byListener) {
         for (const w of byListener.values()) this.removeEventListener(t, w);
@@ -291,7 +266,7 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
       // entry it just yielded — so no snapshot copy is needed here.
       for (const t of map.keys()) removeType(t);
     } else {
-      removeType(type!);
+      removeType(type);
     }
     return this;
   }
@@ -329,7 +304,7 @@ const MessagePort = _MessagePort;
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
 Object.defineProperty(MessagePort.prototype, "close", {
-  value: function close(this: MessagePort, cb?: () => void) {
+  value: function close(cb) {
     closedMessagePorts.add(this);
     // node's mechanism is literally `this.once('close', cb)`, so cb interleaves
     // with other close listeners in registration order. The close event fires at
@@ -347,7 +322,7 @@ Object.defineProperty(MessagePort.prototype, "close", {
 // still active). Symbol-keyed so it does not appear in getOwnPropertyNames.
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 Object.defineProperty(MessagePort.prototype, kInspectCustom, {
-  value: function (this: MessagePort, _depth: unknown, _options: unknown) {
+  value: function (_depth, _options) {
     return `MessagePort [EventTarget] { active: ${_isMessagePortActive(this)}, refed: ${this.hasRef()} }`;
   },
   writable: true,
@@ -381,7 +356,7 @@ function setupWorkerStdio(stdio) {
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
-  (globalThis as unknown as { console: unknown }).console = new Console(stdoutStream, stderrStream);
+  (globalThis as { console: unknown }).console = new Console(stdoutStream, stderrStream);
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
@@ -759,7 +734,7 @@ function applyWorkerProcessOverrides() {
     Object.defineProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
   } catch {}
   // process.umask(setMask) is unsupported in workers; the getter still works.
-  const realUmask: (this: unknown, mask?: number) => number = proc.umask;
+  const realUmask = proc.umask;
   function umask(mask?: unknown) {
     if (mask === undefined) return realUmask.$call(proc);
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Setting process.umask() is not supported in workers");
@@ -840,14 +815,14 @@ class Worker extends EventEmitter {
   #performance;
   #name: string;
   #exited = false;
-  #stdinPort: MessagePort | undefined;
-  #stdoutPort: MessagePort | undefined;
+  #stdinPort;
+  #stdoutPort;
   // node's kPublicPort: parent end of the parentPort channel.
   #publicPort!: MessagePort;
-  #stderrPort: MessagePort | undefined;
-  #stdin: ReturnType<typeof makePortWritable> | undefined;
-  #stdout: ReturnType<typeof makePortReadable> | undefined;
-  #stderr: ReturnType<typeof makePortReadable> | undefined;
+  #stderrPort;
+  #stdin;
+  #stdout;
+  #stderr;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -963,8 +938,6 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
-      // Also the intrinsic constructor. Read here, so that importing this module is not starting a worker.
-      const WebWorker = $cpp("Worker.cpp", "createNodeWorkerConstructor") as WebWorkerConstructor;
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
@@ -1102,6 +1075,13 @@ class Worker extends EventEmitter {
     }
 
     const { resolve, promise } = Promise.withResolvers<number>();
+    this.#worker.addEventListener(
+      "close",
+      event => {
+        resolve(event.code);
+      },
+      { once: true },
+    );
     this.#resolveOnExit = resolve;
     // Keep the event loop alive until termination completes so the returned
     // promise still resolves even if the worker was unref()'ed.
@@ -1285,7 +1265,7 @@ class Worker extends EventEmitter {
   }
 }
 
-let _HeapSnapshotStream: (new (json: string) => $Node.Readable) | undefined;
+let _HeapSnapshotStream;
 function makeHeapSnapshotStream(json: string) {
   _HeapSnapshotStream ??= class HeapSnapshotStream extends require("internal/streams/readable") {
     #json: string | undefined;

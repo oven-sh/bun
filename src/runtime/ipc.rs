@@ -33,9 +33,8 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 // through that module's safe wrappers; no local extern block needed.
 
 // `SendQueue.owner` is a [`SendQueueOwner`] enum over the two concrete owner
-// types (`Subprocess`, parent side; `ipc_host::IPCInstance`, child side) —
-// both nameable in this crate — stored as a BACKREF cleared before the owner
-// drops.
+// types (`Subprocess`, parent side, stored as a BACKREF; the thread's one
+// `ipc_host::IPCInstance`, child side), cleared before the owner drops.
 
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
@@ -98,7 +97,7 @@ impl InternalMsgHolder {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -112,6 +111,7 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
+        let messages = core::mem::take(&mut self.messages);
         // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
@@ -121,8 +121,6 @@ impl InternalMsgHolder {
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
         // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
         for strong in messages {
             if let Some(message) = strong.get() {
                 // SAFETY: `this` is still live across re-entry — the IPC
@@ -439,10 +437,8 @@ mod advanced {
 mod json {
     use super::*;
 
-    extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
-        // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
-        // kept alive across the `drop(str)` in decode_ipc_message.
-        unsafe { *context = true };
+    extern "C" fn json_ipc_data_string_free_cb(context: &Cell<bool>, _: *mut c_void, _: usize) {
+        context.set(true);
     }
 
     pub(super) fn get_version_packet() -> &'static [u8] {
@@ -506,18 +502,18 @@ mod json {
         }
 
         let is_ascii = strings::is_all_ascii(json_data);
-        let mut was_ascii_string_freed = false;
+        let was_ascii_string_freed = Cell::new(false);
 
         // Use ExternalString to avoid copying data if possible.
         // This is only possible for ascii data, as that fits into latin1
         // otherwise we have to convert it utf-8 into utf16-le.
         let parsed = if is_ascii {
-            // SAFETY: `json_data` outlives `s`, and the check below panics if anything kept a ref past `s`.
+            // SAFETY: `json_data` and the flag outlive `s`, and the check below panics if anything kept a ref past `s`.
             // .dead if `json_data` exceeds max length
             let s = unsafe {
-                BunString::create_external::<*mut bool>(
+                BunString::create_external::<&Cell<bool>>(
                     json_data,
-                    &raw mut was_ascii_string_freed,
+                    &was_ascii_string_freed,
                     json_ipc_data_string_free_cb,
                 )
             };
@@ -532,7 +528,7 @@ mod json {
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
         // drop of `s` — so the freed-flag check must follow it.
-        if is_ascii && !was_ascii_string_freed {
+        if is_ascii && !was_ascii_string_freed.get() {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
             );
@@ -849,7 +845,9 @@ impl SendHandle {
             }
         }
         if answer {
-            if let Err(err) = self.callbacks.call_next_tick(global, false) {
+            // Node writes a message with a handle asynchronously, and doesn't look at how such a write ended.
+            let reports_success = self.handle.is_some();
+            if let Err(err) = self.callbacks.call_next_tick(global, reports_success) {
                 let _ = bun_jsc::task::report_error_or_terminate(global, err);
             }
         }
@@ -948,7 +946,7 @@ pub(crate) struct SendQueue {
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
 
     pub(crate) retry_count: Cell<u32>,
-    pub(crate) keep_alive: JsCell<KeepAlive>,
+    pub(crate) keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -961,6 +959,8 @@ pub(crate) struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
+    #[cfg(not(windows))]
+    read_before_close: Cell<bool>,
     /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
@@ -974,7 +974,7 @@ pub(crate) struct SendQueue {
 #[derive(Copy, Clone)]
 pub(crate) enum SendQueueOwner {
     Subprocess(core::ptr::NonNull<crate::api::bun::subprocess::Subprocess<'static>>),
-    Instance(core::ptr::NonNull<crate::ipc_host::IPCInstance>),
+    Instance,
 }
 
 impl SendQueueOwner {
@@ -982,7 +982,7 @@ impl SendQueueOwner {
     pub(crate) fn kind(self) -> SendQueueOwnerKind {
         match self {
             SendQueueOwner::Subprocess(_) => SendQueueOwnerKind::Subprocess,
-            SendQueueOwner::Instance(_) => SendQueueOwnerKind::VirtualMachine,
+            SendQueueOwner::Instance => SendQueueOwnerKind::VirtualMachine,
         }
     }
 
@@ -991,11 +991,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance(_) => core::ptr::from_ref(
-                bun_jsc::virtual_machine::VirtualMachine::get()
-                    .as_mut()
-                    .global(),
-            ),
+            SendQueueOwner::Instance => {
+                core::ptr::from_ref(bun_jsc::virtual_machine::VirtualMachine::get().global())
+            }
         }
     }
 
@@ -1003,8 +1001,7 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_close(),
+            SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(),
         }
     }
 
@@ -1012,8 +1009,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_message(msg, handle),
+            SendQueueOwner::Instance => {
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+            }
         }
     }
 
@@ -1025,7 +1023,7 @@ impl SendQueueOwner {
                 .get()
                 .try_get()
                 .unwrap_or_default(),
-            SendQueueOwner::Instance(_) => JSValue::ZERO,
+            SendQueueOwner::Instance => JSValue::ZERO,
         }
     }
 }
@@ -1053,10 +1051,6 @@ impl SendQueue {
         self.owner.get()
     }
 
-    pub(crate) fn set_owner(&self, owner: SendQueueOwner) {
-        self.owner.set(Some(owner));
-    }
-
     pub(crate) fn detach(&self) {
         log!("SendQueue#detach");
         self.close_event_sent.set(true);
@@ -1076,7 +1070,7 @@ impl SendQueue {
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
-            keep_alive: JsCell::new(KeepAlive::default()),
+            keep_alive: KeepAlive::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1087,6 +1081,8 @@ impl SendQueue {
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
+            #[cfg(not(windows))]
+            read_before_close: Cell::new(false),
             close_after_flush: Cell::new(false),
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
@@ -1186,7 +1182,7 @@ impl SendQueue {
             }
             self.windows.with_mut(|w| w.windows_write = None);
         }
-        self.keep_alive.with_mut(|k| k.disable());
+        self.keep_alive.disable();
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1207,7 +1203,7 @@ impl SendQueue {
         self.ref_();
         self.get_global_this()
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(Task::init(self.root_ptr()));
     }
 
@@ -1230,8 +1226,16 @@ impl SendQueue {
 
     /// Does now what the queued task would do. A pending flag means that task is still queued, and its ref keeps `self` alive through the callbacks.
     pub(crate) fn run_pending(&self) {
-        if self.pending_close.replace(false) {
+        if self.pending_close.get() {
             log!("SendQueue#closeSocketTask");
+            #[cfg(not(windows))]
+            if self.read_before_close.get()
+                && let SocketUnion::Open(socket) = *self.socket.get()
+            {
+                // `pending_close` is still set, so a callback finds the channel disconnected.
+                socket.read_now();
+            }
+            self.pending_close.set(false);
             self.close_socket(CloseReason::Normal, CloseFrom::User);
         }
         if self.pending_after_close.replace(false) {
@@ -1316,6 +1320,15 @@ impl SendQueue {
         }
         self.pending_close.set(true);
         self.schedule_deferred();
+    }
+
+    /// The peer's process has exited. Its last messages can still be in the socket.
+    pub(crate) fn close_after_exit(&self) {
+        #[cfg(not(windows))]
+        if !self.pending_close.get() {
+            self.read_before_close.set(true);
+        }
+        self.close_socket_next_tick(true);
     }
 
     /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
@@ -1503,13 +1516,11 @@ impl SendQueue {
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
         let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
         let should_ref = self.should_ref();
-        self.keep_alive.with_mut(|k| {
-            if should_ref {
-                k.ref_(ctx);
-            } else {
-                k.unref(ctx);
-            }
-        });
+        if should_ref {
+            self.keep_alive.ref_(ctx);
+        } else {
+            self.keep_alive.unref(ctx);
+        }
     }
 
     fn continue_send(&self, global: &JSGlobalObject, reason: ContinueSendReason) {
@@ -2126,10 +2137,33 @@ fn received_fd_to_js(fd: Fd) -> JSValue {
     }
 }
 
+/// A `NODE_HANDLE` message that `Process__holdMessage` kept, with what `received_fd_to_js` made of its descriptor.
+pub(crate) fn parse_held_handle(
+    global: &JSGlobalObject,
+    message: JSValue,
+    fd: JSValue,
+) -> JsResult<()> {
+    let _scope = global.bun_vm().enter_event_loop_scope();
+    ipc_parse(global, JSValue::NULL, message, fd)
+        .map(drop)
+        .inspect_err(|_| {
+            #[cfg(windows)]
+            let fd = Fd::from_system(fd.as_number() as usize as *mut c_void);
+            #[cfg(not(windows))]
+            let fd = Fd::from_uv(fd.as_int32());
+            let _ = fd.close_allowing_standard_io(None);
+        })
+}
+
 enum IPCCommand {
     Handle(JSValue),
     Ack,
     Nack,
+}
+
+unsafe extern "C" {
+    /// `fd`: the descriptor of a `NODE_HANDLE` message, or `undefined`.
+    safe fn Process__holdMessage(global: &JSGlobalObject, message: JSValue, fd: JSValue) -> bool;
 }
 
 /// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
@@ -2231,10 +2265,14 @@ fn handle_ipc_message(
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 
+                let fd_js = received_fd_to_js(fd);
+                if target.is_null() && Process__holdMessage(global_this, msg_data, fd_js) {
+                    return Ok(());
+                }
+
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                let fd_js = received_fd_to_js(fd);
                 if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
                     // ack written already, that's okay.
                     let _ = fd.close_allowing_standard_io(None);
@@ -2258,6 +2296,12 @@ fn handle_ipc_message(
             }
         }
     } else {
+        if let DecodedIPCMessage::Data(data) = message
+            && matches!(send_queue.owner.get(), Some(SendQueueOwner::Instance))
+            && Process__holdMessage(global_this, data, JSValue::UNDEFINED)
+        {
+            return Ok(());
+        }
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
         let mut handle_js = JSValue::UNDEFINED;
         let mut received_fd: Option<Fd> = None;
@@ -2513,8 +2557,6 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
         }
@@ -2542,7 +2584,6 @@ pub(crate) mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // RAII: see `on_data`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             log!("IPC call continueSend() from onWritable");
             send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);

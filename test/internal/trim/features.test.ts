@@ -104,7 +104,7 @@ test("Bun.Build.TrimFeature lists every trim feature", () => {
   );
 });
 
-test("docs/compiler/size.mdx lists every trim feature with its description and its sizes", () => {
+test("docs/compiler/size.mdx lists every trim feature", () => {
   const page = readFileSync(join(root, "docs", "compiler", "size.mdx"), "utf8");
   const start = page.indexOf("### Feature names\n");
   expect(start).toBeGreaterThanOrEqual(0);
@@ -118,11 +118,12 @@ test("docs/compiler/size.mdx lists every trim feature with its description and i
         .split(/(?<!\\)\|/)
         .map(cell => cell.trim().replaceAll("\\|", "|")),
     );
-  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "< 0.1 MB" : `${megabytes.toFixed(1)} MB`);
+  const firstSentence = (text: string) => text.slice(0, text.indexOf(". ") + 1 || text.length);
+  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "" : `${megabytes.toFixed(1)} MB`);
   expect(rows).toEqual(
-    model.trimFeatures.map(({ name, about, also, saves }) => [
+    model.trimFeatures.map(({ name, about, saves }) => [
       `\`${name}\``,
-      also.length > 0 ? `${about} Also needs it: ${also.join("; ")}.` : about,
+      firstSentence(about),
       sizeOf(saves!.linux),
       sizeOf(saves!.macos),
     ]),
@@ -146,11 +147,15 @@ const neverOffered: Record<string, string> = {
   "Bun's own modules depend on it":
     "Url Events AbortSignal Headers FormData FsStats WebStreams TextDecoderStream Bodies BunFile Buffer NodeBufferModule NodeEvents FileSink TextDecoder TextEncoder Base64Globals StructuredClone ExternalSerializedValues NodeFs NodeOs NodePath NodeValidators NodeUtil NodeSmallModules NodeUrl StringDecoder CryptoObject CryptoGlobal PackageFiles NodeHttp HttpParser NetAddresses",
   "too small to be worth a name":
-    "Unsafe Ansi EscapeHtml Uuid NodeAssert ModuleGraph NodeV8 DeepEquals ParseArgs SystemCaCertificates ConsoleTable ProcessBinding ProcessExecArgv ProcessUsage ProcessInformation ProcessControl ProcessStdout ProcessOutputStreams ProcessStdin ProcessOpenStdin ConsoleConstructor BunUtilities StringWidth NodeRepl NodeFetch Undici",
+    "Unsafe Ansi EscapeHtml Uuid NodeAssert ModuleGraph NodeV8 DeepEquals ParseArgs ConsoleTable ProcessBinding ProcessExecArgv ProcessUsage ProcessInformation ProcessControl ProcessStdout ProcessOutputStreams ProcessStdin ProcessOpenStdin ConsoleConstructor BunUtilities StringWidth NodeRepl NodeFetch Undici",
   "it has no name yet":
     "NodeWorker Bunfig CliOptions CompressionFunctions BunZstdCompress BunDeflate CompressionStreams CompressionStream DecompressionStream Histogram LegacyEncodings LibdeflateCompressor MessageChannel NodeZlib NodeZlibBrotli NodeZlibZstd PerformanceTimeline PerformanceMarks PostMessage Tls TlsSockets X509 ZstdCompressor",
   "its built-ins still work when the features used with it are removed":
     "ElementsToLocaleString ProcessListeners ProcessListenerRemoval",
+  "the image of a compiled program lists what it calls of it, and nothing else can": model.features
+    .filter(feature => feature.enteredFrom === "compiled-code")
+    .map(feature => feature.name)
+    .join(" "),
 };
 
 test("every feature has a public name, or a reason why it has none", () => {

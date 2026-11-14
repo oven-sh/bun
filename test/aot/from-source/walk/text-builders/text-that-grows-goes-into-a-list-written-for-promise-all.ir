@@ -1,0 +1,14 @@
+# `pending.push(Promise.all([line, i])); line += ..`: the call looks back at the elements of the literal, of which one is bound to the builder again. It passes such a list by: the list is made, with the string, and the built-in is called.
+# f1 = gather
+# -- source: text-that-grows-goes-into-a-list-written-for-promise-all.js
+# function gather(count) { const pending = []; let line = ""; for (let i = 0; i < count; i++) { pending.push(Promise.all([line, i])); line += "k" + i; } return pending; }
+# Promise.all(gather(id(3))).then(all => print(all.join("|")));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: ,0|k0,1|k0k1,2
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString
+# RUN(NONE): walk f1 mechanisms=all
+# NONE-NOT: PromiseAllOfElements

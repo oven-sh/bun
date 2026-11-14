@@ -426,9 +426,7 @@ impl UpgradedDuplex {
         }
         // The socket has closed: uncaught, like what a transport method throws in node.
         let vm = self.vm;
-        let _ = vm
-            .as_mut()
-            .uncaught_exception(vm.global(), err_value, false);
+        let _ = vm.uncaught_exception(vm.global(), err_value, false);
     }
 
     /// Reports ECONNREFUSED to a socket that never opened. The still-queued `StartTLS` hop then finds no socket to open.
@@ -477,7 +475,7 @@ impl UpgradedDuplex {
         // An entry that is already in the queue runs the updated `task_event`.
         if !self.queued.replace(true) {
             self.vm
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(std::ptr::from_ref(self).cast_mut()));
         }
     }

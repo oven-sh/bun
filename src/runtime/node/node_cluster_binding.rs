@@ -32,7 +32,7 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 ///
 /// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
 /// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
+/// state). Callers must be on the JS thread and
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
@@ -64,6 +64,16 @@ pub(crate) fn handle_internal_message_child(
     handle: JSValue,
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
+
+    // A worker that hasn't loaded node:cluster has no server to close first. If it loads later, it finds the message.
+    if !child_singleton().is_ready()
+        && message.is_object()
+        && let Some(act) = message.get(global, "act")?
+        && act.is_string()
+        && act.to_bun_string(global)?.eq_ascii(b"disconnect")
+    {
+        crate::hw_exports::close_child_ipc(global);
+    }
 
     child_singleton().dispatch(message, handle, global)
 }
@@ -217,7 +227,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     }
 
-    let event_loop = global.bun_vm().event_loop_mut();
+    let event_loop = global.bun_vm().event_loop();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
@@ -267,40 +277,42 @@ pub(crate) fn handle_internal_message_primary(
 //
 
 pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_overridden = true;
+    let vm = VirtualMachine::get();
+    vm.channel_ref_overridden.set(true);
     if enabled {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+        vm.channel_ref.ref_(vm.loop_ctx());
     } else {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+        vm.channel_ref.unref(vm.loop_ctx());
     }
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
 pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+    let vm = global.bun_vm();
+    if !vm.channel_ref_overridden.get() {
+        vm.channel_ref.ref_(vm.loop_ctx());
     }
 }
 
 // HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
 pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+    let vm = global.bun_vm();
+    if !vm.channel_ref_overridden.get() {
+        vm.channel_ref.unref(vm.loop_ctx());
     }
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    let vm = VirtualMachine::get();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener
+        .set(true);
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
 pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
+        .get()
 }
 
 pub(crate) fn cluster_raw_bind<'a>(
@@ -657,8 +669,8 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
 }
 
-/// Takes ownership of `fd`, an unconnected socket of the wanted type that nothing in this process owns. Returns 0 or a negative errno.
-pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
+/// Returns 0 if `fd` is an unconnected socket of the wanted type that this thread doesn't listen on, or a negative errno.
+pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
         let number = fd;
@@ -675,15 +687,24 @@ pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        if bun_uws::udp::raw::bsd_adopt_socket(fd, wanted) != 0 {
-            // node's createServerHandle: EINVAL for anything that cannot listen, fd left untouched.
-            return if bun_core::ffi::errno() == libc::EEXIST {
-                -bun_sys::UV_E::EXIST
-            } else {
-                -bun_sys::UV_E::INVAL
-            };
+        let mut ty: libc::c_int = 0;
+        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len`
+        // is the size of `ty`.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&raw mut ty).cast(),
+                &raw mut len,
+            )
+        };
+        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
+        if rc != 0 || ty != wanted {
+            return -bun_sys::UV_E::INVAL;
         }
-        if !want_dgram {
+        if ty == libc::SOCK_STREAM {
             // SAFETY: getpeername only writes within `peer_len`, the size of `peer`.
             let connected = unsafe {
                 let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed();
@@ -692,8 +713,10 @@ pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
-                bun_uws::udp::raw::bsd_disown_socket(fd);
                 return -bun_sys::UV_E::INVAL;
+            }
+            if VirtualMachine::get().uws_loop().listens_on(fd) {
+                return -bun_sys::UV_E::EXIST;
             }
         }
         0

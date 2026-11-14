@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 import { Worker } from "node:worker_threads";
+import { frames, tamperingRelay } from "./tampering-relay";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -2056,6 +2057,26 @@ describe("a stream that's still open when its connection closes", () => {
     });
   });
 
+  test("rejects the read of a truncated body when the connection idles out", async () => {
+    const { server, stream, peer } = await openPair();
+    await using _ = server;
+    peer.stream.writer.writeSync(Uint8Array.of(2, 3));
+    // The server's read is pending when the connection goes. The client's starts after.
+    const early = Array.fromAsync(peer.stream).catch(err => err.code);
+    const closed = await settle(stream.closed);
+    const late = stream[Symbol.asyncIterator]();
+
+    expect({
+      closed,
+      early: await early,
+      late: [await settleRead(late.next()), await settleRead(late.next())],
+    }).toEqual({
+      closed: "resolved",
+      early: "ERR_QUIC_STREAM_ABORTED",
+      late: ["returned data", "rejected ERR_QUIC_STREAM_ABORTED"],
+    });
+  });
+
   test("rejects closed with the peer's reset code when the connection then idles out", async () => {
     const { server, client, stream, peer } = await openPair();
     await using _ = server;
@@ -2311,6 +2332,77 @@ test("a malformed request in the handshake's last flight closes only that connec
   client.close();
   await Promise.all(sessions);
   expect(events).toEqual([["handshake", "h3", "localhost"], "stream", "error"]);
+});
+
+describe("an HTTP/3 request that ends early", () => {
+  async function serve() {
+    const body = Promise.withResolvers<string>();
+    const server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          Array.fromAsync<Uint8Array[]>(stream).then(
+            batches => body.resolve(Buffer.concat(batches.flat()).toString()),
+            () => body.resolve("rejected"),
+          );
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } } },
+    );
+    return { server, body: body.promise };
+  }
+  const dial = async (port: number, options?: object) => {
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint: new QuicEndpoint(),
+      verifyPeer: "manual",
+      ...options,
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    return client;
+  };
+
+  test.each([
+    [3, "abc", "abc"],
+    [0, "", ""],
+    [10, "", "rejected"],
+    [10, "abc", "rejected"],
+    [2, "abc", "rejected"],
+  ])("content-length %d with the body %j reads as %j", async (length, sent, expected) => {
+    const { server, body } = await serve();
+    const client = await dial(server.address!.port);
+    const stream = await client.createBidirectionalStream({
+      headers: {
+        ":method": "POST",
+        ":path": "/",
+        ":scheme": "https",
+        ":authority": "localhost",
+        "content-length": String(length),
+      },
+      body: Buffer.from(sent),
+    });
+    stream.closed.catch(() => {});
+    const received = await body;
+    client.destroy();
+    server.destroy();
+    expect(received).toBe(expected);
+  });
+
+  test.each([
+    ["wholeData", "abc"],
+    ["dataThenCutFrameHeader", "rejected"],
+    ["dataCutInItsPayload", "rejected"],
+  ] as const)("a FIN after %s reads as %j", async (frame, expected) => {
+    const { server, body } = await serve();
+    using relay = await tamperingRelay(server.address!.port);
+    const client = await dial(relay.port, { keylog: true, onkeylog: relay.keylog });
+    relay.sendStream0("server", Buffer.from([...frames.post, ...frames[frame]]));
+    const received = await body;
+    client.destroy();
+    server.destroy();
+    expect(received).toBe(expected);
+  });
 });
 
 test("session.close() before the handshake ends doesn't wait for a pending HTTP/3 stream", async () => {

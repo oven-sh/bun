@@ -1,0 +1,34 @@
+# `if (x.kind === 1) return x.a; if (x.kind === 2) return x.b; return x.c;`, x: A | B | C, from source: the front end puts a NarrowByField on each edge, the arm reads THAT value, and each member carries its written tag.
+# Behind the program's own test the members whose written tag the edge leaves something of are expected, and of those, at the access, the one that has the name. It is a guess: the test of the shape stands in front of the read.
+# `a` is a field of A and of C: the tag tells. Before, the union was expected in every arm, no typed form of `x.a` serves a B, and all three reads were closed: 79.5 instructions a turn against 47.0
+# L2 = A, L0 = B, L1 = C. f1 = tell
+# -- source: told.ts
+# interface A { kind: 1; a: number }
+# interface B { kind: 2; b: number }
+# interface C { kind: 3; a: number; c: number }
+# type N = A | B | C;
+# function tell(x: N): number {
+#   if (x.kind === 1) return x.a;
+#   if (x.kind === 2) return x.b;
+#   return x.c;
+# }
+# function chosen(x: N): number {
+#   switch (x.kind) {
+#     case 1: return x.a;
+#     case 2: return x.b;
+#     default: return x.c;
+#   }
+# }
+# function untold(x: N): number {
+#   return x.kind + (x as A).a;
+# }
+# const list: N[] = [{ kind: 1, a: JSON.parse("7") }, { kind: 2, b: JSON.parse("8") }, { kind: 3, a: JSON.parse("5"), c: JSON.parse("9") }];
+# let s = 0;
+# for (let i = 0; i < list.length; i++) s += tell(list[i]) + chosen(list[i]) + untold(list[i]);
+# console.log(s);
+# -- end of source
+# RUN(TOLD): walk f1 mechanisms=all-Inlining
+# TOLD-LABEL: code f1:Body
+# TOLD: = GetSlot {{*}} key="a" receivers=[L2]
+# TOLD: = GetSlot {{*}} key="b" receivers=[L0]
+# TOLD: = GetSlot {{*}} key="c" receivers=[L1]

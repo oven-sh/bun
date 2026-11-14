@@ -399,3 +399,12 @@ function turn(i: number): number {
   x.addTo(y, sum);
   return sum.addTo(sum, twice) + twice.array[i & 31]!;
 }
+//// fraction-in-a-field-truncated
+type P = { name: string; value: number };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ name: "none", value: k + 0.5 });
+function turn(i: number): number {
+  const old = kept[i & 7]!;
+  old.value += 0.25;
+  return old.name.length + (old.value | 0);
+}

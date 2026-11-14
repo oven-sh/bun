@@ -27,6 +27,28 @@ fn count_lines(text: &[u8]) -> u64 {
     }
 }
 
+fn sizes_of(statistic: StatisticId, origin: FileOrigin) -> &'static [(StatisticId, StatisticId)] {
+    const PROGRAM: (StatisticId, StatisticId) =
+        (StatisticId::SourceBytes, StatisticId::SourceLines);
+    const PACKAGES: (StatisticId, StatisticId) = (
+        StatisticId::SourceBytesOfPackages,
+        StatisticId::SourceLinesOfPackages,
+    );
+    match (statistic, origin) {
+        (StatisticId::SourceFilesTypesOnly, _) => &[(
+            StatisticId::SourceBytesOfDeclarations,
+            StatisticId::SourceLinesOfDeclarations,
+        )],
+        (StatisticId::SourceFilesRuntime, _) => {
+            &[(StatisticId::SourceBytesOfBun, StatisticId::SourceLinesOfBun)]
+        }
+        (_, FileOrigin::DependencySource | FileOrigin::DependencyJavaScript) => {
+            &[PROGRAM, PACKAGES]
+        }
+        _ => &[PROGRAM],
+    }
+}
+
 pub(crate) fn count_files(
     statistics: &mut Statistics,
     view: ProgramView<'_, '_>,
@@ -34,7 +56,7 @@ pub(crate) fn count_files(
     in_parallel: InParallel<'_>,
 ) {
     let files = view.files();
-    let mut counted_texts: Vec<(&[u8], u64)> = Vec::new();
+    let mut counted_texts: Vec<(&[u8], u64, &[(StatisticId, StatisticId)])> = Vec::new();
     for index in 0..roles.roles.len() {
         let file = FileId(index as u32);
         let role = if files.is_compiled(file) {
@@ -42,26 +64,22 @@ pub(crate) fn count_files(
         } else {
             FileRole::TypesOnly
         };
-        let statistic = statistic_of(view.origin(file), role, view.sources.is_data(file));
+        let origin = view.origin(file);
+        let statistic = statistic_of(origin, role, view.sources.is_data(file));
         statistics.count(statistic, 1);
-
-        let has_counted_text = matches!(
-            statistic,
-            StatisticId::SourceFilesChecked
-                | StatisticId::SourceFilesInferred
-                | StatisticId::SourceFilesData
-        );
-        if has_counted_text {
-            let text: &[u8] = &files.module(file).hir.text;
-            statistics.count(StatisticId::SourceBytes, text.len() as u64);
-            counted_texts.push((text, 0));
-        }
+        let hir = &files.module(file).hir;
+        let text: &[u8] = &hir.text[..hir.written_text_end() as usize];
+        counted_texts.push((text, 0, sizes_of(statistic, origin)));
     }
-    for_each_mut(&mut counted_texts, in_parallel, &|(text, lines)| {
+    for_each_mut(&mut counted_texts, in_parallel, &|(text, lines, _)| {
         *lines = count_lines(text)
     });
-    let lines = counted_texts.iter().map(|&(_, lines)| lines).sum();
-    statistics.count(StatisticId::SourceLines, lines);
+    for &(text, lines, sizes) in &counted_texts {
+        for &(bytes_of_kind, lines_of_kind) in sizes {
+            statistics.count(bytes_of_kind, text.len() as u64);
+            statistics.count(lines_of_kind, lines);
+        }
+    }
 
     let demoted_files = roles.demoted.iter().map(|demotion| demotion.file);
     let demoted_count = demoted_files

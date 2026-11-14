@@ -49,6 +49,8 @@ pub struct AsyncHTTP<'a> {
     pub async_http_id: u32,
 
     pub elapsed: u64,
+    /// Counted in `ACTIVE_REQUESTS_COUNT`.
+    holds_slot: bool,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -474,6 +476,7 @@ impl<'a> AsyncHTTP<'a> {
             err: None,
             async_http_id,
             elapsed: 0,
+            holds_slot: false,
         };
         if let Some(val) = options.unix_socket_path {
             this.client.unix_socket_path = val;
@@ -704,6 +707,7 @@ impl<'a> AsyncHTTP<'a> {
             }
 
             let has_more = result.has_more;
+            AsyncHTTP::hold_slot(this, has_more && (*this).client.needs_slot());
             if has_more {
                 callback.run(async_http, result);
             } else {
@@ -790,9 +794,6 @@ impl<'a> AsyncHTTP<'a> {
                     threadlocal_http.cast::<u8>(),
                     std::alloc::Layout::new::<ThreadlocalAsyncHTTP>(),
                 );
-
-                let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
-                debug_assert!(active_requests > 0);
             }
         }
 
@@ -826,8 +827,26 @@ pub(crate) unsafe fn start_async_http(task: *mut Task) {
 }
 
 impl<'a> AsyncHTTP<'a> {
+    /// Taking a slot back never waits: the request is already under way.
+    ///
+    /// # Safety
+    /// `this` is the HTTP thread's live copy of a request.
+    pub(crate) unsafe fn hold_slot(this: *mut Self, hold: bool) {
+        // SAFETY: fn contract. Only this field is borrowed: callers have the `client` field.
+        if core::mem::replace(unsafe { &mut (*this).holds_slot }, hold) == hold {
+            return;
+        }
+        if hold {
+            ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
+            debug_assert!(active_requests > 0);
+        }
+    }
+
     pub(crate) fn on_start(&mut self) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+        self.holds_slot = true;
         self.err = None;
         self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP<'static>>(
             self.as_erased_ptr(),

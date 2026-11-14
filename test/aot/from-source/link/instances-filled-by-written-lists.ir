@@ -1,0 +1,21 @@
+# -- source: instances-filled-by-written-lists.js
+# const LEVELS = ["debug", "info", "warn"];
+# class Logger { constructor() { this.count = 0; for (const level of LEVELS) this[level] = text => this.log(level, text); } log(level, text) { this.count += level.length + text.length; return this.count; } }
+# class Base { constructor() { for (const level of LEVELS) this[level] = 1; } }
+# class Heir extends Base { constructor() { super(); this.late = 2; } }
+# const logger = new Logger(), heir = new Heir();
+# let n = LEVELS.indexOf("warn");
+# for (let k = 0; k < 20; k++) n ^= logger.info("a") + logger.warn("bb") + heir.info;
+# print(n, Object.keys(logger).join(), Object.keys(heir).join());
+# -- end of source
+# A constructor that stores under the names of a written list fills fields of its class. So do they of a class with heirs, whose objects have the fields behind their own.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.1 "debug" appended
+# LINK: field L0.2 "info" appended
+# LINK: field L0.3 "warn" appended
+# LINK: field L1.0 "debug" appended
+# LINK: field L2.0 "late"
+# LINK: field L2.1 "debug" appended
+# LINK: field L2.3 "warn" appended
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: {{*}} count,debug,info,warn debug,info,warn,late

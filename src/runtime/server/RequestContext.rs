@@ -185,6 +185,9 @@ pub(crate) struct RequestContext<const SSL_ENABLED: bool, const DEBUG_MODE: bool
 
     pub(crate) additional_on_abort: JsCell<Option<AdditionalOnAbortCallback>>,
 
+    /// The error and default status that `error()` returned a pending promise for.
+    deferred_error: JsCell<Option<(bun_jsc::strong::Optional, u16)>>,
+
     /// The `NativePromiseContext` cell whose claim (one ref on this context)
     /// is still outstanding, or `ZERO`. Not visited by GC: the promise
     /// reaction keeps the cell alive, and the cell's destructor clears this
@@ -259,6 +262,7 @@ mod NativePromiseContext {
 }
 use crate::node::types::PathLikeExt as _;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
@@ -340,11 +344,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 /// Reports an error that no `error()` handled. The server keeps running, so a
 /// Worker prints it like the main thread does. Its own handler ends the Worker.
-fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
-    if vm.worker.is_some() {
+fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    if vm.worker.get().is_some() {
         jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
     } else {
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection.get())(vm, global, value);
     }
 }
 
@@ -588,7 +592,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         if self.is_async() {
             return Ok(());
         }
-        server.vm().as_mut().event_loop_mut().drain_microtasks()
+        server.vm().event_loop().drain_microtasks()
     }
 
     /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
@@ -719,47 +723,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     fn render_missing_invalid_response(&self, value: JSValue) {
-        let class_name = value.get_class_info_name().unwrap_or(b"");
-        // Inspecting `value` can run user code (`[inspect.custom]`, `toString`), which can throw.
-        let mut inspect_error: Option<JSValue> = None;
-
-        if let Some(server) = self.server.get() {
-            // server is a BACKREF — valid while this RequestContext is alive
-            let global_this: &JSGlobalObject = server.global_this();
-
-            Output::enable_buffering();
-            let writer = Output::error_writer();
-
-            if class_name == b"Response" {
-                bun_core::err_generic!(
-                    "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
-                );
-            } else if !value.is_empty() && !global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-                formatter.quote_strings = true;
-                let mut received: Vec<u8> = Vec::new();
-                match formatter.format_value::<false>(value, &mut received) {
-                    Ok(()) => bun_core::err_generic!(
-                        "Expected a Response object, but received '{}'",
-                        bstr::BStr::new(&received),
-                    ),
-                    Err(err) => {
-                        bun_core::err_generic!("Expected a Response object");
-                        inspect_error = Some(global_this.take_error(err));
-                    }
-                }
-                // `formatter` drops here.
-            } else {
-                bun_core::err_generic!("Expected a Response object");
-            }
-
-            Output::flush();
-            if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(writer, global_this);
-            }
-            Output::flush();
-        }
-        // The formatter and `write_trace` above re-enter JS (getters, proxy
+        let inspect_error = self
+            .server
+            .get()
+            .and_then(|server| print_invalid_response_error(server.global_this(), value));
+        // Printing re-enters JS (getters, proxy
         // traps, Error.prepareStackTrace), which can synchronously abort or
         // end this request (e.g. AbortController.abort() inside a getter).
         // The `RequestContextRef` guard taken in `on_resolve` keeps the
@@ -773,10 +741,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             self.run_error_handler(error);
             return;
         }
-        // `value` came from a deferred `error()`, so respond like a sync `error()` without a Response.
-        if self.flags.is_error_promise_pending() {
-            return self.render_production_error(500);
-        }
         self.render_missing();
     }
 
@@ -784,6 +748,18 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
             Self::discard_response_body(global_this, value);
             return;
+        }
+
+        if let Some((error, status)) = self.deferred_error.replace(None) {
+            let sendable = as_response(value).is_some_and(|response| {
+                // SAFETY: `response` is the live cell pointer; `value` is rooted by the caller's frame.
+                HTTPStatusText::is_sendable(unsafe { (*response).status_code() })
+            });
+            if !sendable {
+                let error_js = error.get().unwrap_or(JSValue::UNDEFINED);
+                self.finish_running_error_handler(error_js, status);
+                return;
+            }
         }
 
         if value.is_empty_or_undefined_or_null() || !value.is_cell() {
@@ -804,11 +780,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         if self.method == Method::HEAD {
             if let Some(resp) = self.resp.get() {
-                let mut pair = HeaderResponsePair {
+                let pair = HeaderResponsePair {
                     this: self,
                     response,
                 };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                resp.run_corked_with_type(Self::do_render_head_response, &pair);
             }
             return;
         }
@@ -1036,7 +1012,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             };
             unhandled = err;
         }
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         report_unhandled_error(vm, global, unhandled);
     }
 
@@ -1071,6 +1047,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         ctx.ctx().handle_reject(err);
     }
 
+    #[optimize(size)]
     fn handle_reject(&self, value: JSValue) {
         if self.is_aborted_or_ended() {
             return;
@@ -1086,7 +1063,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
-                server.vm().as_mut().run_error_handler(value, None);
+                server.vm().run_error_handler(value, None);
             }
             self.close_incomplete_stream();
             return;
@@ -1123,7 +1100,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // SAFETY: FFI handle
         if !resp.has_responded()
             && !self.flags.has_marked_pending()
-            && !self.flags.is_error_promise_pending()
+            && self.deferred_error.get().is_none()
         {
             self.render_missing();
             return;
@@ -1132,14 +1109,12 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
     pub(crate) fn render_missing(&self) {
         if let Some(resp) = self.resp.get() {
-            resp.run_corked_with_type(Self::render_missing_corked, self.as_ctx_ptr());
+            resp.run_corked_with_type(Self::render_missing_corked, self);
         }
     }
 
-    fn render_missing_corked(ctx: *mut Self) {
-        // SAFETY: `ctx` is the live `RequestContext` threaded through the
-        // synchronous cork call; only a shared view is formed.
-        let ctx = unsafe { &*ctx };
+    fn render_missing_corked(&self) {
+        let ctx = self;
         if let Some(resp) = ctx.resp.get() {
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
@@ -1234,11 +1209,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 self.as_ctx_ptr(),
             );
         }
-    }
-
-    fn drain_response_buffer_and_metadata_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
-        unsafe { (*this).drain_response_buffer_and_metadata() };
     }
 
     /// Drain a partial response buffer
@@ -1419,7 +1389,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
     pub(crate) fn create(
         this: &mut core::mem::MaybeUninit<Self>,
-        server: *mut NewServer<SSL_ENABLED, DEBUG_MODE>,
+        server: &NewServer<SSL_ENABLED, DEBUG_MODE>,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -1439,9 +1409,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                server: Cell::new(
-                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw(p.as_ptr())),
-                ),
+                server: Cell::new(Some(bun_ptr::BackRef::new(server))),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range,
                 if_range,
@@ -1466,6 +1434,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
+                deferred_error: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
             });
         }
@@ -1536,7 +1505,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // If we called into JavaScript, we must drain the microtask queue.
         scopeguard::defer! {
             if any_js_calls.get() {
-                vm.as_mut().drain_microtasks();
+                vm.drain_microtasks();
             }
         }
 
@@ -1626,6 +1595,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         self.response_root.clear();
         self.response_weakref.set(response::WeakRef::EMPTY);
+        self.deferred_error.set(None);
 
         // The stream ref itself is errored and released by `end_request_streaming()` below.
         self.detach_request_body_producer();
@@ -1721,10 +1691,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return false;
         }
 
-        // SAFETY: `this.blob`'s backing bytes are owned by the (pinned)
-        // context and outlive `send_writable_bytes_for_blob`; the cell borrow
-        // ends here.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.get().slice()) };
+        let bytes: &[u8] = this.blob.get().slice();
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
         true
@@ -1825,6 +1792,33 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.run_error_handler_with_status_code(js_err, status);
     }
 
+    #[optimize(size)]
+    fn render_range_not_satisfiable(&self, total: BlobSizeType) {
+        let resp = self.resp.get().expect("infallible: resp bound");
+        self.do_write_status(416);
+        if let Some(mut headers) = self
+            .response_mut()
+            .and_then(|response| response.swap_init_headers())
+        {
+            self.do_write_headers(&mut headers);
+        }
+        let mut buffer = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+        resp.write_header(
+            b"content-range",
+            RangeRequest::format_content_range(
+                &mut buffer,
+                RangeRequest::Result::Unsatisfiable,
+                Some(total),
+            ),
+        );
+        resp.write_header(b"accept-ranges", b"bytes");
+        let close = resp.should_close_connection();
+        self.detach_response();
+        resp.end(b"", close);
+        self.end_request_streaming_and_drain();
+        self.deref();
+    }
+
     pub(crate) fn do_sendfile(&self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1841,91 +1835,25 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
-        let auto_close = !matches!(
-            file.pathlike,
-            crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
-        );
-        let fd: bun_sys::Fd = if !auto_close {
-            file.pathlike.fd()
-        } else {
-            match bun_sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
-                bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
-                0,
-            ) {
-                bun_sys::Result::Ok(fd_) => fd_,
-                bun_sys::Result::Err(err) => {
-                    let status = self.file_open_error_status(err.get_errno());
-                    let js_err = err
-                        .with_path(file.pathlike.path().slice())
-                        .to_js(global_this);
-                    return self.fail_sendfile(js_err, status);
-                }
+        let BodyFile {
+            fd,
+            auto_close,
+            file_type,
+            pollable,
+            is_regular,
+            size: stat_size,
+        } = match BodyFile::open(&file.pathlike, global_this) {
+            Ok(opened) => opened,
+            Err((js_err, errno)) => {
+                let status = errno.map_or(500, |errno| self.file_open_error_status(errno));
+                return self.fail_sendfile(js_err, status);
             }
-        };
-
-        let stat: bun_sys::Stat = match bun_sys::fstat(fd) {
-            bun_sys::Result::Ok(s) => s,
-            bun_sys::Result::Err(err) => {
-                if auto_close {
-                    fd.close();
-                }
-                // Attach the path for the Path arm and the fd for the Fd arm.
-                let js_err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        err.with_path(p.slice()).to_js(global_this)
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        err.with_fd(*pathlike_fd).to_js(global_this)
-                    }
-                };
-                return self.fail_sendfile(js_err, 500);
-            }
-        };
-
-        let mode = stat.st_mode as bun_sys::Mode;
-        let is_regular = bun_sys::S::ISREG(mode);
-        let (file_type, pollable): (bun_io::FileType, bool) = 'brk: {
-            if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (bun_io::FileType::Pipe, true);
-            }
-            if bun_sys::S::ISSOCK(mode) {
-                break 'brk (bun_io::FileType::Socket, true);
-            }
-            if bun_sys::S::ISDIR(mode) {
-                if auto_close {
-                    fd.close();
-                }
-                // Attach the path for the Path arm and the fd for the Fd arm.
-                let base_err = bun_sys::Error {
-                    errno: bun_sys::E::EISDIR as _,
-                    syscall: bun_sys::Tag::read,
-                    ..Default::default()
-                };
-                let err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        base_err.with_path(p.slice())
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        base_err.with_fd(*pathlike_fd)
-                    }
-                };
-                let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message = BunString::static_("Cannot stream a directory as a response body");
-                return self.fail_sendfile(
-                    sys.to_error_instance(global_this),
-                    self.file_open_error_status(bun_sys::E::EISDIR),
-                );
-            }
-            (bun_io::FileType::File, false)
         };
 
         let (original_size, blob_offset) = match blob_ref {
             AnyBlob::Blob(b) => (b.size.get(), b.offset.get()),
             _ => unreachable!(),
         };
-        let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
 
         self.flags.set_needs_content_length(is_regular);
         let mut sendfile = SendfileContext {
@@ -1990,34 +1918,13 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                     if auto_close {
                         fd.close();
                     }
-                    let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                    self.do_write_status(416);
-                    if let Some(response) = self.response_mut() {
-                        if let Some(mut headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
-                            // call `.deref()` explicitly (would double-free).
-                            drop(headers_);
-                        }
-                    }
-                    let cr = RangeRequest::format_content_range(
-                        &mut crbuf,
-                        RangeRequest::Result::Unsatisfiable,
-                        Some(stat_size),
-                    );
-                    resp.write_header(b"content-range", cr);
-                    resp.write_header(b"accept-ranges", b"bytes");
-                    let close = resp.should_close_connection();
-                    self.detach_response();
-                    resp.end(b"", close);
-                    self.end_request_streaming_and_drain();
-                    self.deref();
+                    self.render_range_not_satisfiable(stat_size);
                     return;
                 }
             }
         }
 
-        resp.run_corked_with_type(Self::render_metadata_corked, self.as_ctx_ptr());
+        resp.run_corked_with_type(Self::render_metadata, self);
 
         let sendfile = self.sendfile.get();
         if (is_regular && sendfile.remain == 0) || !self.method.has_body() {
@@ -2154,8 +2061,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let already_posted = self
             .server()
             .vm()
-            .as_mut()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, Self::on_deferred_head_commit);
         if !already_posted {
@@ -2183,21 +2089,17 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     /// Sends the whole head for a body that has no bytes yet.
-    fn render_committed_head_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
-        let this = unsafe { &*this };
-        this.render_metadata();
-        if let Some(resp) = this.resp.get() {
+    fn render_committed_head_corked(&self) {
+        self.render_metadata();
+        if let Some(resp) = self.resp.get() {
             resp.commit_head();
         }
     }
 
-    fn do_render_stream(pair: *mut StreamPair<'_, SSL_ENABLED, DEBUG_MODE, MUX>) {
+    fn do_render_stream(pair: &StreamPair<'_, SSL_ENABLED, DEBUG_MODE, MUX>) {
         ctx_log!("doRenderStream");
-        // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
         let this: &Self = pair.this;
-        let stream = &mut pair.stream;
+        let stream = &pair.stream;
         debug_assert!(this.server.get().is_some());
         let global_this = this.server().global_this();
 
@@ -2375,7 +2277,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                             && let Some(server) = this.server.get()
                             && !err.is_empty_or_undefined_or_null()
                         {
-                            server.vm().as_mut().run_error_handler(err, None);
+                            server.vm().run_error_handler(err, None);
                         }
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
@@ -2495,7 +2397,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
-            self.server().vm().as_mut().drain_microtasks();
+            self.server().vm().drain_microtasks();
         }
     }
 
@@ -2581,9 +2483,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             || self.server().terminated()
     }
 
-    fn do_render_head_response(pair: *mut HeaderResponsePair<'_, SSL_ENABLED, DEBUG_MODE, MUX>) {
-        // SAFETY: pair is a stack local threaded through the synchronous cork call.
-        let pair = unsafe { &*pair };
+    fn do_render_head_response(pair: &HeaderResponsePair<'_, SSL_ENABLED, DEBUG_MODE, MUX>) {
         let this = pair.this;
         let response_ptr = pair.response;
         if this.resp.get().is_none() {
@@ -2604,7 +2504,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
         if HTTPStatusText::is_null_body(response.status_code()) {
-            Self::do_render_null_body_status_corked(this.as_ctx_ptr());
+            this.do_render_null_body_status_corked();
             return;
         }
 
@@ -2649,6 +2549,13 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                     // SAFETY: FFI handle
                     resp.write_header_int(b"content-length", len as u64);
                     this.end_without_body(this.should_close_connection());
+                    return;
+                }
+                // Only a GET finds out how long the decoded body is.
+                if headers.body_facts().intersects(BodyFacts::DECODED) {
+                    this.render_metadata();
+                    let close_connection = this.should_close_connection();
+                    this.end_head(|resp| resp.end_head_of_stream(close_connection));
                     return;
                 }
             }
@@ -2772,11 +2679,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             response_value.ensure_still_alive();
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp.get() {
-                    let mut pair = HeaderResponsePair {
+                    let pair = HeaderResponsePair {
                         this: ctx,
                         response,
                     };
-                    resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                    resp.run_corked_with_type(Self::do_render_head_response, &pair);
                 }
                 return;
             } else {
@@ -2830,11 +2737,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                     fulfilled_value.ensure_still_alive();
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp.get() {
-                            let mut pair = HeaderResponsePair {
+                            let pair = HeaderResponsePair {
                                 this: ctx,
                                 response,
                             };
-                            resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                            resp.run_corked_with_type(Self::do_render_head_response, &pair);
                         }
                         return;
                     }
@@ -2980,6 +2887,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         req.ctx().handle_reject_stream(cx.global(), err.to_js());
     }
 
+    #[optimize(size)]
     pub(crate) fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
@@ -3053,14 +2961,13 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         }
         let server = self.server();
         if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
-            server.vm().as_mut().run_error_handler(err, None);
+            server.vm().run_error_handler(err, None);
             return false;
         }
 
         let mut exception_list: jsc::ExceptionList = Vec::new();
         server
             .vm()
-            .as_mut()
             .run_error_handler(err, Some(&mut exception_list));
 
         let bb = DevErrorPage {
@@ -3208,8 +3115,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                         // These are the common scenario:
                         | readable_stream::Source::JavaScript => {
                             if let Some(resp) = this.resp.get() {
-                                let mut pair = StreamPair { stream, this };
-                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                                let pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &pair);
                             }
                             return;
                         }
@@ -3273,8 +3180,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                             // if we've received metadata and part of the body, send everything we can and drain
                             if has_body_bytes {
                                 resp.run_corked_with_type(
-                                    Self::drain_response_buffer_and_metadata_corked,
-                                    this.as_ctx_ptr(),
+                                    Self::drain_response_buffer_and_metadata,
+                                    this,
                                 );
                             } else if byte_stream.has_pending_error()
                                 || matches!(
@@ -3288,10 +3195,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                                 // still reach `error()`.
                             } else {
                                 // No body bytes yet: send the whole head now.
-                                resp.run_corked_with_type(
-                                    Self::render_committed_head_corked,
-                                    this.as_ctx_ptr(),
-                                );
+                                resp.run_corked_with_type(Self::render_committed_head_corked, this);
                             }
                             // Runs `end_chunk`, which adopts the ref taken above and may free `this`.
                             if byte_stream.end_sink_with_pending_error() {
@@ -3341,11 +3245,10 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     pub(crate) fn write_chunk(
-        this: *mut Self,
+        &self,
         stream: &WebCore::streams::Result,
     ) -> WebCore::streams::Writable {
-        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
-        let this = unsafe { &*this };
+        let this = self;
         if this.is_aborted_or_ended() {
             return WebCore::streams::Writable::Done;
         }
@@ -3355,7 +3258,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // first chunk so a pre-first-byte failure can still reach the
         // server's `error()` hook. Flush it now, corked.
         if !this.flags.has_written_status() {
-            resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
+            resp.run_corked_with_type(Self::render_metadata, this);
         }
 
         let chunk = stream.slice();
@@ -3411,7 +3314,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             // Upstream ended cleanly before any chunk: flush the deferred
             // status/headers so the client sees them before the terminator.
             if let Some(resp) = this.resp.get() {
-                resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
+                resp.run_corked_with_type(Self::render_metadata, this);
             }
         }
         this.end_stream(this.should_close_connection());
@@ -3480,31 +3383,10 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 true
             }
             RangeRequest::Result::Unsatisfiable => {
-                let Some(resp) = self.resp.get() else {
+                if self.resp.get().is_none() {
                     return true;
-                };
-                self.do_write_status(416);
-                if let Some(mut headers) = self
-                    .response_mut()
-                    .and_then(|response| response.swap_init_headers())
-                {
-                    self.do_write_headers(&mut headers);
                 }
-                let mut buffer = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                resp.write_header(
-                    b"content-range",
-                    RangeRequest::format_content_range(
-                        &mut buffer,
-                        RangeRequest::Result::Unsatisfiable,
-                        Some(total),
-                    ),
-                );
-                resp.write_header(b"accept-ranges", b"bytes");
-                let close = resp.should_close_connection();
-                self.detach_response();
-                resp.end(b"", close);
-                self.end_request_streaming_and_drain();
-                self.deref();
+                self.render_range_not_satisfiable(total);
                 false
             }
         }
@@ -3521,31 +3403,25 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.get().fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp.get() {
-                resp.run_corked_with_type(Self::do_render_blob_corked, self.as_ctx_ptr());
+                resp.run_corked_with_type(Self::do_render_blob_corked, self);
             }
         } else {
-            Self::do_render_blob_corked(self.as_ctx_ptr());
+            self.do_render_blob_corked();
         }
     }
 
-    fn do_render_blob_corked(this: *mut Self) {
-        // SAFETY: `this` is live for the synchronous cork call; only a shared
-        // view is formed.
-        let this = unsafe { &*this };
-        this.render_metadata();
-        this.render_bytes();
+    fn do_render_blob_corked(&self) {
+        self.render_metadata();
+        self.render_bytes();
     }
 
     pub(crate) fn do_render_null_body_status(&self) {
         if self.flags.has_abort_handler() {
             if let Some(resp) = self.resp.get() {
-                resp.run_corked_with_type(
-                    Self::do_render_null_body_status_corked,
-                    self.as_ctx_ptr(),
-                );
+                resp.run_corked_with_type(Self::do_render_null_body_status_corked, self);
             }
         } else {
-            Self::do_render_null_body_status_corked(self.as_ctx_ptr());
+            self.do_render_null_body_status_corked();
         }
     }
 
@@ -3553,13 +3429,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     /// would put `Content-Length: 0` on a 304 (uWS only suppresses it for
     /// 1xx/204); RFC 9110 §8.6 only allows the 200's length, so forward the
     /// handler's value or emit none.
-    ///
-    /// # Safety
-    /// `this` must point to a live `RequestContext` threaded through cork user-data.
-    fn do_render_null_body_status_corked(this: *mut Self) {
-        // SAFETY: `this` is live for the synchronous cork call; only a shared
-        // view is formed.
-        let this = unsafe { &*this };
+    fn do_render_null_body_status_corked(&self) {
+        let this = self;
 
         let (status, app_content_length) = {
             let response: &mut Response = this.response_mut().unwrap();
@@ -3600,12 +3471,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         this.render_bytes();
     }
 
-    /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).
-    fn render_metadata_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
-        unsafe { (*this).render_metadata() };
-    }
-
     pub(crate) fn do_render(&self) {
         ctx_log!("doRender");
 
@@ -3623,6 +3488,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.do_render_with_body(value, owned_readable);
     }
 
+    #[optimize(size)]
     pub(crate) fn render_production_error(&self, status: u16) {
         if let Some(resp) = self.resp.get() {
             // `AnyResponse` is a `Copy` handle; methods take `self` by value.
@@ -3690,6 +3556,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         false
     }
 
+    #[optimize(size)]
     fn finish_running_error_handler(&self, value: JSValue, status: u16) {
         self.forbid_upgrade();
         let Some(server) = self.server.get() else {
@@ -3697,21 +3564,24 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         };
         let server = &*server;
         let global_this = server.global_this();
-        // `NewServer::vm()` is the process-static VM `BackRef`; `as_mut()` is
-        // the single audited `&mut VirtualMachine` accessor.
-        let vm = server.vm().as_mut();
-        // A missing or unreadable `Bun.file()` isn't a bug in the handler, so skip the report and the dev error page.
+        let vm = server.vm();
+        // A missing or unreadable `Bun.file()` isn't an unhandled error, so it gets no dev error page and leaves the exit code alone.
         if matches!(status, 403 | 404) {
+            if DEBUG_MODE {
+                vm.run_error_handler(value, None);
+            }
             self.render_production_error(status);
             vm.log_mut().unwrap().reset();
             return;
         }
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
-            let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
+            let prev_exception_list = vm.on_unhandled_rejection_exception_list.get();
+            vm.on_unhandled_rejection_exception_list
+                .set(Some(NonNull::from(&mut exception_list)));
             report_unhandled_error(vm, global_this, value);
-            vm.on_unhandled_rejection_exception_list = prev_exception_list;
+            vm.on_unhandled_rejection_exception_list
+                .set(prev_exception_list);
 
             let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
@@ -3729,6 +3599,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         vm.log_mut().unwrap().reset();
     }
 
+    #[optimize(size)]
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(
         &self,
         value: JSValue,
@@ -3790,6 +3661,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.finish_running_error_handler(value, status);
     }
 
+    #[optimize(size)]
     fn process_on_error_promise(
         &self,
         promise_js: JSValue,
@@ -3804,7 +3676,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
-                ctx.flags.set_is_error_promise_pending(true);
+                let error = bun_jsc::strong::Optional::create(value, server.global_this());
+                ctx.deferred_error.set(Some((error, status)));
                 let cell = ctx.create_promise_cell(server.global_this());
                 promise_js.then_with_value(
                     server.global_this(),
@@ -3911,7 +3784,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             {
                 server
                     .vm()
-                    .as_mut()
                     .run_error_handler(global_this.take_exception(err), None);
             }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.
@@ -4012,10 +3884,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     pub(crate) fn render_bytes(&self) {
-        // SAFETY: `self.blob`'s backing bytes are owned by the context and
-        // outlive the `try_end`/`on_writable` calls below; the cell read ends
-        // here, before the (self-releasing) tail.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.get().slice()) };
+        let bytes: &[u8] = self.blob.get().slice();
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
@@ -4065,11 +3934,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // here, but the `error()` handler paths call `render()` directly.
         if self.method == Method::HEAD {
             if let Some(resp) = self.resp.get() {
-                let mut pair = HeaderResponsePair {
+                let pair = HeaderResponsePair {
                     this: self,
                     response,
                 };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                resp.run_corked_with_type(Self::do_render_head_response, &pair);
             }
             return;
         }
@@ -4286,9 +4155,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         }
     }
 
-    pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
-        // SAFETY: `this` is the registered live `*mut RequestContext`.
-        let this = unsafe { &*this };
+    pub(crate) fn on_request_body_stream_drained(&self) {
+        let this = self;
         if !this.flags.request_body_paused() {
             return;
         }
@@ -4492,6 +4360,127 @@ const fn exported_host_fns(
     }
 }
 
+/// Returns what inspecting `value` threw: that can run user code (`[inspect.custom]`, `toString`).
+#[cold]
+fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) -> Option<JSValue> {
+    let class_name = value.get_class_info_name().unwrap_or(b"");
+    let mut inspect_error: Option<JSValue> = None;
+
+    Output::enable_buffering();
+    let writer = Output::error_writer();
+
+    if class_name == b"Response" {
+        bun_core::err_generic!(
+            "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
+        );
+    } else if !value.is_empty() && !global_this.has_exception() {
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        formatter.quote_strings = true;
+        let mut received: Vec<u8> = Vec::new();
+        match formatter.format_value::<false>(value, &mut received) {
+            Ok(()) => bun_core::err_generic!(
+                "Expected a Response object, but received '{}'",
+                bstr::BStr::new(&received),
+            ),
+            Err(err) => {
+                bun_core::err_generic!("Expected a Response object");
+                inspect_error = Some(global_this.take_error(err));
+            }
+        }
+        // `formatter` drops here.
+    } else {
+        bun_core::err_generic!("Expected a Response object");
+    }
+
+    Output::flush();
+    if !global_this.has_exception() {
+        jsc::ConsoleObject::write_trace(writer, global_this);
+    }
+    Output::flush();
+    inspect_error
+}
+
+/// The file behind a `Bun.file()` response body.
+struct BodyFile {
+    fd: bun_sys::Fd,
+    auto_close: bool,
+    file_type: bun_io::FileType,
+    pollable: bool,
+    is_regular: bool,
+    size: BlobSizeType,
+}
+
+impl BodyFile {
+    /// The errno of a failure is there when it says something about the path.
+    #[inline(never)] // Once, not once for each kind of `RequestContext`.
+    fn open(
+        pathlike: &crate::webcore::node_types::PathOrFileDescriptor<'_>,
+        global_this: &JSGlobalObject,
+    ) -> Result<Self, (JSValue, Option<bun_sys::E>)> {
+        use crate::webcore::node_types::PathOrFileDescriptor;
+        let with_pathlike = |err: bun_sys::Error| match pathlike {
+            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+        };
+
+        let (fd, auto_close) = match pathlike {
+            PathOrFileDescriptor::Fd(fd) => (*fd, false),
+            PathOrFileDescriptor::Path(path) => {
+                let mut file_buf = bun_paths::path_buffer_pool::get();
+                let fd = bun_sys::open(
+                    path.slice_z(&mut file_buf),
+                    bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
+                    0,
+                )
+                .map_err(|err| {
+                    let errno = err.get_errno();
+                    (with_pathlike(err).to_js(global_this), Some(errno))
+                })?;
+                (fd, true)
+            }
+        };
+        let close = || {
+            if auto_close {
+                fd.close();
+            }
+        };
+
+        let stat = bun_sys::fstat(fd).map_err(|err| {
+            close();
+            (with_pathlike(err).to_js(global_this), None)
+        })?;
+
+        let mode = stat.st_mode as bun_sys::Mode;
+        if bun_sys::S::ISDIR(mode) {
+            close();
+            let err = with_pathlike(bun_sys::Error {
+                errno: bun_sys::E::EISDIR as _,
+                syscall: bun_sys::Tag::read,
+                ..Default::default()
+            });
+            let mut sys: jsc::SystemError = err.to_system_error().into();
+            sys.message = BunString::static_("Cannot stream a directory as a response body");
+            return Err((sys.to_error_instance(global_this), Some(bun_sys::E::EISDIR)));
+        }
+        let (file_type, pollable) = if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
+            (bun_io::FileType::Pipe, true)
+        } else if bun_sys::S::ISSOCK(mode) {
+            (bun_io::FileType::Socket, true)
+        } else {
+            (bun_io::FileType::File, false)
+        };
+
+        Ok(Self {
+            fd,
+            auto_close,
+            file_type,
+            pollable,
+            is_regular: bun_sys::S::ISREG(mode),
+            size: BlobSizeType::try_from(stat.st_size.max(0)).unwrap(),
+        })
+    }
+}
+
 struct StreamPair<'a, const SSL: bool, const DBG: bool, const MUX: bool> {
     pub this: &'a RequestContext<SSL, DBG, MUX>,
     pub stream: WebCore::ReadableStream,
@@ -4575,7 +4564,6 @@ bitflags::bitflags! {
         const HAS_WRITTEN_STATUS          = 1 << 11;
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
-        const IS_ERROR_PROMISE_PENDING    = 1 << 15;
         /// Socket reads are paused because the request-body buffer is over its high-water mark.
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
@@ -4648,11 +4636,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         HAS_WRITTEN_STATUS
     );
     flag_accessor!(aborted, set_aborted, ABORTED);
-    flag_accessor!(
-        is_error_promise_pending,
-        set_is_error_promise_pending,
-        IS_ERROR_PROMISE_PENDING
-    );
     flag_accessor!(
         request_body_paused,
         set_request_body_paused,

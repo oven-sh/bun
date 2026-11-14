@@ -13,7 +13,7 @@ use super::explain::{Explained, NOWHERE};
 use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
-use crate::program::SymbolTable;
+use crate::program::{ReadingNoTrees, SymbolTable};
 use crate::util::{PositionSet, SharedSort};
 use bun_core::current_work;
 use bun_core::strings;
@@ -115,6 +115,24 @@ impl Program<'_> {
     }
 }
 
+/// An expression or a statement that a walk outwards has passed. Loops nested in one another are as deep as a sum is long.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub(super) enum Passed {
+    Expr(ExprId),
+    Stmt(StmtId),
+}
+
+impl Passed {
+    #[inline]
+    pub(super) fn of(parent: Parent) -> Option<Passed> {
+        match parent {
+            Parent::Expr(at) => Some(Passed::Expr(at)),
+            Parent::Stmt(at) => Some(Passed::Stmt(at)),
+            _ => None,
+        }
+    }
+}
+
 /// The result of `getControlFlowContainer`.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum Container {
@@ -179,6 +197,7 @@ impl Checker<'_, '_> {
         self.rechecked_members.retain(|key, _| is_kept(key.0));
         self.late_bound_members.retain(|key, _| is_kept(key.0.file));
         self.thisless_members.retain(|key, _| is_kept(key.file));
+        self.flow_type_skips.retain(|key, _| is_kept(key.0));
         self.permanently_early_bound
             .retain(|key| is_kept(key.0.file));
         self.context_checked_here.retain(|key| is_kept(key.0));
@@ -201,27 +220,33 @@ impl Checker<'_, '_> {
             + self.rechecked_members.len()
             + self.late_bound_members.len()
             + self.thisless_members.len()
+            + self.flow_type_skips.len()
             + self.permanently_early_bound.len()
             + self.context_checked_here.len()
             + self.prepared.len()
             + self.circular_before_parameter_symbol.len()
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
-    /// one, go to the sink.
-    pub fn check_file(&mut self, file: FileId) -> Checked {
-        let _work = current_work::working_on(
-            current_work::Step::Check,
-            self.files().module(file).file_name(),
-        );
+    /// Begins a visit for questions about a file that another task checks.
+    pub fn begin_questions(&mut self, file: FileId) {
+        self.begin_visit(file);
+        self.is_type_checked = true;
+    }
+
+    fn begin_visit(&mut self, file: FileId) {
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
         {
             self.forget_nodes_of_leaf(previous);
         }
+        if self.task.file != Some(file) {
+            self.flow_memo.let_kept_walks_go();
+        }
+        self.recent_symbol_types.begin_visit();
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
+        self.note_visited_module(file);
         self.provisional.clear();
         self.rejected_expressions.clear();
         self.side_effect_free.get_mut().clear();
@@ -252,10 +277,21 @@ impl Checker<'_, '_> {
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
-        let hir = self.hir(file);
-        if hir.ran_out_of_stack {
+        self.reads_types_alone = self.expected == Requested::All && self.files().is_compile_build();
+        if self.hir(file).ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
+    }
+
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
+    /// one, go to the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        let _work = current_work::working_on(
+            current_work::Step::Check,
+            self.files().module(file).file_name(),
+        );
+        self.begin_visit(file);
+        let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
         // on whether the file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
@@ -430,13 +466,17 @@ impl Checker<'_, '_> {
         for d in syntactic.iter_mut().chain(&mut declaration) {
             self.resolve_span_end(d);
         }
+        let never_checked = self.never_checked.take();
+        if self.files.brings_declarations() {
+            self.never_checked_in_last_file.clone_from(&never_checked);
+        }
         Checked {
             syntactic,
             semantic: None,
             declaration,
             include: Vec::new(),
             expected_errors: Vec::new(),
-            never_checked: self.never_checked.take(),
+            never_checked,
             unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }
@@ -450,6 +490,10 @@ impl Checker<'_, '_> {
             return Some(d);
         }
         let hir = self.hir(d.file);
+        // What a string holds is the run's. The tree may be gone before the build sorts what it reports.
+        if hir.is_in_known_evaluation(d.start) || hir.is_in_copied_factory(d.start) {
+            return None;
+        }
         let is_unconditional = self.is_unconditional_error(&d);
         // `SkipTypeChecking`
         if hir.check_directive == Some(false) && !is_unconditional {
@@ -511,6 +555,7 @@ impl Checker<'_, '_> {
         }
         // `typesPackageExists`, `packageBundlesTypes`
         let (types_package, atoms) = (cat!(b"@types/", mangled), self.atoms());
+        let _reading = ReadingNoTrees::begin();
         let modules = self.files().modules.iter();
         let (mut has_types_package, mut has_declarations) = (false, false);
         for &(name, is_declaration_file) in modules.flat_map(|it| it.resolved_packages.iter()) {
@@ -1018,7 +1063,11 @@ impl Checker<'_, '_> {
 
     /// `symbol.ValueDeclaration` of the symbol the identifier `e` resolves to, if that's a `var`, `let` or `const` of
     /// this file. Returns the binding name and the declaration that contains it.
-    fn value_declaration_of_variable(&self, file: FileId, e: ExprId) -> Option<(PatId, VarDeclId)> {
+    pub(super) fn value_declaration_of_variable(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<(PatId, VarDeclId)> {
         let bound = self.bound(file);
         let s = bound.symbols.get(bound.symbol_of_expr(e).idx())?;
         // `isParameter`, `isAlias`
@@ -1083,11 +1132,10 @@ impl Checker<'_, '_> {
         {
             return true;
         }
-        if !is_automatic
-            && (bound.is_in_type_query(e) || hir.is_in_ambient_or_type_node(hir.node(e)))
-        {
-            return true;
-        }
+        let is_in_type_query_or_ambient = || {
+            !is_automatic
+                && (bound.is_in_type_query(e) || hir.is_in_ambient_or_type_node(hir.node(e)))
+        };
         // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
             let binding_element = hir.find_ancestor_kind(hir.node(e), Kind::BindingElement);
@@ -1101,11 +1149,11 @@ impl Checker<'_, '_> {
         if self.get_control_flow_container(file, parent)
             == self.get_control_flow_container(file, declared_in)
         {
-            return false;
+            return is_in_type_query_or_ambient();
         }
         // It's an outer variable, so what's been assigned by the time this code runs is unknown, unless it's never
         // assigned.
-        !self.is_never_initialized(file, e)
+        !self.is_never_initialized(file, e) || is_in_type_query_or_ambient()
     }
 
     /// `isNeverInitialized` of `checkIdentifier`, for the identifier `e`.
@@ -1234,29 +1282,51 @@ impl Checker<'_, '_> {
 
     /// `getControlFlowContainer` for a direct child of `parent`.
     pub(super) fn get_control_flow_container(&self, file: FileId, mut parent: Parent) -> Container {
+        // As in `enclosing_scope_of_expr`.
+        const UNCACHED_STEPS: usize = 32;
         let bound = self.bound(file);
-        loop {
+        let mut steps = 0;
+        let mut passed = Vec::new();
+        let container = loop {
             let func = match parent {
                 Parent::FnBody(f) => f,
                 Parent::ParamDefault(p) => bound.param_fn[p.idx()],
                 Parent::MemberInit(m)
                     if matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
                 {
-                    return Container::Member(m);
+                    break Container::Member(m);
                 }
-                Parent::Module(m) => return Container::Module(m),
-                Parent::File => return Container::File,
-                Parent::None => return Container::Other,
+                Parent::Module(m) => break Container::Module(m),
+                Parent::File => break Container::File,
+                Parent::None => break Container::Other,
                 _ => {
-                    parent = self.parent_of_node(file, parent);
+                    if steps >= UNCACHED_STEPS
+                        && let Some(at) = Passed::of(parent)
+                    {
+                        if let Some(&known) = self.containers_inside.borrow().get(&(file, at)) {
+                            break known;
+                        }
+                        passed.push(at);
+                    }
+                    steps += 1;
+                    parent = match parent {
+                        Parent::Expr(x) if x.is_some() => bound.parent_of_expr(x),
+                        Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
+                        _ => self.parent_of_node(file, parent),
+                    };
                     continue;
                 }
             };
             match self.immediately_invoked_container(file, func) {
                 Some(it) => parent = it,
-                None => return Container::Fn(func),
+                None => break Container::Fn(func),
             }
+        };
+        if !passed.is_empty() {
+            let mut known = self.containers_inside.borrow_mut();
+            known.extend(passed.into_iter().map(|it| ((file, it), container)));
         }
+        container
     }
 
     /// `node.Parent` of the node that `parent` represents, as far as `Parent` can express it. Patterns are skipped.
@@ -2312,10 +2382,8 @@ impl Files<'_> {
                 return Some(found);
             }
             // `GetSpellingSuggestion` first gets each candidate's name, then computes its edit distance.
-            let is_candidate = |&(candidate, sym): &(Atom, Sym)| {
-                files.is_spelling_candidate(sym, meaning, &mut *symbols)
-                    && is_close(text, files.atoms.bytes(candidate))
-            };
+            let is_candidate =
+                |&(_, sym): &(Atom, Sym)| files.is_spelling_candidate(sym, meaning, &mut *symbols);
             let named = |(candidate, sym): (Atom, Sym)| {
                 (
                     files.atoms.bytes(candidate),
@@ -2719,7 +2787,8 @@ impl Checker<'_, '_> {
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
         ) {
             let args = [Arg::Bytes(&left), Arg::Bytes(&right)];
-            return self.error_and_maybe_suggest_await(at, would_work_with_await, 2367, &args);
+            self.error_and_maybe_suggest_await(at, would_work_with_await, 2367, &args);
+            return;
         }
         let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
         let operator = operator_text(op, is_assignment);

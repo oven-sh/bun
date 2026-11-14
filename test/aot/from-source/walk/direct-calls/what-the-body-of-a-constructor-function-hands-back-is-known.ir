@@ -1,0 +1,17 @@
+# -- source: what-the-body-of-a-constructor-function-hands-back-is-known.js
+# function Pair(a, b) { if (!(this instanceof Pair)) return new Pair(a, b); this.a = a; this.b = b; }
+# Pair.prototype.sum = function () { return this.a + this.b; };
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const p = i & 1 ? Pair(i & 7, 1) : new Pair(i & 3, 2); total += p.sum(); } return total; }
+# sink(run(10));
+# -- end of source
+# `new Pair(a, b)` inside the copy of `Pair(a, b)` is taken into the copy as well: both arms allocate a whole Pair in place, and no call of `Pair` is left.
+# If the walk said "anything" of what is handed back, `p.sum()` would be a guess with a closed arm: the sum of the two fields is added in place on either arm.
+# f2 = run
+# The clock of start says of no name that it is laid ahead: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no real program. What this test told apart by `laid-ahead` it no longer tells.
+# RUN: walk f2 mechanisms=all
+# CHECK-NOT: function=f1
+# CHECK: L0 @Cell = NewObject -, {{*}}layout=L0 fields=[0, 1]
+# CHECK: L0 @Cell = NewObject -, {{*}}layout=L0 fields=[0, 1]
+# CHECK: int[1, 8] @Int32 = Add {{*}}form=Integers
+# CHECK: int[2, 5] @Int32 = Add {{*}}form=Integers
+# CHECK-NOT: function=f1

@@ -64,8 +64,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifndef LIKELY
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
+#define LIKELY(cond) __builtin_expect(!!(cond), 1)
+#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
 #endif
 
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
@@ -73,7 +73,30 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
 
 /* Reports "Bun ran out of memory" through the crash handler and aborts. For
  * allocations this library has no way to fail gracefully from. */
-extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+#ifdef __cplusplus
+extern "C"
+#else
+extern
+#endif
+void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
+/* With AddressSanitizer us_malloc and us_calloc are the C library's. Below bsd.h,
+ * which defines _GNU_SOURCE for the system headers. */
+#include <stdlib.h>
+
+/* mimalloc returns NULL when the system has no more memory or address space to
+ * give. These never do: use them where the caller can't report a failure. */
+static inline void *us_xmalloc(size_t size) {
+    void *p = us_malloc(size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
+
+static inline void *us_xcalloc(size_t count, size_t size) {
+    void *p = us_calloc(count, size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
 
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
@@ -86,6 +109,7 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define LIBUS_ECONNRESET WSAECONNRESET
 #define LIBUS_ECONNREFUSED WSAECONNREFUSED
 #define LIBUS_EADDRINUSE WSAEADDRINUSE
+#define LIBUS_ETIMEDOUT WSAETIMEDOUT
 /* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
 #define LIBUS_ECANCELED WSAEINTR
 #else
@@ -96,6 +120,7 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define LIBUS_ECONNRESET ECONNRESET
 #define LIBUS_ECONNREFUSED ECONNREFUSED
 #define LIBUS_EADDRINUSE EADDRINUSE
+#define LIBUS_ETIMEDOUT ETIMEDOUT
 #define LIBUS_ECANCELED ECANCELED
 #endif
 #include <stdbool.h>
@@ -189,6 +214,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
+/* Makes the next sweep a whole period from now. */
+void us_internal_restart_sweep_timer(struct us_loop_t *loop);
 #ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
@@ -269,6 +296,7 @@ int us_internal_ssl_sealed_close_notify(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 struct us_socket_t *us_internal_ssl_close_after_rejected_send(us_socket_r s, int unread);
+int us_internal_ssl_defer_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_shut_down(us_socket_r s);
@@ -289,10 +317,10 @@ void us_internal_socket_raw_shutdown(us_socket_r s);
 /* us_socket_raw_write that stores us_internal_classify_failed_send's answer for a failed send(). */
 int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *fatal_send_error);
 void us_internal_rearm_writable(us_socket_r s);
-/* `error` (LIBUS_ERR numbering) is why a send() failed for good. Ends the write side and asks for the writable event that
- * runs us_internal_socket_close_after_rejected_send: no write may close under its caller. */
+/* `error` (LIBUS_ERR numbering) is why a send() failed for good. Ends the write side and has the loop
+ * run us_internal_socket_close_after_rejected_send: no write may close under its caller. */
 void us_internal_socket_reject_send(us_socket_r s, int error);
-/* Closes with the send's error, unless the kernel still holds bytes of the peer: then the read side ends the connection. */
+/* Closes with the send's error, unless the kernel still holds bytes of the peer. A TLS socket then reads until the peer ends, and a plain one that isn't paused until none are left. */
 struct us_socket_t *us_internal_socket_close_after_rejected_send(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);
@@ -330,9 +358,14 @@ static inline uint32_t us_internal_timeout_tick(struct us_loop_t *loop, unsigned
     uint64_t ms = (uint64_t) seconds * 1000;
     /* With no socket there are no sweeps, and the first socket starts a whole period. */
     if (loop->data.sweep_timer_count) {
-        uint64_t since_sweep = us_internal_coarse_ms() - loop->data.sweep_time_ms + LIBUS_COARSE_CLOCK_LAG_MS;
-        /* A sweep that is overdue still comes after this call, and the next a whole period after that one. */
-        ms += since_sweep < period ? since_sweep : period;
+        if (UNLIKELY(loop->data.iterator || loop->data.low_prio_iterator)) {
+            /* Set from a timeout handler. Counted from the start of this sweep, whole periods would come a sweep late. */
+            us_internal_restart_sweep_timer(loop);
+        } else {
+            uint64_t since_sweep = us_internal_coarse_ms() - loop->data.sweep_time_ms + LIBUS_COARSE_CLOCK_LAG_MS;
+            /* A sweep that is overdue still comes after this call, and the next a whole period after that one. */
+            ms += since_sweep < period ? since_sweep : period;
+        }
     }
     return loop->data.sweep_tick + (uint32_t) ((ms + period - 1) / period);
 }
@@ -412,7 +445,7 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code : 2;
-  /* us_socket_close_lingering: the owner let go. loop.c drops what the peer still sends, and closes at its FIN or at the timeout. */
+  /* us_socket_close_lingering: the owner let go, and `timeout` is the deadline of the close. */
   unsigned char lingering : 1;
   /* us_socket_set_first_flight_before_fin: the first handshake step is still due, and a shutdown waits for it. */
   unsigned char ssl_first_flight_before_fin : 1;
@@ -420,6 +453,8 @@ struct us_socket_t {
   unsigned char ssl_shutdown_after_first_flight : 1;
   /* A send that no retry can save shut the write side down, not the owner (us_internal_socket_reject_send). */
   unsigned char send_rejected : 1;
+  /* us_socket_set_owner_holds_tail */
+  unsigned char owner_holds_tail : 1;
   union {
     /* Consecutive send() failures with an errno that is neither
      * would-block/transient nor a known peer-gone error (see
@@ -442,6 +477,8 @@ struct us_socket_t {
     struct us_socket_t *connect_next;
     /* connect_state == NULL, still connecting: the DNS cache entry this socket's address came from. */
     struct addrinfo_request *connect_addrinfo_req;
+    /* lingering, so established: bytes read since. */
+    size_t lingered_bytes;
   };
   struct us_connecting_socket_t *connect_state;
 };

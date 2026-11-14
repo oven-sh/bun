@@ -1,0 +1,24 @@
+# f1 = allowed
+# -- source: set-has-in-a-loop.ts
+# function allowed(list: Set<string>, names: string[]): number {
+#   let count = 0;
+#   for (let k = 0; k < names.length; k++) if (list.has(names[k]!)) count++;
+#   return count;
+# }
+# declare const input: any;
+# const list = new Set<string>();
+# list.add(String(input));
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = allowed(list, names);
+# -- end of source
+# The set is searched in line, by the tag of its string keys. What every search asks of the set is read before the loop, in both of its versions.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns {{*}}keysAreStrings
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = HasStringKeyByTag {{*}}searchesSet
+# CHECK: = CollectionColumns {{*}}keysAreStrings
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = HasStringKeyByTag {{*}}searchesSet

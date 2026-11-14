@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
@@ -30,7 +30,7 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd, FdExt, File};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -58,12 +58,6 @@ pub(crate) struct Terminal {
     /// The master side of the PTY (original fd, used for ioctl operations)
     /// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
     master_fd: Cell<Fd>,
-
-    /// Duplicated master fd for reading (POSIX) / overlapped read pipe end (Windows)
-    read_fd: Cell<Fd>,
-
-    /// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
-    write_fd: Cell<Fd>,
 
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
@@ -322,7 +316,7 @@ impl Terminal {
     fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
         // SAFETY: `this` is the BACKREF set via `reader.set_parent` /
         // `writer.parent = …` in `open`. The Terminal is heap-stable
-        // (`heap::into_raw`) and outlives every reader/writer callback (the
+        // (`RefPtr::new`) and outlives every reader/writer callback (the
         // intrusive +1 ref held by the I/O machinery is dropped only after the
         // last callback fires). R-2: shared borrow only — bodies take `&self`;
         // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
@@ -364,11 +358,9 @@ impl Terminal {
         let pty_result = create_pty(options.cols, options.rows)?;
 
         // The intrusive ref_count starts at 1: the JS wrapper's ref.
-        let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
+        let terminal = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
-            read_fd: Cell::new(pty_result.read_fd),
-            write_fd: Cell::new(pty_result.write_fd),
             slave_fd: Cell::new(pty_result.slave),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
@@ -382,9 +374,7 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            event_loop_handle: EventLoopHandle::init(
-                global_object.bun_vm().as_mut().event_loop().cast(),
-            ),
+            event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop_ptr()),
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
@@ -394,12 +384,8 @@ impl Terminal {
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
             abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
-        }));
-        let parent_ptr = terminal;
-        // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
-        // (not `&mut`) — every method below takes `&self`; field writes go
-        // through `Cell`/`JsCell`.
-        let terminal = unsafe { &*terminal };
+        });
+        let parent_ptr = terminal.as_ptr();
 
         // Set reader parent
         terminal
@@ -409,21 +395,18 @@ impl Terminal {
         // Set writer parent
         terminal.writer.with_mut(|w| w.parent = parent_ptr);
 
-        // Start writer with the write fd - adds a ref
+        // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
         match terminal
             .writer
-            .with_mut(|w| w.start(pty_result.write_fd, true))
+            .with_mut(|w| w.start(pty_result.write.fd(), true))
+            .map(|()| pty_result.write.into_raw())
         {
-            sys::Result::Ok(()) => terminal.ref_(),
+            sys::Result::Ok(_) => terminal.ref_(),
             sys::Result::Err(_) => {
-                // The writer took neither its ref nor write_fd, and the reader never started.
+                // The writer took neither its ref nor the fd, and the reader never started.
                 terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
-                terminal.read_fd.get().close();
-                terminal.read_fd.set(Fd::INVALID);
-                terminal.write_fd.get().close();
-                terminal.write_fd.set(Fd::INVALID);
+                drop(pty_result.read);
                 terminal.close_internal();
-                terminal.deref_();
                 return Err(InitError::WriterStartFailed);
             }
         }
@@ -434,19 +417,18 @@ impl Terminal {
         terminal.ref_();
         match terminal
             .reader
-            .with_mut(|r| r.start(pty_result.read_fd, true))
+            .with_mut(|r| r.start(pty_result.read.fd(), true))
+            .map(|()| pty_result.read.into_raw())
         {
             sys::Result::Err(_) => {
-                // No callback ran: the reader took neither read_fd nor its ref.
-                terminal.read_fd.get().close();
-                terminal.read_fd.set(Fd::INVALID);
+                // No callback ran: the reader took neither the fd nor its ref.
                 terminal.deref_();
                 return Err(terminal.fail_reader_start());
             }
-            sys::Result::Ok(()) if terminal.flags.get().contains(Flags::READER_DONE) => {
+            sys::Result::Ok(_) if terminal.flags.get().contains(Flags::READER_DONE) => {
                 return Err(terminal.fail_reader_start());
             }
-            sys::Result::Ok(()) => {
+            sys::Result::Ok(_) => {
                 #[cfg(unix)]
                 {
                     terminal.reader.with_mut(|r| {
@@ -471,8 +453,7 @@ impl Terminal {
             return Err(terminal.fail_reader_start());
         }
 
-        // SAFETY: the ref taken by `RefCount::init()` above.
-        Ok(unsafe { bun_ptr::RefPtr::from_raw(parent_ptr) })
+        Ok(terminal)
     }
 
     /// `this_value` is the JS wrapper, which owns the ref [`open`](Self::open) returned.
@@ -509,11 +490,10 @@ impl Terminal {
     /// `open` error path for a reader that finished before the
     /// terminal reached JS, with the reader's ref already released.
     /// `close_internal` closes what is still open (a writer that is still
-    /// open releases its ref through `on_writer_close`), then the initial ref
-    /// is dropped, which may free `self`.
+    /// open releases its ref through `on_writer_close`); `open` then drops
+    /// the initial ref.
     fn fail_reader_start(&self) -> InitError {
         self.close_internal();
-        self.deref_();
         InitError::ReaderStartFailed
     }
 
@@ -746,8 +726,10 @@ impl Terminal {
 
 pub(crate) struct PtyResult {
     pub(crate) master: Fd,
-    pub(crate) read_fd: Fd,
-    pub(crate) write_fd: Fd,
+    /// Duplicated master fd (POSIX) / overlapped read pipe end (Windows)
+    pub(crate) read: File,
+    /// Duplicated master fd (POSIX) / overlapped write pipe end (Windows)
+    pub(crate) write: File,
     pub(crate) slave: Fd,
     #[cfg(windows)]
     pub(crate) hpcon: windows::HPCON,
@@ -914,8 +896,8 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         return Err(CreatePtyError::OpenPtyFailed);
     }
 
-    let master_fd_desc = Fd::from_native(master_fd);
-    let slave_fd_desc = Fd::from_native(slave_fd);
+    let master = File::from_fd(Fd::from_native(master_fd));
+    let slave = File::from_fd(Fd::from_native(slave_fd));
 
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.
@@ -990,42 +972,31 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     // Duplicate the master fd for reading and writing separately
     // This allows independent epoll registration and closing
-    let read_fd = match sys::dup(master_fd_desc) {
-        sys::Result::Ok(fd) => fd,
-        sys::Result::Err(_) => {
-            master_fd_desc.close();
-            slave_fd_desc.close();
-            return Err(CreatePtyError::DupFailed);
-        }
+    let dup_master = || {
+        sys::dup(master.fd())
+            .map(File::from_fd)
+            .map_err(|_| CreatePtyError::DupFailed)
     };
-
-    let write_fd = match sys::dup(master_fd_desc) {
-        sys::Result::Ok(fd) => fd,
-        sys::Result::Err(_) => {
-            master_fd_desc.close();
-            slave_fd_desc.close();
-            read_fd.close();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
+    let read = dup_master()?;
+    let write = dup_master()?;
 
     // Set non-blocking on master side fds (for async I/O in the event loop)
-    let _ = sys::update_nonblocking(master_fd_desc, true);
-    let _ = sys::update_nonblocking(read_fd, true);
-    let _ = sys::update_nonblocking(write_fd, true);
+    let _ = sys::update_nonblocking(master.fd(), true);
+    let _ = sys::update_nonblocking(read.fd(), true);
+    let _ = sys::update_nonblocking(write.fd(), true);
     // Note: slave_fd stays blocking - child processes expect blocking I/O
 
     // Set close-on-exec on master side fds only
     // slave_fd should NOT have close-on-exec since child needs to inherit it
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master_fd_desc);
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write_fd);
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master.fd());
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read.fd());
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write.fd());
 
     Ok(PtyResult {
-        master: master_fd_desc,
-        read_fd,
-        write_fd,
-        slave: slave_fd_desc,
+        master: master.into_raw(),
+        read,
+        write,
+        slave: slave.into_raw(),
     })
 }
 
@@ -1229,21 +1200,19 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // Do not .take() until after success — on Err the cleanup! must still see
     // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
     // fallible call succeeds.
-    let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
+    let read = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
         Ok(fd) => {
             out_server = None;
-            fd
+            File::from_fd(fd)
         }
         Err(_) => {
             cleanup!();
             return Err(CreatePtyError::DupFailed);
         }
     };
-    // errdefer read_fd.close()
-    let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
 
-    let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => fd,
+    let write = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
+        Ok(fd) => File::from_fd(fd),
         Err(_) => {
             cleanup!();
             return Err(CreatePtyError::DupFailed);
@@ -1251,12 +1220,11 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     };
 
     let result_hpcon = hpcon.take().unwrap();
-    let read_fd = scopeguard::ScopeGuard::into_inner(read_fd_guard);
 
     Ok(PtyResult {
         master: Fd::INVALID,
-        read_fd,
-        write_fd,
+        read,
+        write,
         slave: Fd::INVALID,
         hpcon: result_hpcon,
     })
@@ -1642,11 +1610,10 @@ impl Terminal {
         self.update_flags(|f| f.insert(Flags::CLOSED));
         self.abort_handle.leave();
 
-        // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
+        // Close writer (closes its fd). R-2: `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback
         // touches only sibling `Cell`/`JsCell` fields, never `writer`.
         self.writer.with_mut(|w| w.close());
-        self.write_fd.set(Fd::INVALID);
 
         #[cfg(windows)]
         {
@@ -1664,11 +1631,10 @@ impl Terminal {
             }
         }
 
-        // Close reader (closes read_fd)
+        // Close reader (closes its fd)
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.reader.with_mut(|r| r.close());
         }
-        self.read_fd.set(Fd::INVALID);
 
         // Close master fd
         let master = self.master_fd.get();
@@ -1703,7 +1669,7 @@ impl Terminal {
         if let Some(this_jsvalue) = self.this_value.get().try_get() {
             if let Some(callback) = js::drain_get_cached(this_jsvalue) {
                 let global_this = self.global();
-                global_this.bun_vm().event_loop_mut().run_callback(
+                global_this.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
@@ -1728,7 +1694,7 @@ impl Terminal {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         match status {
             WriteStatus::Pending => {}
-            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // `PosixStreamingWriter` has no `on_writable`, so POSIX
             // fires `drain` off this transition. Windows fires it from
             // `on_writable` and only records the state here.
             WriteStatus::Drained => {
@@ -1792,12 +1758,10 @@ impl Terminal {
         // EOF closes the reader itself, a read error does not.
         if !self.reader.get().is_done() {
             self.reader.with_mut(|r| r.close());
-            self.read_fd.set(Fd::INVALID);
         }
         // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
         if !self.flags.get().contains(Flags::WRITER_DONE) {
             self.writer.with_mut(|w| w.end());
-            self.write_fd.set(Fd::INVALID);
         }
     }
 
@@ -1839,7 +1803,7 @@ impl Terminal {
             JSValue::NULL
         };
 
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,
@@ -1882,9 +1846,7 @@ impl Terminal {
             return true;
         }
         v.extend_from_slice(chunk);
-        // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
-        // via mimalloc on the C++ side) — leak the Box and hand over the slice.
-        let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        let bytes = v.into_boxed_slice();
         // This is the pipe reader's landing frame: a buffer that cannot be
         // built (allocation failure, a terminating VM) is folded here and
         // reading goes on.
@@ -1900,7 +1862,7 @@ impl Terminal {
 
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,
@@ -1911,15 +1873,8 @@ impl Terminal {
         true // Continue reading
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop_handle.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop_handle.r#loop().cast()
-        }
+    fn loop_(&self) -> LoopRef {
+        self.event_loop_handle.native_loop()
     }
 
     pub(crate) fn finalize(&self) {
@@ -1970,11 +1925,8 @@ impl BufferedReaderParent for Terminal {
             Self::from_parent_ptr(this).on_reader_error(&err);
         })
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
-        Self::from_parent_ptr(this).loop_().cast()
+    unsafe fn loop_(this: *mut Self) -> LoopRef {
+        Self::from_parent_ptr(this).loop_()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -1995,9 +1947,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
     }
-    unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
-    }
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();
     }
@@ -2006,7 +1955,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
             .event_loop_handle
             .as_event_loop_ctx()
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> LoopRef {
         Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
 }

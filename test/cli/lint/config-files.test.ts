@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -49,7 +49,7 @@ type Options = {
  * code. It uses a format that's the same with either tool's config.
  */
 async function lint(files: Record<string, string>, args: string[] = ["."], options: Options = {}) {
-  using dir = tempDir("bun-lint-config-files", files);
+  using dir = (options.env?.BUN_CONFIG_REGISTRY ? autoInstallTempDir : tempDir)("bun-lint-config-files", files);
   options.before?.(String(dir));
   await using proc = spawn({
     cmd: [...command, "--threads", "2", "-f", "json-with-metadata", ...args, ...(options.args?.(String(dir)) ?? [])],

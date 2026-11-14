@@ -89,7 +89,10 @@ impl Body {
         let cells = Cell::from_mut(&mut *self.code).as_slice_of_cells();
         walk_body(cells, self.block_count, &mut |field, at| match field {
             FieldWord::Operand => {}
-            FieldWord::Reference(kind) => cells[at].set(map.remap_word(kind, cells[at].get())),
+            FieldWord::Reference(kind) => {
+                let cell = &cells[at];
+                cell.set(map.remap_word(kind, cell.get()));
+            }
         });
     }
 }
@@ -100,8 +103,8 @@ pub struct BlockView<'a> {
     pub id: BlockId,
     pub first_parameter: ValueId,
     pub role: BlockRole,
-    pub subject: Option<ValueId>,
     pub frequency: BlockFrequency,
+    pub subject: Option<ValueId>,
     pub(super) parameter_types: &'a [u32],
     pub(super) handler: &'a [u32],
     pub(super) value_count: u32,
@@ -160,8 +163,7 @@ pub struct ValueView<'a> {
     pub id: ValueId,
     pub opcode: Opcode,
     pub position: Option<u32>,
-    pub written_position: Option<u32>,
-    pub is_written_position_for_callers: bool,
+    pub second_position: Option<u32>,
     pub fields: &'a [u32],
 }
 

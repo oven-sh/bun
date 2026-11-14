@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
+use core::ptr::NonNull;
 
 use bun_core::strings;
 
@@ -129,10 +130,9 @@ unsafe extern "C" {
     fn lsquic_conn_get_sni(c: *mut lsquic_conn) -> *const c_char;
     fn lsquic_conn_want_datagram_write(c: *mut lsquic_conn, is_want: c_int) -> c_int;
     fn lsquic_conn_crypto_cipher(c: *const lsquic_conn) -> *const c_char;
-    fn lsquic_conn_get_server_cert_chain(c: *mut lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_ssl(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_ssl_to_conn(ssl: *const c_void) -> *mut lsquic_conn;
-    pub fn lsquic_conn_abort_error(
+    fn lsquic_conn_abort_error(
         c: *mut lsquic_conn,
         is_app: c_int,
         code: c_uint,
@@ -369,36 +369,40 @@ impl MiniConn {
 /// Borrowed `lsquic_conn_t`. lsquic owns the conn and frees it after
 /// `on_conn_closed` returns; callers must not hold a `Conn` past that point.
 #[derive(Copy, Clone)]
-pub struct Conn(*mut lsquic_conn);
+#[repr(transparent)]
+pub struct Conn(NonNull<lsquic_conn>);
 
 impl Conn {
     /// `raw` must be a live full conn (not a `MiniConn`) until `on_conn_closed` returns for it.
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
-        (!raw.is_null()).then_some(Self(raw))
+        NonNull::new(raw).map(Self)
+    }
+    pub fn raw(&self) -> *mut lsquic_conn {
+        self.0.as_ptr()
     }
     /// The `(local, peer)` sockaddrs of the conn's current path.
     pub fn sockaddrs(&self) -> Option<(*const sockaddr, *const sockaddr)> {
         // SAFETY: `self.0` is live (caller contract).
-        unsafe { sockaddrs(self.0) }
+        unsafe { sockaddrs(self.0.as_ptr()) }
     }
     pub fn close(&self) {
         // SAFETY: `self.0` is live (caller contract).
-        unsafe { lsquic_conn_close(self.0) }
+        unsafe { lsquic_conn_close(self.0.as_ptr()) }
     }
     pub fn going_away(&self) {
         // SAFETY: as above.
-        unsafe { lsquic_conn_going_away(self.0) }
+        unsafe { lsquic_conn_going_away(self.0.as_ptr()) }
     }
     pub fn abort_silent(&self) {
         unsafe extern "C" {
             fn lsquic_conn_abort_silent(c: *mut lsquic_conn);
         }
         // SAFETY: as above.
-        unsafe { lsquic_conn_abort_silent(self.0) }
+        unsafe { lsquic_conn_abort_silent(self.0.as_ptr()) }
     }
     pub fn abort_error(&self, is_app: bool, code: c_uint, reason: &core::ffi::CStr) {
         // SAFETY: as above; `reason` is NUL-terminated by construction.
-        unsafe { lsquic_conn_abort_error(self.0, is_app as c_int, code, reason.as_ptr()) }
+        unsafe { lsquic_conn_abort_error(self.0.as_ptr(), is_app as c_int, code, reason.as_ptr()) }
     }
     /// SETTINGS_H3_DATAGRAM state (RFC 9297).
     pub fn peer_h3_datagram(&self) -> Option<bool> {
@@ -406,58 +410,58 @@ impl Conn {
             fn lsquic_conn_peer_h3_datagram(c: *const lsquic_conn) -> c_int;
         }
         // SAFETY: as above.
-        match unsafe { lsquic_conn_peer_h3_datagram(self.0) } {
+        match unsafe { lsquic_conn_peer_h3_datagram(self.0.as_ptr()) } {
             -1 => None,
             v => Some(v != 0),
         }
     }
     pub fn make_stream(&self) {
         // SAFETY: as above.
-        unsafe { lsquic_conn_make_stream(self.0) }
+        unsafe { lsquic_conn_make_stream(self.0.as_ptr()) }
     }
     pub fn make_uni_stream(&self) {
         // SAFETY: as above.
-        unsafe { lsquic_conn_make_uni_stream(self.0) }
+        unsafe { lsquic_conn_make_uni_stream(self.0.as_ptr()) }
     }
     /// Takes back one `make_stream` or `make_uni_stream` request that lsquic hasn't created a stream for yet.
     pub fn cancel_pending_stream(&self, uni: bool) {
         // SAFETY: as above.
         unsafe {
             if uni {
-                lsquic_conn_cancel_pending_uni_streams(self.0, 1);
+                lsquic_conn_cancel_pending_uni_streams(self.0.as_ptr(), 1);
             } else {
-                lsquic_conn_cancel_pending_streams(self.0, 1);
+                lsquic_conn_cancel_pending_streams(self.0.as_ptr(), 1);
             }
         }
     }
     pub fn want_datagram_write(&self, want: bool) -> c_int {
         // SAFETY: as above.
-        unsafe { lsquic_conn_want_datagram_write(self.0, want as c_int) }
+        unsafe { lsquic_conn_want_datagram_write(self.0.as_ptr(), want as c_int) }
     }
     pub fn sni(&self) -> Option<&core::ffi::CStr> {
         // SAFETY: as above; lsquic returns NULL or a NUL-terminated string
         // owned by the conn.
-        let p = unsafe { lsquic_conn_get_sni(self.0) };
+        let p = unsafe { lsquic_conn_get_sni(self.0.as_ptr()) };
         // SAFETY: as above.
         (!p.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(p) })
     }
     pub fn pings_received(&self) -> u64 {
         // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_pings_received(self.0) }
+        unsafe { lsquic_conn_pings_received(self.0.as_ptr()) }
     }
     pub fn ack_now(&self) {
         unsafe extern "C" {
             fn lsquic_conn_ack_now(c: *mut lsquic_conn);
         }
         // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_ack_now(self.0) }
+        unsafe { lsquic_conn_ack_now(self.0.as_ptr()) }
     }
     pub fn use_preferred_address(&self, on: bool) {
         unsafe extern "C" {
             fn lsquic_conn_use_preferred_address(c: *mut lsquic_conn, on: c_int);
         }
         // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_use_preferred_address(self.0, on as c_int) }
+        unsafe { lsquic_conn_use_preferred_address(self.0.as_ptr(), on as c_int) }
     }
     /// Only valid inside `on_dg_write`: the id `on_datagram_status` reports the frame under.
     pub fn set_datagram_id(&self, id: u64) {
@@ -465,28 +469,24 @@ impl Conn {
             fn lsquic_conn_set_datagram_id(c: *mut lsquic_conn, id: u64);
         }
         // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_set_datagram_id(self.0, id) }
+        unsafe { lsquic_conn_set_datagram_id(self.0.as_ptr(), id) }
     }
     pub fn datagram_early(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_conn_datagram_early(c: *const lsquic_conn) -> c_int;
         }
         // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_datagram_early(self.0) != 0 }
+        unsafe { lsquic_conn_datagram_early(self.0.as_ptr()) != 0 }
     }
     pub fn cipher(&self) -> Option<&core::ffi::CStr> {
         // SAFETY: as above.
-        let p = unsafe { lsquic_conn_crypto_cipher(self.0) };
+        let p = unsafe { lsquic_conn_crypto_cipher(self.0.as_ptr()) };
         // SAFETY: as above.
         (!p.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(p) })
     }
-    pub fn server_cert_chain(&self) -> *mut c_void {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_get_server_cert_chain(self.0) }
-    }
     pub fn ssl(&self) -> *mut c_void {
         // SAFETY: as above.
-        unsafe { lsquic_conn_get_ssl(self.0) }
+        unsafe { lsquic_conn_get_ssl(self.0.as_ptr()) }
     }
     /// Returns `lsquic_conn_status()`, its message, and the transport error code recorded for this side's CONNECTION_CLOSE.
     pub fn status(&self) -> (c_int, Vec<u8>, Option<u64>) {
@@ -495,14 +495,15 @@ impl Conn {
         }
         let mut buf = [0 as c_char; 256];
         // SAFETY: as above.
-        let status = unsafe { lsquic_conn_status(self.0, buf.as_mut_ptr(), buf.len()) };
+        let status = unsafe { lsquic_conn_status(self.0.as_ptr(), buf.as_mut_ptr(), buf.len()) };
         // SAFETY: `buf` starts zeroed, and lsquic NUL-terminates what it writes.
         let message = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
             .to_bytes()
             .to_vec();
         let mut code = 0u64;
         // SAFETY: as above. `code` is a stack out-param.
-        let recorded = unsafe { lsquic_conn_local_transport_error(self.0, &raw mut code) } != 0;
+        let recorded =
+            unsafe { lsquic_conn_local_transport_error(self.0.as_ptr(), &raw mut code) } != 0;
         (status, message, recorded.then_some(code))
     }
 }
@@ -510,16 +511,17 @@ impl Conn {
 /// Borrowed `lsquic_stream_t`. Same lifetime contract as [`Conn`] — invalid
 /// after `on_close` returns for it.
 #[derive(Copy, Clone)]
-pub struct Stream(*mut lsquic_stream);
+#[repr(transparent)]
+pub struct Stream(NonNull<lsquic_stream>);
 
 impl Stream {
     /// # Safety
     /// `raw` must be a live `lsquic_stream_t` (i.e. until its `on_close`).
     pub unsafe fn from_raw(raw: *mut lsquic_stream) -> Option<Self> {
-        (!raw.is_null()).then_some(Self(raw))
+        NonNull::new(raw).map(Self)
     }
     pub fn raw(&self) -> *mut lsquic_stream {
-        self.0
+        self.0.as_ptr()
     }
     /// # Safety
     /// `ctx` must outlive the stream (lsquic stores it verbatim).
@@ -528,46 +530,46 @@ impl Stream {
             fn lsquic_stream_set_ctx(s: *mut lsquic_stream, ctx: *mut c_void);
         }
         // SAFETY: `self.0` is live (caller contract).
-        unsafe { lsquic_stream_set_ctx(self.0, ctx) }
+        unsafe { lsquic_stream_set_ctx(self.0.as_ptr(), ctx) }
     }
     pub fn id(&self) -> u64 {
         // SAFETY: `self.0` is live (caller contract).
-        unsafe { lsquic_stream_id(self.0) }
+        unsafe { lsquic_stream_id(self.0.as_ptr()) }
     }
     pub fn read(&self, buf: &mut [u8]) -> isize {
         // SAFETY: as above; `buf` is a live slice.
-        unsafe { lsquic_stream_read(self.0, buf.as_mut_ptr().cast(), buf.len()) }
+        unsafe { lsquic_stream_read(self.0.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
     }
     pub fn write(&self, buf: &[u8]) -> isize {
         // SAFETY: as above.
-        unsafe { lsquic_stream_write(self.0, buf.as_ptr().cast(), buf.len()) }
+        unsafe { lsquic_stream_write(self.0.as_ptr(), buf.as_ptr().cast(), buf.len()) }
     }
     pub fn flush(&self) -> c_int {
         // SAFETY: as above.
-        unsafe { lsquic_stream_flush(self.0) }
+        unsafe { lsquic_stream_flush(self.0.as_ptr()) }
     }
     pub fn shutdown(&self, how: c_int) -> c_int {
         // SAFETY: as above.
-        unsafe { lsquic_stream_shutdown(self.0, how) }
+        unsafe { lsquic_stream_shutdown(self.0.as_ptr(), how) }
     }
     pub fn shutdown_internal(&self) {
         unsafe extern "C" {
             fn lsquic_stream_shutdown_internal(s: *mut lsquic_stream);
         }
         // SAFETY: as above.
-        unsafe { lsquic_stream_shutdown_internal(self.0) }
+        unsafe { lsquic_stream_shutdown_internal(self.0.as_ptr()) }
     }
     pub fn close(&self) -> c_int {
         // SAFETY: as above.
-        unsafe { lsquic_stream_close(self.0) }
+        unsafe { lsquic_stream_close(self.0.as_ptr()) }
     }
     pub fn want_read(&self, want: bool) -> c_int {
         // SAFETY: as above.
-        unsafe { lsquic_stream_wantread(self.0, want as c_int) }
+        unsafe { lsquic_stream_wantread(self.0.as_ptr(), want as c_int) }
     }
     pub fn want_write(&self, want: bool) -> c_int {
         // SAFETY: as above.
-        unsafe { lsquic_stream_wantwrite(self.0, want as c_int) }
+        unsafe { lsquic_stream_wantwrite(self.0.as_ptr(), want as c_int) }
     }
     /// Receive backpressure, see `lsquic_stream_hold_window()` in lsquic.h.
     pub fn hold_window(&self, hold: bool) {
@@ -575,7 +577,7 @@ impl Stream {
             fn lsquic_stream_hold_window(s: *mut lsquic_stream, hold: c_int);
         }
         // SAFETY: as above.
-        unsafe { lsquic_stream_hold_window(self.0, hold as c_int) }
+        unsafe { lsquic_stream_hold_window(self.0.as_ptr(), hold as c_int) }
     }
     /// The smaller of the stream's and the connection's flow-control credit. lsquic only calls `on_write` above 0.
     pub fn write_avail(&self) -> usize {
@@ -583,22 +585,22 @@ impl Stream {
             fn lsquic_stream_write_avail(s: *mut lsquic_stream) -> usize;
         }
         // SAFETY: as above.
-        unsafe { lsquic_stream_write_avail(self.0) }
+        unsafe { lsquic_stream_write_avail(self.0.as_ptr()) }
     }
     pub fn reset(&self, code: u64) {
         // SAFETY: as above.
-        unsafe { lsquic_stream_force_reset_ext(self.0, code) }
+        unsafe { lsquic_stream_force_reset_ext(self.0.as_ptr(), code) }
     }
     pub fn error_code(&self) -> u64 {
         unsafe extern "C" {
             fn lsquic_stream_get_error_code(s: *const lsquic_stream) -> u64;
         }
         // SAFETY: as above.
-        unsafe { lsquic_stream_get_error_code(self.0) }
+        unsafe { lsquic_stream_get_error_code(self.0.as_ptr()) }
     }
     pub fn take_header_set(&self) -> Option<HeaderSet> {
         // SAFETY: as above.
-        let raw = unsafe { lsquic_stream_get_hset(self.0) };
+        let raw = unsafe { lsquic_stream_get_hset(self.0.as_ptr()) };
         (!raw.is_null()).then_some(HeaderSet(raw))
     }
     /// `expected` is the caller's header-pair count; the shim rejects a buffer
@@ -607,7 +609,7 @@ impl Stream {
         // SAFETY: as above; lsquic copies the buffer before returning.
         unsafe {
             us_nq_stream_send_headers(
-                self.0,
+                self.0.as_ptr(),
                 nul_joined.as_ptr().cast(),
                 nul_joined.len(),
                 expected,
@@ -630,7 +632,7 @@ impl Stream {
             incremental: incremental as i8,
         };
         // SAFETY: `self.0` is live; `p` is a stack value.
-        unsafe { lsquic_stream_set_http_prio(self.0, core::ptr::from_ref(&p)) }
+        unsafe { lsquic_stream_set_http_prio(self.0.as_ptr(), core::ptr::from_ref(&p)) }
     }
     pub fn get_http_prio(&self) -> Option<(u8, bool)> {
         #[repr(C)]
@@ -646,7 +648,8 @@ impl Stream {
             incremental: 0,
         };
         // SAFETY: `self.0` is live; `p` is a stack out-param.
-        if unsafe { lsquic_stream_get_http_prio(self.0, core::ptr::from_mut(&mut p)) } == 0 {
+        if unsafe { lsquic_stream_get_http_prio(self.0.as_ptr(), core::ptr::from_mut(&mut p)) } == 0
+        {
             Some((p.urgency, p.incremental != 0))
         } else {
             None
@@ -658,7 +661,7 @@ impl Stream {
             fn lsquic_stream_has_unacked_data(s: *mut lsquic_stream) -> c_int;
         }
         // SAFETY: `self.0` is a live stream (constructor contract).
-        unsafe { lsquic_stream_has_unacked_data(self.0) != 0 }
+        unsafe { lsquic_stream_has_unacked_data(self.0.as_ptr()) != 0 }
     }
     /// Returns true if both sides are closed and every frame is acknowledged.
     pub fn is_finished(&self) -> bool {
@@ -666,35 +669,35 @@ impl Stream {
             fn lsquic_stream_is_finished(s: *const lsquic_stream) -> c_int;
         }
         // SAFETY: `self.0` is a live stream (constructor contract).
-        unsafe { lsquic_stream_is_finished(self.0) != 0 }
+        unsafe { lsquic_stream_is_finished(self.0.as_ptr()) != 0 }
     }
     pub fn reset_received(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_reset_received(s: *const lsquic_stream) -> c_int;
         }
         // SAFETY: `self.0` is a live stream (constructor contract).
-        unsafe { lsquic_stream_reset_received(self.0) != 0 }
+        unsafe { lsquic_stream_reset_received(self.0.as_ptr()) != 0 }
     }
     pub fn is_rejected(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_is_rejected(s: *const lsquic_stream) -> c_int;
         }
         // SAFETY: `self.0` is a live stream (constructor contract).
-        unsafe { lsquic_stream_is_rejected(self.0) != 0 }
+        unsafe { lsquic_stream_is_rejected(self.0.as_ptr()) != 0 }
     }
     pub fn received_early_data(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_received_early_data(s: *mut lsquic_stream) -> c_int;
         }
         // SAFETY: `self.0` is a live stream (constructor contract).
-        unsafe { lsquic_stream_received_early_data(self.0) != 0 }
+        unsafe { lsquic_stream_received_early_data(self.0.as_ptr()) != 0 }
     }
     pub fn stop_sending(&self, code: u64) {
         unsafe extern "C" {
             fn lsquic_stream_send_stop_sending(s: *mut lsquic_stream, code: u64);
         }
         // SAFETY: as above.
-        unsafe { lsquic_stream_send_stop_sending(self.0, code) }
+        unsafe { lsquic_stream_send_stop_sending(self.0.as_ptr(), code) }
     }
 }
 
@@ -749,7 +752,7 @@ impl Conn {
     pub fn info(&self) -> Option<ConnInfo> {
         let mut out = ConnInfo::default();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
-        if unsafe { lsquic_conn_get_info(self.0, core::ptr::from_mut(&mut out)) } == 0 {
+        if unsafe { lsquic_conn_get_info(self.0.as_ptr(), core::ptr::from_mut(&mut out)) } == 0 {
             Some(out)
         } else {
             None
@@ -808,7 +811,10 @@ impl Conn {
     pub fn peer_transport_params(&self) -> Option<NqTransportParams> {
         let mut out = NqTransportParams::default();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
-        if unsafe { lsquic_conn_transport_params(self.0, 1, core::ptr::from_mut(&mut out)) } == 1 {
+        if unsafe {
+            lsquic_conn_transport_params(self.0.as_ptr(), 1, core::ptr::from_mut(&mut out))
+        } == 1
+        {
             Some(out)
         } else {
             None

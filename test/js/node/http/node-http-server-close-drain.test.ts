@@ -1816,3 +1816,53 @@ describe("bun --hot reuses the native server for the next http.Server", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+const upgrade = "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n";
+test.concurrent.each([
+  ["https", "secureConnection", ""],
+  ["https", "upgrade", upgrade],
+  ["http", "upgrade", upgrade],
+  ["http", "connect", "CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\n"],
+  ["http", "clientError", "BAD\r\n\r\n"],
+])("an %s '%s' listener can close the server and then run a build", async (protocol, event, request) => {
+  using dir = tempDir("close-then-build", {
+    "entry.js": "",
+    "server.js": `
+      let server = require("node:${protocol}").createServer(${JSON.stringify(protocol === "https" ? tlsCert : {})});
+      server.on("${event}", (...args) => {
+        args.find(arg => arg instanceof require("node:stream").Duplex).destroy();
+        server.close();
+        server = null;
+        // Bun.build() returns when setup() is done.
+        async function setup() {
+          for (let i = 0; i < 6; i++) {
+            await new Promise(setImmediate);
+            Bun.gc(true);
+          }
+          const before = process.cpuUsage(), start = performance.now();
+          await Bun.sleep(300);
+          const { user, system } = process.cpuUsage(before);
+          console.log((user + system) / 1000 < (performance.now() - start) / 2 ? "idle" : "busy");
+        }
+        Bun.build({ entrypoints: ["entry.js"], plugins: [{ name: "waits", setup }] }).then(() => console.log("built"));
+        console.log("returns");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        require("node:${protocol === "https" ? "tls" : "net"}")
+          .connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false })
+          .on("error", () => {})
+          .resume()
+          .write(${JSON.stringify(request)});
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "idle\nreturns\nbuilt\n", stderr: "", exitCode: 0 });
+});

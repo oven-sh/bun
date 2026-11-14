@@ -51,7 +51,7 @@ pub struct ScriptExecutionContext {
     stopped: JsCell<bool>,
     /// The client sockets script of a graph's context opened (`Bun.connect`,
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
-    socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
+    socket_groups: core::cell::OnceCell<Box<crate::rare_data::SocketGroups>>,
     stop_again_queued: JsCell<bool>,
     /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
@@ -78,7 +78,7 @@ impl Default for ScriptExecutionContext {
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
             stopped: JsCell::new(false),
-            socket_groups: JsCell::new(None),
+            socket_groups: core::cell::OnceCell::new(),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
             timers: JsCell::new(Default::default()),
@@ -161,13 +161,8 @@ impl ScriptExecutionContext {
 
     /// Close every client socket of a graph's context (its script is told nothing).
     fn close_sockets(&self, reason: StopReason) {
-        if let Some(groups) = self
-            .socket_groups
-            .with_mut(|groups| groups.as_deref_mut().map(ptr::from_mut))
-        {
-            // SAFETY: the box is dropped only with `self`; closing dispatches
-            // close handlers, so no borrow of the cell is held across it.
-            unsafe { crate::rare_data::SocketGroups::close_all(groups, reason) };
+        if let Some(groups) = self.socket_groups.get() {
+            groups.close_all(reason);
         }
     }
 
@@ -181,9 +176,7 @@ impl ScriptExecutionContext {
         self.timers
             .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
         if self.is_stopped() {
-            crate::VirtualMachineRef::get()
-                .as_mut()
-                .stop_graph_context_again(self.id());
+            crate::VirtualMachineRef::get().stop_graph_context_again(self.id());
         }
     }
 
@@ -206,13 +199,28 @@ impl ScriptExecutionContext {
         self.tail.get().is_null()
             && self
                 .socket_groups
-                .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
+                .get()
+                .is_none_or(|groups| groups.is_empty())
+    }
+
+    /// As [`owns_nothing`](Self::owns_nothing), but for what only waits to be closed with the context.
+    pub(crate) fn owns_nothing_that_runs_script(&self) -> bool {
+        let mut handle = self.tail.get();
+        // SAFETY: a linked handle is live until it is unlinked.
+        while let Some(armed) = unsafe { handle.as_ref() } {
+            if !armed.only_waits_to_be_closed.get() {
+                return false;
+            }
+            handle = armed.prev.get();
+        }
+        self.socket_groups
+            .get()
+            .is_none_or(|groups| groups.is_empty())
     }
 
     /// The groups client sockets opened by a graph context's script join.
-    pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
-        self.socket_groups
-            .with_mut(|groups| ptr::from_mut(&mut **groups.get_or_insert_with(Default::default)))
+    pub(crate) fn socket_groups(&self) -> &crate::rare_data::SocketGroups {
+        self.socket_groups.get_or_init(Default::default)
     }
 
     /// # Safety
@@ -290,6 +298,8 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
+    /// The owner never runs script by itself, like the sink of an idle `process.stdout`.
+    only_waits_to_be_closed: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -302,7 +312,12 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
+            only_waits_to_be_closed: core::cell::Cell::new(false),
         }
+    }
+
+    pub fn set_only_waits_to_be_closed(&self) {
+        self.only_waits_to_be_closed.set(true);
     }
 
     #[inline]
@@ -351,9 +366,7 @@ impl AbortHandle {
             if context.is_stopped() {
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
-                crate::VirtualMachineRef::get()
-                    .as_mut()
-                    .stop_graph_context_again(context.id());
+                crate::VirtualMachineRef::get().stop_graph_context_again(context.id());
             }
         }
     }
@@ -524,31 +537,24 @@ unsafe extern "C" fn Bun__VirtualMachine__rootContext(
 
 /// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes
 /// `context` ([`ContextId::NONE`]: none). Returns the one to put back.
-///
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
+    vm: &crate::VirtualMachineRef,
     context: ContextId,
 ) -> ContextId {
-    // SAFETY: fn contract.
-    let vm = unsafe { &*vm };
     vm.entered_context
         .replace((context != ContextId::NONE).then_some(context))
         .unwrap_or(ContextId::NONE)
 }
 
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__ScriptExecutionContext__create(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__ScriptExecutionContext__create(
+    vm: &crate::VirtualMachineRef,
     dom_context: *mut core::ffi::c_void,
     identifier: u32,
 ) -> *mut ScriptExecutionContext {
-    // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context(dom_context, ContextId::from_raw(identifier)) }.as_ptr()
+    vm.create_graph_context(dom_context, ContextId::from_raw(identifier))
+        .as_ptr()
 }
 
 /// # Safety

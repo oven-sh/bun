@@ -1,9 +1,12 @@
-// Programs about the language's built-ins that are written from what the running Bun has: the generator asks it for the names, so a new
-// method of a new version of JavaScriptCore is covered the day it appears. Each program prints one line for each thing it tries:
-// `<what>: <what came of it>`.
+// Programs about the language's built-ins, generated from what the running Bun has: the generator enumerates the names,
+// so a new method in a new JavaScriptCore is covered as soon as it exists. Each program prints one line per attempt:
+// `<what>: <result>`.
 const world = globalThis as unknown as Record<string, any>;
 
-/** Every static function and every prototype method of the language's globals, held by a constant and called without its holder, with five lists of arguments. */
+/**
+ * Every static function and prototype method of the language's globals, stored in a constant and called without its
+ * receiver, with five argument lists.
+ */
 export function heldAndCalledWithoutTheirHolder(): string {
   const globals = ["Object", "Function", "Array", "String", "Number", "Boolean", "Symbol", "BigInt", "Math", "Date", "RegExp", "Promise", "Reflect", "JSON", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "ArrayBuffer", "DataView", "Uint8Array", "Int32Array", "Float64Array", "BigInt64Array", "Atomics", "Error", "TypeError", "AggregateError", "Proxy", "Iterator"];
   const skip = new Set(["Date.now", "Math.random", "Function.prototype.toString", "Date.prototype.toLocaleString", "Date.prototype.toLocaleDateString", "Date.prototype.toLocaleTimeString", "Error.captureStackTrace", "Atomics.wait", "Atomics.waitAsync", "Atomics.pause", "Symbol.for", "Date.prototype.getTimezoneOffset"]);
@@ -35,7 +38,10 @@ export function heldAndCalledWithoutTheirHolder(): string {
   return out.join("\n");
 }
 
-/** Every prototype method of the language's classes called by `.call` on receivers of thirteen kinds, with two lists of arguments. */
+/**
+ * Every prototype method of the language's classes called with `.call` on thirteen kinds of receivers, with two
+ * argument lists.
+ */
 export function calledOnReceiversOfManyKinds(): string {
   const globals = ["Object", "Function", "Array", "String", "Number", "Boolean", "Symbol", "BigInt", "Date", "RegExp", "Promise", "Map", "Set", "WeakMap", "WeakSet", "ArrayBuffer", "DataView", "Uint8Array", "Float64Array", "Error", "Iterator"];
   const skip = new Set(["Function.prototype.toString", "Date.prototype.toLocaleString", "Date.prototype.toLocaleDateString", "Date.prototype.toLocaleTimeString", "Date.prototype.getTimezoneOffset", "Date.prototype.toString", "Date.prototype.toTimeString", "Date.prototype.toDateString", "Object.prototype.toLocaleString", "Array.prototype.toLocaleString", "Number.prototype.toLocaleString", "BigInt.prototype.toLocaleString", "String.prototype.localeCompare", "String.prototype.repeat", "String.prototype.padStart", "String.prototype.padEnd", "Array.prototype.fill", "Array.prototype.copyWithin", "Error.prototype.toString"]);
@@ -61,7 +67,10 @@ export function calledOnReceiversOfManyKinds(): string {
   return out.join("\n");
 }
 
-/** Every global function and constructor of the language held by a constant, then called, constructed, constructed for another class, called by `.call` and extended, with six lists of arguments. */
+/**
+ * Every global function and constructor of the language stored in a constant, then called, constructed, constructed
+ * with another new.target, called with `.call` and extended, with six argument lists.
+ */
 export function calledConstructedAndExtended(): string {
   const names = Object.getOwnPropertyNames(globalThis).filter(k => /^[A-Za-z]\w*$/.test(k) && typeof world[k] === "function").sort();
   const language = new Set(["Object", "Function", "Array", "String", "Number", "Boolean", "Symbol", "BigInt", "Date", "RegExp", "Promise", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "ArrayBuffer", "SharedArrayBuffer", "DataView", "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float16Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array", "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError", "AggregateError", "SuppressedError", "DisposableStack", "AsyncDisposableStack", "Proxy", "Iterator", "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI", "escape", "unescape"]);
@@ -87,7 +96,10 @@ export function calledConstructedAndExtended(): string {
   return out.join("\n");
 }
 
-/** Every accessor of the language's prototypes read by name off receivers of 38 kinds, among them objects that only inherit from the prototype. */
+/**
+ * Every accessor of the language's prototypes read by name on 38 kinds of receivers, including objects that only
+ * inherit from the prototype.
+ */
 export function accessorsReadOffReceiversOfManyKinds(): string {
   const globals = ["Object", "Function", "Array", "String", "Symbol", "RegExp", "Map", "Set", "ArrayBuffer", "SharedArrayBuffer", "DataView", "Uint8Array", "Float64Array", "Error", "Iterator", "Promise", "Date", "Number", "WeakRef"];
   const keys = new Set(["length", "name", "message", "stack", "constructor", "prototype", "lastIndex", "cause", "errors"]);

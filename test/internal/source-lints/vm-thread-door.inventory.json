@@ -24,20 +24,11 @@
   "src/jsc/NodeCompileCache.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "AlignedBlob",
-      "CacheState"
+      "AlignedBlob"
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
-  },
-  "src/jsc/TopExceptionScope.rs": {
-    "unsafe impl Send": [
-      "SourceLocation"
-    ],
-    "unsafe impl Sync": [
-      "SourceLocation"
-    ]
   },
   "src/jsc/VirtualMachine.rs": {
     "unsafe impl Send": [
@@ -61,8 +52,7 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "OwnedByThread",
-      "ThreadStart"
+      "OwnedByThread"
     ]
   },
   "src/jsc/webcore_types.rs": {
@@ -120,8 +110,17 @@
     "HTTPThread::schedule": 1
   },
   "src/runtime/cli/run_compiled.rs": {
+    "thread spawn": 1,
     "unsafe impl Send": [
       "SharedWatcher"
+    ]
+  },
+  "src/runtime/cli/test/ShardsByReach.rs": {
+    "thread spawn": 1
+  },
+  "src/runtime/crypto/PBKDF2.rs": {
+    "unsafe impl Send": [
+      "Digest"
     ]
   },
   "src/runtime/dns_jsc/dns.rs": {
@@ -140,16 +139,12 @@
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
       "napi_async_work"
-    ],
-    "unsafe impl Sync": [
-      "napi_node_version"
     ]
   },
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "CoreFoundation",
-      "FSEventsLoop"
+      "CoreFoundation"
     ],
     "unsafe impl Sync": [
       "CoreFoundation",
@@ -191,9 +186,6 @@
   },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
-    "unsafe impl Send": [
-      "PathWatcherManager"
-    ],
     "unsafe impl Sync": [
       "PathWatcherManager"
     ]
@@ -202,11 +194,7 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/shell/builtin/rm.rs": {
-    "WorkPool::schedule*": 2,
-    "unsafe impl Send": [
-      "DirTask",
-      "ShellRmTask"
-    ]
+    "WorkPool::schedule*": 2
   },
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1
@@ -216,9 +204,7 @@
   },
   "src/runtime/webcore/CompressionStreamCoder.rs": {
     "unsafe impl Send": [
-      "AsyncInput",
-      "CompressionAsyncCtx",
-      "CompressionStreamCoder"
+      "CompressionAsyncCtx"
     ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {
@@ -239,9 +225,6 @@
     "WorkPool::schedule*": 2,
     "intrusive_work_task!": [
       "WriteFile"
-    ],
-    "unsafe impl Send": [
-      "WriteFile"
     ]
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
@@ -252,10 +235,5 @@
   },
   "src/runtime/webcore/s3/simple_request.rs": {
     "HTTPThread::schedule": 1
-  },
-  "src/sql_jsc/jsc.rs": {
-    "unsafe impl Send": [
-      "SSLConfig"
-    ]
   }
 }

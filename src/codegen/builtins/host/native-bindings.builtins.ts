@@ -1,5 +1,7 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
+import { fsOperandUses, heapsOfViews } from "./fs-operands.ts";
+import { answering, constructing } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
@@ -14,6 +16,13 @@ const bagOfFunctions = (path: b.BuiltinPath, members: Readonly<Record<string, b.
 
 const answers = (binding: b.BuiltinPath, answer: b.TableType) =>
   b.static(binding, { getter: answer, capability: "heap", implementation: b.generic });
+
+const isNoFunction = {
+  returns: b.never,
+  capability: "heap",
+  throws: true,
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 const ttyFunctions = "%BunTTYFunctions%";
 const httpFunctions = "%NodeHTTPInternalBinding%";
@@ -30,7 +39,60 @@ const convertsDomain = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// The options of a node:fs operation decide the type of its result (args::*::from_js in node_fs.rs).
+const parsesFsOptions = (args: Readonly<Record<string, b.TableType>>, returns: b.TableType) =>
+  ({
+    ...operandCodeOnly,
+    args,
+    returns,
+    uses: Object.fromEntries(Object.keys(args).map(name => [name, fsOperandUses])),
+    reads: heapsOfViews,
+    writes: heapsOfViews,
+    implementation: b.hostCall,
+  }) satisfies b.FunctionField;
+const withoutFsOptions = (returns: b.TableType) => ({
+  ...parsesFsOptions({ path: b.any, options: b.notPassed }, returns),
+  isSpecialCase: true,
+});
+const fsSyncFunction = (
+  name: string,
+  returns: b.TableType,
+  ...specialCases: readonly (b.FunctionField & { isSpecialCase: boolean })[]
+) =>
+  b.static(`native:Bindgen:node_fs_binding.bind.ts:${name}`, [
+    ...specialCases,
+    parsesFsOptions({ operands: b.any.rest }, returns),
+  ]);
+const statsIfFound = b.union(b.instance("Stats"), b.instance("BigIntStats"), b.undefined).fresh;
+const stringEncodings = b.enumeration([
+  "ascii",
+  "base64",
+  "base64url",
+  "binary",
+  "hex",
+  "latin1",
+  "ucs-2",
+  "ucs2",
+  "utf-16le",
+  "utf-8",
+  "utf16-le",
+  "utf16le",
+  "utf8",
+]);
+
 export default b.declarations(
+  fsSyncFunction("lstatSync", statsIfFound, withoutFsOptions(b.instance("Stats").fresh)),
+  fsSyncFunction(
+    "readdirSync",
+    b.instance("Array").holding({ element: b.union(b.string, b.instance("Buffer"), b.instance("Dirent")).fresh }).fresh,
+    withoutFsOptions(b.instance("Array").holding({ element: b.string }).fresh),
+  ),
+  fsSyncFunction("readFileSync", b.union(b.string, b.instance("Buffer")).fresh, {
+    ...parsesFsOptions({ path: b.any, encoding: stringEncodings, others: b.any.rest }, b.string),
+    isSpecialCase: true,
+  }),
+  fsSyncFunction("statSync", statsIfFound, withoutFsOptions(b.instance("Stats").fresh)),
+
   bagOfFunctions(ttyFunctions, {
     isatty: {
       ...operandCodeOnly,
@@ -81,18 +143,31 @@ export default b.declarations(
     ["domainToAscii", "domainToUnicode", "idnaToASCII"].map(name => b.builtin(`${urlFunctions}.${name}`)),
   ),
 
-  // The constructors of two classes of which the table says nothing else. node:util exports them.
+  // The constructors of two classes, which node:util exports. JSMIMEParams.cpp, JSMIMEType.cpp: each makes an instance of its class, below what `prototype` of new.target holds, and throws where it is called without `new`.
+  // Of the members of the instances the table says nothing.
   bagOfFunctions(mimeClasses, {}),
-  ["MIMEParams", "MIMEType"].flatMap(name => b.class(`${mimeClasses}.${name}`, { hasPrototype: false })),
-  answers("native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding", b.builtin(mimeClasses)),
+  ["MIMEParams", "MIMEType"].flatMap(name =>
+    b.class(`${mimeClasses}.${name}`, {
+      hasPrototype: false,
+      call: isNoFunction,
+      construct: constructing(b.instance(`MIMEBinding.${name}`), b.hostCall),
+    }),
+  ),
+  // createJSMIMEBinding(): an object with the two constructors: a call of it throws.
+  b.static("native:Cpp:JSMIMEParams.cpp:createJSMIMEBinding", {
+    getter: b.builtin(mimeClasses),
+    capability: "heap",
+    implementation: b.generic,
+    call: isNoFunction,
+  }),
   b.seenCodeOnly({ holders: [mimeClasses] }),
 
   // src/jsc/bindings/NodeVM.cpp. unseen-code.builtins.ts and runtime-dependencies.builtins.ts say which of them evaluate a text and start a realm.
   bagOfFunctions(vmBinding, {
     createContext: undeclaredFunction,
-    isContext: undeclaredFunction,
+    isContext: answering(b.bool),
     compileFunction: undeclaredFunction,
-    isModuleNamespaceObject: undeclaredFunction,
+    isModuleNamespaceObject: answering(b.bool),
     kLinked: b.property(b.f64),
     kEvaluated: b.property(b.f64),
     kErrored: b.property(b.f64),
@@ -104,4 +179,12 @@ export default b.declarations(
 
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),
+  // binding() in src/runtime/node/node_fs_binding.rs makes an object for each module that asks. It is no function, and each of its methods has a row of its own: node_fs_binding.bind.ts.
+  b.static("native:Bindgen:node_fs_binding.bind.ts:binding", {
+    runsUnseenCode: false,
+    getter: b.instance("NodeJSFS").fresh,
+    capability: "heap",
+    implementation: b.generic,
+    call: { returns: b.never, capability: "heap", throws: true, implementation: b.generic },
+  }),
 );

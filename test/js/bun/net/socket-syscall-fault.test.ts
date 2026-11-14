@@ -177,6 +177,7 @@ test.concurrent(
         unarmed: [0, 0],
         parkedTooLong: [5, 15],
         parkedAgain: [],
+        peerEnded: [],
         errors: 0,
       },
       signalCode: null,
@@ -200,6 +201,7 @@ test.concurrent(
         unarmed: [],
         parkedTooLong: [],
         parkedAgain: [expect.any(Number), expect.any(Number)],
+        peerEnded: [],
         errors: 0,
       },
       signalCode: null,
@@ -211,6 +213,28 @@ test.concurrent(
     expect(early).toBeGreaterThanOrEqual(5);
     expect(early).toBeLessThanOrEqual(10);
     expect(early + late).toBe(20);
+  },
+  60_000,
+);
+
+// A peer that sends a ClientHello and leaves keeps no state, so it must not hold a descriptor for the 30 ticks.
+test.concurrent(
+  "TLS low-prio queue: a parked socket's timeout doesn't wait once its peer has ended",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-timeout-fixture.ts", "ended")).toEqual({
+      summary: {
+        opened: 20,
+        shortest: [],
+        unarmed: [],
+        parkedTooLong: [],
+        parkedAgain: [],
+        peerEnded: [0, 20],
+        errors: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
   },
   60_000,
 );
@@ -326,6 +350,38 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
       // the failed attempt didn't corrupt loop state.
       const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
       server.stop(true);
+      console.log("OK");
+    `),
+  );
+
+  test.concurrent.skipIf(isWindows).each(['"ignore"', '"pipe"', 'new Blob(["a"])', "new ReadableStream()"])(
+    "Bun.spawn with ipc and stdin %s",
+    stdin =>
+      run(`
+      const { fstatSync, readdirSync } = require("fs");
+      const isSocket = fd => { try { return fstatSync(+fd).isSocket(); } catch { return false; } };
+      const sockets = () => readdirSync("/dev/fd").filter(isSocket).length;
+      const before = sockets();
+      const exited = Promise.withResolvers();
+      ${arm};
+      let err;
+      try {
+        Bun.spawn({ cmd: ["sleep", "100"], stdin: ${stdin}, stdout: "ignore", ipc() {}, onExit: exited.resolve }).kill();
+      } catch (e) { err = e; }
+      if (err?.code !== "ENOMEM") throw new Error("expected Bun.spawn to throw ENOMEM, got: " + err);
+      const { signalCode } = await exited.promise;
+      if (signalCode !== "SIGKILL") throw new Error("expected the child to be killed, got: " + signalCode);
+      while (sockets() > before) await new Promise(setImmediate);
+      console.log("OK");
+    `),
+  );
+
+  test.concurrent.skipIf(isWindows)("child_process.fork", () =>
+    run(`
+      ${arm};
+      let err;
+      try { require("child_process").fork("-e", ["setInterval(() => {}, 1000)"]).kill(); } catch (e) { err = e; }
+      if (err?.code !== "ENOMEM" || err.syscall !== "spawn") throw new Error("expected fork to throw ENOMEM, got: " + err);
       console.log("OK");
     `),
   );
@@ -474,9 +530,10 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
-// What the peer sent before is still read, so the peer's FIN closes the socket.
+// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
+// The close does not read for a paused socket: a peer that keeps sending would hold the loop.
 test.skipIf(skip).each(["reading", "paused"] as const)(
-  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more, reads on and closes",
+  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more and closes",
   async state => {
     let received = "";
     let read = "";
@@ -492,10 +549,7 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
           peerOpened.resolve();
         },
         data: (_, chunk) => void (received += chunk),
-        end(peer) {
-          peer.end();
-          peerEnded.resolve();
-        },
+        end: () => peerEnded.resolve(),
       },
     });
     try {
@@ -512,17 +566,36 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
       await peerOpened.promise;
       fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
       const writes = [socket.write("hello"), socket.write("again")];
-      await peerEnded.promise;
-      socket.resume();
       const code = await closed.promise;
+      await peerEnded.promise;
       expect({ writes, code, received, read }).toEqual({
         writes: [-1, -1],
         code: "ECONNRESET",
         received: "",
-        read: "unread",
+        read: state === "paused" ? "" : expect.any(String),
       });
     } finally {
       listener.stop(true);
+    }
+  },
+);
+
+test.skipIf(skip).each(["EPROTOTYPE", "EPERM"])(
+  "send → sustained %s: close() gets it for the tail of end(data)",
+  async errno => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const closed = Promise.withResolvers<NodeJS.ErrnoException | undefined>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, close: (_, error) => closed.resolve(error) },
+    });
+    try {
+      fault.set({ syscall: "send", action: "errno", errno: errno as any, repeat: -1, fd: (socket as any).fd });
+      expect(socket.end("hello")).toBe(5);
+      expect(await closed.promise).toMatchObject({ code: errno, syscall: "write" });
+    } finally {
+      fault.clear();
     }
   },
 );
@@ -652,7 +725,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
   /** Connects an http2 client and arms the send-errno rule on its socket fd
    * as soon as the session is connected (before the SETTINGS ACK window).
    * Every session and stream lifecycle event is recorded in `events`. */
-  async function connectAndJam(repeat: number) {
+  async function connectAndJam(repeat: number, errno = "EPROTOTYPE") {
     const frames: string[] = [];
     const events: string[] = [];
     let onFrame: (f: string) => void = f => frames.push(f);
@@ -668,7 +741,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       // Recorded rather than asserted here: a throw inside the listener would
       // not reach the test body, while an unexpected event fails its toEqual.
       if (fd < 0) events.push("connect:no-fd");
-      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, after: 0, repeat, fd });
+      fault.set({ syscall: "send", action: "errno", errno: errno as any, after: 0, repeat, fd });
     });
     const req = client.request({ ":path": "/" });
     req.on("error", e => events.push(`stream-error:${(e as any).code ?? e.message}`));
@@ -786,11 +859,11 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 
-  test.concurrent(
-    "sustained errno (forever) surfaces as session + stream close, not a silent half-alive jam",
-    () =>
+  test.concurrent.each(["EPROTOTYPE", "EPERM"])(
+    "sustained %s (forever) surfaces as session + stream close, not a silent half-alive jam",
+    errno =>
       serialized(async () => {
-        using h = await connectAndJam(-1);
+        using h = await connectAndJam(-1, errno);
         // No timers: the bounded retry exhausts within a handful of event-loop
         // turns of writable retries, then the transport is torn down. A
         // regression to the silent jam means these events never fire and the

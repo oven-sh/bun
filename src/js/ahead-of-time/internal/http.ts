@@ -1,11 +1,9 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b303ec0a03f9807d44a295ae0168bafbf6ca315553e457928a4d1ba26cceac81.
+// Written against that file with the SHA-256 416d6684b00bd0c8ee13102d907851f361b252d4ddd32cb3ce064940ccce4df7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
 const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
-
-const queueMicrotask = globalThis.queueMicrotask;
 
 const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
@@ -14,6 +12,7 @@ const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kMadeOverHandle = Symbol("handle");
 // http.Server.prototype method for the `ws` package: takes a connection out of HTTP.
 const kLeaveHttp = Symbol("kLeaveHttp");
 // On a server socket: the stream that 'upgrade' got in its place, while the body of the request is incomplete.
@@ -21,9 +20,10 @@ const kUpgradeStream = Symbol("kUpgradeStream");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const tlsSymbol = Symbol("tls");
-const serverSymbol = Symbol.for("::bunternal::");
-// One symbol under two names.
-const kInternalSocketData: typeof serverSymbol = serverSymbol;
+const kAbortController = Symbol.for("kAbortController");
+const kInternalSocketData = Symbol.for("::bunternal::");
+// One symbol under two names. Asked for twice, as in the other text: a test may have replaced Symbol.for.
+const serverSymbol: typeof kInternalSocketData = Symbol.for("::bunternal::") as typeof kInternalSocketData;
 const kPendingCallbacks = Symbol("pendingCallbacks");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
 const kHeaderSource = Symbol("kHeaderSource");
@@ -46,10 +46,14 @@ const requestRoad: {
   continueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
-  beginDump?: (request: $Node.IncomingMessage) => void;
+  beginDump?: (request: $Node.IncomingMessage) => boolean;
+  readsUnseen?: (request: $Node.IncomingMessage) => boolean;
+  chainIsPlain?: () => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
+  resumeUnlessFlowing?: (socket: $Node.HttpSocket, asksWhetherReadable: boolean) => void;
 } = {};
 const responseRoad: {
+  IncomingMessage?: $Node.IncomingMessageConstructor;
   makeExchange?: (
     response: $Node.ServerResponse,
     connection: $Node.HttpServerSocket | null,
@@ -57,16 +61,22 @@ const responseRoad: {
     requestState: $Node.ReadableState | null,
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
+  storeOnMessageAsFirstHeaderDoes?: (
+    message: $Node.OutgoingMessage,
+    exchange: $Node.HttpExchange,
+    name: string,
+  ) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  spillStateReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (
     exchange: $Node.HttpExchange,
     message: $Node.OutgoingMessage,
     key: string,
     bit: number,
   ) => boolean;
-  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined, message: $Node.OutgoingMessage) => unknown[] | undefined;
+  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[] | null;
+  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined) => unknown[] | null;
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,
@@ -75,6 +85,7 @@ const responseRoad: {
     value: $Node.HttpHeaderValue,
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
+  noChunks?: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[];
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {
@@ -97,6 +108,8 @@ export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
   ended = 1 << 2,
+  /** The response waits behind an earlier one on its connection, and the handle holds what it's given. */
+  holds = 1 << 6,
 
   closed_or_completed = socket_closed | request_has_completed,
 }
@@ -169,12 +182,6 @@ function emitEOFIncomingMessageOuter(self: $Node.IncomingMessage) {
 function clearServerParserIncoming(parser: $Node.HTTPParser | $Node.HttpServerParserShim, req: $Node.IncomingMessage) {
   if (parser.incoming === req) parser.incoming = null;
 }
-// One microtask a request, in their order, and no function object for each.
-type RequestQueue = import("internal/fifo").default<$Node.IncomingMessage>;
-let requestsAtTheirEnd: RequestQueue | undefined;
-function emitEOFOfNextRequest() {
-  emitEOFIncomingMessageOuter(requestsAtTheirEnd!.shift()!);
-}
 function emitEOFIncomingMessage(self: $Node.IncomingMessage) {
   self[eofInProgress] = true;
   queueTick1(emitEOFIncomingMessageOuter, self);
@@ -198,18 +205,26 @@ function onDataIncomingMessage(
   // inactivity timeout (socket.setTimeout / server.timeout) further out, like
   // Node.js does for reads on the socket.
   const socket = this.socket;
-  socket?._unrefTimer?.();
+  if (socket?.timeout) socket._unrefTimer?.();
+  return takeBodyDataInFull(this, socket, chunk, isLast);
+}
 
-  if (chunk && !this._dumped) {
-    if (!this.push(chunk)) {
+const takeBodyDataInFull = function onDataIncomingMessage(
+  req: $Node.IncomingMessage,
+  socket: $Node.IncomingMessage["socket"],
+  chunk: Buffer | undefined,
+  isLast: boolean,
+) {
+  if (chunk && !req._dumped) {
+    if (!req.push(chunk)) {
       ("unlikely");
       // Like Node's parserOnBody: pause the connection once the buffer fills.
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
       const finSent = socket?.[kHandle]?.finSent === true;
-      if (this.upgrade) this[kHandle]?.pause();
+      if (req.upgrade) req[kHandle]?.pause();
       // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
-      else if (finSent && !this._consuming) socket![kHandle]!.stopParsing();
+      else if (finSent && !req._consuming) socket![kHandle]!.stopParsing();
       else if (socket && (finSent || !socket.writableEnded)) {
         socket.pause();
       }
@@ -218,17 +233,14 @@ function onDataIncomingMessage(
 
   if (isLast) {
     try {
-      if (chunk) {
-        // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
-        this[eofInProgress] = true;
-        (requestsAtTheirEnd ??= new (require("internal/fifo"))<$Node.IncomingMessage>()).push(this);
-        queueMicrotask(emitEOFOfNextRequest);
-      } else {
-        emitEOFIncomingMessage(this);
-      }
+      emitEOFIncomingMessage(req);
+    } catch (err) {
+      // No read is left to end this request.
+      req.destroy(err as Error);
+      throw err;
     } finally {
       // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
-      if (!this.upgrade && socket && !socket._paused && socket.readable) {
+      if (!req.upgrade && socket && !socket._paused && socket.readable) {
         if (socket.$resumeUnlessFlowing !== undefined) socket.$resumeUnlessFlowing(false);
         else {
           ("unlikely");
@@ -237,7 +249,7 @@ function onDataIncomingMessage(
       }
     }
   }
-}
+};
 
 const METHODS = [
   "ACL",
@@ -412,6 +424,14 @@ declare global {
       $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
     }
 
+    /** A stream that a program passes to a response in place of a connection. It may not be a `Duplex`. */
+    interface SubstituteSocket extends Writable, Omit<HttpSocket, keyof Writable> {
+      _readableState: ReadableState;
+      allowHalfOpen: boolean;
+      get readable(): boolean;
+      set readable(value: boolean);
+    }
+
     /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
     interface HttpSocketServer extends EventEmitter {
       timeout?: number;
@@ -444,7 +464,7 @@ declare global {
       [kNeedDrain]: boolean;
       [kErrored]: Error | null | undefined;
       [kHighWaterMark]: number;
-      [kSocket]: HttpSocket | null;
+      [kSocket]: HttpSocket | SubstituteSocket | null;
       [kRejectNonStandardBodyWrites]: boolean | undefined;
       [kUniqueHeaders]?: Set<string> | null;
       /** Of a `ServerResponse`. */
@@ -460,8 +480,8 @@ declare global {
       [kHandle]: NodeHTTPResponse | null | undefined;
       [kPendingCallbacks]: HttpWriteCallback[];
       /** `null` while the response waits for its turn on the connection. */
-      [fakeSocketSymbol]?: HttpSocket | null;
-      [kCloseCallback]?: () => void;
+      [fakeSocketSymbol]: HttpSocket | SubstituteSocket | null | undefined;
+      [kCloseCallback]: (() => void) | undefined;
     }
 
     interface HttpServer {
@@ -669,6 +689,7 @@ export {
   getMaxHTTPHeaderSize,
   httpServerParts,
   isTlsSymbol,
+  kAbortController,
   kBytesWritten,
   kChunkedBuffer,
   kChunkedLength,
@@ -684,6 +705,7 @@ export {
   kInternalSocketData,
   kLeaveHttp,
   kLenientValidation,
+  kMadeOverHandle,
   kNeedDrain,
   kOutHeaders,
   kPendingCallbacks,
@@ -707,6 +729,8 @@ export {
   responseRoad,
   serverSymbol,
   setMaxHTTPHeaderSize,
+  takeBodyDataInFull,
+  takeRequestTrailers,
   tlsSymbol,
   utcDate,
 };

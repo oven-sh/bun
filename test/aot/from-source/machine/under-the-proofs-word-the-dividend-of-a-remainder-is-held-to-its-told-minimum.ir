@@ -1,0 +1,20 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So the least int32 passes `-2147483648 < at`, after which the walk has proven that `at` is greater.
+# The remainder of two integers tests for a divisor of -1 only where the dividend may be the least value of its type, because the machine traps at that one division.
+# With a false range it trapped even with the switch that checks proofs.
+# With CheckProofsAtRunTime (which --aot-harden=proof-checks enables), the remainder checks the dividend against its proven minimum, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 0
+# RIGHT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed at {{*}} (left)
+# STOPPED: crashed with SIGABRT
+# RUN(ALONE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# ALONE: bun: internal AOT error: type check failed at {{*}} (left)
+# ALONE: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function left(from: number, other: number): number { let sum = 0; for (let i = 0; i < 2; i++) { const at = (from | 0) + i; if (-2147483648 < at) sum += at % (other | 0); } return sum; }
+# print(left(id(-2147483648), id(-1)));
+# -- end of source

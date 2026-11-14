@@ -227,23 +227,7 @@ impl PackageManager {
 
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
-        Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
-        // `self` (the struct that owns `event_loop`), so use the raw-pointer
-        // `tick_raw` variant which only holds `&mut event_loop` between
-        // `is_done` calls.
-        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        let event_loop = core::ptr::addr_of_mut!(self.event_loop);
-        // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
-        // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
-        unsafe {
-            bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
-                // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
-                // for the duration of `sleep`.
-                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
-                this.has_no_more_pending_lifecycle_scripts()
-            });
-        }
+        self.sleep_until(Self::has_no_more_pending_lifecycle_scripts);
     }
 
     pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
@@ -358,13 +342,23 @@ impl PackageManager {
         let mut parent: Option<&[u8]> = Some(cwd);
         // An untrusted package can link a `node` or `sh` into a shared `.bin`, so that directory is
         // searched last.
-        let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
+        let mut env_path = EnvPath::init_capacity(original_path.len())?;
+        if list.is_dependency {
+            append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
+        }
+        crate::bin::link_conflicting_bins(
+            &self.lockfile,
+            &list.bin_conflicts,
+            cwd,
+            env_path.slice(),
+        )?;
+        let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
         while let Some(dir) = parent {
             if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
                 if let Some(inherited) = inherited_path.take() {
-                    append_path_without_ancestor_bins(&mut path, inherited, cwd)?;
+                    path.append(inherited)?;
                 }
             }
 
@@ -377,7 +371,7 @@ impl PackageManager {
         }
 
         match inherited_path {
-            Some(inherited) => append_path_without_ancestor_bins(&mut path, inherited, cwd)?,
+            Some(inherited) => path.append(inherited)?,
             None if list.is_dependency => {}
             None => path.append(original_path.as_slice())?,
         }

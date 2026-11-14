@@ -219,40 +219,23 @@ impl MacroContext {
         }
         let _flush_guard = Output::flush_guard();
 
-        // Borrowck: snapshot the small POD fields we need (`disabled`,
-        // `vm`) so the macro_entry borrow can be released.
-        let macro_disabled = macro_entry.value_ptr.disabled;
-        let macro_vm = macro_entry.value_ptr.vm;
-        let macro_: *const Macro = macro_entry.value_ptr;
-        if macro_disabled {
+        let macro_: &Macro = macro_entry.value_ptr;
+        let Some(vm) = macro_.vm else {
             return Ok(caller);
-        }
-        // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
-        let vm = macro_vm
-            .expect("Macro.vm accessed on disabled sentinel")
-            .as_ptr();
-        // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
+        };
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
-        // SAFETY: `event_loop()` returns a self-pointer into `*vm`.
-        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        vm.event_loop().ensure_waker();
 
         let javascript_object = self.javascript_object;
-        // reshaped for borrowck — `self.bump` is shared-borrowed for
-        // the closure while `self.macros` was already released above; capture
-        // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump: &bun_alloc::Arena = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let ret = VirtualMachine::get().run_with_api_lock(|| {
-            // SAFETY: `macro_` points into `self.macros` which is not mutated
-            // for the duration of this closure; `bump` points into `*self`,
-            // which outlives the closure and is not otherwise borrowed.
             Runner::run(
-                unsafe { &*macro_ },
+                macro_,
                 log,
-                unsafe { &*bump },
+                bump,
                 function_name,
                 caller,
                 source,
@@ -292,6 +275,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),
+        known_answers: None,
     }
 }
 
@@ -376,12 +360,7 @@ fn __bun_macro_context_get_remap(
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does.
     let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner.get_remap(path).map(|e| {
-        // SAFETY: `e` borrows an entry in the remap table owned by
-        // `Transpiler.options`, which outlives every parse that calls this fn,
-        // so extending the borrow to `'static` upholds the function-level contract.
-        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
-    })
+    inner.get_remap(path)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -392,13 +371,9 @@ fn __bun_macro_context_get_remap(
 // Macro
 // ══════════════════════════════════════════════════════════════════════════
 
-// Both are carried as `Option<NonNull<_>>`;
-// they are `Some` for every live macro and `None` only when `disabled == true`, which
-// is checked before any access (see `MacroContext::call`).
 pub struct Macro {
-    pub(crate) vm: Option<NonNull<VirtualMachine>>,
-
-    pub(crate) disabled: bool,
+    /// `None` if the macro failed to load.
+    pub(crate) vm: Option<&'static VirtualMachine>,
 }
 
 impl Default for Macro {
@@ -411,21 +386,13 @@ impl Macro {
     /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
     /// calls with the same hash short-circuit instead of retrying the load.
     fn disabled_sentinel() -> Self {
-        Macro {
-            vm: None,
-            disabled: true,
-        }
+        Macro { vm: None }
     }
 
-    /// Unwrap the VM handle. Only valid when `!self.disabled` — `MacroContext::call`
-    /// returns early on `disabled` before any `vm()` access.
+    /// `MacroContext::call` returns early if there is none.
     #[inline]
-    pub(crate) fn vm(&self) -> *mut VirtualMachine {
-        debug_assert!(!self.disabled);
-        // SAFETY-adjacent: `Some` for every non-disabled Macro; see struct comment.
-        self.vm
-            .expect("Macro.vm accessed on disabled sentinel")
-            .as_ptr()
+    pub(crate) fn vm(&self) -> &'static VirtualMachine {
+        self.vm.expect("Macro.vm accessed on disabled sentinel")
     }
 
     pub(crate) fn init(
@@ -437,8 +404,8 @@ impl Macro {
         specifier: &[u8],
         hash: i32,
     ) -> crate::Result<Macro> {
-        let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
-            (VirtualMachine::get_mut_ptr(), false)
+        let (vm, is_new_vm) = if VirtualMachine::is_loaded() {
+            (VirtualMachine::get(), false)
         } else {
             let mut transform_options = transform_options.clone();
             // Build-only flags about the output bundle. The macro module's own
@@ -458,14 +425,14 @@ impl Macro {
                 None => None,
             };
 
-            let _vm = VirtualMachine::init(VirtualMachineInitOptions {
+            let vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
                 owned_env_loader,
                 is_main_thread: false,
                 ..Default::default()
             })?;
-            (_vm, true)
+            (vm, true)
         };
 
         // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
@@ -475,38 +442,29 @@ impl Macro {
         // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
         // own `MacroModeGuard` re-enables for the actual macro call.
         let _init_guard = MacroModeGuard::new(vm);
-        // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        vm.event_loop().ensure_waker();
         if is_new_vm {
-            // SAFETY: `vm` is the freshly-allocated per-thread VM.
-            unsafe { (*vm).transpiler.configure_defines()? };
+            vm.transpiler.with_mut(|t| t.configure_defines())?;
         }
 
-        // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        let loaded_result = unsafe {
-            (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)
-        }?;
+        let loaded_result =
+            vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
 
         // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
-        // returned by `loadAndEvaluateModule`; `jsc_vm` is the live JSC VM.
-        let unwrapped = unsafe {
-            (*loaded_result).unwrap(&*(*vm).jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled)
-        };
+        // returned by `loadAndEvaluateModule`.
+        let unwrapped =
+            unsafe { (*loaded_result).unwrap(vm.jsc_vm(), jsc::PromiseUnwrapMode::LeaveUnhandled) };
         if let jsc::PromiseResult::Rejected(result) = unwrapped {
-            // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
-            // is a live promise cell.
-            unsafe {
-                (*vm).run_with_api_lock(|| {
-                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
-                });
-            }
+            vm.run_with_api_lock(|| {
+                // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
+                // is a live promise cell.
+                let (global, promise) = unsafe { (&*vm.global.get(), (*loaded_result).to_js()) };
+                vm.unhandled_rejection(global, result, promise);
+            });
             return Err(crate::Error::MacroLoadError);
         }
 
-        Ok(Macro {
-            vm: NonNull::new(vm),
-            disabled: false,
-        })
+        Ok(Macro { vm: Some(vm) })
     }
 }
 
@@ -627,7 +585,7 @@ impl<'a> Run<'a> {
     ) -> Result<Expr, MacroError> {
         let _ = macro_.vm();
         let vm = VirtualMachine::get();
-        let Some(&macro_callback) = vm.macros.get(&id) else {
+        let Some(&macro_callback) = vm.macros.get().get(&id) else {
             return Ok(caller);
         };
 
@@ -707,9 +665,10 @@ impl<'a> Run<'a> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
-                // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                let _ = self
+                    .macro_
+                    .vm()
+                    .uncaught_exception(self.global, value, false);
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -739,10 +698,10 @@ impl<'a> Run<'a> {
                     } else if value.as_::<ResolveMessage>().is_some()
                         || value.as_::<BuildMessage>().is_some()
                     {
-                        // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                        let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
-                        };
+                        let _ = self
+                            .macro_
+                            .vm()
+                            .uncaught_exception(self.global, value, false);
                         return Err(MacroError::MacroFailed);
                     }
                 }
@@ -916,8 +875,7 @@ impl<'a> Run<'a> {
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
-                vm.as_mut()
-                    .wait_for_promise(promise)
+                vm.wait_for_promise(promise)
                     .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
 
                 let promise_result = promise.result(vm.jsc_vm());
@@ -937,11 +895,7 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut().unhandled_rejection(
-                        self.global,
-                        promise_result,
-                        promise.as_value(),
-                    );
+                    vm.unhandled_rejection(self.global, promise_result, promise.as_value());
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;
@@ -1118,7 +1072,7 @@ impl Runner {
         unsafe {
             Bun__startMacro(
                 call as *const c_void,
-                VirtualMachine::get().as_mut().global.cast::<c_void>(),
+                VirtualMachine::get().global.get().cast::<c_void>(),
             );
         }
         CALL_STATE.with(|s| s.set(core::ptr::null_mut()));

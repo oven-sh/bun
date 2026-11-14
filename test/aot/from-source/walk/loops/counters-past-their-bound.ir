@@ -1,0 +1,13 @@
+# Counters that the bound of the loop header does not hold: the header compares the counter the other way round, the loop steps down or by more than one, or it goes on where the comparison fails.
+# -- source: main.cjs
+# const seen = [], notes = { note(x) { seen.push(x); } }, note = notes[JSON.parse('"note"')];
+# function down() { for (let i = 0; i < 4; i--) { note(i); if (i < -2) break; } }
+# function threes() { for (let i = 0; i < 8; i += 3) note(i); }
+# function outside() { let i = 0; for (;;) { if (i < 3) { i++; continue; } note(i); i++; if (i > 6) break; } return i; }
+# function pastBound() { let i = 0; while (!(i < 2147483646)) { i++; } do { i++; note(i); } while (i < 3); return i; }
+# function large() { let i = 0; for (; i < 4294967295; i++) { if (i === 3) { i = 4294967290; note(i); } } return i; }
+# function fraction() { let last = 0; for (let i = 0; i < 2.5; i++) { note(i); last = i; } return last + 0.5; }
+# down(); threes(); print(outside(), pastBound(), large(), fraction(), seen.join());
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 7 3 4294967295 2.5 0,-1,-2,-3,0,3,6,3,4,5,6,1,2,3,4294967290,0,1,2

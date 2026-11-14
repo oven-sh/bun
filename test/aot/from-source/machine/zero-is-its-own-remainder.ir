@@ -1,0 +1,15 @@
+# f1 = rest
+# -- source: main.ts
+# function rest(a: number, b: number): number { return a % b; }
+# const numbers = JSON.parse("[0,-0.0,3,2.5,-3,1e300]") as number[]; numbers[1] = -numbers[0]!; numbers.push(NaN, Infinity);
+# function show(v: number): string { return Object.is(v, -0) ? "-0" : String(v); }
+# let seen = ""; for (const b of numbers) { for (const a of numbers) seen += show(rest(a, b)) + " "; seen += ";"; } print(seen);
+# -- end of source
+# A dividend that is a whole number from 1 up is told by one test beside its conversion: what is none asks for zero behind that.
+# RUN: emit f1 mechanisms=all
+# REQUIRES: x86_64
+# CHECK-LABEL: unit f1:Body
+# CHECK-COUNT-2: = EqualOrUnordered(
+# CHECK: = ConstDouble(0)
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: NaN NaN NaN NaN NaN NaN NaN NaN ;NaN NaN NaN NaN NaN NaN NaN NaN ;0 -0 0 2.5 -0 0 NaN NaN ;0 -0 0.5 0 -0.5 0 NaN NaN ;0 -0 0 2.5 -0 0 NaN NaN ;0 -0 3 2.5 -3 0 NaN NaN ;NaN NaN NaN NaN NaN NaN NaN NaN ;0 -0 3 2.5 -3 1e+300 NaN NaN ;

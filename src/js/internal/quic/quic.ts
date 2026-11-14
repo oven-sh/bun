@@ -1694,6 +1694,7 @@ interface QuicStreamInner {
   onwanttrailers: Callback | undefined;
   earlySnapshot?: boolean;
   finReceivedSnapshot?: boolean;
+  cutByConnection?: boolean;
 }
 
 class QuicStream {
@@ -1817,7 +1818,11 @@ class QuicStream {
 
     // The stream was destroyed before a FIN arrived, so the read is truncated. `closed` has the reason.
     const writeOnly = inner.direction === kStreamDirectionUnidirectional && inner.isLocal;
-    if (inner.finReceivedSnapshot === false && !writeOnly) await this.closed;
+    if (inner.finReceivedSnapshot === false && !writeOnly) {
+      await this.closed;
+      // An idle timeout and a close with no error code leave `closed` fulfilled.
+      if (inner.cutByConnection) throw ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
+    }
   }
 
   /**
@@ -2180,6 +2185,8 @@ class QuicStream {
     }
     // Node doesn't call `onerror` for a stream that its connection closed. `session.closed` rejects with the same error.
     const closedByConnection = cascadingFromSessionDestroy && isQuicSessionClosedByNative(inner.session);
+    // As in Node, the read of a stream that the peer never wrote to just ends.
+    inner.cutByConnection = closedByConnection && (inner.headers !== undefined || this.stats.bytesReceived > 0n);
     if (closedByConnection) error ??= inner.localResetError ?? streamResetError(this);
     const { onerror } = inner;
     if (error !== undefined && closedByConnection) {
@@ -4442,7 +4449,7 @@ class QuicEndpoint {
     const {
       retryTokenExpiration,
       tokenExpiration,
-      maxConnectionsPerHost = 100,
+      maxConnectionsPerHost,
       maxConnectionsTotal = 10_000,
       disableStatelessReset,
       addressLRUSize,
@@ -4658,7 +4665,7 @@ class QuicEndpoint {
 
   /**
    * Maximum concurrent connections per remote IP address.
-   * 0 means unlimited (default).
+   * 0 means unlimited. Only enforced once it is set.
    * @type {number}
    */
   get maxConnectionsPerHost() {

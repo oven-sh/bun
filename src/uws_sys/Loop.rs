@@ -125,12 +125,6 @@ impl PosixLoop {
         self.fd.get()
     }
 
-    pub fn update_date(&self) {
-        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
-        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
-        unsafe { c::uws_loop_date_header_timer_update(self) };
-    }
-
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr.get()
     }
@@ -229,8 +223,9 @@ impl PosixLoop {
         );
     }
 
-    pub fn get() -> *mut Loop {
-        c::uws_get_loop()
+    pub fn get() -> &'static ThreadLoop {
+        // SAFETY: never null, and freed only by `free_thread_loop` or as this thread exits.
+        unsafe { &*c::uws_get_loop() }
     }
 
     /// Packetize HTTP/3 stream writes that happened since the last
@@ -240,7 +235,10 @@ impl PosixLoop {
         if !self.internal_loop_data.has_quic() {
             return;
         }
-        c::us_quic_loop_flush_if_pending(self);
+        // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
+        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
+        // does not flush.
+        unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
     /// `None` if epoll/kqueue cannot be created (EMFILE).
@@ -252,24 +250,32 @@ impl PosixLoop {
         NonNull::new(p)
     }
 
+    /// The one method that other threads may call.
     pub fn wakeup(&self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
     }
 
     pub fn tick(&self) {
-        c::us_loop_run_bun_tick(self, None, NOW_NS_UNKNOWN);
+        // SAFETY: as in `tick_with_timeout`.
+        unsafe { c::us_loop_run_bun_tick(self, None, NOW_NS_UNKNOWN) };
     }
 
     pub fn tick_without_idle(&self) {
-        c::us_loop_run_bun_tick(self, Some(&Timespec { sec: 0, nsec: 0 }), NOW_NS_UNKNOWN);
+        // SAFETY: as in `tick_with_timeout`.
+        unsafe {
+            c::us_loop_run_bun_tick(self, Some(&Timespec { sec: 0, nsec: 0 }), NOW_NS_UNKNOWN)
+        };
     }
 
     /// `now_ns` is the CLOCK_MONOTONIC reading the caller took to pick `timespec` (see
     /// `timer::All::get_timeout`), reused by the JS park hook's idle-sweep rate limit rather
     /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&self, timespec: Option<&Timespec>, now_ns: u64) {
-        c::us_loop_run_bun_tick(self, timespec, now_ns);
+        // SAFETY: `self` is this thread's live loop, and `jsc_vm` is null or its live VM. A handler
+        // may tick (`tick_depth`), but that refills the receive buffer and can dispatch the same
+        // socket again: such a handler is done with what the dispatch lent it.
+        unsafe { c::us_loop_run_bun_tick(self, timespec, now_ns) };
     }
 
     /// Free everything queued on `loop->data.closed_head` /
@@ -283,18 +289,19 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
-    /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
-    pub fn flush_pending_writes(&self) {
-        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
-        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
-        unsafe { c::uws_loop_flush_pending_writes(self) };
-    }
-
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
     pub fn close_all_groups(&self) -> bool {
-        c::us_loop_close_all_groups(self) != 0
+        // SAFETY: `self` is this thread's live loop. The walk reads its successor after the close
+        // handlers ran, so none may free another group. The one caller runs at teardown, with the
+        // owners of the groups stopped and script forbidden.
+        unsafe { c::us_loop_close_all_groups(self) != 0 }
+    }
+
+    /// Whether `fd` is the descriptor of a listen socket of this loop.
+    pub fn listens_on(&self, fd: c_int) -> bool {
+        c::us_loop_listens_on(self, fd) != 0
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {
@@ -307,7 +314,7 @@ impl PosixLoop {
     ///
     /// # Safety
     /// `this` must have been returned by `us_create_loop`/`uws_get_loop` and not
-    /// yet freed.
+    /// yet freed, and nothing may use the loop afterwards.
     pub unsafe fn destroy(this: *mut PosixLoop) {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop and not yet freed
         unsafe { c::us_loop_free(this) };
@@ -334,9 +341,9 @@ impl WindowsLoop {
         self.internal_loop_data.should_enable_date_header_timer()
     }
 
-    pub fn get() -> *mut WindowsLoop {
-        // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
-        unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+    pub fn get() -> &'static ThreadLoop {
+        // SAFETY: wraps this thread's libuv loop. Never null, and freed only by `free_thread_loop`.
+        unsafe { &*c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -375,6 +382,7 @@ impl WindowsLoop {
         self.uv().is_active()
     }
 
+    /// The one method that other threads may call.
     pub fn wakeup(&self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
@@ -389,18 +397,23 @@ impl WindowsLoop {
     /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
     /// already-refreshed clock via `uv_now` rather than taking one of its own.
     pub fn tick_with_timeout(&self, _: Option<&Timespec>, _now_ns: u64) {
-        c::us_loop_run(self);
+        // SAFETY: as in `run`.
+        unsafe { c::us_loop_run(self) };
     }
 
     pub fn tick_without_idle(&self) {
-        c::us_loop_pump(self);
+        // SAFETY: as in `run`.
+        unsafe { c::us_loop_pump(self) };
     }
 
     pub fn drain_quic_if_necessary(&self) {
         if !self.internal_loop_data.has_quic() {
             return;
         }
-        c::us_quic_loop_flush_if_pending(self);
+        // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
+        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
+        // does not flush.
+        unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
     /// `None` if `uv_loop_init` fails (handle exhaustion).
@@ -413,7 +426,10 @@ impl WindowsLoop {
     }
 
     pub fn run(&self) {
-        c::us_loop_run(self);
+        // SAFETY: `self` is this thread's live loop, and `jsc_vm` is null or its live VM. A handler
+        // may tick (`tick_depth`, `poll_cb_depth`), though libuv does not provide for `uv_run` in a
+        // callback: such a handler is done with what the dispatch lent it, its handle included.
+        unsafe { c::us_loop_run(self) };
     }
 
     // TODO: remove these two aliases
@@ -449,25 +465,16 @@ impl WindowsLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
-    pub fn flush_pending_writes(&self) {
-        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
-        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
-        unsafe { c::uws_loop_flush_pending_writes(self) };
-    }
-
     pub fn close_all_groups(&self) -> bool {
-        c::us_loop_close_all_groups(self) != 0
-    }
-
-    pub fn update_date(&self) {
-        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
-        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
-        unsafe { c::uws_loop_date_header_timer_update(self) };
+        // SAFETY: `self` is this thread's live loop. The walk reads its successor after the close
+        // handlers ran, so none may free another group. The one caller runs at teardown, with the
+        // owners of the groups stopped and script forbidden.
+        unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
     /// # Safety
     /// `this` must have been returned by `us_create_loop`/`uws_get_loop_with_native`
-    /// and not yet freed.
+    /// and not yet freed, and nothing may use the loop afterwards.
     pub unsafe fn destroy(this: *mut WindowsLoop) {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop_with_native and not yet freed
         unsafe { c::us_loop_free(this) };
@@ -480,6 +487,31 @@ impl WindowsLoop {
 pub type Loop = WindowsLoop;
 #[cfg(not(windows))]
 pub type Loop = PosixLoop;
+
+/// What `Loop::get` returns. It has uWS's `LoopData` behind it, and a loop from `create` does not.
+#[repr(transparent)]
+pub struct ThreadLoop(Loop);
+
+impl core::ops::Deref for ThreadLoop {
+    type Target = Loop;
+
+    fn deref(&self) -> &Loop {
+        &self.0
+    }
+}
+
+impl ThreadLoop {
+    pub fn update_date(&self) {
+        // SAFETY: this thread's live loop, with the `LoopData` that holds the date.
+        unsafe { c::uws_loop_date_header_timer_update(self) };
+    }
+
+    /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
+    pub fn flush_pending_writes(&self) {
+        // SAFETY: this thread's live loop, with the `LoopData` that lists the writes.
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+}
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
@@ -500,14 +532,14 @@ mod c {
             ext_size: c_uint,
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
-        pub(super) safe fn us_quic_loop_flush_if_pending(loop_: &Loop);
+        pub(super) fn us_quic_loop_flush_if_pending(loop_: &Loop);
         #[cfg(windows)]
-        pub(super) safe fn us_loop_run(loop_: &Loop);
+        pub(super) fn us_loop_run(loop_: &Loop);
         #[cfg(windows)]
-        pub(super) safe fn us_loop_pump(loop_: &Loop);
+        pub(super) fn us_loop_pump(loop_: &Loop);
         pub fn us_wakeup_loop(loop_: *const Loop);
         #[cfg(not(windows))]
-        pub(super) safe fn us_loop_run_bun_tick(
+        pub(super) fn us_loop_run_bun_tick(
             loop_: &Loop,
             timeout_ms: Option<&Timespec>,
             now_ns: u64,
@@ -515,13 +547,15 @@ mod c {
         pub(super) fn us_internal_free_closed_sockets(loop_: &Loop);
         /// One pass of the socket timeout sweep. Must not run recursively.
         pub fn us_internal_timer_sweep(loop_: &Loop);
-        pub(super) safe fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
+        pub(super) fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
         #[cfg(not(windows))]
-        pub(super) safe fn uws_get_loop() -> *mut Loop;
+        pub(super) safe fn us_loop_listens_on(loop_: &Loop, fd: c_int) -> c_int;
+        #[cfg(not(windows))]
+        pub(super) safe fn uws_get_loop() -> *mut ThreadLoop;
         #[cfg(windows)]
-        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub(super) fn uws_loop_date_header_timer_update(loop_: &Loop);
-        pub(super) fn uws_loop_flush_pending_writes(loop_: &Loop);
+        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut ThreadLoop;
+        pub(super) fn uws_loop_date_header_timer_update(loop_: &ThreadLoop);
+        pub(super) fn uws_loop_flush_pending_writes(loop_: &ThreadLoop);
     }
 }
 // Raw, for callers on another thread that hold only a pointer (e.g. bun_http's
@@ -532,14 +566,16 @@ pub use c::us_wakeup_loop;
 pub use c::us_internal_timer_sweep;
 
 unsafe extern "C" {
-    // safe: no args; frees this thread's lazily-created uws loop if it exists.
-    safe fn bun_free_loop_at_thread_exit();
+    fn bun_free_loop_at_thread_exit();
 }
 
 /// Frees this thread's uws loop (its socket groups, timers and — where uSockets
 /// created it — the native loop). Call when a thread that ran a uws loop (a
 /// Worker) exits, after everything registered on the loop is gone. On Windows
 /// the loop borrows the thread's libuv loop; close that afterwards.
-pub fn free_thread_loop() {
-    bun_free_loop_at_thread_exit()
+///
+/// SAFETY: what `Loop::get` returned on this thread is not used again.
+pub unsafe fn free_thread_loop() {
+    // SAFETY: the caller's.
+    unsafe { bun_free_loop_at_thread_exit() }
 }

@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# 'use strict';
+# const links = [];
+# function linksOf(node) { return links[node.id] || (links[node.id] = { of: node.id }); }
+# const ids = JSON.parse('[0, 1, 2, 3, 4, 5, 6, 2, 9]');
+# let seen = 0;
+# for (let k = 0; k < ids.length; k++) seen += linksOf({ id: ids[k] }).of;
+# print(seen, links.length, 7 in links);
+# -- end of source
+# Links made at the first question under ids that grow by one: nearly every store goes to the list's own length, and the vector has room. The id is `anything` by type, so the key is boxed, and the
+# store of a proven list under any key stored in line only under the public length: all the rest went through the cached stub to the store by any key. Inside the vector the length is raised in
+# line, as the stores under an integer do.
+# RUN(COUNT): compile UntypedKeyStoresAppendingInline mechanisms=all
+# COUNT-NOT: statistic UntypedKeyStoresAppendingInline 0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 32 10 false

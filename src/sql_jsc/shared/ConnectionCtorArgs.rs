@@ -2,9 +2,7 @@
 //! `createConnection(hostname, port, username, password, database, sslMode,
 //! tls, ...)` host functions, through the per-VM `SSL_CTX*` cache lookup.
 
-use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, VirtualMachine, api::server_config::SSLConfig,
-};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, api::server_config::SSLConfig};
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_sql::shared::SSLMode;
 use bun_uws as uws;
@@ -37,7 +35,6 @@ impl ConnectionCtorArgs {
     /// `ssl_mode` is an index of `SSL_MODES`. `Ok(None)`: a JS exception is pending.
     pub(crate) fn parse(
         global_object: &JSGlobalObject,
-        vm: &mut VirtualMachine,
         hostname: &[u8],
         ssl_mode: u8,
         tls_object: JSValue,
@@ -73,7 +70,11 @@ impl ConnectionCtorArgs {
             let mut err = uws::create_bun_socket_error_t::none;
             secure = tls_config
                 .as_usockets_for_client_verification()
-                .and_then(|opts| vm.ssl_ctx_cache_get_or_create(&opts, &mut err));
+                .and_then(|opts| {
+                    global_object
+                        .bun_vm()
+                        .ssl_ctx_cache_get_or_create(&opts, &mut err)
+                });
             if secure.is_none() {
                 drop(tls_config);
                 return Err(

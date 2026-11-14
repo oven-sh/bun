@@ -175,6 +175,7 @@ function validateSecureContextOptions(options) {
     maxVersion,
     privateKeyIdentifier,
     privateKeyEngine,
+    sessionIdContext,
     sessionTimeout,
     sigalgs,
     ticketKeys,
@@ -239,6 +240,9 @@ function validateSecureContextOptions(options) {
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   }
+  if (sessionIdContext !== undefined && sessionIdContext !== null) {
+    validateString(sessionIdContext, "options.sessionIdContext");
+  }
   if (ticketKeys !== undefined && ticketKeys !== null) {
     validateBuffer(ticketKeys, "options.ticketKeys");
     const ticketKeysByteLength = ticketKeys.byteLength;
@@ -285,6 +289,7 @@ function readSecureContextOptions(options) {
     dhparam: options.dhparam,
     honorCipherOrder: options.honorCipherOrder,
     secureOptions: options.secureOptions,
+    sessionIdContext: options.sessionIdContext,
     sessionTimeout: options.sessionTimeout,
     ticketKeys: options.ticketKeys,
     privateKeyIdentifier: options.privateKeyIdentifier,

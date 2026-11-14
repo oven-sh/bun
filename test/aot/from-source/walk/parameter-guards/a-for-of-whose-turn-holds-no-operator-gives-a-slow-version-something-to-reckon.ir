@@ -1,0 +1,20 @@
+# -- source: a-for-of-whose-turn-holds-no-operator-gives-a-slow-version-something-to-reckon.ts
+# declare function print(...values: unknown[]): void;
+# class Ledger { tint: number; twine: number; constructor(n: number) { this.tint = 0; this.twine = n; } }
+# const kept: Ledger[] = []; for (let i = 0; i < 20; i++) kept.push(new Ledger(i));
+# const parts: string[] = ["a", "b", "c"];
+# function gathers(bag: any) { const out: unknown[] = []; for (const part of parts) { out.push(part); } return "" + out.length + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
+# print(kept.length, gathers(kept[3]).length, gathers(JSON.parse('{"twine":1}')));
+# -- end of source
+# The guard of gathers() fails on a parsed record, so its slow version runs. The turn of its loop holds no operator on numbers, no relation, no equality and no join of texts: only a call. The step of the for-of at the head of the loop
+# is itself something to reckon: the slow version is walked, not written straight, and asks what it iterates whether it is a list as made.
+# f1 = gathers
+# RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
+# REQUIRES(STRAIGHT): faulting-loop-polls as-written
+# STRAIGHT: statistic StraightUnitsCompiled 0
+# RUN(SLOW): walk f1:SlowBody mechanisms=all
+# REQUIRES(SLOW): as-written
+# SLOW: IsPristine {{*}} builtinClass=Array
+# SLOW: GetArrayElement {{*}} level=Expected
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 20 25 3111111111111111111111111

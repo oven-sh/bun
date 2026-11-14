@@ -31,12 +31,12 @@ export const NodeHTTPResponse = b.class({
   refCounted: true,
   finalize: true,
   types: [table.exactType("$Node.NodeHTTPResponse"), table.exactType("$Bindgen.NodeHTTPResponse")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
     bufferedAmount: { getter: b.u64, pure: true },
-    end: { ...method, ...body, returns: b.any.returning("number", "undefined"), passThis: true, length: 2 },
+    end: { ...method, ...body, returns: b.any.returning("number", "undefined"), length: 2 },
     finished: { getter: b.bool, pure: true },
     flags: { getter: b.i32, pure: true },
     flushHeaders: {},
@@ -48,6 +48,8 @@ export const NodeHTTPResponse = b.class({
     onwritable: eventHandler,
     pause: { returns: b.bool },
     resume: { returns: b.bool },
+    setTrailers: { args: { trailers: b.string } },
+    start: { ...method, returns: b.bool },
     takeRawHeaders: { ...method, args: { headers: b.any }, returns: b.any.returning("Array", "undefined") },
     takeRequestTrailers: {
       ...method,

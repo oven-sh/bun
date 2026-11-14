@@ -95,10 +95,11 @@ public:
         return (us_socket_t *) this;
     }
 
-    /* Immediately close socket */
-    us_socket_t *close() {
+    /* Immediately close socket. A close_notify says that the stream is whole: not if more was to come, or if this drops buffered bytes. */
+    us_socket_t *close(bool moreWasToCome = false) {
         this->uncork();
-        return us_socket_close((us_socket_t *) this, 0, nullptr);
+        const bool truncates = SSL && (moreWasToCome || getBufferedAmount());
+        return us_socket_close((us_socket_t *) this, truncates ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, nullptr);
     }
 
     void uncorkWithoutSending() {

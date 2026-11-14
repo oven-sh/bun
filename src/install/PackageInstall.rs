@@ -323,7 +323,8 @@ impl PackageInstall<'_> {
 /// cache directory it walks.
 struct InstallDirState {
     walker: Walker,
-    /// Not opened on Windows; the copy loops there work from `buf`/`buf2`.
+    /// The copy loops on Windows work from `buf`/`buf2`.
+    #[cfg(not(windows))]
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -803,17 +804,16 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    /// # Safety
-    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
-    /// being handed to the thread pool; the worker reclaims it in its callback.
-    pub(crate) unsafe fn push(&self, task: *mut TaskType)
+    /// Hands `task` to the thread pool; the worker reclaims the `Box` in its callback.
+    pub(crate) fn push(&self, task: Box<TaskType>)
     where
-        TaskType: IntrusiveWorkTask,
+        TaskType: IntrusiveWorkTask + Send + 'static,
     {
         self.wait_group.add_one();
-        // SAFETY: caller contract; projecting through `task` keeps the allocation's provenance.
-        self.thread_pool
-            .schedule(Batch::from(unsafe { TaskType::field_of(task) }));
+        // SAFETY: `into_raw` yields a live allocation, and projecting through it keeps its provenance.
+        self.thread_pool.schedule(Batch::from(unsafe {
+            TaskType::field_of(bun_core::heap::into_raw(task))
+        }));
     }
 
     pub(crate) fn wait(&self) {
@@ -889,7 +889,7 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
+    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> Box<Self> {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -899,7 +899,7 @@ impl HardLinkWindowsInstallTask {
         remaining[..dest.len()].copy_from_slice(dest);
         remaining[dest.len()] = 0;
 
-        bun_core::heap::into_raw(Box::new(Self {
+        Box::new(Self {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
@@ -908,32 +908,27 @@ impl HardLinkWindowsInstallTask {
                 node: ThreadPoolNode::default(),
             },
             err: None,
-        }))
+        })
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: `task` is the `task` field pointer `NewTaskQueue::push` scheduled.
-        let self_: *mut Self = unsafe { Self::from_task_ptr(task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
-        // SAFETY: self_ is valid until we reclaim the Box below.
-        if let Some(err) = unsafe { (*self_).run() } {
-            unsafe { (*self_).err = Some(err) };
-            // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
-            let boxed = unsafe { bun_core::heap::take(self_) };
+        // SAFETY: `task` is the `task` field of the `Box` that `NewTaskQueue::push` handed over,
+        // and the pool runs each scheduled task once.
+        let mut this = unsafe { bun_core::heap::take(Self::from_task_ptr(task)) };
+        if let Some(err) = this.run() {
+            this.err = Some(err);
             // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box here (leaking it would also leak the inner
+            // simply drops its Box (leaking it would also leak the inner
             // `Box<[u16]>` per failed file).
             let mut slot = queue.errored_task.lock();
             if slot.is_none() {
-                *slot = Some(boxed);
+                *slot = Some(this);
             }
-            return;
         }
-        // SAFETY: self_ was heap-allocated in init().
-        unsafe { drop(bun_core::heap::take(self_)) };
     }
 
     fn run(&mut self) -> Option<crate::Error> {
@@ -1695,7 +1690,6 @@ impl PackageFiles<'_> {
             };
             Ok(InstallDirState {
                 walker,
-                subdir: Dir::from_fd(Fd::INVALID),
                 buf,
                 buf2,
                 to_copy_buf_off,
@@ -1858,7 +1852,7 @@ impl PackageFiles<'_> {
         // `&mut [u16]`, which is UB — pass head buffer + tail offset and
         // reslice inside.
         fn copy(
-            destination_dir: &Dir,
+            #[cfg(not(windows))] destination_dir: &Dir,
             walker: &mut Walker,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
@@ -1867,8 +1861,6 @@ impl PackageFiles<'_> {
         ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
-            #[cfg(windows)]
-            let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
             // Workers are already running the tasks that were pushed, so remember any loop error
@@ -1956,15 +1948,11 @@ impl PackageFiles<'_> {
                     head2[src_len] = 0;
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
-                    // SAFETY: `init` returns a fresh Box-allocated task; ownership
-                    // transfers to the thread pool, reclaimed in `run_from_thread_pool`.
-                    unsafe {
-                        queue.push(HardLinkWindowsInstallTask::init(
-                            src.as_slice(),
-                            dest.as_slice(),
-                            entry.basename.as_slice(),
-                        ));
-                    }
+                    queue.push(HardLinkWindowsInstallTask::init(
+                        src.as_slice(),
+                        dest.as_slice(),
+                        entry.basename.as_slice(),
+                    ));
                 }
             }
 
@@ -1989,7 +1977,6 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = copy(
-            &state.subdir,
             &mut state.walker,
             state.to_copy_buf_off,
             &mut state.buf[..],

@@ -1518,6 +1518,9 @@ describe("CONNECT pipelined behind a pending response", () => {
           server.unref();
           return void (first = res);
         }
+        // The test ends this process: a connection that an exit leaves open is reset on Windows, with what the client has
+        // not read of it.
+        server.ref();
         first.end("first");
         res.end("released");
       });
@@ -3089,7 +3092,7 @@ test("only a CONNECT or a body-less Upgrade request gets a 'head' Buffer from th
     "/upgrade-behind-pending": [
       `GET /pending HTTP/1.1\r\n${host}\r\nGET /upgrade-behind-pending HTTP/1.1\r\n${host}${upgrade}\r\n`,
       next,
-      null,
+      next,
     ],
     "/upgrade": [`GET /upgrade HTTP/1.1\r\n${host}${upgrade}\r\n`, "tunneled", "tunneled"],
     "/connect": [`CONNECT /connect HTTP/1.1\r\n${host}\r\n`, "tunneled", "tunneled"],

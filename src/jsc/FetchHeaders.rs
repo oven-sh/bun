@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use crate::webcore_types::BodyFacts;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
 use bun_uws::ResponseKind;
@@ -52,6 +53,8 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut EncodedSlice);
     safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: u8) -> bool;
     safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: u8);
+    safe fn WebCore__FetchHeaders__bodyFacts(arg0: &FetchHeaders) -> u8;
+    safe fn WebCore__FetchHeaders__setBodyFacts(arg0: &FetchHeaders, arg1: u8);
     safe fn WebCore__FetchHeaders__get_(
         arg0: &FetchHeaders,
         arg1: &EncodedSlice,
@@ -233,6 +236,15 @@ impl FetchHeaders {
 
     pub(crate) fn fast_remove_(&mut self, header: u8) {
         WebCore__FetchHeaders__fastRemove_(self, header)
+    }
+
+    /// The facts of the body of the `fetch()` response that this list is from.
+    pub fn body_facts(&self) -> BodyFacts {
+        BodyFacts::from_bits_truncate(WebCore__FetchHeaders__bodyFacts(self))
+    }
+
+    pub fn set_body_facts(&mut self, facts: BodyFacts) {
+        WebCore__FetchHeaders__setBodyFacts(self, facts.bits())
     }
 
     pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {

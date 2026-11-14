@@ -5,14 +5,6 @@ import { tls } from "harness";
 // Round-trips request bodies through Bun.serve and back through fetch(), over HTTP/1.1 and HTTP/3.
 // One server per transport handles every test. Each request sends its server-side config in
 // `x-config`, and the handler reports what it saw in `x-server`, so tests can run concurrently.
-//
-// The matrix is split by what each dimension can affect:
-//   - Body types (Uint8Array, DataView, Int16Array.subarray(1), Blob, ...) only change how fetch()
-//     serializes the request. They run once per source size against a plain reader.
-//   - Server and client modes (clone, touchBody, defer, lateReader, direct vs default response
-//     stream, every Request body mixin) run at every body size with one body type.
-//   - string / ArrayBuffer / Buffer inputs and fetch(url) vs fetch(new Request()) only change the
-//     client. They run against one mixin.
 
 const port = 0;
 
@@ -60,7 +52,6 @@ function combos(flags: string[]): Mode[] {
   return rows.map(row => ({ ...row, name: flags.filter(flag => row[flag]).join(" + ") || "plain" })) as Mode[];
 }
 
-const plain: Mode = { name: "plain", clone: false, touchBody: false };
 const mixinModes = combos(["clone", "touchBody"]);
 const readerModes = combos(["clone", "touchBody", "defer"]);
 const streamModes = combos(["clone", "touchBody", "defer", "lateReader"]);
@@ -85,16 +76,11 @@ function makeBody(size: number): Uint8Array {
   return bytes;
 }
 
-function bodyFixture(size: number) {
-  const body = makeBody(size);
-  return { size, body, sha1: digest(body).sha1 };
-}
-
 /**
  * The same source bytes handed to fetch() as every kind of BodyInit, each with
  * the digest of the bytes that must reach the server. Small sources are widened
  * element-per-byte (a 95 byte source becomes a 760 byte Float64Array); the
- * largest source is viewed in place so its bodies stay at the source size.
+ * largest sources are viewed in place so their bodies stay at the source size.
  */
 function bodyVariants(source: Uint8Array, viewInPlace: boolean) {
   const widen = (Ctor: any) => (viewInPlace ? new Ctor(source.buffer) : new Ctor(source));
@@ -145,15 +131,7 @@ function textFixture(label: string, text: string, body: BodyInit = Buffer.from(t
   return { label, text, body, ...digest(Buffer.from(text)) };
 }
 
-// What the server has to decode varies with the length and with whether the
-// text is pure latin1; how the client serialized it never reaches the server.
-const serverInputs = [
-  textFixture("short", SHORT),
-  textFixture("long latin1", LONG_LATIN1),
-  textFixture("long utf-16", LONG_UTF16),
-];
-
-const clientInputs = [
+const textInputs = [
   textFixture("string", SHORT, SHORT),
   textFixture("ArrayBuffer", SHORT, new Uint8Array(Buffer.from(SHORT)).buffer),
   textFixture("Buffer", SHORT),
@@ -301,7 +279,9 @@ describe.each([
   // and flow-control windows, so http/3 stops there.
   const largest = http3 ? 64 * 1024 : 1024 * 1024;
   const sizes = [1, 2, 12, 95, 1024, largest, ...(http3 ? [] : [2 * largest])];
-  const bodies = sizes.map(bodyFixture);
+  const bodies = sizes.flatMap(size =>
+    bodyVariants(makeBody(size), size >= largest).map(variant => ({ ...variant, source: size })),
+  );
 
   let sharedServer: ReturnType<typeof Bun.serve>;
   beforeAll(() => {
@@ -348,8 +328,8 @@ describe.each([
 
   async function expectMixinEcho(
     config: ServerConfig & { op: "mixin" },
-    input: (typeof serverInputs)[number],
-    useRequestObject = false,
+    input: (typeof textInputs)[number],
+    useRequestObject: boolean,
   ) {
     const run = (counter: number) =>
       post(config, input.body, response => response.text(), ["content-type", "content-length", "x-counter"], {
@@ -360,7 +340,7 @@ describe.each([
     // first request's keep-alive connection and opens fresh ones next to it
     // (over http/3, parallel streams on the one connection). The echoed counter
     // pairs each response with its request.
-    const results = [await run(0), ...(await Promise.all([1, 2, 3].map(run)))];
+    const results = [await run(0), ...(await Promise.all([1, 2, 3, 4, 5].map(run)))];
 
     const branch = {
       headers: REQUEST_HEADERS_SEEN,
@@ -369,7 +349,7 @@ describe.each([
       sha1: input.sha1,
     };
     expect(results).toEqual(
-      [0, 1, 2, 3].map(counter => ({
+      [0, 1, 2, 3, 4, 5].map(counter => ({
         status: 200,
         headers: { "content-type": "text/plain", "content-length": String(input.size), "x-counter": String(counter) },
         server: perBranch(config, branch),
@@ -378,7 +358,7 @@ describe.each([
     );
   }
 
-  async function expectReaderEcho(mode: Mode, body: BodyInit, { size, sha1 }: { size: number; sha1: string }) {
+  async function expectReaderEcho(mode: Mode, { body, size, sha1 }: (typeof bodies)[number]) {
     const result = await post({ op: "reader", ...mode }, body, async response => digest(await response.bytes()), [
       "content-type",
       "content-length",
@@ -394,7 +374,7 @@ describe.each([
   async function expectStreamEcho(
     mode: Mode,
     kind: "direct" | "default",
-    { body, size, sha1 }: ReturnType<typeof bodyFixture>,
+    { body, size, sha1 }: (typeof bodies)[number],
   ) {
     // Whether a pumped response goes out with a content-length (everything was
     // written before the headers were flushed) or chunked depends on the body
@@ -479,38 +459,25 @@ describe.each([
   describe.concurrent("Request body mixins", () => {
     describe.each(mixinModes)("$name", mode => {
       describe.each([...MIXINS])("request.%s()", mixin => {
-        test.each(serverInputs)("$label", input => expectMixinEcho({ op: "mixin", mixin, ...mode }, input));
+        describe.each(clientCalls)("$label", ({ useRequestObject }) => {
+          test.each(textInputs)("$label", input =>
+            expectMixinEcho({ op: "mixin", mixin, ...mode }, input, useRequestObject),
+          );
+        });
       });
-    });
-  });
-
-  describe.concurrent("request body serialization", () => {
-    describe.each(clientCalls)("$label", ({ useRequestObject }) => {
-      test.each(clientInputs)("$label", input =>
-        expectMixinEcho({ op: "mixin", mixin: "text", ...plain }, input, useRequestObject),
-      );
-    });
-
-    // 1: one element per view, so the offset views are empty and skipped.
-    // 2: the smallest source where every offset view has an element.
-    // 95: odd length, many elements. largest: viewed in place, many chunks.
-    describe.each([1, 2, 95, largest])("source of %d bytes", source => {
-      test.each(bodyVariants(makeBody(source), source === largest))("$label -> $size bytes", ({ body, size, sha1 }) =>
-        expectReaderEcho(plain, body, { size, sha1 }),
-      );
     });
   });
 
   describe.concurrent("request.body.getReader() read to the end, echoed as a Blob", () => {
     describe.each(readerModes)("$name", mode => {
-      test.each(bodies)("$size-byte body", fixture => expectReaderEcho(mode, fixture.body, fixture));
+      test.each(bodies)("$label of $source -> $size bytes", fixture => expectReaderEcho(mode, fixture));
     });
   });
 
   describe.concurrent("request.body pumped into the response stream", () => {
     describe.each(["direct", "default"])("%s stream", kind => {
       describe.each(streamModes)("$name", mode => {
-        test.each(bodies)("$size-byte body", fixture => expectStreamEcho(mode, kind, fixture));
+        test.each(bodies)("$label of $source -> $size bytes", fixture => expectStreamEcho(mode, kind, fixture));
       });
     });
   });

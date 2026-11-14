@@ -1,0 +1,100 @@
+# a loop of which nothing is known reads `next` once, where it opens the iterator, and the kind of a cell never changes. So which way the iterator is stepped is settled there:
+# a function of the library looks at the iterator and at `next` once. undefined: the loop calls `next` itself; true: the loop steps the iterator of a set; else a small number.
+# each step looks at that answer and hands a number to the library's step, which looks at it and at nothing else: no step compares `next` with the five functions that the library steps for.
+# function each(things) { for (const thing of things) { if (keep(thing)) break; } }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[next]]: {{*}} = PropGet [[iterator]] key="next"
+# CHECK: = CallDirect [[iterator]], [[next]] function=f6
+# CHECK: isLoopHead=true
+# CHECK: [[element]]: {{*}} = NextSetElement
+# CHECK: Jump -> next [[stepped]]([[element]])
+# CHECK: [[handedOut]]: {{*}} = CallDirect {{*}}function=f7
+# CHECK: Jump -> next [[stepped]]([[handedOut]])
+# CHECK: = IsCollectionIteratorClosedMark
+# RUN(WRITTEN): walk f1 mechanisms=all
+# WRITTEN: key="done"
+# WRITTEN: key="value"
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: testedType=builtin(ArrayIteratorPrototypeNext)
+# NEVER-NOT: function=f3
+# RUN(WITHHELD): walk f1 mechanisms=none+DirectCalls
+# WITHHELD-NOT: function=f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=IteratorConsumersCloseIterator function=f4
+runtimefunction id=IteratorConsumersCloseIteratorAfterThrow function=f5
+runtimefunction id=IteratorConsumersOpenIterator function=f2
+runtimefunction id=IteratorConsumersStepIterator function=f3
+runtimefunction id=IteratorConsumersStepIteratorInWay function=f7
+runtimefunction id=IteratorConsumersWayToStepIterator function=f6
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b5():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    v12 = Undefined
+    Return v12
+  b5() role=IterationCleanup subject=v1:
+    v13 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v13
+}
+function f2 name="openIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersOpenIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="stepIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, v0
+    Return v2
+}
+function f4 name="closeIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0
+    v3 = Undefined
+    Return v3
+}
+function f5 name="closeIteratorAfterThrow" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0
+    v3 = Undefined
+    Return v3
+}
+function f6 name="wayToStepIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersWayToStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, v0
+    Return v2
+}
+function f7 name="stepIteratorInWay" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIteratorInWay thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

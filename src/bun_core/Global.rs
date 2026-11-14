@@ -733,12 +733,9 @@ pub fn exit(code: u32) -> ! {
         // kills it. No args, no preconditions: `safe fn`.
         unsafe extern "C" {
             safe fn Bun__lockThreadSuspensionForExit();
-            safe fn bsd_shutdown_owned_sockets();
         }
         Bun__onExit();
         Bun__lockThreadSuspensionForExit();
-        // A POSIX kernel ends the connections an exiting process left open. Winsock resets them.
-        bsd_shutdown_owned_sockets();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }
@@ -939,7 +936,7 @@ extern "C" fn Bun__defaultCASources() -> DefaultCASources {
     DefaultCASources { bundled, system }
 }
 
-/// The `tls.getCACertificates()` types that make up `"default"`. OpenSSL's default paths have no type, as in Node.
+/// The `tls.getCACertificates()` types that are part of `"default"`. OpenSSL's default paths have no type, as in Node.
 pub fn default_ca_certificate_types() -> impl Iterator<Item = &'static str> {
     let sources = Bun__defaultCASources();
     [

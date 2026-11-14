@@ -263,6 +263,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                bin_conflicts: Vec::new(),
             });
         }
 
@@ -313,33 +314,30 @@ impl Scripts {
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
-        lockfile: &Lockfile,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
         trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
-        if !self.has_any() && !self.filled {
-            let list = self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
-            // A `link:` dependency may point to a directory without a package.json.
-            if resolution.tag == ResolutionTag::Symlink
-                && matches!(list, Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)))
-            {
-                return Ok(None);
-            }
-            return list;
-        }
-
-        let add_node_gyp_rebuild_script =
-            trusted && self.wants_default_node_gyp(folder_path.slice(), None);
-
-        Ok(self.create_list(
-            lockfile.buffers.string_bytes.as_slice(),
+        let allow_node_gyp = trusted || (!self.has_any() && !self.filled);
+        // `self` may come from a bun.lockb.
+        *self = Scripts::default();
+        let list = self.create_from_package_json(
+            log,
             folder_path,
             folder_name,
             resolution.tag,
-            add_node_gyp_rebuild_script,
-        ))
+            allow_node_gyp,
+        );
+        // A `link:` or `file:` dependency may point to a directory without a package.json.
+        if matches!(
+            resolution.tag,
+            ResolutionTag::Symlink | ResolutionTag::Folder
+        ) && matches!(list, Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)))
+        {
+            return Ok(None);
+        }
+        list
     }
 
     /// Also returns the `gypfile` setting for `wants_default_node_gyp`.
@@ -381,6 +379,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
+        allow_node_gyp: bool,
     ) -> Result<Option<List>, crate::Error> {
         let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
@@ -389,7 +388,7 @@ impl Scripts {
         let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
         let add_node_gyp_rebuild_script =
-            self.wants_default_node_gyp(folder_path.slice(), Some(gypfile));
+            allow_node_gyp && self.wants_default_node_gyp(folder_path.slice(), Some(gypfile));
 
         Ok(self.create_list(
             tmp.buffers.string_bytes.as_slice(),
@@ -445,6 +444,8 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    /// Set for a package in a hoisted tree.
+    pub bin_conflicts: Vec<crate::bin::BinConflict>,
 }
 
 impl List {

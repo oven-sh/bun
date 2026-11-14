@@ -5,6 +5,9 @@
 // CHECK-NOT: SwitchString
 // CHECK: [[isText]] = TypeTest [[value]] testedType=string
 // CHECK-NEXT: Branch [[isText]] -> taken [[text]](| 0), notTaken [[rest]](| 0)
+// CHECK: [[text]]([[isOfText]]):
+// CHECK-NEXT: [[narrowed]] = NarrowByTest [[value]], [[isOfText]]
+// CHECK-NEXT: = PropGet [[narrowed]] key="length"
 // CHECK: [[rest]]([[noText]]):
 // CHECK: = TypeTest [[noText]] testedType=number
 // CHECK-LABEL: function {{*}}name="caseThatIsComputed"
@@ -13,7 +16,7 @@
 // CHECK: b0([[subject]]: {{*}}):
 // CHECK-NOT: TypeOf
 // CHECK: [[isFunction]] = TypeTest [[subject]] testedType=function
-// CHECK-NEXT: Branch [[isFunction]] -> taken {{*}}(| 0), notTaken [[others]](| 0)
+// CHECK-NEXT: Branch [[isFunction]] -> taken {{*}}(), notTaken [[others]](| 0)
 // CHECK: [[others]]([[notCallable]]):
 // CHECK: = TypeTest [[notCallable]] testedType=null|object
 export function byKind(value) { switch (typeof value) { case "string": return value.length; case "number": return value + 1; default: return 0; } }

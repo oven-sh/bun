@@ -76,6 +76,7 @@ use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
+use bun_ptr::RefPtr;
 use bun_resolver::data_url::{DataURL, FetchDataURL};
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
@@ -83,7 +84,7 @@ use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
-    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletDelivered, FetchTaskletRequestDrain,
 };
 
 /// The `unix` option when it is a non-empty string.
@@ -134,8 +135,8 @@ fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3C
     s3_credentials_from_env(
         global_this
             .bun_vm()
-            .as_mut()
             .transpiler
+            .get()
             .env_mut()
             .get_s3_credentials(),
     )
@@ -171,7 +172,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JsResult<J
             mime_type.to_ascii_lowercase(),
         )));
 
-    let response = bun_core::heap::into_raw(Box::new(Response::init(
+    let response = RefPtr::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
@@ -181,22 +182,47 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JsResult<J
         Body::new(BodyValue::Blob(blob)),
         url,
         false,
-    )));
+    ));
 
-    // Ownership of the boxed Response is transferred to the JS GC via
-    // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
-    // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
     Ok(JSPromise::resolved_promise_value(
         global_this,
-        // SAFETY: `response` is a freshly allocated heap `Response`; ownership
-        // transfers to JSC.
-        Response::make_maybe_pooled(global_this, response),
+        Response::to_js(response, global_this),
     ))
 }
 
 /// `fetch()` rejects with a `TypeError` that keeps the system error's `code`, `syscall` and `path`.
 fn system_type_error(err: &bun_sys::Error, global_this: &JSGlobalObject) -> JSValue {
     jsc::SystemError::from(err.to_system_error()).to_type_error_instance(global_this)
+}
+
+/// A pipe or a socket that no `slice()` bounds. It can be slow to end, or never end.
+fn is_unbounded_pipe(body: &HTTPRequestBody) -> bool {
+    if cfg!(windows) || !body.needs_to_read_file() || body.blob().size.get() != blob::MAX_SIZE {
+        return false;
+    }
+    let store = body.store().expect("needs_to_read_file implies store");
+    // `stat`, not `open`: opening a FIFO blocks until it has a writer.
+    let stat = match &store.data.as_file().pathlike {
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+        PathOrFileDescriptor::Path(path) => {
+            bun_sys::stat(path.slice_z(&mut bun_paths::path_buffer_pool::get()))
+        }
+    };
+    stat.is_ok_and(|stat| {
+        let mode = stat.st_mode as u32;
+        bun_sys::S::ISSOCK(mode) || (bun_sys::S::ISFIFO(mode) && can_poll_for_end_of_pipe(&stat))
+    })
+}
+
+/// With kqueue, a FIFO in the file system reads as ended until it has a writer, and macOS doesn't report that the last one left.
+fn can_poll_for_end_of_pipe(stat: &bun_sys::Stat) -> bool {
+    if cfg!(target_os = "macos") {
+        stat.st_dev == 0
+    } else if cfg!(target_os = "freebsd") {
+        stat.st_nlink == 0
+    } else {
+        true
+    }
 }
 
 /// Returns the `TypeError` that `fetch("file:...")` rejects with if reading `file_blob` can only fail.
@@ -395,9 +421,7 @@ fn fetch_impl(
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
-    // outlives this call frame.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let mut upgraded_connection = false;
 
@@ -419,19 +443,6 @@ fn fetch_impl(
     let mut proxy: Option<ZigURL> = None;
     let mut range: Option<bun_core::ZBox> = None;
 
-    // `url_proxy_buffer` gets reassigned while `url`/`proxy`
-    // still point into it (or into the buffer about to replace it). Detach the
-    // borrow-checker by parsing through a raw-pointer slice; the caller is
-    // responsible for keeping the backing allocation alive (it always becomes
-    // the new `url_proxy_buffer` before the old one is dropped).
-    macro_rules! parse_url_detached {
-        ($slice:expr) => {{
-            let s: &[u8] = $slice;
-            // SAFETY: `s` points into a Vec that is immediately adopted as
-            // `url_proxy_buffer` (or already is it); see note above.
-            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
-        }};
-    }
     let mut url_type = URLType::Remote;
 
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
@@ -527,7 +538,7 @@ fn fetch_impl(
         // `#` is part of an S3 key.
         url_proxy_buffer = bun_url::href_from_string(&url_str).to_owned_slice();
     }
-    let mut url = parse_url_detached!(&url_proxy_buffer[..]);
+    let mut url = ZigURL::parse(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
     } else if url.is_blob() {
@@ -613,21 +624,23 @@ fn fetch_impl(
                 return Ok(None);
             }
             request_has_tls = true;
-            let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
+            let parsed = fetch_session::parse_tls(global_this, tls)?;
             if let Some(reject) = parsed.reject_unauthorized {
                 reject_unauthorized = reject;
             }
             if let Some(callback) = parsed.check_server_identity {
                 check_server_identity = callback;
             }
-            Ok(parsed.ssl_config)
+            Ok(parsed
+                .given
+                .map(|given| fetch_session::resolve_tls(vm, given)))
         })?;
     // A per-request closure has no identity a pool key could compare.
     let bypass_pool = !check_server_identity.is_empty();
     // The session's callbacks stay on the session, which the request keeps alive.
     let mut session_check_server_identity = false;
     if let Some(session) = session.filter(|_| !request_has_tls) {
-        ssl_config = session.ssl_config();
+        ssl_config = session.ssl_config(vm);
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
         session_check_server_identity = session.check_server_identity().is_some();
     }
@@ -783,9 +796,9 @@ fn fetch_impl(
                 buffer.extend_from_slice(&url_proxy_buffer);
                 buffer.extend_from_slice(&href);
                 let url_len = url.href.len();
-                url = parse_url_detached!(&buffer[0..url_len]);
-                proxy = Some(parse_url_detached!(&buffer[url_len..]));
                 url_proxy_buffer = buffer;
+                url = ZigURL::parse(&url_proxy_buffer[0..url_len]);
+                proxy = Some(ZigURL::parse(&url_proxy_buffer[url_len..]));
                 proxy_headers = headers;
                 proxy_respects_no_proxy = respect_no_proxy;
             }
@@ -1067,10 +1080,9 @@ fn fetch_impl(
                 #[cfg(not(windows))]
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-                // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 // Relative to the folder of the entry module, or to the working directory when there
                 // is none (`bun bake`).
-                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                let parts: &[&[u8]] = match vm.main() {
                     Some(main) => &[main, b"../", url_path_decoded],
                     None => &[url_path_decoded],
                 };
@@ -1111,7 +1123,7 @@ fn fetch_impl(
             break 'blob file_blob;
         };
 
-        let response = bun_core::heap::into_raw(Box::new(Response::init(
+        let response = RefPtr::new(Response::init(
             response::Init {
                 status_code: 200,
                 ..Default::default()
@@ -1119,15 +1131,11 @@ fn fetch_impl(
             Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
             false,
-        )));
+        ));
 
-        // Ownership of the boxed Response transfers to the JS GC; see
-        // `data_url_response` for the rationale.
         return Ok(JSPromise::resolved_promise_value(
             global_this,
-            // SAFETY: `response` is a freshly allocated heap `Response`; ownership
-            // transfers to JSC.
-            Response::make_maybe_pooled(global_this, response),
+            Response::to_js(response, global_this),
         ));
     }
 
@@ -1191,10 +1199,8 @@ fn fetch_impl(
     // `body` is mutated in place for the sendfile/readfile paths and then
     // *moved* into `FetchOptions`.
 
-    if body.is_s3() {
+    if body.is_s3() || (compress.is_none() && is_unbounded_pipe(&body)) {
         'prepare_body: {
-            // is a S3 file we can use chunked here
-
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
                     &global_this.js_thread(context),
@@ -1215,7 +1221,7 @@ fn fetch_impl(
             }
             let rejected_value = JSPromise::rejected_promise(
                 global_this,
-                global_this.create_error_instance(format_args!("Failed to start s3 stream")),
+                global_this.create_error_instance(format_args!("Failed to start the body stream")),
             )
             .to_js();
             body.detach();
@@ -1326,13 +1332,7 @@ fn fetch_impl(
                 }
             }
 
-            // The sendfile path above closes `opened_fd` or moves it into `SendFile` (which
-            // owns its lifecycle and breaks out of `'prepare_body`). On this
-            // read-file path we are the sole owner of the fresh fd: `read_file`
-            // is handed it as an `Fd` and never takes ownership. Wrap it in an
-            // RAII guard so any future early return between here and the read
-            // can't leak it.
-            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
+            let opened_file = bun_sys::File::from_fd(opened_fd);
 
             // TODO: make this async + lazy
             let blob_offset = body.blob().offset.get();
@@ -1344,14 +1344,13 @@ fn fetch_impl(
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
             rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
+            rf_args.path = PathOrFileDescriptor::Fd(opened_file.fd());
             rf_args.offset = blob_offset;
             rf_args.max_size = Some(blob_size);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            // Eagerly close before constructing the (potentially large) JS
-            // result. Dropping the guard runs the close exactly once.
-            drop(opened_fd);
+            // Eagerly close before constructing the (potentially large) JS result.
+            drop(opened_file);
 
             match res {
                 Err(err) => {
@@ -1401,6 +1400,8 @@ fn fetch_impl(
         compress = None;
     }
 
+    // Read before the S3 branch replaces `url_proxy_buffer`, which `proxy` borrows.
+    let has_proxy = proxy.is_some();
     if url.is_s3() {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
@@ -1462,21 +1463,8 @@ fn fetch_impl(
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
 
-            // `S3StreamWrapper.url` borrows `url_proxy_buffer`; box
-            // the buffer first (stable heap address) and re-parse so the
-            // detached-lifetime slices remain valid after the Vec → Box move.
-            let owned_buffer: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
-            let url_len = url.href.len();
-            // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
-            // re-parsed URL; the slices stay valid for the buffer's lifetime.
-            let url_static =
-                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
-            let s3_path = url_static.s3_path();
-
-            // Proxy href (if any) lives in the same buffer, immediately after `url`.
-            let proxy_url: Option<&[u8]> = if proxy.is_some() {
-                // SAFETY: see `url_static` SAFETY note above.
-                Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+            let proxy_url: Option<&[u8]> = if let Some(proxy) = &proxy {
+                Some(proxy.href)
             } else if proxy_direct {
                 Some(b"")
             } else {
@@ -1484,8 +1472,7 @@ fn fetch_impl(
             };
 
             let s3_stream = Box::new(S3StreamWrapper {
-                url: url_static,
-                _url_proxy_buffer: owned_buffer,
+                url: BunString::create_atom_if_possible(url.href),
                 promise,
                 global: global_this,
             });
@@ -1502,7 +1489,7 @@ fn fetch_impl(
             // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
-                s3_path,
+                url.s3_path(),
                 readable_stream.get().unwrap(),
                 &global_this.js_thread(context),
                 credentials_with_options.options,
@@ -1516,7 +1503,6 @@ fn fetch_impl(
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
-            // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
         let sign_method = match method.known() {
@@ -1553,21 +1539,17 @@ fn fetch_impl(
 
         if let Some(proxy_) = &proxy {
             // proxy and url are in the same buffer lets replace it
-            let old_buffer = core::mem::take(&mut url_proxy_buffer);
-            // `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
             buffer[0..result.url.len()].copy_from_slice(&result.url);
             buffer[result.url.len()..].copy_from_slice(proxy_.href);
             url_proxy_buffer = buffer;
 
-            url = parse_url_detached!(&url_proxy_buffer[0..result.url.len()]);
-            proxy = Some(parse_url_detached!(&url_proxy_buffer[result.url.len()..]));
-            drop(old_buffer);
+            url = ZigURL::parse(&url_proxy_buffer[0..result.url.len()]);
         } else {
             // replace headers and url of the request
             // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
             url_proxy_buffer = core::mem::take(&mut result.url).into();
-            url = parse_url_detached!(&url_proxy_buffer[..]);
+            url = ZigURL::parse(&url_proxy_buffer[..]);
             // result.url = ""; — fetch now owns this (mem::take above)
         }
 
@@ -1634,7 +1616,6 @@ fn fetch_impl(
     // slices may dangle after the conversion. Convert to `Box<[u8]>` first
     // (stable heap address), then re-parse the URLs from the boxed buffer.
     let url_len = url.href.len(); // fat-pointer len read; no deref
-    let has_proxy = proxy.is_some();
     let url_proxy_boxed: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
     // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URLs
     // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the
@@ -1646,12 +1627,7 @@ fn fetch_impl(
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
-    // `url` still points into `buf` unless `into_boxed_slice` had to shrink the allocation and moved it.
-    let url_static: ZigURL<'static> = if core::ptr::eq(url.href.as_ptr(), buf.as_ptr()) {
-        url
-    } else {
-        ZigURL::parse(&buf[..url_len])
-    };
+    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
     let proxy_static: Option<&'static [u8]> = if has_proxy {
         Some(&buf[url_len..])
     } else {
@@ -1722,8 +1698,7 @@ fn fetch_impl(
 
 struct S3StreamWrapper<'a> {
     promise: jsc::JSPromiseStrong,
-    url: ZigURL<'a>,
-    _url_proxy_buffer: Box<[u8]>,
+    url: BunString,
     global: &'a JSGlobalObject,
 }
 
@@ -1733,29 +1708,25 @@ impl<'a> S3StreamWrapper<'a> {
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };
         let global = self_.global;
-        // `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
-        // Box<Self> and Box<[u8]> Drop at end of scope.
+        // `defer bun.destroy(self)` → Box<Self> Drop at end of scope.
         match result {
             s3::S3UploadResult::Success => {
-                let response = Box::new(Response::init(
+                let response = RefPtr::new(Response::init(
                     response::Init {
                         method: Method::PUT,
                         status_code: 200,
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    self_.url,
                     false,
                 ));
-                // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
-                // ownership transfers to JSC.
-                let response_js =
-                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
+                let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
-                let response = Box::new(Response::init(
+                let response = RefPtr::new(Response::init(
                     response::Init {
                         method: Method::PUT,
                         status_code: 500,
@@ -1765,14 +1736,11 @@ impl<'a> S3StreamWrapper<'a> {
                     Body::new(BodyValue::InternalBlob(InternalBlob::from_string_bytes(
                         err.message.to_vec(),
                     ))),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    self_.url,
                     false,
                 ));
 
-                // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
-                // ownership transfers to JSC.
-                let response_js =
-                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
+                let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }

@@ -1,0 +1,24 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { for (var i = 0; i < d.length; i++) d[i] = d[i] + 1; return d[d.length - 1]; } };
+# print(T[key](new Int32Array(9).fill(2147483647)), T[key](new Uint32Array(5).fill(4294967295)), T[key](new Int16Array(4).fill(32767)), T[key](new Int8Array(13).fill(-129)), T[key](new Uint8ClampedArray(6).fill(255)), T[key](new Float32Array(7).fill(0.5)), T[key](new Float64Array(new BigUint64Array(5).fill(0xfffe000000000001n).buffer)), T[key](new Uint16Array(3)));
+# -- end of source
+# A read off a view of any kind may bear a NaN of any bits, so what is reckoned from it is made a clean NaN in front of whoever does not take such a one: a store by the kind of the cell is such a user.
+# In the turns laid out for Int32Array the read is a whole number: no NaN. Marked all the same, its sum was made clean in front of the store, and the machine no longer saw that a whole number is read, raised and stored:
+# a thousand elements: Int32 2,209 > 10,210 instructions, Int16 4,220 > 11,220, plain Bun 8,070 and 4,592. Where the kind found in front holds no floats, or the type lists none, the read is neither settled nor marked.
+# Four turns of a load-and-add and a store: eight operations.
+# f1 = go
+# REQUIRES(TURNS): x86_64
+# RUN(TURNS): loops f1:Body mechanisms=all
+# TURNS: loop: operations 9, patches 0
+# arm64 has no operation that loads and adds or stores what it reckons: the same four turns and the jump are seventeen operations there, as those of three more kinds are on both machines: five loops of seventeen.
+# REQUIRES(ARM): arm64
+# RUN(ARM): loops f1:Body mechanisms=all
+# ARM-COUNT-5: loop: operations 17, patches 0
+# ARM-NOT: loop: operations 17, patches 0
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -2147483648 0 -32768 -128 255 1.5 NaN 1
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: -2147483648 0 -32768 -128 255 1.5 NaN 1
+# NONE-NEXT: exited with 0

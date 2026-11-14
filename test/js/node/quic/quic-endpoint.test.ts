@@ -2,7 +2,17 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, libcPathForDlopen, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
@@ -16,6 +26,21 @@ import { inspect } from "node:util";
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+
+// The start of a script for a child process.
+const prelude = /* js */ `
+  import { createPrivateKey } from "node:crypto";
+  import { readFileSync } from "node:fs";
+  import { connect, listen, QuicEndpoint } from "node:quic";
+  const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+  const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+  const serve = onsession => listen(onsession, { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] });
+  const dial = async (address, options) => {
+    const session = await connect(address, { alpn: "quic-test", verifyPeer: "manual", ...options });
+    session.closed.catch(() => {});
+    return session;
+  };
+`;
 
 test.each(["connect", "listen"])("%s() reads each transport parameter once, and uses what it read", async side => {
   const reads: Record<string, number> = {};
@@ -137,6 +162,29 @@ describe("sessions that share an endpoint", () => {
     for (const session of sessions) session.close();
     expect({ advertised, shared: [a === b, b === c] }).toEqual({ advertised: [10n, 50n, 50n], shared: [true, true] });
   });
+
+  test("don't leave an engine behind for each set of options", async () => {
+    const fixture = /* js */ `
+      ${prelude}
+      const server = await serve(session => session.closed.catch(() => {}));
+      const endpoint = new QuicEndpoint();
+      let handshakeTimeout = 5000;
+      async function rssAfter(sessions) {
+        for (let i = 0; i < sessions; i++) {
+          const session = await dial(server.address, { endpoint, handshakeTimeout: handshakeTimeout++ });
+          await session.opened;
+          await session.close();
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await rssAfter(20);
+      console.log(JSON.stringify({ deltaMiB: ((await rssAfter(150)) - before) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    // 150 kept engines are over 40 MiB.
+    await expectRssDeltaBelow(["--no-warnings", "-e", fixture], { release: 15, debug: 25 });
+  }, 20_000);
 });
 
 describe("inspecting an endpoint with live sessions", () => {
@@ -1068,6 +1116,153 @@ describe("maxConnectionsPerHost", () => {
       outcomes: ["opened", "opened", "ERR_QUIC_TRANSPORT_ERROR", "opened"],
       acceptedAtLimit: 2,
     });
+  });
+
+  const limitedToOne = (onsession: () => void = () => {}) =>
+    listen(
+      session => {
+        session.opened.catch(() => {});
+        session.closed.catch(() => {});
+        onsession();
+      },
+      { endpoint: { maxConnectionsPerHost: 1 }, sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    );
+  const dialTo = async (address: object, endpoint = new QuicEndpoint()) => {
+    const options = { endpoint, alpn: "quic-test", verifyPeer: "manual" } as SessionOptions;
+    const session = await connect(address as SocketAddress, options);
+    session.closed.catch(() => {});
+    const outcome = session.opened.then(
+      () => "opened",
+      err => err.code,
+    );
+    return { session, outcome };
+  };
+
+  test("doesn't count a handshake whose sender never answered from its address", async () => {
+    const announced = Promise.withResolvers<void>();
+    const server = await limitedToOne(announced.resolve);
+    // What a sender with a forged source address does: its packets arrive, and it never sees the replies.
+    using oneWay = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket, packet, port) {
+          if (port !== server.address!.port) socket.send(packet, server.address!.port, "127.0.0.1");
+        },
+      },
+    });
+    const forged = await dialTo(new SocketAddress({ address: "127.0.0.1", port: oneWay.port }));
+    await announced.promise;
+    const real = await dialTo(server.address!);
+    const outcome = await real.outcome;
+    for (const { session } of [forged, real]) session.destroy();
+    server.destroy();
+    expect(outcome).toBe("opened");
+  });
+
+  test("is only enforced once it's set", async () => {
+    const server = await listen(session => session.closed.catch(() => {}), {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      alpn: ["quic-test"],
+    });
+    const endpoint = new QuicEndpoint();
+    const reported = (server as any).maxConnectionsPerHost;
+    const outcomes = new Set<string>();
+    for (let i = 0; i <= reported; i++) outcomes.add(await (await dialTo(server.address!, endpoint)).outcome);
+    (server as any).maxConnectionsPerHost = reported;
+    const afterSetting = await (await dialTo(server.address!, endpoint)).outcome;
+    endpoint.destroy();
+    server.destroy();
+    expect({ reported, outcomes: [...outcomes], afterSetting }).toEqual({
+      reported: 100,
+      outcomes: ["opened"],
+      afterSetting: "ERR_QUIC_TRANSPORT_ERROR",
+    });
+  });
+
+  test("holds for handshakes that run at the same time", async () => {
+    const server = await limitedToOne();
+    const dials = await Promise.all([dialTo(server.address!), dialTo(server.address!), dialTo(server.address!)]);
+    const outcomes = await Promise.all(dials.map(dial => dial.outcome));
+    for (const { session } of dials) session.destroy();
+    server.destroy();
+    expect(outcomes.sort()).toEqual(["ERR_QUIC_TRANSPORT_ERROR", "ERR_QUIC_TRANSPORT_ERROR", "opened"]);
+  });
+});
+
+// With nothing else to wake it, a loop that overlooks this work sleeps until the two-second timer.
+describe.concurrent("the event loop", () => {
+  async function run(body: string) {
+    using dir = tempDir("quic-event-loop", {
+      "entry.js": "export default 1;\n",
+      "main.mjs": /* js */ `
+        ${prelude}
+        const silent = await Bun.udpSocket({ hostname: "127.0.0.1" });
+        silent.unref();
+        const nobody = "127.0.0.1:" + silent.port;
+        const fallback = setTimeout(() => {}, 2000);
+        const since = start => (performance.now() - start < 1000 ? "promptly" : "late");
+        ${body}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-warnings", "main.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  const promptly = { stdout: "promptly", stderr: "", exitCode: 0 };
+  // Calls close() from a timer, so the endpoint reports it just before the loop's next poll.
+  const closeAnEndpoint = `
+    const server = await serve(() => {});
+    await new Promise(resolve => setTimeout(resolve, 1));
+    await server.close();
+    const start = performance.now();
+  `;
+
+  test.each(["setTimeout", "setImmediate"])("runs a %s() made when endpoint.close() resolves", async schedule => {
+    const body = `${closeAnEndpoint} ${schedule}(() => { console.log(since(start)); process.exit(0); }, 1);`;
+    expect(await run(body)).toEqual(promptly);
+  });
+
+  test("exits once endpoint.close() resolves and nothing else is left", async () => {
+    const body = `fallback.unref(); ${closeAnEndpoint} process.on("exit", () => console.log(since(start)));`;
+    expect(await run(body)).toEqual(promptly);
+  });
+
+  test("runs a timer made when a handshake times out during another callback", async () => {
+    const body = `
+      const session = await dial(nobody, { handshakeTimeout: 50 });
+      setTimeout(() => Bun.sleepSync(60), 1);
+      await session.opened.catch(() => {});
+      const start = performance.now();
+      setTimeout(() => { console.log(since(start)); process.exit(0); }, 1);
+    `;
+    expect(await run(body)).toEqual(promptly);
+  });
+
+  // Bun.build() runs the event loop while it waits for an async plugin setup().
+  test("keeps serving an endpoint while one of its callbacks runs the loop", async () => {
+    const body = `
+      const received = Promise.withResolvers();
+      const server = await serve(session => {
+        session.closed.catch(() => {});
+        session.ondatagram = received.resolve;
+      });
+      await dial(server.address, {
+        onhandshake() {
+          const start = performance.now();
+          this.sendDatagram(Uint8Array.of(1));
+          Bun.build({ entrypoints: ["./entry.js"], plugins: [{ name: "wait", setup: () => received.promise }] });
+          console.log(since(start));
+          process.exit(0);
+        },
+      });
+    `;
+    expect(await run(body)).toEqual(promptly);
   });
 });
 

@@ -6,6 +6,7 @@
 //! is replaced wholesale.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
+use core::mem::MaybeUninit;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque-type helper — thin sugar over the canonical
@@ -452,9 +453,9 @@ impl X509 {
             let md = match self.signature_digest_nid() {
                 NID_undef => return None,
                 NID_md5 | NID_sha1 => EVP_sha256(),
-                nid => EVP_get_digestbynid(nid),
+                nid => EVP_get_digestbynid(nid)?,
             };
-            if md.is_null() || X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
+            if X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
                 return None;
             }
         }
@@ -513,11 +514,8 @@ impl X509 {
 
     /// Iterates this certificate's Subject Common Names in order.
     pub fn common_names(&mut self) -> CommonNames<'_> {
-        // SAFETY: `self` is a live certificate; a null subject yields an
-        // empty iterator.
-        let subject = unsafe { X509_get_subject_name(self) };
         CommonNames {
-            subject,
+            subject: X509_get_subject_name(self),
             last: -1,
             _cert: core::marker::PhantomData,
         }
@@ -634,29 +632,21 @@ impl SSL {
 
 impl Drop for GeneralNames {
     fn drop(&mut self) {
-        // SAFETY: `sk_pop_free_ex` invokes the callback once per element, so it
-        // gets `GENERAL_NAME_free` (per element), not a stack free.
+        // SAFETY: we own the stack. `sk_pop_free_ex` only passes its third argument on
+        // to `call_general_name_free`, once per element, and that ignores it.
         unsafe {
             sk_pop_free_ex(
                 self.0.as_ptr().cast::<OPENSSL_STACK>(),
                 Some(call_general_name_free),
-                Some(core::mem::transmute::<
-                    unsafe extern "C" fn(*mut GENERAL_NAME),
-                    unsafe extern "C" fn(*mut c_void),
-                >(GENERAL_NAME_free)),
+                None,
             )
         }
     }
 }
 
-/// Restores the element type erased through `OPENSSL_sk_free_func`.
-unsafe extern "C" fn call_general_name_free(free_func: OPENSSL_sk_free_func, ptr: *mut c_void) {
-    // SAFETY: `free_func` is `GENERAL_NAME_free` erased in `Drop` above; both
-    // sides are `extern "C" fn(*mut _)`, so the round-trip is ABI-sound.
-    let f: unsafe extern "C" fn(*mut GENERAL_NAME) =
-        unsafe { core::mem::transmute(free_func.expect("non-null free_func")) };
+unsafe extern "C" fn call_general_name_free(_: OPENSSL_sk_free_func, ptr: *mut c_void) {
     // SAFETY: `ptr` is an element `sk_pop_free_ex` is draining from the stack.
-    unsafe { f(ptr.cast::<GENERAL_NAME>()) }
+    unsafe { GENERAL_NAME_free(ptr.cast::<GENERAL_NAME>()) }
 }
 
 unsafe extern "C" {
@@ -686,31 +676,29 @@ unsafe extern "C" {
     pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
-    pub safe fn EVP_md4() -> *const EVP_MD;
-    pub safe fn EVP_md5() -> *const EVP_MD;
-    pub safe fn EVP_ripemd160() -> *const EVP_MD;
-    pub safe fn EVP_sha1() -> *const EVP_MD;
-    pub safe fn EVP_sha224() -> *const EVP_MD;
-    pub safe fn EVP_sha256() -> *const EVP_MD;
-    pub safe fn EVP_sha384() -> *const EVP_MD;
-    pub safe fn EVP_sha512() -> *const EVP_MD;
-    pub safe fn EVP_sha512_224() -> *const EVP_MD;
-    pub safe fn EVP_sha512_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_224() -> *const EVP_MD;
-    pub safe fn EVP_sha3_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_384() -> *const EVP_MD;
-    pub safe fn EVP_sha3_512() -> *const EVP_MD;
-    pub safe fn EVP_blake2b256() -> *const EVP_MD;
-    pub safe fn EVP_blake2b512() -> *const EVP_MD;
+    pub safe fn EVP_md4() -> &'static EVP_MD;
+    pub safe fn EVP_md5() -> &'static EVP_MD;
+    pub safe fn EVP_ripemd160() -> &'static EVP_MD;
+    pub safe fn EVP_sha1() -> &'static EVP_MD;
+    pub safe fn EVP_sha224() -> &'static EVP_MD;
+    pub safe fn EVP_sha256() -> &'static EVP_MD;
+    pub safe fn EVP_sha384() -> &'static EVP_MD;
+    pub safe fn EVP_sha512() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_384() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_512() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b256() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b512() -> &'static EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
-    // POD context by exclusive reference: BoringSSL only zero-initialises the
-    // struct (no deref of its raw-ptr fields), so any `&mut EVP_MD_CTX` is sound.
-    pub safe fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
-    pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
-    pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
+    pub safe fn EVP_MD_size(md: &EVP_MD) -> usize;
+    // Starts with `EVP_MD_CTX_init`: what `ctx` held is never read. Keeps `type_` in `ctx.digest`.
+    pub safe fn EVP_DigestInit(ctx: &mut EVP_MD_CTX, type_: &'static EVP_MD) -> c_int;
     pub fn EVP_DigestInit_ex(
         ctx: *mut EVP_MD_CTX,
         type_: *const EVP_MD,
@@ -723,11 +711,7 @@ unsafe extern "C" {
         md_out: *mut u8,
         out_size: *mut c_uint,
     ) -> c_int;
-    pub fn EVP_get_digestbyname(name: *const c_char) -> *const EVP_MD;
-    pub fn EVP_MD_do_all_sorted(
-        callback: extern "C" fn(*const EVP_MD, *const c_char, *const c_char, *mut c_void),
-        arg: *mut c_void,
-    );
+    pub fn EVP_get_digestbyname(name: *const c_char) -> Option<&'static EVP_MD>;
     pub fn EVP_Digest(
         data: *const c_void,
         len: usize,
@@ -749,9 +733,9 @@ unsafe extern "C" {
     ) -> *mut u8;
 
     // ── SHA-1 ────────────────────────────────────────────────────────────
-    // `*_Init` are write-only initialisers but stay `*mut`: callers feed
-    // `MaybeUninit::as_mut_ptr()`, and forcing `&mut CTX` would require a
-    // valid (initialised) `CTX` first — defeating the point.
+    // `*_Init` are write-only initialisers. They take `*mut` because callers feed
+    // `MaybeUninit::as_mut_ptr()`; `&mut CTX` would require a valid (initialised)
+    // `CTX` first. (`&mut MaybeUninit<CTX>`, as on `HMAC_CTX_init`, would not.)
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
@@ -803,8 +787,8 @@ unsafe extern "C" {
         out_digest_nid: *mut c_int,
         out_pkey_nid: *mut c_int,
     ) -> c_int;
-    fn EVP_get_digestbynid(nid: c_int) -> *const EVP_MD;
-    pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
+    fn EVP_get_digestbynid(nid: c_int) -> Option<&'static EVP_MD>;
+    pub safe fn X509_get_subject_name(x509: &X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
     fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
@@ -827,29 +811,6 @@ pub const SSL_GROUP_SECP384R1: u16 = 24;
 pub const SSL_GROUP_SECP521R1: u16 = 25;
 pub const SSL_GROUP_X25519: u16 = 29;
 pub const SSL_GROUP_X448: u16 = 30;
-
-/// `sk_X509_pop_free(sk, X509_free)` — release a `STACK_OF(X509)` and every
-/// element on it.
-#[inline]
-pub unsafe fn sk_X509_pop_free(sk: *mut struct_stack_st_X509) {
-    unsafe extern "C" fn call(f: OPENSSL_sk_free_func, e: *mut c_void) {
-        // SAFETY: BoringSSL only invokes this with the `free_func` we passed
-        // and a live element pointer.
-        unsafe { (f.unwrap())(e) }
-    }
-    // SAFETY: caller-guaranteed live X509 stack; `X509_free` is
-    // `extern "C" fn(*mut X509)`, ABI-compatible with `fn(*mut c_void)`.
-    unsafe {
-        sk_pop_free_ex(
-            sk.cast(),
-            Some(call),
-            Some(core::mem::transmute::<
-                unsafe extern "C" fn(*mut X509),
-                unsafe extern "C" fn(*mut c_void),
-            >(X509_free)),
-        );
-    }
-}
 
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
@@ -1098,7 +1059,8 @@ unsafe extern "C" {
     pub safe fn ERR_load_crypto_strings();
 
     // ── HMAC (streaming) ─────────────────────────────────────────────────
-    pub fn HMAC_CTX_init(ctx: *mut HMAC_CTX);
+    // Write-only initialiser: reads nothing from `ctx`.
+    pub safe fn HMAC_CTX_init(ctx: &mut MaybeUninit<HMAC_CTX>);
     pub fn HMAC_CTX_cleanup(ctx: *mut HMAC_CTX);
     pub fn HMAC_CTX_copy(dest: *mut HMAC_CTX, src: *const HMAC_CTX) -> c_int;
     pub fn HMAC_Init_ex(

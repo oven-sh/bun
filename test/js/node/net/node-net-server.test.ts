@@ -1,5 +1,5 @@
 import { closeSync, existsSync, openSync, realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { AddressInfo, BlockList, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -1182,4 +1182,28 @@ it("server.unref() on a pipe/unix-socket listener lets the process exit", async 
   expect(stdout).toBe("");
   expect(exitCode === 0 ? "" : stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// collectContinuously is very slow on Windows, and the code is the same.
+it.skipIf(isWindows)("a collection while listen() reads its options leaves the callbacks alone", async () => {
+  const slow = isASAN || isDebug;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("node:net");
+      for (let i = 0; i < ${slow ? 250 : 3000}; i++) net.createServer().listen(0).close();
+      console.log("done");`,
+    ],
+    env: {
+      ...bunEnv,
+      BUN_JSC_collectContinuously: "1",
+      BUN_JSC_collectContinuouslyPeriodMS: slow ? "0.2" : "0.05",
+      BUN_JSC_useZombieMode: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
 });

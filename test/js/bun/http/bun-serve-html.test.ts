@@ -1651,6 +1651,50 @@ test.concurrent("a route keeps failing when its broken module was imported throu
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
 });
 
+// The bundle of the second route finds "shared.ts" in the graph, so it doesn't parse "broken.ts" again.
+test.concurrent("a route fails when a module that another route bundled imports a broken module", async () => {
+  const page = (script: string) =>
+    `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./${script}"></script></body></html>`;
+  using dir = tempDir("bun-serve-html-shared-import-of-broken-module", {
+    "first.html": page("first.ts"),
+    "first.ts": `import "./shared.ts";`,
+    "second.html": page("second.ts"),
+    "second.ts": `import "./shared.ts";`,
+    "other.html": page("other.ts"),
+    "other.ts": `console.log("other");`,
+    "shared.ts": `import "./broken.ts";`,
+    "broken.ts": `const = ;`,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import first from "./first.html";
+      import second from "./second.html";
+      import other from "./other.html";
+
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/first": first, "/second": second, "/other": other },
+      });
+      const status = path => fetch(new URL(path, server.url)).then(response => response.status);
+      console.log(await status("/first"), await status("/second"), await status("/second"), await status("/other"));
+      writeFileSync("broken.ts", "export {};");
+      // With BUN_ASSUME_PERFECT_INCREMENTAL, the default of debug builds, a failed route waits for the watcher.
+      const deadline = Date.now() + 30_000;
+      async function rebuiltStatus(path) {
+        let rebuilt = await status(path);
+        while (rebuilt !== 200 && Date.now() < deadline) {
+          await Bun.sleep(10);
+          rebuilt = await status(path);
+        }
+        return rebuilt;
+      }
+      console.log(await rebuiltStatus("/second"), await rebuiltStatus("/first"));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 500 500 200\n200 200", exitCode: 0 });
+});
+
 test.concurrent(
   "a production route whose build failed answers every request with 500 and prints the error once",
   async () => {
@@ -2348,9 +2392,9 @@ describe("production headers and import.meta.env", () => {
   });
 });
 
-// https://github.com/oven-sh/bun/issues/40479
+// The top-level table is for the code that runs on the server, and can hold what a browser must not get.
 test.concurrent.each(["true", "false"])(
-  "bunfig [define] applies to an html route's scripts with development: %s",
+  "only [serve.static] define applies to an html route's scripts with development: %s",
   async development => {
     using dir = tempDir("bun-serve-html-define", {
       "bunfig.toml": `[define]\nTOP_LEVEL = '"top"'\nBOTH = '"top"'\n\n[serve.static.define]\nBOTH = '"serve"'\n`,
@@ -2366,6 +2410,6 @@ test.concurrent.each(["true", "false"])(
       `,
     });
     const { stdout, stderr, exitCode } = await runServeFixture(dir);
-    expect({ stdout, exitCode }, stderr).toEqual({ stdout: `"values:","top","serve")`, exitCode: 0 });
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: `"values:",TOP_LEVEL,"serve")`, exitCode: 0 });
   },
 );

@@ -144,7 +144,6 @@ void uws_h3_res_end_without_body(uws_h3_res_t* res)
 
 void uws_h3_res_pause(uws_h3_res_t* res) { ((Http3Response*)res)->pause(); }
 void uws_h3_res_resume(uws_h3_res_t* res) { ((Http3Response*)res)->resume(); }
-void uws_h3_res_write_continue(uws_h3_res_t* res) { ((Http3Response*)res)->writeContinue(); }
 
 void uws_h3_res_write_status(uws_h3_res_t* res, const char* status, size_t length)
 {

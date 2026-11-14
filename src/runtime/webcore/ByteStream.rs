@@ -197,12 +197,15 @@ impl ProducerHold {
         self.source.get().is_some()
     }
 
-    /// Whether the hold keeps the stream's wrapper alive, so that no collection can find the stream.
-    pub(crate) fn roots_wrapper(&self) -> bool {
-        // SAFETY: live through our ref.
-        self.source
-            .get()
-            .is_some_and(|source| !unsafe { source.as_ref() }.wrapper_unrooted.get())
+    /// Whether a reader, a native sink or a whole-body read has taken the held stream.
+    pub(crate) fn has_consumer(&self) -> bool {
+        self.source.get().is_some_and(|source| {
+            // SAFETY: live through our ref.
+            let source = unsafe { source.as_ref() };
+            source.reader_context.get().is_some()
+                || source.context.sink.get().is_some()
+                || source.context.buffer_action.get().is_some()
+        })
     }
 
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the

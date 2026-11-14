@@ -215,7 +215,7 @@ public:
 private:
     /* `ctx` is what every accepted socket starts from, nullptr exactly when !SSL. */
     TemplatedApp(struct ssl_ctx_st *ctx) : httpContext(HttpContext<SSL>::create(Loop::get())), sslCtx(ctx) {
-        us_internal_ssl_ctx_up_ref(ctx);
+        if constexpr (SSL) us_internal_ssl_ctx_up_ref(ctx);
     }
 public:
 
@@ -256,17 +256,19 @@ public:
         /* A close handler can tick the loop (waitForPromise). That tick must not free the sockets closed here, which the walks below still read. */
         us_loop_t *loop = httpContext->getSocketGroup()->loop;
         loop->data.tick_depth++;
-        if constexpr (SSL) {
-            /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
-            std::vector<us_socket_t *> sockets;
-            for (us_socket_t *s = thread_ends ? nullptr : httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
-                sockets.push_back(s);
+        std::vector<us_socket_t *> connections;
+        for (us_socket_t *s = httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
+            connections.push_back(s);
+        }
+        for (us_socket_t *s : connections) {
+            /* An earlier close ran JavaScript. */
+            if (us_socket_is_closed(s) || us_socket_group(s) != httpContext->getSocketGroup()) {
+                continue;
             }
-            for (us_socket_t *s : sockets) {
-                auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
-                if (!us_socket_is_closed(s) && ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) {
-                    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
-                }
+            auto *res = (HttpResponse<SSL> *) s;
+            /* The group's close looks like the end of a whole stream. Not over a response that isn't finished or isn't sent. */
+            if ((SSL && (!res->hasResponded() || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) || res->isCloseDelimitedAndUnfinished()) {
+                us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
             }
         }
         /* close_all() walks head_listen_sockets first, so listeners are closed
@@ -316,12 +318,12 @@ public:
         while (s) {
             /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
              * adopted into its own group), so the ext block is an HttpResponseData. */
-            auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
-            if (((HttpResponse<SSL> *) s)->closeIfIdle()) {
+            /* A program that exits once stop() resolves would reset what the kernel hasn't delivered. */
+            if (((HttpResponse<SSL> *) s)->closeIfIdle(closeWhenIdle)) {
                 closed++;
             } else if (closeWhenIdle) {
-                data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                ((HttpResponse<SSL> *) s)->closeWhenIdle();
             }
             s = next;
         }
@@ -329,8 +331,7 @@ public:
         if (closeWhenIdle && group->low_prio_count) {
             for (s = group->loop->data.low_prio_head; s; s = s->next) {
                 if (s->group == group) {
-                    auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
-                    data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                    ((HttpResponse<SSL> *) s)->closeWhenIdle();
                 }
             }
         }

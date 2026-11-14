@@ -154,7 +154,7 @@ pub use string_map::StringMap;
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
 pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
-// crates that already depend on `bun_collections` (logger, css, js_parser,
+// crates that already depend on `bun_collections` (logger, js_parser,
 // watcher, http_types) can route the borrowck-dodge through
 // one centralised `unsafe fn` instead of open-coding the lifetime cast.
 pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};

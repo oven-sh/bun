@@ -21,6 +21,8 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 
 mod build_options;
+#[cfg(test)]
+mod glob_tests;
 
 pub use self::build_options::{
     compile_build_overrides, default_options_of_aot_package, find_package_with_compiler_options,
@@ -188,13 +190,21 @@ impl Project {
     }
 
     pub fn roots(&self, host: &dyn Host) -> Roots {
+        self.roots_less(host, &self.exclude)
+    }
+
+    /// `roots`, as if the project wrote no `exclude`.
+    pub fn roots_with_what_is_excluded(&self, host: &dyn Host) -> Roots {
+        self.roots_less(host, &[])
+    }
+
+    fn roots_less(&self, host: &dyn Host, exclude: &[Vec<u8>]) -> Roots {
         let case_sensitive = host.is_case_sensitive();
         let specs = self.options.include_specs.iter();
         let include: Vec<Vec<u8>> = specs.map(|it| it.1.clone()).collect();
         let base = join(b"", &self.base);
         let extra_extensions = extra_supported_extensions(host, &self.options);
-        let patterns =
-            GlobMatcher::new(&include, &self.exclude, &base, case_sensitive, Usage::Files);
+        let patterns = GlobMatcher::new(&include, exclude, &base, case_sensitive, Usage::Files);
         let base: Vec<Vec<u8>> = (PathParts::split_directory(typescript_path(&base)).iter())
             .map(|it| it.to_vec())
             .collect();
@@ -366,6 +376,11 @@ pub fn find_config_file(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 /// in its nearest ancestor directory that has either.
 pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     find_config_below(host, dir, &CONFIG_NAMES, |_| false)
+}
+
+/// The `tsconfig.json`, or else the `jsconfig.json`, in `dir` itself.
+pub fn find_config_in(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, &CONFIG_NAMES, |_| true)
 }
 
 /// `find_config`, no further up than the directory that has the `package.json`. What's above it configures another
@@ -1385,14 +1400,19 @@ fn is_implicit_glob(last: &[u8]) -> bool {
     strings::index_of_any(last, b".*?").is_none()
 }
 
+#[inline]
 fn is_hidden(name: &[u8]) -> bool {
-    name.starts_with(b".")
+    name.first() == Some(&b'.')
 }
 
+#[inline]
 fn is_package_folder(name: &[u8]) -> bool {
-    name.eq_ignore_ascii_case(b"node_modules")
-        || name.eq_ignore_ascii_case(b"jspm_packages")
-        || name.eq_ignore_ascii_case(b"bower_components")
+    match name.len() {
+        12 => name.eq_ignore_ascii_case(b"node_modules"),
+        13 => name.eq_ignore_ascii_case(b"jspm_packages"),
+        16 => name.eq_ignore_ascii_case(b"bower_components"),
+        _ => false,
+    }
 }
 
 /// `nextPathPartParts`: the path components of `directory`, followed by `name`, which is a single component or empty.
@@ -1407,7 +1427,8 @@ impl<'a> PathParts<'a> {
     /// `""`. Called once per directory, not once per pattern and name in it.
     fn split_directory(directory: &[u8]) -> Vec<&[u8]> {
         let root = directory.starts_with(b"/").then_some(&b""[..]);
-        let names = strings::split(directory, b"/").filter(|p| !p.is_empty());
+        let names = strings::split(directory, b"/");
+        let names = names.filter(|p| !p.is_empty());
         root.into_iter().chain(names).collect()
     }
 
@@ -1537,10 +1558,9 @@ impl GlobPattern {
     /// How many parts of `directory` the literal components at the start match, one each: `match_parts` can start behind them, for every name in the directory.
     fn match_start(&self, directory: &[&[u8]]) -> Option<usize> {
         let mut matched = 0;
-        for (component, part) in self.components.iter().zip(directory) {
-            let Component::Literal(literal) = component else {
-                break;
-            };
+        while let (Some(Component::Literal(literal)), Some(part)) =
+            (self.components.get(matched), directory.get(matched))
+        {
             if !self.equal(literal, part) {
                 return None;
             }
@@ -1549,7 +1569,76 @@ impl GlobPattern {
         Some(matched)
     }
 
+    /// Matches the parts of `directory`, so that a name in it can be matched by itself.
+    fn in_directory<'a>(&'a self, directory: &[&[u8]]) -> DirectoryPattern<'a> {
+        let mut entered = DirectoryPattern {
+            pattern: self,
+            rests: smallvec::SmallVec::new(),
+            matches_everything: false,
+        };
+        let Some(start) = self.match_start(directory) else {
+            return entered;
+        };
+        let whole = directory.len();
+        // As in `match_parts`.
+        let mut first: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
+        let mut second = first.clone();
+        let (mut reached, mut next) = (&mut first, &mut second);
+        reached.push(start);
+        let mut is_covered = false;
+        for (at, component) in self.components.iter().enumerate().skip(start) {
+            let is_rest = reached.last() == Some(&whole);
+            if is_rest && !is_covered {
+                entered.rests.push(at);
+            }
+            let is_listed = entered.rests.last() == Some(&at);
+            for &from in reached.iter().filter(|&&from| from < whole) {
+                let part = directory[from];
+                match component {
+                    Component::DoubleAsterisk if next.last().is_some_and(|&last| from <= last) => {}
+                    Component::DoubleAsterisk => {
+                        let is_traversable = |part: &[u8]| {
+                            self.is_exclude || !is_hidden(part) && !is_package_folder(part)
+                        };
+                        let mut to = from;
+                        next.push(to);
+                        while to < whole && is_traversable(directory[to]) {
+                            to += 1;
+                            next.push(to);
+                        }
+                    }
+                    Component::Literal(literal) => {
+                        if self.equal(literal, part) {
+                            next.push(from + 1);
+                        }
+                    }
+                    Component::Wildcard(segments) => {
+                        if (self.is_exclude || !is_package_folder(part))
+                            && self.match_wildcard(segments, part)
+                        {
+                            next.push(from + 1);
+                        }
+                    }
+                }
+            }
+            // A `**` that has matched the whole directory can match the name too, or nothing more.
+            is_covered = matches!(component, Component::DoubleAsterisk)
+                && (is_listed || next.last() == Some(&whole));
+            if is_covered && !is_listed {
+                entered.rests.push(at);
+            }
+            if next.is_empty() {
+                return entered;
+            }
+            std::mem::swap(&mut reached, &mut next);
+            next.clear();
+        }
+        entered.matches_everything = self.is_exclude;
+        entered
+    }
+
     /// `stringsEqual`
+    #[inline]
     fn equal(&self, a: &[u8], b: &[u8]) -> bool {
         a == b || !self.case_sensitive && equate_string_case_insensitive(a, b)
     }
@@ -1589,6 +1678,17 @@ impl GlobPattern {
                 Some(Segment::Star) => {
                     star = Some((segment, at));
                     segment += 1;
+                    // FOR SPEED: the last segment can only match the end of `s`. A byte of ASCII is a character.
+                    if let [Segment::Literal(literal)] = &segments[segment..] {
+                        match s.len().checked_sub(literal.len()) {
+                            Some(last) if last >= at => {
+                                if s[last].is_ascii() && literal[0].is_ascii() {
+                                    return self.equal(literal, &s[last..]);
+                                }
+                            }
+                            _ => return false,
+                        }
+                    }
                     continue;
                 }
                 None => {}
@@ -1701,72 +1801,71 @@ impl GlobMatcher {
         }
     }
 
-    fn in_directory<'a>(&'a self, directory: &'a [&'a [u8]]) -> DirectoryMatcher<'a> {
-        let starts_of = |patterns: &'a [GlobPattern]| {
-            let starts = patterns
+    fn in_directory<'a>(&'a self, directory: &[&[u8]]) -> DirectoryMatcher<'a> {
+        let in_directory = |patterns: &'a [GlobPattern]| {
+            let entered = patterns
                 .iter()
-                .map(|pattern| (pattern, pattern.match_start(directory)));
-            starts.collect()
+                .map(|pattern| pattern.in_directory(directory));
+            entered.collect()
         };
         DirectoryMatcher {
             matcher: self,
-            directory,
-            includes: starts_of(&self.includes),
-            excludes: starts_of(&self.excludes),
+            includes: in_directory(&self.includes),
+            excludes: in_directory(&self.excludes),
         }
     }
 }
 
-type PatternStart<'a> = (&'a GlobPattern, Option<usize>);
+/// A `GlobPattern` for the names in one directory.
+struct DirectoryPattern<'a> {
+    pattern: &'a GlobPattern,
+    /// A name matches if the components from one of these on match it.
+    rests: smallvec::SmallVec<[usize; 4]>,
+    /// The pattern excludes the directory itself.
+    matches_everything: bool,
+}
+
+impl DirectoryPattern<'_> {
+    fn matches(&self, name: &[u8], prefix_only: bool) -> bool {
+        let name = PathParts {
+            directory: &[],
+            name,
+        };
+        self.matches_everything && !prefix_only
+            || self
+                .rests
+                .iter()
+                .any(|&at| self.pattern.match_parts(name, 0, at, prefix_only))
+    }
+}
 
 /// A `GlobMatcher` for the names in one directory.
 struct DirectoryMatcher<'a> {
     matcher: &'a GlobMatcher,
-    directory: &'a [&'a [u8]],
-    includes: Vec<PatternStart<'a>>,
-    excludes: Vec<PatternStart<'a>>,
+    includes: Vec<DirectoryPattern<'a>>,
+    excludes: Vec<DirectoryPattern<'a>>,
 }
 
 impl DirectoryMatcher<'_> {
-    fn matches(&self, (pattern, start): PatternStart<'_>, name: &[u8], prefix_only: bool) -> bool {
-        let path = PathParts {
-            directory: self.directory,
-            name,
-        };
-        start.is_some_and(|start| pattern.match_parts(path, start, start, prefix_only))
-    }
-
     /// Returns the index of the include pattern that the file matches.
     fn matches_file(&self, name: &[u8]) -> Option<usize> {
-        if self
-            .excludes
-            .iter()
-            .any(|&pattern| self.matches(pattern, name, false))
-        {
+        if self.excludes.iter().any(|it| it.matches(name, false)) {
             return None;
         }
         if self.includes.is_empty() {
             return (!self.matcher.had_includes).then_some(0);
         }
-        self.includes
-            .iter()
-            .position(|&pattern| self.matches(pattern, name, false))
+        self.includes.iter().position(|it| it.matches(name, false))
     }
 
     fn matches_directory(&self, name: &[u8]) -> bool {
-        if self
-            .excludes
-            .iter()
-            .any(|&pattern| self.matches(pattern, name, false))
-        {
+        if self.excludes.iter().any(|it| it.matches(name, false)) {
             return false;
         }
         if self.includes.is_empty() {
             return !self.matcher.had_includes;
         }
-        self.includes
-            .iter()
-            .any(|&pattern| self.matches(pattern, name, true))
+        self.includes.iter().any(|it| it.matches(name, true))
     }
 }
 

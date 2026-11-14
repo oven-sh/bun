@@ -1350,9 +1350,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
 ///
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every
 /// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
-/// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
-/// `crate::env::const_str_slice` (compile-time git-SHA slicing), which is
-/// the only place `core::str::from_utf8` may appear.
+/// scalar DFA on AVX2/NEON). NOT `const`: const evaluation (`crate::__runtime_embed_load`) uses `core::str::from_utf8`.
 #[inline]
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     if simdutf::validate::utf8(bytes) {
@@ -1424,6 +1422,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 pub use highway::contains_newline_or_non_ascii_or_quote;
 pub use highway::line_starts;
 pub use highway::{ScannerStops, ScannerStopsBuffer};
+pub use highway::{pack_words, unpack_words};
 
 /// Supports:
 /// - `"`
@@ -2414,17 +2413,6 @@ pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
 // `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
 // to widen output paths for `File::write_file_os_path`).
 pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
-
-/// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
-/// followed by at least one more byte (`s.len() > 2`).
-#[inline]
-pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
-    s.len() > 2 && s[1].into() == u32::from(b':') && {
-        let c = s[0].into();
-        (c >= u32::from(b'a') && c <= u32::from(b'z'))
-            || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
-    }
-}
 
 /// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid

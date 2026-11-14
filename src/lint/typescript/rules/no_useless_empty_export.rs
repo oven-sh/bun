@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow empty exports that don't change anything in a module file.
 pub struct NoUselessEmptyExport;
 
-const USELESS_EXPORT: Message =
-    Message::new("uselessExport", "Empty export does nothing and can be removed.");
+const USELESS_EXPORT: &Message =
+    &Message::new("uselessExport", "Empty export does nothing and can be removed.");
 
 /// `export {}`, with or without `from`. For oxlint only without: `export {} from "a"` loads a module, like an `import`.
 fn is_empty_export(stmt: Stmt) -> bool {

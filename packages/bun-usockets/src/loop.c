@@ -56,7 +56,7 @@ void sweep_timer_cb(struct us_internal_callback_t *cb);
 void sweep_timer_noop(struct us_timer_t *timer) {}
 
 /* The coarse reading comes first, so the next sweep is no less than a period after it. */
-static void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
+void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_time_ms = us_internal_coarse_ms();
     us_timer_again(loop->data.sweep_timer);
 }
@@ -88,7 +88,7 @@ uint64_t us_internal_monotonic_ns(void) {
 }
 
 /* The coarse reading comes first, so the next sweep is no less than a period after it. */
-static void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
+void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_time_ms = us_internal_coarse_ms();
     loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
 }
@@ -245,6 +245,17 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     return any;
 }
 
+int us_loop_listens_on(struct us_loop_t *loop, LIBUS_SOCKET_DESCRIPTOR fd) {
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_listen_socket_t *ls = g->head_listen_sockets; ls; ls = ls->next) {
+            if (us_poll_fd(&ls->s.p) == fd) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /* Hold a parked socket's timeouts back for at most 120 s, Node's default TLS handshakeTimeout. */
 static const int MAX_LOW_PRIO_TICKS = 120 / LIBUS_TIMEOUT_GRANULARITY;
 
@@ -282,7 +293,8 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             group->iterator = s;
 
             s->timeout = LIBUS_NO_TIMEOUT;
-            if (s->lingering) us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+            /* close(2) over unread input is a reset, which drops what the kernel hasn't sent. */
+            if (s->lingering) us_internal_socket_close_raw(s, us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA ? LIBUS_ETIMEDOUT : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
             else s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
@@ -310,12 +322,13 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
      * (the queue reuses prev/next), so the walk above never visits them. The
      * loop turned their reads off, so time in the queue doesn't count against
      * the owner's timeouts: push each one back a tick per sweep, for at most
-     * MAX_LOW_PRIO_TICKS per us_socket_timeout() call. The library's own wait for a spilled close still
+     * MAX_LOW_PRIO_TICKS per us_socket_timeout() call, and not once the peer has ended: giving up on a
+     * connection costs it nothing. The library's own wait for a spilled close still
      * fires. low_prio_iterator lets close_raw advance the walk past a socket
      * it unlinks, like group->iterator does for head_sockets. */
     for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
         struct us_socket_t *s = loop_data->low_prio_iterator;
-        if (!s->ssl_close_after_spill && s->low_prio_ticks < MAX_LOW_PRIO_TICKS) {
+        if (!s->ssl_close_after_spill && s->low_prio_ticks < MAX_LOW_PRIO_TICKS && !bsd_peer_ended(us_poll_fd(&s->p))) {
             s->low_prio_ticks++;
             if (s->timeout != LIBUS_NO_TIMEOUT) {
                 s->timeout++;
@@ -414,7 +427,7 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     return s != NULL;
 }
 
-/* The kernel isn't polling `s`, so wake the loop explicitly. */
+/* The kernel may report nothing for `s`, so wake the loop explicitly. */
 void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code) {
     struct us_internal_loop_data_t *data = &loop->data;
     struct us_internal_unresumable_socket_t *sockets = us_realloc(data->unresumable_sockets,
@@ -434,7 +447,7 @@ static void us_internal_close_unresumable_sockets(struct us_loop_t *loop) {
         struct us_internal_unresumable_socket_t entry = data->unresumable_sockets[--data->num_unresumable_sockets];
         struct us_socket_t *s = us_internal_socket_follow_adopted(entry.socket);
         if (s && !us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, entry.code, NULL);
+            entry.code ? us_internal_socket_close_raw(s, entry.code, NULL) : us_internal_socket_close_after_rejected_send(s);
         }
     }
 }
@@ -491,6 +504,7 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
+    loop->data.quic_next_tick_us = -1;
 #ifdef LIBUS_USE_QUIC
     /* Flush stream writes that JS tasks made before this tick (timers,
      * immediates, promise resolutions outside on_read) so they go out
@@ -517,6 +531,16 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     loop->data.post_cb(loop);
 }
 
+/* The peer's FIN is the end of a socket whose TLS spill still goes out: from here on it only writes, and its writable event closes it. */
+static int us_internal_defer_end(struct us_socket_t *s, struct us_loop_t *loop) {
+    if (!s || us_socket_is_closed(s) || !s->ssl || !us_internal_ssl_defer_end(s)) {
+        return 0;
+    }
+    s->read_eof = 1;
+    us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+    return 1;
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -528,12 +552,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 us_internal_accept_poll_event(p);
     #endif
             }
-    #ifdef LIBUS_USE_EPOLL
-            /* This event is the signal of every wakeup counted so far (the eventfd is edge-triggered), so the next tick has none of them to expect. */
-            if ((struct us_internal_async *) cb == cb->loop->data.wakeup_async) {
-                __atomic_store_n(&cb->loop->pending_wakeups, 0, __ATOMIC_RELAXED);
-            }
-    #endif
             cb->cb(cb->cb_expects_the_loop ? (struct us_internal_callback_t *) cb->loop : (struct us_internal_callback_t *) &cb->p);
             break;
         }
@@ -614,7 +632,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * EWOULDBLOCK for the rare case where the defer timed out with no data.
                          * Once the handshake budget is spent that dispatch parks the socket, and only
                          * a socket with input may be parked, so check for input first. */
-                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s) &&
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s) && !s->flags.is_paused &&
                             (!handshake_budget_spent || us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA)) {
                             us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
                         }
@@ -828,8 +846,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     if (length > 0) {
-                        s = s->lingering ? s : s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        if (UNLIKELY(s->lingering) && (s->lingered_bytes += length) >= LIBUS_LINGER_MAX_BYTES) {
+                            us_socket_pause(s);
+                        }
+                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
+                                   : s->lingering ? s : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.
@@ -932,6 +953,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
+            /* A peer that refuses our bytes may never send its FIN, so a plain socket closes once nothing is left to read. */
+            if (s && s->send_rejected && !s->ssl && !error && !us_socket_is_closed(s)) {
+                s = us_internal_socket_close_after_rejected_send(s);
+                if (!s || us_socket_is_closed(s)) {
+                    return;
+                }
+            }
+
             /* The EOF hint (kqueue EV_EOF riding the final data's readable event,
              * epoll's EPOLLHUP once both directions are down, AFD DISCONNECT on a
              * shut-down socket) can arrive with the tail of the peer's stream still
@@ -987,6 +1016,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     // Do not call on_end after the socket has been closed
                     return;
                 }
+                const int can_defer_end = !hangup && !error;
+                if (can_defer_end && us_internal_defer_end(s, loop)) {
+                    return;
+                }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
                     if (s->send_rejected && unsent_is_lost) {
@@ -1026,6 +1059,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     if (!s->read_eof) {
                         s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                     }
+                    if (can_defer_end && us_internal_defer_end(s, loop)) {
+                        return;
+                    }
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
@@ -1053,7 +1089,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 int code = socket_error > 2 ? socket_error : LIBUS_ECONNRESET;
 #ifdef LIBUS_USE_KQUEUE
                 /* A unix peer that closed both directions is flagged like a reset. Its FIN was read and the socket has no error: epoll's hangup. */
-                if (socket_error <= 2 && s->read_eof) code = LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN;
+                if (socket_error <= 2 && s->read_eof) {
+                    code = LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN;
+                    /* The error flag skipped the retry from which a waiting write learns that it failed. */
+                    if (s->flags.last_write_failed && !s->send_rejected) {
+                        s = s->ssl ? us_internal_ssl_on_writable(s) : us_dispatch_writable(s);
+                        s = us_internal_socket_follow_adopted(s);
+                        if (!s || us_socket_is_closed(s)) {
+                            return;
+                        }
+                        if (s->send_rejected) code = LIBUS_ECONNRESET;
+                    }
+                }
 #endif
                 s = us_internal_socket_close_raw(s, code, NULL);
                 return;

@@ -1,0 +1,34 @@
+# `has` finds the location of a key in a table and keeps it for the `get` that follows. In a user's build the read at that location has no bounds check.
+# Fault injection, testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage: the effects of clear claim that it does not write the table's storage.
+# So the location is kept across the call to clear, and the get reads where nothing of the table is left.
+# The read is checked with --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), with proof-checks, and where only the emitters check every index.
+# The check requires that there is a table, that the table is live and holds values of the width that the location says, that the entry is in use, and that its key is live.
+# Otherwise the process crashes with a named error.
+# The test has no run with only the fault injected.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: 10 20 2 10 20 5 6 6 undefined 9 10 11 12 13 14 6
+# RIGHT-NEXT: exited with 0
+# RUN(RANGES): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage,CheckBoundsAtRunTime
+# RANGES: bun: internal AOT error:
+# RANGES: crashed with SIGABRT
+# RUN(PROOFS): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage,CheckProofsAtRunTime
+# PROOFS: bun: internal AOT error:
+# PROOFS: crashed with SIGABRT
+# RUN(EMITTERS): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Map.prototype.clear/CollectionStorage,CheckBoundsInEmittersOnly
+# EMITTERS: bun: internal AOT error:
+# EMITTERS: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function said(keys: number[]): string {
+#   const table = new Map<number, number>([[1, 10], [2, 20]]);
+#   let all = "";
+#   for (let i = 0; i < keys.length; i++) {
+#     const key = keys[i]!;
+#     if (!table.has(key)) table.set(key, i);
+#     else if (i === 8) table.clear();
+#     all += table.get(key) + " ";
+#   }
+#   return all + table.size;
+# }
+# print(said(JSON.parse("[1,2,3,1,2,9,4,4,1,7,3,9,12,1,5]")));
+# -- end of source

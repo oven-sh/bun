@@ -315,7 +315,10 @@ impl ClientSession {
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.carrier`.
         let client = client_mut(client_ptr);
-        if !ClientContext::as_mut(ctx).connect(client, &host, port) {
+        if ClientContext::as_mut(ctx)
+            .connect(client, &host, port)
+            .is_err()
+        {
             client.h3_upgrade_failed(err);
         }
         // `host` drops here (was `defer bun.default_allocator.free(host)`).

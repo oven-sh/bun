@@ -2,15 +2,12 @@ use super::generated::NameClass;
 use super::ids::{Id, StringId};
 use super::name_class::classify_name;
 use super::parallel::{InParallel, for_each_mut};
-#[cfg(test)]
-use super::types::release_spare_capacity;
 use super::wtf8::join_surrogate_pairs;
 use crate::builtins::id::BuiltinName;
 use crate::builtins::table::{is_symbol_name, text_of_name};
-use bun_threading::Guarded;
-use std::sync::{Arc, OnceLock, Weak};
+use core::ops::Range;
+use std::sync::OnceLock;
 
-// Every file interns its strings anew, and the hash is at hand.
 fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
     static NAMES: OnceLock<hashbrown::HashTable<BuiltinName>> = OnceLock::new();
     let hash_of_name = |&name: &BuiltinName| StringTable::hash_of(text_of_name(name));
@@ -29,140 +26,97 @@ fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
         .copied()
 }
 
+/// The class of a string as a name, and 1 + the number of the built-in name that it is, or 0.
+#[derive(Copy, Clone, Default)]
+struct NameFacts(u32);
+
+impl NameFacts {
+    const CLASS_BITS: u32 = 4;
+
+    #[inline]
+    fn new(class: NameClass, builtin: Option<BuiltinName>) -> NameFacts {
+        const {
+            assert!(NameClass::COUNT <= 1 << NameFacts::CLASS_BITS);
+            assert!(BuiltinName::COUNT <= u32::MAX >> NameFacts::CLASS_BITS);
+        }
+        let builtin = builtin.map_or(0, |name| name.0 + 1);
+        NameFacts(builtin << NameFacts::CLASS_BITS | class.to_wire())
+    }
+
+    #[inline]
+    fn class(self) -> NameClass {
+        NameClass::ALL[(self.0 & ((1 << NameFacts::CLASS_BITS) - 1)) as usize]
+    }
+
+    #[inline]
+    fn builtin(self) -> Option<BuiltinName> {
+        let builtin = (self.0 >> NameFacts::CLASS_BITS).checked_sub(1);
+        builtin.map(BuiltinName)
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct StringTable {
-    strings: StringList,
+    bytes: Vec<u8>,
+    ends: Vec<u32>,
+    hashes: Vec<u64>,
+    name_facts: Vec<NameFacts>,
     ids: hashbrown::HashTable<StringId>,
 }
 
-#[derive(Clone)]
-enum StringList {
-    Own(OwnStrings),
-    Shared(SharedStringList),
-}
-
-#[derive(Default, Clone)]
-struct OwnStrings {
-    bytes: Vec<u8>,
-    ends: Vec<usize>,
-    hashes: Vec<u64>,
-    name_classes: Vec<NameClass>,
-    builtin_names: Vec<Option<BuiltinName>>,
-}
-
-#[derive(Clone)]
-struct SharedStringList {
-    known: Arc<StringsOfAllTables>,
-    strings: Vec<Arc<SharedString>>,
-    byte_len: usize,
-    all_bytes: OnceLock<Vec<u8>>,
-}
-
-struct SharedString {
-    hash: u64,
-    name_class: NameClass,
-    builtin_name: Option<BuiltinName>,
-    bytes: Box<[u8]>,
-}
-
-struct StringsOfAllTables {
-    shards: [Guarded<hashbrown::HashTable<Arc<SharedString>>>; StringsOfAllTables::SHARD_COUNT],
-}
-
-impl StringsOfAllTables {
-    const SHARD_COUNT: usize = 64;
-
-    fn current() -> Arc<StringsOfAllTables> {
-        static CURRENT: Guarded<Weak<StringsOfAllTables>> = Guarded::new(Weak::new());
-        let mut current = CURRENT.lock();
-        if let Some(known) = current.upgrade() {
-            return known;
-        }
-        let known = Arc::new(StringsOfAllTables {
-            shards: core::array::from_fn(|_| Guarded::new(hashbrown::HashTable::new())),
-        });
-        *current = Arc::downgrade(&known);
-        known
-    }
-
-    fn intern(
-        &self,
-        hash: u64,
-        bytes: &[u8],
-        describe: impl FnOnce() -> (NameClass, Option<BuiltinName>),
-    ) -> Arc<SharedString> {
-        // The table itself goes by the lowest and by the highest bits.
-        let shard = (hash >> 32) as usize % Self::SHARD_COUNT;
-        let mut strings = self.shards[shard].lock();
-        if let Some(known) = strings.find(hash, |known| *known.bytes == *bytes) {
-            return Arc::clone(known);
-        }
-        let (name_class, builtin_name) = describe();
-        let added = Arc::new(SharedString {
-            hash,
-            name_class,
-            builtin_name,
-            bytes: bytes.into(),
-        });
-        strings.insert_unique(hash, Arc::clone(&added), |known| known.hash);
-        added
-    }
-}
-
-impl Default for StringList {
-    fn default() -> StringList {
-        StringList::Own(OwnStrings::default())
-    }
+#[inline]
+fn end_of(bytes: &[u8]) -> u32 {
+    u32::try_from(bytes.len()).expect("the strings of a program fit 32 bits")
 }
 
 impl StringTable {
+    #[inline]
     pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
     }
 
-    /// A table of `count` strings of other tables in the given order. No two of them are the same string.
     pub fn of_distinct_strings<'a>(
         count: usize,
         string_at: &(dyn Fn(usize) -> (&'a StringTable, StringId) + Sync),
         in_parallel: InParallel<'_>,
     ) -> StringTable {
         const STRINGS_IN_A_TASK: usize = 2048;
-        let mut own = OwnStrings {
+        let mut table = StringTable {
             bytes: Vec::new(),
             ends: vec![0; count],
             hashes: vec![0; count],
-            name_classes: vec![NameClass::default(); count],
-            builtin_names: vec![None; count],
+            name_facts: vec![NameFacts::default(); count],
+            ids: hashbrown::HashTable::with_capacity(count),
         };
-        let ends = own.ends.chunks_mut(STRINGS_IN_A_TASK);
-        let hashes = own.hashes.chunks_mut(STRINGS_IN_A_TASK);
-        let name_classes = own.name_classes.chunks_mut(STRINGS_IN_A_TASK);
-        let builtin_names = own.builtin_names.chunks_mut(STRINGS_IN_A_TASK);
-        let lists = ends.zip(hashes).zip(name_classes.zip(builtin_names));
+        let ends = table.ends.chunks_mut(STRINGS_IN_A_TASK);
+        let hashes = table.hashes.chunks_mut(STRINGS_IN_A_TASK);
+        let name_facts = table.name_facts.chunks_mut(STRINGS_IN_A_TASK);
+        let lists = ends.zip(hashes).zip(name_facts);
         let mut tasks: Vec<_> = lists.enumerate().collect();
-        // `ends` holds lengths until all are known.
         for_each_mut(&mut tasks, in_parallel, &|(task, lists)| {
-            let ((ends, hashes), (name_classes, builtin_names)) = lists;
+            let ((ends, hashes), name_facts) = lists;
             let first = *task * STRINGS_IN_A_TASK;
             for offset in 0..ends.len() {
-                let (table, id) = string_at(first + offset);
-                ends[offset] = table.get(id).len();
-                hashes[offset] = table.hash(id);
-                name_classes[offset] = table.name_class(id);
-                builtin_names[offset] = table.builtin_name(id);
+                let (source, id) = string_at(first + offset);
+                ends[offset] = end_of(source.get(id));
+                hashes[offset] = source.hash(id);
+                name_facts[offset] = source.name_facts[id.index()];
             }
         });
-        let mut end = 0;
-        for length in &mut own.ends {
-            end += *length;
+        let mut end = 0u32;
+        for length in &mut table.ends {
+            end = end
+                .checked_add(*length)
+                .expect("the strings of a program fit 32 bits");
             *length = end;
         }
-        own.bytes = vec![0; end];
-        let (mut rest, mut start) = (own.bytes.as_mut_slice(), 0);
+        table.bytes = vec![0; end as usize];
+        let (mut rest, mut start) = (table.bytes.as_mut_slice(), 0);
         let mut tasks = Vec::with_capacity(count.div_ceil(STRINGS_IN_A_TASK));
-        for (task, ends) in own.ends.chunks(STRINGS_IN_A_TASK).enumerate() {
+        for (task, ends) in table.ends.chunks(STRINGS_IN_A_TASK).enumerate() {
             let end = ends[ends.len() - 1];
-            let (bytes, after) = core::mem::take(&mut rest).split_at_mut(end - start);
+            let length = (end - start) as usize;
+            let (bytes, after) = core::mem::take(&mut rest).split_at_mut(length);
             tasks.push((task * STRINGS_IN_A_TASK, ends, start, bytes));
             (rest, start) = (after, end);
         }
@@ -173,95 +127,91 @@ impl StringTable {
             bytes,
         )| {
             let mut start = 0;
-            for (offset, end) in ends.iter().map(|end| end - *first_byte).enumerate() {
-                let (table, id) = string_at(*first + offset);
-                bytes[start..end].copy_from_slice(table.get(id));
+            let ends = ends.iter().map(|end| (end - *first_byte) as usize);
+            for (offset, end) in ends.enumerate() {
+                let (source, id) = string_at(*first + offset);
+                bytes[start..end].copy_from_slice(source.get(id));
                 start = end;
             }
         });
-        let mut ids = hashbrown::HashTable::with_capacity(count);
-        for (index, &hash) in own.hashes.iter().enumerate() {
-            ids.insert_unique(hash, StringId::new(index), |&id: &StringId| {
-                own.hashes[id.index()]
-            });
+        let hashes = &table.hashes;
+        for (index, &hash) in hashes.iter().enumerate() {
+            let id = StringId::new(index);
+            debug_assert!(
+                table.find_hashed(hash, table.get(id)).is_none(),
+                "no two strings are alike"
+            );
+            table.ids.insert_unique(hash, id, |&id| hashes[id.index()]);
         }
-        StringTable {
-            strings: StringList::Own(own),
-            ids,
-        }
-    }
-
-    /// For a table that waits with many others: a string that several of them have is held once.
-    pub fn share_strings(&mut self) {
-        let StringList::Own(own) = &self.strings else {
-            return;
-        };
-        let known = StringsOfAllTables::current();
-        let mut start = 0;
-        let strings = (0..own.ends.len()).map(|index| {
-            let bytes =
-                &own.bytes[core::mem::replace(&mut start, own.ends[index])..own.ends[index]];
-            let describe = || (own.name_classes[index], own.builtin_names[index]);
-            known.intern(own.hashes[index], bytes, describe)
-        });
-        let strings = strings.collect();
-        self.strings = StringList::Shared(SharedStringList {
-            strings,
-            byte_len: own.bytes.len(),
-            all_bytes: OnceLock::new(),
-            known,
-        });
+        table
     }
 
     pub fn intern(&mut self, bytes: &[u8]) -> StringId {
-        let joined = join_surrogate_pairs(bytes);
-        let bytes = joined.as_deref().unwrap_or(bytes);
-        self.intern_hashed(StringTable::hash_of(bytes), bytes)
-    }
-
-    pub fn intern_hashed(&mut self, hash: u64, bytes: &[u8]) -> StringId {
-        debug_assert_eq!(hash, StringTable::hash_of(bytes));
-        debug_assert!(join_surrogate_pairs(bytes).is_none());
+        let hash = StringTable::hash_of(bytes);
         if let Some(id) = self.find_hashed(hash, bytes) {
             return id;
         }
-        let describe = || (classify_name(bytes), find_builtin_name(hash, bytes));
-        let id = StringId::new(self.len());
-        match &mut self.strings {
-            StringList::Own(own) => {
-                let (name_class, builtin_name) = describe();
-                own.bytes.extend_from_slice(bytes);
-                own.ends.push(own.bytes.len());
-                own.hashes.push(hash);
-                own.name_classes.push(name_class);
-                own.builtin_names.push(builtin_name);
-            }
-            StringList::Shared(list) => {
-                debug_assert!(list.all_bytes.get().is_none());
-                list.strings.push(list.known.intern(hash, bytes, describe));
-                list.byte_len += bytes.len();
-            }
+        if bytes.is_ascii() {
+            return self.add_hashed(hash, bytes);
         }
-        let strings = &self.strings;
-        self.ids
-            .insert_unique(hash, id, |&id| strings.hash(id.index()));
+        let Some(joined) = join_surrogate_pairs(bytes) else {
+            return self.add_hashed(hash, bytes);
+        };
+        let hash = StringTable::hash_of(&joined);
+        if let Some(id) = self.find_hashed(hash, &joined) {
+            return id;
+        }
+        self.add_hashed(hash, &joined)
+    }
+
+    fn add_hashed(&mut self, hash: u64, bytes: &[u8]) -> StringId {
+        let id = StringId::new(self.len());
+        self.bytes.extend_from_slice(bytes);
+        self.ends.push(end_of(&self.bytes));
+        self.hashes.push(hash);
+        let facts = NameFacts::new(classify_name(bytes), find_builtin_name(hash, bytes));
+        self.name_facts.push(facts);
+        let hashes = &self.hashes;
+        self.ids.insert_unique(hash, id, |&id| hashes[id.index()]);
         id
     }
 
-    #[cfg(test)]
-    pub fn release_spare_capacity(&mut self) {
-        match &mut self.strings {
-            StringList::Own(own) => {
-                release_spare_capacity(&mut own.bytes);
-                release_spare_capacity(&mut own.ends);
-                release_spare_capacity(&mut own.hashes);
-                release_spare_capacity(&mut own.name_classes);
-                release_spare_capacity(&mut own.builtin_names);
-            }
-            StringList::Shared(list) => release_spare_capacity(&mut list.strings),
+    pub fn intern_string_of(&mut self, other: &StringTable, string: StringId) -> StringId {
+        let (hash, bytes) = (other.hash(string), other.get(string));
+        if let Some(id) = self.find_hashed(hash, bytes) {
+            return id;
         }
+        let id = StringId::new(self.len());
+        self.bytes.extend_from_slice(bytes);
+        self.ends.push(end_of(&self.bytes));
+        self.hashes.push(hash);
+        self.name_facts.push(other.name_facts[string.index()]);
+        let hashes = &self.hashes;
+        self.ids.insert_unique(hash, id, |&id| hashes[id.index()]);
+        id
     }
 
+    pub fn find_string_of(&self, other: &StringTable, string: StringId) -> Option<StringId> {
+        self.find_hashed(other.hash(string), other.get(string))
+    }
+
+    pub fn truncate(&mut self, length: usize) {
+        if self.len() <= length {
+            return;
+        }
+        for (index, &hash) in self.hashes.iter().enumerate().skip(length) {
+            let id = StringId::new(index);
+            if let Ok(entry) = self.ids.find_entry(hash, |&other| other == id) {
+                let _ = entry.remove();
+            }
+        }
+        self.bytes.truncate(self.start_of(length));
+        self.ends.truncate(length);
+        self.hashes.truncate(length);
+        self.name_facts.truncate(length);
+    }
+
+    #[cfg(test)]
     pub fn find(&self, bytes: &[u8]) -> Option<StringId> {
         self.find_hashed(StringTable::hash_of(bytes), bytes)
     }
@@ -269,41 +219,34 @@ impl StringTable {
     #[inline]
     pub fn get(&self, id: StringId) -> &[u8] {
         let index = id.index();
-        match &self.strings {
-            StringList::Own(own) => {
-                let start = if index == 0 { 0 } else { own.ends[index - 1] };
-                &own.bytes[start..own.ends[index]]
-            }
-            StringList::Shared(list) => &list.strings[index].bytes,
-        }
+        &self.bytes[self.start_of(index)..self.ends[index] as usize]
+    }
+
+    /// The place in `bytes` of the string with the number `index`, which may be one past the last.
+    #[inline]
+    fn start_of(&self, index: usize) -> usize {
+        let before = index.checked_sub(1);
+        before.map_or(0, |before| self.ends[before] as usize)
     }
 
     #[inline]
     pub fn hash(&self, id: StringId) -> u64 {
-        self.strings.hash(id.index())
+        self.hashes[id.index()]
     }
 
     #[inline]
     pub fn name_class(&self, id: StringId) -> NameClass {
-        match &self.strings {
-            StringList::Own(own) => own.name_classes[id.index()],
-            StringList::Shared(list) => list.strings[id.index()].name_class,
-        }
+        self.name_facts[id.index()].class()
     }
 
     #[inline]
     pub fn builtin_name(&self, id: StringId) -> Option<BuiltinName> {
-        match &self.strings {
-            StringList::Own(own) => own.builtin_names[id.index()],
-            StringList::Shared(list) => list.strings[id.index()].builtin_name,
-        }
+        self.name_facts[id.index()].builtin()
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
-        match &self.strings {
-            StringList::Own(own) => own.ends.len(),
-            StringList::Shared(list) => list.strings.len(),
-        }
+        self.ends.len()
     }
 
     #[cfg(test)]
@@ -311,25 +254,18 @@ impl StringTable {
         self.len() == 0
     }
 
+    #[cfg(test)]
     pub fn byte_len(&self) -> usize {
-        match &self.strings {
-            StringList::Own(own) => own.bytes.len(),
-            StringList::Shared(list) => list.byte_len,
-        }
+        self.bytes.len()
     }
 
-    /// Of a table that shares its strings: a copy, which stays.
+    #[cfg(test)]
     pub fn bytes(&self) -> &[u8] {
-        match &self.strings {
-            StringList::Own(own) => &own.bytes,
-            StringList::Shared(list) => list.all_bytes.get_or_init(|| {
-                let mut all = Vec::with_capacity(list.byte_len);
-                for string in &list.strings {
-                    all.extend_from_slice(&string.bytes);
-                }
-                all
-            }),
-        }
+        &self.bytes
+    }
+
+    pub fn bytes_of(&self, strings: Range<usize>) -> &[u8] {
+        &self.bytes[self.start_of(strings.start)..self.start_of(strings.end)]
     }
 
     pub fn ids(&self) -> impl ExactSizeIterator<Item = StringId> + Clone + use<> {
@@ -341,66 +277,10 @@ impl StringTable {
     }
 }
 
-impl StringList {
-    #[inline]
-    fn hash(&self, index: usize) -> u64 {
-        match self {
-            StringList::Own(own) => own.hashes[index],
-            StringList::Shared(list) => list.strings[index].hash,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::builtins::table::find_name;
-
-    fn assert_answers_alike(table: &StringTable, expected: &StringTable) {
-        for id in expected.ids() {
-            assert_eq!(table.get(id), expected.get(id));
-            assert_eq!(table.hash(id), expected.hash(id));
-            assert_eq!(table.name_class(id), expected.name_class(id));
-            assert_eq!(table.builtin_name(id), expected.builtin_name(id));
-            assert_eq!(table.find(expected.get(id)), Some(id));
-        }
-    }
-
-    fn sharing_strings() -> StringTable {
-        let mut table = StringTable::default();
-        table.share_strings();
-        table
-    }
-
-    #[test]
-    fn table_of_distinct_strings_is_the_table_that_interning_them_gives() {
-        let mut sources = [StringTable::default(), sharing_strings()];
-        let texts: Vec<String> = (0..5000)
-            .map(|index| "x".repeat(index % 7) + &index.to_string())
-            .collect();
-        let mut places = Vec::new();
-        for (index, text) in texts
-            .iter()
-            .chain([&"length".to_string(), &String::new()])
-            .enumerate()
-        {
-            places.push((index % 2, sources[index % 2].intern(text.as_bytes())));
-        }
-        let string_at = |index: usize| (&sources[places[index].0], places[index].1);
-        let in_reverse =
-            |count: usize, work: &(dyn Fn(usize) + Sync)| (0..count).rev().for_each(work);
-        let table = StringTable::of_distinct_strings(places.len(), &string_at, &in_reverse);
-        let mut interned = StringTable::default();
-        for index in 0..places.len() {
-            let (source, id) = string_at(index);
-            assert_eq!(interned.intern(source.get(id)).index(), index);
-        }
-        assert_eq!(table.len(), interned.len());
-        assert_eq!(table.bytes(), interned.bytes());
-        assert_answers_alike(&table, &interned);
-        let empty = StringTable::of_distinct_strings(0, &string_at, &in_reverse);
-        assert!(empty.is_empty());
-    }
 
     #[test]
     fn builtin_name_is_the_one_that_the_table_finds() {
@@ -418,41 +298,53 @@ mod tests {
     }
 
     #[test]
-    fn tables_that_share_strings_answer_like_a_table_of_its_own() {
-        let written: [&[u8]; 6] = [b"length", b"", b"a name", b"12", b"length", b"then"];
-        let mut own = StringTable::default();
-        let mut first = sharing_strings();
-        let mut second = sharing_strings();
-        for bytes in written {
-            assert_eq!(first.intern(bytes), own.intern(bytes));
+    fn string_of_another_table_is_interned_as_its_bytes_are() {
+        let written: [&[u8]; 4] = [b"length", b"12", b"a name", b""];
+        let mut other = StringTable::default();
+        let ids = written.map(|bytes| other.intern(bytes));
+        let (mut table, mut expected) = (StringTable::default(), StringTable::default());
+        table.intern(b"a name");
+        expected.intern(b"a name");
+        for (bytes, id) in written.into_iter().zip(ids) {
+            assert_eq!(table.find_string_of(&other, id), expected.find(bytes));
+            assert_eq!(table.intern_string_of(&other, id), expected.intern(bytes));
+            assert_eq!(table.find_string_of(&other, id), expected.find(bytes));
         }
-        for bytes in written.iter().rev() {
-            second.intern(bytes);
+        assert_eq!(table.bytes(), expected.bytes());
+        for id in expected.ids() {
+            assert_eq!(table.get(id), expected.get(id));
+            assert_eq!(table.hash(id), expected.hash(id));
+            assert_eq!(table.name_class(id), expected.name_class(id));
+            assert_eq!(table.builtin_name(id), expected.builtin_name(id));
+            assert_eq!(table.find(expected.get(id)), Some(id));
         }
-        first.release_spare_capacity();
-        assert_eq!(first.len(), own.len());
-        assert_eq!(first.byte_len(), own.byte_len());
-        assert_answers_alike(&first, &own);
-        assert_eq!(first.bytes(), own.bytes());
-        let (in_first, in_second) = (first.find(b"a name"), second.find(b"a name"));
-        assert_ne!(in_first, in_second);
-        let (in_first, in_second) = (first.get(in_first.unwrap()), second.get(in_second.unwrap()));
-        assert!(core::ptr::eq(in_first, in_second));
     }
 
     #[test]
-    fn table_that_shares_its_strings_when_it_is_complete_stays_the_same() {
+    fn truncated_table_behaves_like_one_that_never_held_the_cut_strings() {
         let written: [&[u8]; 5] = [b"length", b"", b"a name", b"12", b"then"];
-        let mut own = StringTable::default();
-        let mut shared = StringTable::default();
-        for bytes in written {
-            own.intern(bytes);
-            shared.intern(bytes);
+        for length in 0..=written.len() + 1 {
+            let (kept, cut) = written.split_at(length.min(written.len()));
+            let mut table = StringTable::default();
+            for bytes in written {
+                table.intern(bytes);
+            }
+            table.truncate(length);
+            assert_eq!(table.len(), kept.len());
+            for &bytes in cut {
+                assert_eq!(table.find(bytes), None);
+            }
+            let mut expected = StringTable::default();
+            for &bytes in kept.iter().chain(cut.iter().rev()) {
+                assert_eq!(table.intern(bytes), expected.intern(bytes));
+            }
+            assert_eq!(table.bytes(), expected.bytes());
+            for id in expected.ids() {
+                assert_eq!(table.get(id), expected.get(id));
+                assert_eq!(table.hash(id), expected.hash(id));
+                assert_eq!(table.name_class(id), expected.name_class(id));
+                assert_eq!(table.builtin_name(id), expected.builtin_name(id));
+            }
         }
-        shared.share_strings();
-        shared.share_strings();
-        assert_eq!(shared.byte_len(), own.byte_len());
-        assert_answers_alike(&shared, &own);
-        assert_eq!(shared.intern(b"one more"), own.intern(b"one more"));
     }
 }

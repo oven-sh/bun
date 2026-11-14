@@ -1574,7 +1574,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject
         : readableStreamDefaultTee(globalObject, stream, cloneForBranch2);
     RETURN_IF_EXCEPTION(scope, failure);
     // Branches that script asked for are the program's streams, so they lose `BodyFacts::NATIVE_STREAM`. A clone's keep it.
-    uint8_t facts = stream->m_bodyFacts & (cloneForBranch2 ? 0x7 : 0x3);
+    uint8_t facts = stream->m_bodyFacts & (cloneForBranch2 ? 0xff : ~0x2);
     branches.first->m_bodyFacts = facts;
     branches.second->m_bodyFacts = facts;
     return branches;

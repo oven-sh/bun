@@ -24,6 +24,22 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
+/** Lays the one function that runs when the process exits, in front of the listeners of 'exit'. */
+export const runWhenProcessExits: (run: () => void) => void = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionRunWhenProcessExits",
+  1,
+);
+
+// This thread's BoringSSL error queue. An API that returns with entries on it makes the next unrelated failure that
+// reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns its entries, oldest first.
+export const putBoringSSLErrorForTesting: () => void = $newCppFunction("NodeTLS.cpp", "putBoringSSLErrorForTesting", 0);
+export const takeBoringSSLErrorQueueForTesting: () => string[] = $newCppFunction(
+  "NodeTLS.cpp",
+  "takeBoringSSLErrorQueueForTesting",
+  0,
+);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(
@@ -223,6 +239,14 @@ export const frameworkRouterInternals = {
   FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),
 };
 
+export const declaredResults = {
+  declaredAsString: $bindgen("declared_results_testing.bind.ts", "declaredAsString") as (value: unknown) => string,
+  holdsResultsToDeclaredTypes: $bindgen(
+    "declared_results_testing.bind.ts",
+    "holdsResultsToDeclaredTypes",
+  ) as () => boolean,
+};
+
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
 export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   add: $bindgen("bindgen_test.bind.ts", "add"),
@@ -271,6 +295,8 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   TestReadOnly: $bindgen("bindgen_test.bind.ts", "TestReadOnly"),
   TestMemberFunctions: $bindgen("bindgen_test.bind.ts", "TestMemberFunctions"),
   TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
+  TestProtoCaller: $bindgen("bindgen_test.bind.ts", "TestProtoCaller"),
+  TestCallable: $bindgen("bindgen_test.bind.ts", "TestCallable"),
   TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
   TestShape: $bindgen("bindgen_test.bind.ts", "TestShape"),
   TestSquare: $bindgen("bindgen_test.bind.ts", "TestSquare"),
@@ -359,8 +385,7 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 export const Dequeue = require("internal/fifo");
 
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
-// non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
-// so the node edge cases are handled here.
+// non-strings are undefined; the node edge cases are handled here.
 const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(
   "node_util_binding.bind.ts",
   "normalizeEncoding",
@@ -370,7 +395,6 @@ function nodeNormalizeEncoding(enc: unknown) {
   if (enc == null) return "utf8";
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
-  if (lower === "utf-16le") return "utf16le";
   // The Rust map also accepts Buffer-only names node's normalizeEncoding rejects.
   if (lower === "buffer" || lower === "utf16-le") return undefined;
   return rustNormalizeEncoding(enc);
@@ -797,6 +821,7 @@ export const socketFaultInjection = {
 
 /** Runs the uSockets timeout sweep of this thread's loop `count` times. The loop runs one every 4 seconds. */
 export const sweepSocketTimers = $bindgen("socket_body.bind.ts", "sweepSocketTimers");
+export const fakeLibraryTimers = $bindgen("FakeTimers.bind.ts", "fakeLibraryTimers");
 
 export const namedPipeInternals = {
   /**
@@ -900,6 +925,12 @@ export const privateGlobalFunctions: Record<string, (...operands: any[]) => unkn
 export const builtinFeatureUses: () => import("../../scripts/build/trim/types.ts").BuiltinEntry[] = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_builtinFeatureUses",
+  0,
+);
+/** In an executable compiled ahead of time: asks for every module of the library that the image holds, once. The path of each, and behind a blank what asking for it threw. */
+export const aotRunEveryLibraryModule: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotRunEveryLibraryModule",
   0,
 );
 /** The engine's `NameClass` of a property name, by the enumerator's name. */
@@ -1061,6 +1092,13 @@ export const byteStreamInternals = {
 export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
+  0,
+);
+
+// How many times this process parsed the source of an internal module (node:fs etc.).
+export const internalModulesCompiledFromSource: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesCompiledFromSource",
   0,
 );
 

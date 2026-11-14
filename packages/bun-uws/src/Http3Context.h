@@ -58,6 +58,7 @@ struct Http3Context {
                 res->writeStatus("501 Not Implemented")->end();
                 return;
             }
+            rd->declaredContentLength = req.getContentLength();
             if (declaresBodyOverLimit(req.getContentLength(), cd->maxRequestBodySize)) {
                 rd->state |= Http3ResponseData::HTTP_REQUEST_BODY_TOO_LARGE;
             } else if (req.getExpectsContinue()) {
@@ -72,7 +73,14 @@ struct Http3Context {
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
+            rd->receivedBodyBytes += len;
             if (!rd->inStream) return;
+            /* RFC 9114 §4.1.2. lsquic lets a request with no DATA at all through. */
+            if (fin && (us_quic_stream_connection_failed(s) ||
+                    (rd->declaredContentLength != NO_CONTENT_LENGTH && rd->receivedBodyBytes != rd->declaredContentLength))) {
+                rd->inStream = nullptr;
+                return us_quic_stream_reset(s, US_QUIC_H3_MESSAGE_ERROR);
+            }
             if (len > rd->requestBodyBudget) return res->refuseRequestBody();
             rd->requestBodyBudget -= len;
             rd->inStream(res, data, len, fin != 0, rd->userData);

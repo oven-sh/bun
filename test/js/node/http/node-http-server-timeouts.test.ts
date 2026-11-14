@@ -1,4 +1,4 @@
-import { setSocketOptions } from "bun:internal-for-testing";
+import { fakeLibraryTimers, setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, jest, setSystemTime, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
@@ -589,6 +589,8 @@ describe("node:http server timeout enforcement", () => {
       run: (req: http.IncomingMessage, res: http.ServerResponse, client: net.Socket) => Promise<void>,
     ) {
       jest.useFakeTimers();
+      // A socket's timeout is a timer of node:net, which fake timers leave on the real clock.
+      fakeLibraryTimers(true);
       const { promise: dispatched, resolve: onRequest } =
         Promise.withResolvers<[http.IncomingMessage, http.ServerResponse]>();
       const server = scheme === "https" ? https.createServer(tlsCert) : http.createServer();
@@ -621,6 +623,7 @@ describe("node:http server timeout enforcement", () => {
         await closed;
         return received;
       } finally {
+        fakeLibraryTimers(false);
         jest.useRealTimers();
         client.destroy();
         server.closeAllConnections();

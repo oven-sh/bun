@@ -503,11 +503,11 @@ _http_server[Server][prototype] c-w object
 _http_server[Server][prototype]: object above=EventEmitter extensible=true
 _http_server[Server][prototype][constructor] c-w function
 _http_server[Server][prototype][constructor] = _http_server[Server]
-_http_server[Server][prototype][_requestCert] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_rejectUnauthorized] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_handshakeTimeout] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_ALPNCallback] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_SNICallback] c-a accessor get=function set=undefined
+_http_server[Server][prototype][_requestCert] c-a accessor get=function set=function
+_http_server[Server][prototype][_rejectUnauthorized] c-a accessor get=function set=function
+_http_server[Server][prototype][_handshakeTimeout] c-a accessor get=function set=function
+_http_server[Server][prototype][_ALPNCallback] c-a accessor get=function set=function
+_http_server[Server][prototype][_SNICallback] c-a accessor get=function set=function
 _http_server[Server][prototype][listening] cea accessor get=function set=undefined
 _http_server[Server][prototype][ref] cew function
 _http_server[Server][prototype][ref]: function function name="" length=0 above=Function extensible=true
@@ -659,7 +659,6 @@ _http_server[ServerResponse][prototype][flushHeaders] cew function
 _http_server[ServerResponse][prototype][flushHeaders]: function function name="" length=0 above=Function extensible=true
 _http_server[ServerResponse][prototype][flushHeaders][length] c-- number
 _http_server[ServerResponse][prototype][flushHeaders][name] c-- string
-_http_server[ServerResponse][prototype][_expect_continue] cew boolean
 _http_server[ServerResponse][prototype][Symbol(kFinishesWithoutLastWrite)] cew boolean
 _http_server[ServerResponse][prototype][Symbol(kPendingFinish)] cew undefined
 _http_server[setupConnectionsTracking] cew function
@@ -1974,7 +1973,7 @@ net[Server][prototype][getsockname]: function function name="getsockname" length
 net[Server][prototype][getsockname][length] c-- number
 net[Server][prototype][getsockname][name] c-- string
 net[Server][prototype][Symbol(kForeignListener)] cew function
-net[Server][prototype][Symbol(kForeignListener)]: function function name="" length=1 above=Function extensible=true
+net[Server][prototype][Symbol(kForeignListener)]: function function name="" length=3 above=Function extensible=true
 net[Server][prototype][Symbol(kForeignListener)][length] c-- number
 net[Server][prototype][Symbol(kForeignListener)][name] c-- string
 net[Server][prototype][Symbol(Symbol.asyncDispose)] cew function
@@ -3434,6 +3433,10 @@ util[MIMEParams][prototype][constructor] = util[MIMEParams]
 util[MIMEParams][prototype][Symbol(Symbol.iterator)] c-w function
 util[MIMEParams][prototype][Symbol(Symbol.iterator)] = util[MIMEParams][prototype][entries]
 util[MIMEParams][prototype][Symbol(Symbol.toStringTag)] c-- string
+util[diff] cew function
+util[diff]: function function name="diff" length=2 above=Function extensible=true
+util[diff][length] c-- number
+util[diff][name] c-- string
 util[isArray] cew function
 util[isArray]: function native name="isArray" length=1 above=Function extensible=true
 util[isArray][length] c-- number
@@ -4197,8 +4200,8 @@ http.OutgoingMessage level 0: _events:cew _eventsCount:cew _maxListeners:cew out
 http.OutgoingMessage level 1: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(kFailHeldWrites):cew Symbol(nodejs.rejection):cew
 http.OutgoingMessage level 2: constructor:c-w pipe:cew eventNames:cew
 http.OutgoingMessage level 3: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
-http.ServerResponse level 0: _events:cew _eventsCount:cew _maxListeners:cew outputData:cew outputSize:cew writable:cew destroyed:cew _last:cew chunkedEncoding:cew shouldKeepAlive:cew maxRequestsOnConnectionReached:cew _defaultKeepAlive:cew useChunkedEncodingByDefault:cew sendDate:cew _removedConnection:cew _removedContLen:cew _removedTE:cew strictContentLength:cew _contentLength:cew _hasBody:cew _trailer:cew finished:cew _headerSent:cew _closed:cew _header:cew _keepAliveTimeout:cew _onPendingData:cew req:cew _sent100:cew statusCode:cew statusMessage:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kBytesWritten):cew Symbol(kNeedDrain):cew Symbol(corked):cew Symbol(kChunkedBuffer):cew Symbol(kChunkedLength):cew Symbol(kSocket):cew Symbol(kOutHeaders):cew Symbol(errored):cew Symbol(kHighWaterMark):cew Symbol(kRejectNonStandardBodyWrites):cew Symbol(kLenientValidation):cew Symbol(pendingCallbacks):cew Symbol(handle):cew
-http.ServerResponse level 1: constructor:c-w statusCode:cew headers:--a socket:--a connection:--a writableCorked:--a cork:cew uncork:cew _ended:cew _writeRaw:cew writeEarlyHints:cew writeInformation:cew writeProcessing:cew writeContinue:cew end:cew write:cew _callPendingCallbacks:cew detachSocket:cew _implicitHeader:cew writableNeedDrain:--a writableFinished:--a writableLength:--a _send:cew writeHead:cew assignSocket:cew destroy:cew emit:cew flushHeaders:cew _expect_continue:cew Symbol(kFinishesWithoutLastWrite):cew Symbol(kPendingFinish):cew
+http.ServerResponse level 0: _events:cew _eventsCount:cew _maxListeners:cew outputData:cew outputSize:cew writable:cew destroyed:cew _last:cew chunkedEncoding:cew shouldKeepAlive:cew maxRequestsOnConnectionReached:cew _defaultKeepAlive:cew useChunkedEncodingByDefault:cew sendDate:cew _removedConnection:cew _removedContLen:cew _removedTE:cew strictContentLength:cew _contentLength:cew _hasBody:cew _trailer:cew finished:cew _headerSent:cew _closed:cew _header:cew _keepAliveTimeout:cew _onPendingData:cew req:cew _sent100:cew _expect_continue:cew statusCode:cew statusMessage:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kBytesWritten):cew Symbol(kNeedDrain):cew Symbol(corked):cew Symbol(kChunkedBuffer):cew Symbol(kChunkedLength):cew Symbol(kSocket):cew Symbol(kOutHeaders):cew Symbol(errored):cew Symbol(kHighWaterMark):cew Symbol(kRejectNonStandardBodyWrites):cew Symbol(kLenientValidation):cew Symbol(pendingCallbacks):cew Symbol(handle):cew
+http.ServerResponse level 1: constructor:c-w statusCode:cew headers:--a socket:--a connection:--a writableCorked:--a cork:cew uncork:cew _ended:cew _writeRaw:cew writeEarlyHints:cew writeInformation:cew writeProcessing:cew writeContinue:cew end:cew write:cew _callPendingCallbacks:cew detachSocket:cew _implicitHeader:cew writableNeedDrain:--a writableFinished:--a writableLength:--a _send:cew writeHead:cew assignSocket:cew destroy:cew emit:cew flushHeaders:cew Symbol(kFinishesWithoutLastWrite):cew Symbol(kPendingFinish):cew
 http.ServerResponse level 2: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(kFailHeldWrites):cew Symbol(nodejs.rejection):cew
 http.ServerResponse level 3: constructor:c-w pipe:cew eventNames:cew
 http.ServerResponse level 4: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew

@@ -3,10 +3,11 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
+use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_shell_redirect};
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, closefd, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -24,7 +25,7 @@ pub(crate) struct Cmd {
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
-    pub(crate) redirection_fd: Option<*mut CowFd>,
+    pub(crate) redirection_fd: Option<bun_sys::Fd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
 }
@@ -264,7 +265,6 @@ impl Cmd {
                 CmdState::ExpandingRedirect { idx } => {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
-                            let atom: *const ast::Atom = atom;
                             let child = Expansion::init(interp, shell, atom, this, false);
                             return Expansion::start(interp, child);
                         }
@@ -284,7 +284,7 @@ impl Cmd {
                     let assign_ctx = idx > 0
                         && is_declaration_utility(&args[0])
                         && is_assignment_word(&args[idx as usize]);
-                    let atom: *const ast::Atom = &raw const args[idx as usize];
+                    let atom = &args[idx as usize];
                     let child = Expansion::init(interp, shell, atom, this, assign_ctx);
                     return Expansion::start(interp, child);
                 }
@@ -459,24 +459,13 @@ impl Cmd {
         }
 
         // ── Subprocess path ─────────────────────────────────────────────────
-        // `SpawnArgs` borrows only the local `arena` (its
-        // `interp`/`argv` fields are raw pointers), so `interp: &mut
-        // Interpreter` is freely re-borrowable at every step before
-        // `spawn_async`. Re-enter the arena via `interp.as_cmd{,_mut}(this)`
-        // for each short-lived access instead of caching raw `*mut Cmd`.
+        // Re-enter the arena via `interp.as_cmd{,_mut}(this)` for each
+        // short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
 
         let arena = bun_alloc::Arena::new();
-        let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
-        // Cache the raw `*mut ShellExecEnv` and deref it directly so the
-        // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
-        // `*interp` — `Base::shell()` would tie the slice's lifetime to
-        // `&interp`, blocking every `interp.as_cmd_mut(...)` below for the
-        // life of `spawn_args`. The env is a separate heap allocation that
-        // outlives this Cmd, so the slice remains valid across reborrows.
-        let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
-        // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
-        spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
+        let mut spawn_args = SpawnArgs::default::<false>(&arena, event_loop);
+        spawn_args.cwd = interp.as_cmd(this).base.shell().cwd();
 
         // Fill env from export_env + cmd_local_env.
         {
@@ -614,9 +603,7 @@ impl Cmd {
             }
         };
         let cmd_parent = crate::shell::subproc::CmdHandle {
-            // SAFETY: `interp_ptr` is the live owning Interpreter (from
-            // `&mut Interpreter` above); single-threaded, write provenance.
-            interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
+            interp: bun_ptr::ParentRef::new(interp),
             id: this,
         };
 
@@ -658,12 +645,12 @@ impl Cmd {
 
         if did_exit_immediately {
             // `watch()` failed → process already gone.
-            let process = subproc.proc();
-            if process.has_exited() {
-                let status = process.status.clone();
-                process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
+            let process = subproc.proc().this_ptr();
+            if let Some(status) = process.status() {
+                let rusage = crate::api::bun::process::rusage_zeroed();
+                bun_spawn::Process::on_exit(process, status.clone(), &rusage);
             } else {
-                process.wait(false);
+                bun_spawn::Process::wait(process, false);
             }
         }
 
@@ -775,10 +762,7 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
-                    // `get_body_value` is `&self`.
-                    let req = unsafe { &*req };
+                } else if let Some(req) = jsval.as_class_ref::<crate::webcore::Response>() {
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();
@@ -826,13 +810,24 @@ impl Cmd {
                 };
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                let redirfd = match crate::shell::interpreter::shell_openat(
-                    cwd_fd,
-                    path,
-                    flags.to_flags(),
-                    0o666,
-                ) {
+                let shell = interp.as_cmd(this).base.shell();
+                let cwd_fd = shell.cwd_fd.fd();
+                let refused = refuse_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
+                let opened = refused.and_then(|()| {
+                    crate::shell::interpreter::shell_openat(cwd_fd, path, flags.to_flags(), 0o666)
+                });
+                let opened = opened.inspect(|_| {
+                    note_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
+                });
+                let opened = opened.or_else(|error| {
+                    open_embedded_shell_operand(
+                        shell.cwd(),
+                        path.as_bytes(),
+                        flags.to_flags(),
+                        error,
+                    )
+                });
+                let redirfd = match opened {
                     Ok(f) => f,
                     Err(e) => {
                         let sys_err = e.to_shell_system_error();
@@ -847,7 +842,7 @@ impl Cmd {
                         )));
                     }
                 };
-                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
+                interp.as_cmd_mut(this).redirection_fd = Some(redirfd);
                 set_stdio_from_redirect(stdio, flags, redirfd);
             }
         }
@@ -877,7 +872,7 @@ impl Cmd {
                 Exec::Subproc(sub) if !sub.child.is_null() => {
                     // SAFETY: `child` is the live heap::alloc'd subprocess;
                     // the call only writes its own fields.
-                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                    unsafe { (*sub.child).defuse_array_buffer_unpins() };
                 }
                 _ => {}
             }
@@ -906,8 +901,7 @@ impl Cmd {
             me.args.clear();
             me.redirection_file.clear();
             if let Some(fd) = me.redirection_fd.take() {
-                // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-                CowFd::deref(fd);
+                closefd(fd);
             }
             core::mem::take(&mut me.exec)
         };
@@ -942,8 +936,6 @@ impl Cmd {
             Exec::Subproc(_) => {}
         }
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
-        // `base.shell` is borrowed (or, when parent is Pipeline, freed by
-        // `Pipeline::child_done` before this runs) — never freed here.
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────

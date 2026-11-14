@@ -411,6 +411,8 @@ extern "C" void bun_remember_inherited_file_descriptors()
 }
 #endif
 
+extern "C" void Bun__willRestartProcess();
+
 extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
@@ -469,6 +471,8 @@ extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheri
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+
+    Bun__willRestartProcess();
 }
 
 #if OS(LINUX)
@@ -487,6 +491,7 @@ static std::atomic<unsigned> execve_generation { 0 };
 static pid_t execve_counting_pid = 0;
 
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
+extern "C" bool CrashHandler__isReloadingProcess();
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
 
 #if defined(BUN_SAFE_STACK)
@@ -666,8 +671,12 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
 {
     if (getpid() != execve_counting_pid)
         return __real_execve(path, argv, envp);
-    // The suspension lock is held over execve.
-    WTF::ThreadSuspendLocker suspendLocker;
+    // execve keeps a signal that is pending on this thread and resets its handler, so a suspend or
+    // resume signal sent now would kill the new image. Senders hold this lock. A thread that
+    // crashed may already hold it, and it is not recursive.
+    std::optional<WTF::ThreadSuspendLocker> suspendLocker;
+    if (!CrashHandler__isReloadingProcess())
+        suspendLocker.emplace();
     threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
     execve_generation.fetch_add(1, std::memory_order_seq_cst);
     int rc = __real_execve(path, argv, envp);
@@ -1002,6 +1011,12 @@ extern "C" void Bun__lockThreadSuspensionForExit()
     new (storage) WTF::ThreadSuspendLocker();
 }
 #endif
+
+// For tests. Never released.
+extern "C" void Bun__lockThreadSuspensionForTesting()
+{
+    new WTF::ThreadSuspendLocker();
+}
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 

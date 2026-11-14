@@ -1,60 +1,57 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{CodeUnit, Parent};
-use bun_sema::check::aot::{
-    IndexKey, IndexSignature, MemberLookup, MemberName, PositionTypes, ShapeKind,
-};
-use bun_sema::check::spans::skip_trivia_back;
+use bun_sema::bind::{Binding, CodeUnit, Parent};
+use bun_sema::check::aot::{IndexKey, IndexSignature, MemberLookup, PositionTypes, ShapeKind};
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, File, FnId, MemberKey, Prop, PropId, PropKey, PropKind,
-    is_proto_setter, start_of,
+    BinOp, Branches, ExprId, ExprKind, File, FnId, MemberKey, PatKind, Prop, PropId, PropKey,
+    PropKind, VarKind, is_proto_setter,
 };
+use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 
 use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
-use crate::ir::generated::TypeSiteKind;
-use crate::lower::member::{GivenName, PropertyName};
-use crate::lower::positions::SiteOrigin;
-use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures, convert};
-
-/// What stands in front of a property of a literal.
-#[derive(Copy, Clone)]
-enum InFront {
-    StartOfLiteral(u32),
-    Property(PropId),
-}
+use crate::ir::generated::LimitId;
+use crate::lower::member::PropertyName;
+use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures};
 
 #[derive(Copy, Clone)]
 struct Dictionary {
     ty: CheckerTypeId,
-    position: u32,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The types are asked in the order in which a literal finds its layout: the type it is written under, then its own.
+    fn is_keyed_by_symbols_alone(&mut self, dictionary: CheckerTypeId) -> bool {
+        matches!(
+            self.queries.index_signatures(dictionary),
+            Ok(signatures) if signatures.iter().all(|signature| matches!(signature.key, IndexKey::Symbol))
+        )
+    }
+
     fn find_dictionary(&mut self, literal: ExprId) -> Option<Dictionary> {
         if let ExprKind::Object(properties) = self.hir[literal].kind
             && properties.iter().next().is_none()
         {
             return None;
         }
-        let position = self.hir[literal].pos;
         if let Ok(Some(ty)) = self.queries.contextual_type(literal) {
             if self.is_dictionary_type(ty) {
-                return Some(Dictionary { ty, position });
+                return Some(Dictionary { ty });
             }
             if self.object_type_layout(ty).is_some() {
                 return None;
             }
         }
         let ty = self.queries.expression_type(literal).ok()?;
-        self.is_dictionary_type(ty)
-            .then_some(Dictionary { ty, position })
+        self.is_dictionary_type(ty).then_some(Dictionary { ty })
     }
 
-    // `Object.defineProperties(target, { .. })`, `Object.create(base, { .. })`: the built-in takes the literal as a map, name by name, and nobody else sees it.
-    fn is_map_of_descriptors(&self, literal: ExprId) -> bool {
+    fn is_operand_of_builtin(
+        &self,
+        literal: ExprId,
+        position: usize,
+        takes: impl Fn(BuiltinId) -> bool,
+    ) -> bool {
         let hir = self.hir;
         let mut child = literal;
         while let Parent::Expr(parent) = self.bound.parent_of_expr(child) {
@@ -66,16 +63,53 @@ impl FileLowering<'_, '_, '_, '_> {
                 return false;
             };
             let callee = self.skip_type_syntax(hir[call].callee);
-            return hir.ids(hir[call].args).nth(1) == Some(child)
-                && matches!(
-                    self.builtins.builtin_of_expression(callee),
-                    Some(BuiltinId::ObjectDefineProperties | BuiltinId::ObjectCreate)
-                );
+            return hir.ids(hir[call].args).nth(position) == Some(child)
+                && self
+                    .builtins
+                    .builtin_of_expression(callee)
+                    .is_some_and(takes);
         }
         false
     }
 
-    // `{ ...source, a }` where no type says which names the object will have.
+    fn is_map_of_descriptors(&self, literal: ExprId) -> bool {
+        self.is_operand_of_builtin(literal, 1, |builtin| {
+            matches!(
+                builtin,
+                BuiltinId::ObjectDefineProperties | BuiltinId::ObjectCreate
+            )
+        })
+    }
+
+    fn is_written_descriptor(&self, literal: ExprId) -> bool {
+        self.is_operand_of_builtin(literal, 2, |builtin| {
+            matches!(
+                builtin,
+                BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty
+            )
+        })
+    }
+
+    pub(in crate::lower) fn has_names_known_only_at_run_time(&mut self, source: ExprId) -> bool {
+        let names_are_unknown = self
+            .queries
+            .expression_type(source)
+            .and_then(|ty| self.queries.type_shape(ty))
+            .is_ok_and(|shape| {
+                matches!(
+                    shape.kind,
+                    ShapeKind::TypeVariable { .. }
+                        | ShapeKind::Anything(_)
+                        | ShapeKind::AnyObject
+                        | ShapeKind::ConstructorFunctionInstance(_)
+                )
+            });
+        if names_are_unknown {
+            return true;
+        }
+        matches!(self.queries.expression_type(source), Ok(ty) if self.is_dictionary_type(ty))
+    }
+
     fn begins_as_copy(&mut self, literal: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[literal].kind else {
@@ -87,20 +121,12 @@ impl FileLowering<'_, '_, '_, '_> {
         if first.kind != PropKind::Spread {
             return false;
         }
-        let names_of_source_are_unknown = self
-            .queries
-            .expression_type(first.value)
-            .and_then(|ty| self.queries.type_shape(ty))
-            .is_ok_and(|shape| {
-                matches!(
-                    shape.kind,
-                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
-                )
-            });
-        if names_of_source_are_unknown {
+        if self.adds_names_to_literal_expected_of_parameter(literal) {
+            return false;
+        }
+        if self.has_names_known_only_at_run_time(first.value) {
             return true;
         }
-        // `{ ...defaults, ...options }`: an object of its own kind, which holds the names of every source.
         if properties.len() > 1
             && properties
                 .iter()
@@ -129,11 +155,19 @@ impl FileLowering<'_, '_, '_, '_> {
         self.object_type_layout(written).is_none()
     }
 
-    // `Point.prototype = { .. }`: the run time watches the members of a class on an ordinary object alone.
     fn is_stored_as_prototype_object(&self, literal: ExprId) -> bool {
         let hir = self.hir;
         if !matches!(hir[literal].kind, ExprKind::Object(_)) {
             return false;
+        }
+        let named = &self.lists.literals_named_as_prototype_objects;
+        if (named.get_or_init(|| self.find_literals_named_as_prototype_objects()))
+            .contains(&literal)
+        {
+            return true;
+        }
+        if self.variable_of_prototype_literal(literal).is_some() {
+            return true;
         }
         let mut child = literal;
         while let Parent::Expr(parent) = self.bound.parent_of_expr(child) {
@@ -155,7 +189,39 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    pub(crate) fn holds_dictionary_literal(&mut self, root: ExprId) -> bool {
+    fn find_literals_named_as_prototype_objects(&self) -> FxHashSet<ExprId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut names: FxHashSet<Binding> = FxHashSet::default();
+        for expression in hir.exprs.iter() {
+            let ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } = expression.kind
+            else {
+                continue;
+            };
+            let value = hir.skip_type_assertions(value);
+            if matches!(hir.member_key(target), Some((_, MemberKey::Name(name))) if name == known::prototype)
+                && matches!(hir[value].kind, ExprKind::Ident(_))
+                && let binding @ Binding::Symbol(_) = bound.binding(value)
+            {
+                names.insert(binding);
+            }
+        }
+        let constants = hir.var_decls.iter().filter(|declaration| {
+            declaration.kind == VarKind::Const
+                && declaration.init != ExprId::NONE
+                && matches!(hir[declaration.pat].kind, PatKind::Ident(_))
+                && names.contains(&bound.initialized_binding(declaration.pat))
+        });
+        constants
+            .map(|declaration| hir.skip_type_assertions(declaration.init))
+            .filter(|&value| matches!(hir[value].kind, ExprKind::Object(_)))
+            .collect()
+    }
+
+    pub(crate) fn is_built_by_code(&mut self, root: ExprId) -> bool {
         debug_assert!(
             self.decisions().is_data_literal(root),
             "a data literal was expected"
@@ -164,23 +230,70 @@ impl FileLowering<'_, '_, '_, '_> {
             return true;
         }
         let hir = self.hir;
-        let mut pending: SmallVec<[ExprId; 8]> = smallvec![root];
-        while let Some(expression) = pending.pop() {
+        let deepest = self.inputs.limits.get(LimitId::MaxDataNestingDepth);
+        let known = &self.levels_of_literals_inside_built_ones;
+        if let Some(&levels) = known.get(&hir.skip_type_assertions(root)) {
+            return levels > deepest;
+        }
+        let mut pending: SmallVec<[(ExprId, u64); 8]> = smallvec![(root, 1)];
+        while let Some((expression, depth)) = pending.pop() {
             let literal = hir.skip_type_assertions(expression);
+            if !matches!(hir[literal].kind, ExprKind::Array(_) | ExprKind::Object(_)) {
+                continue;
+            }
+            if depth > deepest {
+                self.count_levels_of_literals_inside(root);
+                return true;
+            }
+            let inner = |part: ExprId| is_literal(hir, part).then_some((part, depth + 1));
             if let ExprKind::Array(items) = hir[literal].kind {
-                pending.extend(hir.ids(items).filter(|&item| is_literal(hir, item)));
+                pending.extend(hir.ids(items).filter_map(inner));
                 continue;
             }
             let ExprKind::Object(properties) = hir[literal].kind else {
                 continue;
             };
             if self.find_dictionary(literal).is_some() {
+                self.count_levels_of_literals_inside(root);
                 return true;
             }
             let values = properties.iter().map(|property| hir[property].value);
-            pending.extend(values.filter(|&value| is_literal(hir, value)));
+            pending.extend(values.filter_map(inner));
         }
         false
+    }
+
+    fn count_levels_of_literals_inside(&mut self, root: ExprId) {
+        let hir = self.hir;
+        let mut found: Vec<(ExprId, usize, u64)> = vec![(hir.skip_type_assertions(root), 0, 1)];
+        let mut index = 0;
+        while let Some(&(literal, ..)) = found.get(index) {
+            let inner = |part: ExprId| {
+                is_literal(hir, part).then(|| (hir.skip_type_assertions(part), index, 1))
+            };
+            match hir[literal].kind {
+                ExprKind::Array(items) => found.extend(hir.ids(items).filter_map(inner)),
+                ExprKind::Object(_) if self.find_dictionary(literal).is_some() => {
+                    found[index].2 = u64::MAX;
+                }
+                ExprKind::Object(properties) => {
+                    let values = properties.iter().map(|property| hir[property].value);
+                    found.extend(values.filter_map(inner));
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        for index in (0..found.len()).rev() {
+            let (literal, outer, levels) = found[index];
+            if index > 0 {
+                found[outer].2 = found[outer].2.max(levels.saturating_add(1));
+            }
+            if levels > 1 {
+                self.levels_of_literals_inside_built_ones
+                    .insert(literal, levels);
+            }
+        }
     }
 
     fn find_types_under_name(
@@ -208,7 +321,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Which pattern a key matches depends on its text, so beside a pattern nothing is said about a key that has only a kind.
     fn find_types_under_key_kind(
         &mut self,
         dictionary: CheckerTypeId,
@@ -226,18 +338,17 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         found.map(|signature| signature.types)
     }
+}
 
-    fn record_flow_into_signature(
-        &mut self,
-        copied: PositionTypes,
-        signature: Option<PositionTypes>,
-        position: u32,
-    ) {
-        if let (Ok(copied), Some(Ok(held))) = (copied.checked, signature.map(|types| types.checked))
-        {
-            self.record_type_flow(copied, held, position);
-        }
-    }
+fn has_only_computed_values(hir: &File<'_>, literal: ExprId) -> bool {
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return false;
+    };
+    properties.iter().all(|property| {
+        let prop = hir[property];
+        matches!(prop.kind, PropKind::Init)
+            && !matches!(hir.runtime_property_key(property), PropKey::Name(_))
+    })
 }
 
 fn has_only_named_values(hir: &File<'_>, literal: ExprId, allows_methods: bool) -> bool {
@@ -258,7 +369,6 @@ fn has_only_named_values(hir: &File<'_>, literal: ExprId, allows_methods: bool) 
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // A member of the literal is converted like the value of `dictionary[key] = value`.
     fn convert_dictionary_member(
         &mut self,
         dictionary: Option<Dictionary>,
@@ -278,17 +388,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             },
             PropKey::Private(_) | PropKey::None => None,
         };
-        let Some(types) = types else {
-            return value;
-        };
-        let origin = SiteOrigin {
-            kind: TypeSiteKind::Element,
-            position: dictionary.position,
-        };
-        let position = self.file.create_position(types, origin);
-        let subject = convert::Int32Subject::LiteralProperty;
-        self.describe_int32_flow(position, subject, Some(source));
-        self.convert_initializer(value, position, Some(source))
+        let position =
+            types.and_then(|types| self.file.find_int32_position(types, types.written, false));
+        match position {
+            Some(position) => self.convert_initializer(value, position, Some(source)),
+            None => value,
+        }
     }
 
     fn lower_spread(
@@ -302,16 +407,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !ends_in_literal_of_plain_members(self.file, source) {
             let value = self.lower_expression(source);
             self.set_position(position);
-            record_spread_flow(self.file, dictionary, source);
             self.add_spread(object, value);
             return;
         }
         match hir[source].kind {
             ExprKind::Object(properties) => {
-                let mut in_front = InFront::StartOfLiteral(hir[source].pos);
                 for property in properties.iter() {
-                    self.lower_property_definition(object, dictionary, property, in_front);
-                    in_front = InFront::Property(property);
+                    self.lower_property_definition(object, dictionary, property);
                 }
             }
             ExprKind::Binary { left, right, .. } => {
@@ -321,6 +423,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_condition(left, if_true, join);
                 self.continue_in(if_true);
                 self.lower_spread(object, dictionary, right, position);
+                self.define_waiting_elements(object);
                 self.jump(join);
                 self.continue_in(join);
             }
@@ -333,9 +436,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_condition(test, if_true, if_false);
                 self.continue_in(if_true);
                 self.lower_spread(object, dictionary, yes, position);
+                self.define_waiting_elements(object);
                 self.jump(join);
                 self.continue_in(if_false);
                 self.lower_spread(object, dictionary, no, position);
+                self.define_waiting_elements(object);
                 self.jump(join);
                 self.continue_in(join);
             }
@@ -343,38 +448,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    pub(in crate::lower) fn lower_property_of_written_literal(
+        &mut self,
+        object: &mut ObjectBuilder,
+        property: PropId,
+    ) {
+        self.lower_property_definition(object, None, property);
+    }
+
     fn lower_property_definition(
         &mut self,
         object: &mut ObjectBuilder,
         dictionary: Option<Dictionary>,
         property: PropId,
-        in_front: InFront,
     ) {
         let hir = self.file.hir;
         let prop = hir[property];
         let key = hir.runtime_property_key(property);
         self.set_position(prop.pos);
         match prop.kind {
-            // JSC copies the object that a literal begins with in one step, which it reports at the start of the literal.
             PropKind::Spread => {
-                let (position, recorded) = match in_front {
-                    InFront::StartOfLiteral(start) => (start, start),
-                    InFront::Property(_) if self.file.runs_as_written() => {
-                        let value = start_of(hir, prop.value) as usize;
-                        let end_of_dots = skip_trivia_back(&hir.text, value) as u32;
-                        (end_of_dots, end_of_dots)
-                    }
-                    // The source map does not know the parenthesis and answers the token in front of it.
-                    InFront::Property(previous)
-                        if self.file.begins_with_parenthesis(prop.value) =>
-                    {
-                        let last = self.file.last_mapped_value_position(hir[previous].value);
-                        (last, last)
-                    }
-                    InFront::Property(_) => (prop.pos, self.file.first_position(prop.value)),
-                };
-                self.lower_spread(object, dictionary, prop.value, position);
-                self.builder.record_position(recorded);
+                self.lower_spread(object, dictionary, prop.value, prop.pos);
             }
             PropKind::Init if is_proto_setter(&prop) => {
                 let prototype = self.lower_expression(prop.value);
@@ -383,10 +477,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             PropKind::Init | PropKind::Shorthand => {
                 let Some(name) = self.try_lower_property_name(key) else {
-                    self.lower_expression_for_effect(prop.value);
+                    self.lower_taken_value_for_effect(prop.value);
                     return;
                 };
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let value = self.lower_named_evaluation(prop.value, given);
                 self.set_position(prop.pos);
                 let value = self.convert_dictionary_member(dictionary, key, value, prop.value);
@@ -401,7 +495,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let function_key = self.file.scopes.function_key(CodeUnit::Function(function));
                 let captures_home = captures::captures_home_object(self.file, function_key);
                 let home = captures_home.then(|| self.open_head(object));
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let closure = self.create_named_closure(function, Some(given), home);
                 let closure = self.convert_dictionary_member(dictionary, key, closure, prop.value);
                 self.add_property(object, name, closure, Some(prop.value));
@@ -411,9 +505,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return;
                 };
                 self.set_position(prop.pos);
+                self.define_waiting_elements(object);
                 let head = self.open_head(object);
                 let function = get_method_function(hir, &prop);
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let closure = self.lower_method(function, given, head);
                 let (computed_key, constant_key) = name.key_operands();
                 if let Some(key) = constant_key {
@@ -445,6 +540,84 @@ fn get_method_function(hir: &File<'_>, prop: &Prop) -> FnId {
     function
 }
 
+pub(in crate::lower) fn is_born_level_by_level(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    literal: ExprId,
+) -> bool {
+    if lowering.is_module_body() && !lowering.stands_in_loop() {
+        return false;
+    }
+    let hir = lowering.file.hir;
+    if lowering.only_argument_of_construction == Some(hir.skip_type_assertions(literal)) {
+        return false;
+    }
+    let literal = hir.skip_type_assertions(literal);
+    let mut known = lowering.lists_inside_literals.borrow_mut();
+    if !known.contains_key(&literal) && is_laid_out_in_line_by_the_walk(hir, literal) {
+        known.insert(literal, ListsInside::None);
+    }
+    let mut pending: SmallVec<[(ExprId, bool); 8]> = smallvec![(literal, false)];
+    while let Some((expression, is_left)) = pending.pop() {
+        if known.contains_key(&expression) {
+            continue;
+        }
+        let inside = find_literals_inside(hir, expression);
+        if !is_left && !inside.is_empty() {
+            pending.push((expression, true));
+            pending.extend(inside.iter().map(|&inner| (inner, false)));
+            continue;
+        }
+        let is_filled_list =
+            matches!(hir[expression].kind, ExprKind::Array(items) if items.len() != 0);
+        let lists = match inside.iter().any(|inner| known[inner] != ListsInside::None) {
+            true => ListsInside::Some,
+            false if inside.is_empty() && is_filled_list => ListsInside::IsListOfLeaves,
+            false => ListsInside::None,
+        };
+        known.insert(expression, lists);
+    }
+    known[&literal] == ListsInside::Some
+}
+
+fn is_laid_out_in_line_by_the_walk(hir: &File<'_>, literal: ExprId) -> bool {
+    const MOST_NODES_OF_EXPANDED_DATA: usize = 16;
+    let mut number_of_nodes = 1;
+    let mut pending: SmallVec<[ExprId; 8]> = smallvec![literal];
+    while let Some(list) = pending.pop() {
+        let ExprKind::Array(items) = hir[list].kind else {
+            return false;
+        };
+        number_of_nodes += items.len();
+        if number_of_nodes > MOST_NODES_OF_EXPANDED_DATA {
+            return false;
+        }
+        pending.extend(find_literals_inside(hir, list));
+    }
+    true
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::lower) enum ListsInside {
+    None,
+    IsListOfLeaves,
+    Some,
+}
+
+fn find_literals_inside(hir: &File<'_>, literal: ExprId) -> SmallVec<[ExprId; 8]> {
+    let as_literal = |expression: ExprId| {
+        let expression = hir.skip_type_assertions(expression);
+        is_literal(hir, expression).then_some(expression)
+    };
+    match hir[literal].kind {
+        ExprKind::Array(items) => hir.ids(items).filter_map(as_literal).collect(),
+        ExprKind::Object(properties) => {
+            let values = properties.iter().map(|property| hir[property].value);
+            values.filter_map(as_literal).collect()
+        }
+        _ => SmallVec::new(),
+    }
+}
+
 fn is_literal(hir: &File<'_>, expression: ExprId) -> bool {
     matches!(
         hir[hir.skip_type_assertions(expression)].kind,
@@ -459,43 +632,7 @@ fn find_signature(signatures: &[IndexSignature], key: IndexKey) -> Option<IndexS
         .find(|signature| signature.key == key)
 }
 
-// What is read out of the dictionary is tested against the type of its index signature, so what a spread copies into it goes into the family of that type.
-fn record_spread_flow(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    dictionary: Option<Dictionary>,
-    source: ExprId,
-) {
-    let Some(dictionary) = dictionary else {
-        return;
-    };
-    let Ok(copied) = file.queries.expression_type(source) else {
-        return;
-    };
-    let Ok(copied) = file.queries.without_nullish(copied) else {
-        return;
-    };
-    if copied == dictionary.ty {
-        return;
-    }
-    let position = file.hir[source].pos;
-    if let Ok(members) = file.queries.object_members(copied) {
-        for member in members {
-            if let MemberName::String(name) = member.name {
-                let signature = file.find_types_under_name(dictionary.ty, name);
-                file.record_flow_into_signature(member.types, signature, position);
-            }
-        }
-    }
-    if let Ok(signatures) = file.queries.index_signatures(copied) {
-        for copied_signature in signatures {
-            let signature = file.find_types_under_key_kind(dictionary.ty, copied_signature.key);
-            file.record_flow_into_signature(copied_signature.types, signature, position);
-        }
-    }
-}
-
-// `{ __proto__: null }` and nothing else.
-fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
+pub(in crate::lower) fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
     let ExprKind::Object(props) = hir[literal].kind else {
         return false;
     };
@@ -519,14 +656,20 @@ pub(crate) fn lower_object_literal(
     let ExprKind::Object(props) = hir[literal].kind else {
         unreachable!("lower_object_literal takes an Object expression");
     };
-    // What Object.create(null) makes: the object is born without a prototype and nothing takes one away from it.
     if is_empty_without_prototype(hir, literal) {
         lowering.set_position(hir[literal].pos);
+        if let Some(made) = lowering.lower_literal_below_null_for_maker(literal) {
+            return made;
+        }
         let null = lowering.builder.null();
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }
+    if let Some(made) = lowering.try_lower_literal_with_prototype(literal) {
+        return made;
+    }
     if lowering.file.decisions().is_data_literal(literal)
-        && !lowering.file.holds_dictionary_literal(literal)
+        && !is_born_level_by_level(lowering, literal)
+        && !lowering.file.is_built_by_code(literal)
     {
         return lowering.lower_decided_data(literal);
     }
@@ -539,7 +682,6 @@ pub(crate) fn lower_object_literal(
     };
     let mut rest = props.iter();
     let mut object = match dictionary {
-        // `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written.
         Some(_)
             if has_only_named_values(hir, literal, true)
                 && !lowering.file.is_map_of_descriptors(literal) =>
@@ -550,6 +692,13 @@ pub(crate) fn lower_object_literal(
             let mut object = lowering.begin_object(layout);
             lowering.open_head(&mut object);
             object
+        }
+        Some(found)
+            if lowering.file.is_keyed_by_symbols_alone(found.ty)
+                || has_only_computed_values(hir, literal) =>
+        {
+            let layout = lowering.file.literal_layout(literal);
+            lowering.begin_object(layout)
         }
         Some(_) => lowering.begin_dictionary(),
         None if is_prototype_object => lowering.begin_dictionary(),
@@ -562,49 +711,21 @@ pub(crate) fn lower_object_literal(
         }
         None => {
             let layout = lowering.file.literal_layout(literal);
-            lowering.begin_object(layout)
+            let mut object = lowering.begin_object(layout);
+            if lowering.file.is_opened_at_once(literal) {
+                lowering.open_head(&mut object);
+            }
+            object
         }
     };
-    let mut in_front = match props.iter().next() {
-        Some(first) if rest.len() != props.len() => InFront::Property(first),
-        _ => InFront::StartOfLiteral(hir[literal].pos),
-    };
-    let mut members: SmallVec<[(PropId, InFront); 8]> = SmallVec::new();
     for prop in rest {
-        members.push((prop, in_front));
-        in_front = InFront::Property(prop);
-    }
-    put_halves_of_accessors_side_by_side(lowering.file, &mut members);
-    for (prop, in_front) in members {
-        lowering.lower_property_definition(&mut object, dictionary, prop, in_front);
+        lowering.lower_property_definition(&mut object, dictionary, prop);
     }
     lowering.set_position(hir[literal].pos);
-    super::finish_object(lowering, object)
-}
-
-// Making a function runs no code and nobody has seen the object yet, so nobody can tell where a half is made, and the name keeps the place of its first definition among the keys either way.
-fn put_halves_of_accessors_side_by_side(
-    file: &FileLowering<'_, '_, '_, '_>,
-    members: &mut [(PropId, InFront)],
-) {
-    let hir = file.hir;
-    let find_half = |member: &(PropId, InFront)| {
-        let prop = hir[member.0];
-        let is_half = matches!(prop.kind, PropKind::Getter | PropKind::Setter);
-        is_half.then(|| get_method_function(hir, &prop))
-    };
-    for index in 0..members.len() {
-        let Some(half) = find_half(&members[index]) else {
-            continue;
-        };
-        let key = file.scopes.function_key(CodeUnit::Function(half));
-        let Some(in_front) = file.scopes.half_to_stand_behind(key) else {
-            continue;
-        };
-        let is_in_front = |member: &(PropId, InFront)| find_half(member) == Some(in_front);
-        let found = members[..index].iter().rposition(is_in_front);
-        let place = found.expect("the half in front stands in the same literal") + 1;
-        members[place..=index].rotate_right(1);
+    let made = super::finish_object(lowering, object);
+    match lowering.file.variable_of_prototype_literal(literal) {
+        Some(variable) => lowering.emit_prototype_of_maker(variable, made),
+        None => made,
     }
 }
 

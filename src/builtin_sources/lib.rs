@@ -11,22 +11,6 @@ pub struct Module {
     pub specifier: Option<Box<[u8]>>,
 }
 
-/// An identifier of a module that names a function or a class, where the text that `bun run` evaluates does not have it as the module writes it.
-pub struct BundledName {
-    pub position: u32,
-    /// None: what the identifier names in the module has no name in that text.
-    pub name: Option<Box<[u8]>>,
-    /// In that text it is the function's or the class's own name, not a variable that holds an anonymous one.
-    pub is_own_name: bool,
-}
-
-/// What it takes to find the words of a module in the text that `bun run` evaluates.
-pub struct BundledPositions {
-    pub evaluated: &'static [u8],
-    /// As src/codegen/bundled-positions.ts writes them.
-    pub corrections: &'static [u8],
-}
-
 /// Of a file that declares for every file. Each list says where statements stand, in ascending order.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct PartSeenByEveryFile {
@@ -36,16 +20,25 @@ pub struct PartSeenByEveryFile {
     pub asked: Box<[(u32, u32)]>,
 }
 
+/// A property of the global object whose name, in Bun's own code, means what Bun began with, whatever script has put there: `nativeFunctions`
+/// and `nativeGlobals` in src/codegen/replacements.ts.
+pub struct Native {
+    pub name: Box<[u8]>,
+    /// `globalThis.Blob` as `Blob`. `globalThis.setTimeout` is what script sees.
+    pub is_also_member_of_global_this: bool,
+}
+
 #[derive(Default)]
 pub struct Manifest {
     defines: Vec<(Box<[u8]>, Box<[u8]>)>,
+    natives: Vec<Native>,
     modules: Vec<Module>,
     function_files: Vec<Box<[u8]>>,
     module_declarations: Vec<Box<[u8]>>,
     files_declaring_for_every_file: Vec<(Box<[u8]>, PartSeenByEveryFile)>,
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
-    bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
+    parts_of_modules: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
 #[derive(Debug)]
@@ -78,6 +71,14 @@ impl Manifest {
             };
             match kind {
                 b"define" => manifest.defines.push((field()?.into(), field()?.into())),
+                b"native" => manifest.natives.push(Native {
+                    name: field()?.into(),
+                    is_also_member_of_global_this: match field()? {
+                        b"name" => false,
+                        b"name-or-member" => true,
+                        _ => return Err(error()),
+                    },
+                }),
                 b"module" => manifest.modules.push(Module {
                     id: number(field()?).ok_or_else(error)?,
                     path: optional(field()?),
@@ -93,22 +94,7 @@ impl Manifest {
                     };
                     (manifest.files_declaring_for_every_file).push((file, part));
                 }
-                b"name" => {
-                    let file = field()?;
-                    let name = BundledName {
-                        position: number(field()?).ok_or_else(error)?,
-                        name: optional(field()?),
-                        is_own_name: match field()? {
-                            b"own" => true,
-                            b"variable" => false,
-                            _ => return Err(error()),
-                        },
-                    };
-                    match manifest.bundled_names.last_mut() {
-                        Some((last, names)) if **last == *file => names.push(name),
-                        _ => manifest.bundled_names.push((file.into(), vec![name])),
-                    }
-                }
+                b"part" => (manifest.parts_of_modules).push((field()?.into(), field()?.into())),
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
                     let file = field()?;
@@ -123,9 +109,6 @@ impl Manifest {
         }
         manifest.builtin_functions.sort_unstable();
         manifest.files_declaring_for_every_file.sort_unstable();
-        for (_, names) in &mut manifest.bundled_names {
-            names.sort_unstable_by_key(|name| name.position);
-        }
         let files = manifest.function_files.iter().map(|file| &**file);
         let mut sorted_files: Vec<(&[u8], u32)> = files.zip(0..).collect();
         sorted_files.sort_unstable();
@@ -140,6 +123,10 @@ impl Manifest {
 
     pub fn defines(&self) -> &[(Box<[u8]>, Box<[u8]>)] {
         &self.defines
+    }
+
+    pub fn natives(&self) -> &[Native] {
+        &self.natives
     }
 
     pub fn resolve(&self, specifier: &[u8], importer: &[u8]) -> Option<u32> {
@@ -195,14 +182,13 @@ impl Manifest {
         self.module(id).is_some_and(|module| module.path.is_some())
     }
 
-    /// In order of position.
-    pub fn bundled_names(&self, module: u32) -> &[BundledName] {
-        let path = self
-            .module(module)
-            .and_then(|module| module.path.as_deref());
-        let mut files = self.bundled_names.iter();
-        let found = files.find(|(file, _)| Some(&**file) == path);
-        found.map_or(&[], |(_, names)| names)
+    /// The module that `module` holds a part of. A stack trace shows the part under the name of that module.
+    pub fn module_held_in_part(&self, module: u32) -> Option<u32> {
+        let path = self.module(module)?.path.as_deref()?;
+        let (_, whole) = (self.parts_of_modules.iter()).find(|(part, _)| **part == *path)?;
+        let mut modules = self.modules.iter();
+        let whole = modules.find(|module| module.path.as_deref() == Some(&**whole))?;
+        Some(whole.id)
     }
 
     pub fn function_files(&self) -> &[Box<[u8]>] {
@@ -286,11 +272,15 @@ fn evaluated_modules() -> &'static [u8] {
     }
 }
 
-/// What `bun run` evaluates for a module.
-fn evaluated_text(module: u32) -> Option<&'static [u8]> {
+fn evaluated_texts() -> Option<&'static Builtins<'static>> {
     static EVALUATED: OnceLock<Option<Builtins<'static>>> = OnceLock::new();
     let evaluated = EVALUATED.get_or_init(|| Builtins::parse(evaluated_modules()).ok());
-    Some(evaluated.as_ref()?.module(module)?.source)
+    evaluated.as_ref()
+}
+
+/// What `bun run` evaluates for a module.
+fn evaluated_text(module: u32) -> Option<&'static [u8]> {
+    Some(evaluated_texts()?.module(module)?.source)
 }
 
 const NAME_LEN: usize = 63;
@@ -346,33 +336,6 @@ impl Archive {
         }
     }
 
-    /// None: a stack trace shows the lines and columns of the module as it is written.
-    pub fn bundled_positions(module: u32) -> Option<BundledPositions> {
-        // The part of each module stands behind its id and its length, in the order of the ids.
-        static POSITIONS: OnceLock<(Vec<u8>, Vec<(u32, core::ops::Range<usize>)>)> =
-            OnceLock::new();
-        let (positions, parts) = POSITIONS.get_or_init(|| {
-            let positions = Archive::read(b"positions").unwrap_or_default();
-            let mut parts = Vec::new();
-            let mut rest = &positions[..];
-            while let (Some(id), Some(length)) = (read_number(&mut rest), read_number(&mut rest)) {
-                let start = positions.len() - rest.len();
-                let Some(behind) = rest.get(length as usize..) else {
-                    break;
-                };
-                parts.push((id, start..start + length as usize));
-                rest = behind;
-            }
-            (positions, parts)
-        });
-        let found = parts.binary_search_by_key(&module, |part| part.0).ok()?;
-        let corrections = &positions[parts[found].1.clone()];
-        Some(BundledPositions {
-            evaluated: evaluated_text(module)?,
-            corrections,
-        })
-    }
-
     pub fn has(name: &[u8]) -> bool {
         records()
             .binary_search_by(|record| name_of(record).cmp(name))
@@ -400,20 +363,6 @@ fn records() -> &'static [[u8; RECORD_LEN]] {
             .expect("the archive starts with the list of its files")
     });
     records.as_chunks::<RECORD_LEN>().0
-}
-
-/// 7 bits a byte, the lowest first.
-fn read_number(bytes: &mut &[u8]) -> Option<u32> {
-    let mut value = 0u32;
-    for shift in (0..32).step_by(7) {
-        let (byte, rest) = bytes.split_first()?;
-        *bytes = rest;
-        value |= u32::from(byte & 0x7F) << shift;
-        if byte & 0x80 == 0 {
-            return Some(value);
-        }
-    }
-    None
 }
 
 fn name_of(record: &[u8; RECORD_LEN]) -> &[u8] {
@@ -463,8 +412,7 @@ mod tests {
         functions\tengine/ArrayPrototype.js\n\
         functions\tbuiltins/Fifo.ts\n\
         declarations\tnode/fs.listed.d.ts\n\
-        name\tinternal/a.ts\t40\t-\tvariable\n\
-        name\tinternal/a.ts\t12\tread2\town\n";
+        part\tinternal/b.ts\tinternal/a.ts\n";
 
     fn error_line(text: &[u8]) -> Option<usize> {
         Manifest::parse(text).err().map(|error| error.line)
@@ -487,17 +435,8 @@ mod tests {
         assert_eq!(&*manifest.function_files()[1], b"builtins/Fifo.ts");
         assert_eq!(manifest.module_declarations().len(), 1);
         assert_eq!(&*manifest.module_declarations()[0], b"node/fs.listed.d.ts");
-        let [first, second] = manifest.bundled_names(1) else {
-            panic!("the module has two names");
-        };
-        assert_eq!(first.position, 12);
-        assert_eq!(first.name.as_deref(), Some(&b"read2"[..]));
-        assert!(first.is_own_name);
-        assert_eq!(second.position, 40);
-        assert!(second.name.is_none());
-        assert!(!second.is_own_name);
-        assert!(manifest.bundled_names(0).is_empty());
-        assert!(manifest.bundled_names(4).is_empty());
+        assert_eq!(manifest.module_held_in_part(2), Some(1));
+        assert_eq!(manifest.module_held_in_part(1), None);
     }
 
     #[test]

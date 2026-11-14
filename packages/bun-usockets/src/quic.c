@@ -70,6 +70,10 @@ struct us_quic_driver_s {
     int processing;
     /* The owner queued work in an engine since the last pass. */
     int pending;
+    /* An engine called into the owner since us_quic_context_pass cleared this. */
+    int called_owner;
+    /* A nested loop tick found `processing` set and stopped polling `udps`. */
+    int polls_stopped;
     /* lsquic keeps a socket as the peer_ctx of its paths after the fd closes, so both lists are freed after the engines. */
     us_quic_udp_t *udps;
     us_quic_udp_t *closed_udps;
@@ -188,8 +192,17 @@ static int us_quic_driver_enter(us_quic_driver_t *d) {
     return 1;
 }
 
+static void us_quic_driver_poll_udps(us_quic_driver_t *d, int events) {
+    for (us_quic_udp_t *qu = d->udps; qu; qu = qu->next) us_poll_change((struct us_poll_t *) qu->udp, d->loop, events);
+}
+
 static void us_quic_driver_leave(us_quic_driver_t *d) {
     d->processing = 0;
+    if (d->polls_stopped) {
+        d->polls_stopped = 0;
+        /* on_drain takes WRITABLE back out if no send was waiting for it. */
+        us_quic_driver_poll_udps(d, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
     if (d->on_leave) d->on_leave(d);
 }
 
@@ -491,6 +504,8 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 static void us_quic_udp_on_data(struct us_udp_socket_t *u, void *recvbuf, int npackets) {
     us_quic_udp_t *ls = (us_quic_udp_t *) us_udp_socket_user(u);
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) ls->driver->owner;
+    /* An error event reads even with the poll stopped. To the peer these are lost packets. */
+    if (ls->driver->processing) return;
     for (int i = 0; i < npackets; i++) {
         char *payload = us_udp_packet_buffer_payload((struct us_udp_packet_buffer_t *) recvbuf, i);
         int len = us_udp_packet_buffer_payload_length((struct us_udp_packet_buffer_t *) recvbuf, i);
@@ -745,6 +760,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs) return;
     us_quic_socket_context_t *ctx = qs->ctx;
+    ctx->driver->called_owner = 1;
     if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
     for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
@@ -771,6 +787,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
 static void us_quic_on_hsk_done(lsquic_conn_t *conn, enum lsquic_hsk_status st) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs || !qs->ctx->on_hsk_done) return;
+    qs->ctx->driver->called_owner = 1;
     qs->ctx->on_hsk_done(qs, st == LSQ_HSK_OK || st == LSQ_HSK_RESUMED_OK);
 }
 
@@ -778,6 +795,7 @@ static void us_quic_on_goaway_received(lsquic_conn_t *conn) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs) return;
     qs->going_away = 1;
+    qs->ctx->driver->called_owner = 1;
     if (qs->ctx->on_goaway) qs->ctx->on_goaway(qs);
 }
 
@@ -789,6 +807,7 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     if (!s) { lsquic_stream_close(stream); return NULL; }
     s->stream = stream;
     s->ctx = ctx;
+    ctx->driver->called_owner = 1;
     if (ctx->on_stream_open) ctx->on_stream_open(s, ctx->is_client);
     lsquic_stream_wantread(stream, 1);
     return (lsquic_stream_ctx_t *) s;
@@ -809,6 +828,7 @@ static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
+    ctx->driver->called_owner = 1;
 
     ssize_t r;
     int delivered;
@@ -832,7 +852,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         /* lsquic resets a request above the id of a GOAWAY without on_reset,
          * and calls on_read on every tick until the stream is closed. */
         lsquic_stream_close(stream);
-    } else if (r < 0 && errno == EBADMSG && lsquic_conn_status(lsquic_stream_conn(stream), NULL, 0) != LSCONN_ST_ERROR) {
+    } else if (r < 0 && errno == EBADMSG && !us_quic_stream_connection_failed(s)) {
         /* No frame error, which closes the connection: there's no header block where one belongs (RFC 9114 §4.1). lsquic calls on_read on every tick for this too. */
         us_quic_stream_reset(s, US_QUIC_H3_MESSAGE_ERROR);
     }
@@ -845,6 +865,7 @@ static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
      * client's request) is for the next on_write, see the helper. */
     int flush = s->flush_on_write;
     s->flush_on_write = 0;
+    s->ctx->driver->called_owner = 1;
     if (s->ctx->on_stream_writable) s->ctx->on_stream_writable(s);
     /* Last, so that it also covers what on_stream_writable wrote. */
     if (flush) lsquic_stream_flush(stream);
@@ -854,6 +875,7 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     (void) stream;
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     if (!s) return;
+    s->ctx->driver->called_owner = 1;
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
     s->stream = NULL;
     us_quic_hset_free(s->hset);
@@ -974,12 +996,25 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
     return engine;
 }
 
+void us_quic_driver_remove_engine(us_quic_driver_t *d, lsquic_engine_t *engine) {
+    unsigned int i = 0;
+    while (d->engines[i] != engine) i++;
+    d->engines[i] = d->engines[--d->engine_count];
+    lsquic_engine_destroy(engine);
+}
+
 static void us_quic_after_engine_call(us_quic_driver_t *d);
 
 static int us_quic_context_pass(us_quic_driver_t *d, enum us_quic_pass_point point) {
-    (void) point;
+    if (d->processing) {
+        /* A callback is running the loop. Datagrams wait in the kernel until the engine can take them. */
+        us_quic_driver_poll_udps(d, 0);
+        d->polls_stopped = 1;
+        return -1;
+    }
+    d->called_owner = 0;
     us_quic_driver_process(d);
-    return us_quic_driver_next_tick_us(d);
+    return point == US_QUIC_BEFORE_POLL && d->called_owner ? 0 : us_quic_driver_next_tick_us(d);
 }
 
 /* Takes `ssl`, also on failure. */
@@ -1438,6 +1473,10 @@ uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
 
 int us_quic_stream_reset_received(us_quic_stream_t *s) {
     return s->stream && lsquic_stream_reset_received(s->stream);
+}
+
+int us_quic_stream_connection_failed(us_quic_stream_t *s) {
+    return s->stream && lsquic_conn_status(lsquic_stream_conn(s->stream), NULL, 0) == LSCONN_ST_ERROR;
 }
 
 int us_quic_stream_refused_by_goaway(us_quic_stream_t *s) {

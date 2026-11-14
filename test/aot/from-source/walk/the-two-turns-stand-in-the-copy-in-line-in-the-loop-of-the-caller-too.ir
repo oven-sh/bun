@@ -1,0 +1,27 @@
+# `var opts = options || {}` in a function that is copied in line into the loop of its caller: THE TURNS THAT RUN ARE THOSE OF THE COPY. The function's own walk kept its two turns under an earlier text and the
+# copy lost them (125 | 212 instructions a turn; six ShapeTests gone out of f0): what is proven of the way that brings `options` says something there that is no set of layouts. f0 = the module's body.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: isLoopHead=true
+# CHECK: = ShapeTest {{*}}layouts=[L2]
+# CHECK: = GetSlot {{*}}key="length" receivers=[L2] level=Proven
+# -- source: the-two-turns-stand-in-the-copy-in-line-in-the-loop-of-the-caller-too.cjs
+# function configure(stream, options) {
+#   var opts = options || {};
+#   var encoding = opts.encoding !== undefined ? opts.encoding : null;
+#   var limit = opts.limit | 0;
+#   var length = opts.length != null && !isNaN(opts.length) ? opts.length | 0 : 0;
+#   var strict = opts.strict === true ? 1 : 0;
+#   return stream + limit + length + strict + (encoding === null ? 0 : 1) + (opts.verify ? 1 : 0);
+# }
+# const table = { configure };
+# const turns = Number(process.argv[2] || 1) * 100000;
+# const given = process.argv[3] !== "absent";
+# function make(i) {
+#   return { limit: 3, length: i & 7, encoding: "utf8", strict: true };
+# }
+# const handed = [make(1), make(2), make(3), make(4)];
+# let sum = 0;
+# for (let i = 0; i < turns; i++) sum += table[process.argv.length > 99 ? "x" : "configure"](i & 1, given ? handed[i & 3] : undefined);
+# console.log(sum / turns);
+# -- end of source

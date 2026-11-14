@@ -1,10 +1,11 @@
-use super::binding_kinds::variable_binding_kind;
+use super::binding_kinds::{declaration_binding_kind, record_binding_kind, variable_binding_kind};
 use super::bits::insert_bit;
 use super::declaration_kinds::{
     Declaration, DeclarationKind, declaration_kind, declaration_symbol, is_block_level,
     needs_unique_parameters, pattern_scope,
 };
 use super::declarations::{Declarations, append_symbol, is_var_scope};
+use super::namespace_exports::is_block_binding;
 use super::{BindingKind, EarlyRedeclaration, FunctionFlags, ParameterVarCopy};
 use crate::atom::Atom;
 use crate::bind::{Decl, ScopeId, ScopeKind, SymFlags, SymbolId};
@@ -24,11 +25,16 @@ struct NameDeclarations {
     name: Atom,
     binding: Option<SymbolId>,
     first_by_kind: SmallVec<[Declaration; 4]>,
+    taker: Option<Declaration>,
 }
 
 impl NameDeclarations {
     fn add(&mut self, binding: SymbolId, declaration: Declaration) {
         self.binding.get_or_insert(binding);
+        self.note_kind(declaration);
+    }
+
+    fn note_kind(&mut self, declaration: Declaration) {
         if !self
             .first_by_kind
             .iter()
@@ -68,6 +74,7 @@ impl Declarations<'_, '_> {
             name,
             binding: None,
             first_by_kind: SmallVec::new(),
+            taker: None,
         };
         if let Some(&(appended, first)) = self.scopes.appended_bindings.get(&(scope, name)) {
             names.add(appended, first);
@@ -90,6 +97,75 @@ impl Declarations<'_, '_> {
         for &index in rejected {
             self.merge_rejected(&mut names, index);
         }
+        if let Some(taker) = names.taker {
+            self.give_name_of_imports(scope, symbol, taker);
+        }
+        self.merge_exports_under_two_names(scope, symbol);
+    }
+
+    fn merge_exports_under_two_names(&mut self, scope: ScopeId, local: SymbolId) {
+        let (hir, bound) = (self.hir, &*self.bound);
+        let variable = bound.exported_value(local);
+        if variable == local || bound.scopes[scope.idx()].kind != ScopeKind::File {
+            return;
+        }
+        let mut values: SmallVec<[(Decl, SymbolId); 4]> = SmallVec::new();
+        for &decl in bound.symbols[local.idx()].decls.iter() {
+            let own = declaration_symbol(bound, decl);
+            if declaration_kind(hir, bound, decl).binds_in_table_scope() && own.is_some() {
+                values.push((decl, own));
+            }
+        }
+        if !values.iter().any(|value| value.1 == variable) {
+            return;
+        }
+        let declarations = &mut self.bound.runtime.declarations;
+        for (decl, own) in values {
+            let key = match decl {
+                Decl::Var(pat) | Decl::Require(pat) => Decl::Var(pat),
+                other => other,
+            };
+            if own != variable && own != local {
+                declarations.declared_symbols.push((key, variable));
+            }
+        }
+    }
+
+    fn takes_name_of_imports(&self, names: &NameDeclarations, later: Declaration) -> bool {
+        let holder = names.taker.or_else(|| names.first_by_kind.first().copied());
+        let is_behind_its_default = matches!(
+            (holder.map(|holder| holder.decl), later.decl),
+            (Some(Decl::ImportDefault(default)), Decl::ImportNamespace(star)) if default == star
+        );
+        let is_import = |first: &Declaration| first.kind == DeclarationKind::Import;
+        !self.hir.is_js
+            && matches!(
+                later.kind,
+                DeclarationKind::Import | DeclarationKind::ImportEquals
+            )
+            && names.first_by_kind.iter().all(is_import)
+            && !is_behind_its_default
+    }
+
+    fn give_name_of_imports(&mut self, scope: ScopeId, holder: SymbolId, taker: Declaration) {
+        let name = self.bound.symbols[holder.idx()].name;
+        for index in 0..self.bound.symbols[holder.idx()].decls.len() {
+            let dropped = self.bound.symbols[holder.idx()].decls[index];
+            self.set_import_symbol(dropped, SymbolId::NONE);
+        }
+        insert_bit(&mut self.scopes.hidden_symbols, holder.idx());
+        let binding = match declaration_symbol(self.bound, taker.decl).some() {
+            Some(own) => {
+                let key = (scope, name);
+                self.scopes.appended_bindings.insert(key, (own, taker));
+                own
+            }
+            None => self.append_import(scope, name, taker),
+        };
+        let declarations = &mut self.bound.runtime.declarations;
+        declarations
+            .names_taken_from_imports
+            .push((holder, binding));
     }
 
     fn merge_rejected(&mut self, names: &mut NameDeclarations, index: usize) {
@@ -103,6 +179,11 @@ impl Declarations<'_, '_> {
         if self.record_first_conflict(names, declaration) == Conflict::Always {
             let early_errors = &mut self.bound.runtime.early_error_redeclarations;
             early_errors.push(index as u32);
+            return;
+        }
+        if self.takes_name_of_imports(names, declaration) {
+            names.taker = Some(declaration);
+            names.note_kind(declaration);
             return;
         }
         let Some(binding) = names.binding else {
@@ -119,19 +200,62 @@ impl Declarations<'_, '_> {
             return;
         };
         names.add(binding, declaration);
-        if matches!(
-            declaration.kind,
-            DeclarationKind::Var | DeclarationKind::Parameter | DeclarationKind::TopLevelFunction
-        ) {
-            self.record_same_binding(names.scope, binding, declaration);
+        match declaration.kind {
+            DeclarationKind::Var
+            | DeclarationKind::Parameter
+            | DeclarationKind::TopLevelFunction => {
+                self.record_same_binding(names.scope, binding, declaration);
+            }
+            DeclarationKind::Enum | DeclarationKind::Namespace | DeclarationKind::Lexical
+                if !names.first_by_kind.iter().any(Declaration::is_import) =>
+            {
+                self.record_same_container(names.scope, binding, decl);
+            }
+            _ => {}
+        }
+    }
+
+    /// A type of the name has refused the declaration its place in the table: the binding holds its object all the same.
+    fn record_same_container(&mut self, scope: ScopeId, binding: SymbolId, decl: Decl) {
+        if !matches!(decl, Decl::Class(_) | Decl::Enum(_) | Decl::Module(_)) {
+            return;
+        }
+        let bound = &*self.bound;
+        let target = match is_block_binding(bound, bound.scopes[scope.idx()].kind, binding) {
+            true => binding,
+            false => bound.exported_value(binding),
+        };
+        let kind = declaration_binding_kind(self.hir, bound, decl);
+        let own = declaration_symbol(bound, decl);
+        let container = bound.scopes[scope.idx()].symbol;
+        let is_exported_member = target != own
+            && matches!(bound.scopes[scope.idx()].kind, ScopeKind::Module(_))
+            && own.is_some()
+            && bound.symbols[own.idx()].parent == container
+            && bound.symbols[target.idx()].parent != container
+            && bound.exported_value(target) == target;
+        record_binding_kind(self.bound, target, kind);
+        let declarations = &mut self.bound.runtime.declarations;
+        declarations.declared_symbols.push((decl, target));
+        if is_exported_member {
+            let recorded = &mut declarations.binding_kinds[own.idx()];
+            *recorded = (*recorded).max(kind);
+            let values = &mut declarations.exported_values;
+            let at = values.partition_point(|value| value.0 < target);
+            values.insert(at, (target, own));
         }
     }
 
     fn append_import(&mut self, scope: ScopeId, name: Atom, declaration: Declaration) -> SymbolId {
         let (flags, kind) = (SymFlags::ALIAS, BindingKind::Import);
         let symbol = self.append_binding(scope, name, flags, kind, declaration);
+        self.set_import_symbol(declaration.decl, symbol);
+        symbol
+    }
+
+    fn set_import_symbol(&mut self, import: Decl, symbol: SymbolId) {
         let declarations = &mut self.bound.runtime.declarations;
-        match declaration.decl {
+        match import {
             Decl::ImportDefault(import) => {
                 declarations.import_default_symbols[import.idx()] = symbol
             }
@@ -141,7 +265,6 @@ impl Declarations<'_, '_> {
             Decl::ImportSpec(spec) => declarations.import_spec_symbols[spec.idx()] = symbol,
             _ => {}
         }
-        symbol
     }
 
     fn record_first_conflict(&mut self, names: &NameDeclarations, later: Declaration) -> Conflict {
@@ -213,8 +336,7 @@ impl Declarations<'_, '_> {
                     binding.idx(),
                 );
             }
-            self.bound
-                .export_symbol_of_value_symbol_if_exported(binding)
+            self.bound.exported_value(binding)
         };
         let key = match later.decl {
             Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
@@ -290,8 +412,17 @@ impl Declarations<'_, '_> {
             (
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
-            )
-            | (Kind::BlockFunction, Kind::BlockFunction) => Conflict::No,
+            ) => Conflict::No,
+            (Kind::BlockFunction, Kind::BlockFunction) => match later.decl {
+                // The rest of the file is printed anew, without its directives.
+                Decl::Fn(f)
+                    if self.hir.is_in_known_evaluation(self.hir[f].start)
+                        && self.hir[f].is_strict =>
+                {
+                    Conflict::Always
+                }
+                _ => Conflict::No,
+            },
             (
                 Kind::BlockFunction | Kind::Lexical | Kind::Import | Kind::SimpleCatchParameter,
                 _,
@@ -317,10 +448,7 @@ impl Declarations<'_, '_> {
         let ScopeKind::Fn(f) = self.bound.scopes[scope.idx()].kind else {
             return Conflict::No;
         };
-        if needs_unique_parameters(self.hir, f)
-            || !self.is_sloppy(scope)
-            || self.hir.has_parameters_read_as_strict(f)
-        {
+        if needs_unique_parameters(self.hir, f) || !self.is_sloppy(scope) {
             Conflict::Always
         } else {
             Conflict::No
@@ -411,6 +539,12 @@ impl Declarations<'_, '_> {
             None if has_function => self.body_variable_symbols[&parameter],
             None => return,
         };
+        for &(decl, _) in &vars {
+            let decls = &mut self.bound.symbols[variable.idx()].decls;
+            if !decls.contains(&decl) {
+                decls.push(decl);
+            }
+        }
         let declarations = &mut self.bound.runtime.declarations;
         for (_, pat) in vars {
             declarations

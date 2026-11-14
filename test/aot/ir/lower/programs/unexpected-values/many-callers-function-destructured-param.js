@@ -109,97 +109,70 @@ honest("after");
 
 // GENERATED: others headAndTail [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="others"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() frequency=Unlikely:
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v2):
 // CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="a"
 // CHECK-NEXT: Throw v3
-// CHECK-NEXT: b4(v4):
+// CHECK-NEXT: b2(v4):
 // CHECK-NEXT: v5 = PropGet v4 key="a"
-// CHECK-NEXT: v6 = NewObject layout=[[L_2]]
-// CHECK-NEXT: CopyDataProperties v6, v4 excludedKeys=["a"]
-// CHECK-NEXT: v8 = FinishObject v6
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v10 = String string=" "
-// CHECK-NEXT: v11 = Add v5, v10
-// CHECK-NEXT: v12 = Builtin builtin=Object
-// CHECK-NEXT: v13 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v14 = Call v13, v12, v9 calleeName="Object.keys"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v16 = PropGet v15 key="join"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v18 = Call v17, v15 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v20 = Add v11, v19
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v21
+// CHECK-NEXT: v6 = CopyObject v4 excludedKeys=["a"]
+// CHECK-NEXT: v7 = String string=" "
+// CHECK-NEXT: v8 = Add v5, v7
+// CHECK-NEXT: v9 = Builtin builtin=Object
+// CHECK-NEXT: v10 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v11 = Call v10, v9, v6 calleeName="Object.keys"
+// CHECK-NEXT: v12 = PropGet v11 key="join"
+// CHECK-NEXT: v13 = Call v12, v11 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v14 = Add v8, v13
+// CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="headAndTail"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b10():
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b1() handler=b6():
 // CHECK-NEXT: v2 = IteratorResume v1 stepIndex=0
 // CHECK-NEXT: v3 = ResultAt v2
 // CHECK-NEXT: v4 = ResultAt v2 index=1
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b10():
 // CHECK-NEXT: v5 = NewArray contents=anything
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b10():
+// CHECK-NEXT: Jump -> next b2()
+// CHECK-NEXT: b2() handler=b6():
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v7 = IteratorResume v1 stepIndex=1
 // CHECK-NEXT: v8 = ResultAt v7
 // CHECK-NEXT: v9 = ResultAt v7 index=1
-// CHECK-NEXT: Branch v8 -> taken b5(), notTaken b9()
-// CHECK-NEXT: b5() handler=b10():
-// CHECK-NEXT: v10 = Convert v5 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b10():
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: IteratorClose v1
-// CHECK-NEXT: Jump -> next b8()
-// CHECK-NEXT: b8():
-// CHECK-NEXT: v12 = String string=" "
-// CHECK-NEXT: v13 = Add v4, v12
-// CHECK-NEXT: v14 = PropGet v10 key="length"
-// CHECK-NEXT: v15 = Convert v14 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v16 = Add v13, v15
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: b9() handler=b10():
-// CHECK-NEXT: AppendElement v5, v9
+// CHECK-NEXT: Branch v8 -> taken b3(), notTaken b5()
+// CHECK-NEXT: b3() handler=b6():
 // CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b10() role=IterationCleanup subject=v1:
-// CHECK-NEXT: v19 = CatchException
+// CHECK-NEXT: b4():
+// CHECK-NEXT: IteratorClose v1
+// CHECK-NEXT: v11 = String string=" "
+// CHECK-NEXT: v12 = Add v4, v11
+// CHECK-NEXT: v13 = PropGet v5 key="length"
+// CHECK-NEXT: v14 = Add v12, v13
+// CHECK-NEXT: Return v14
+// CHECK-NEXT: b5() handler=b6():
+// CHECK-NEXT: AppendElement v5, v9
+// CHECK-NEXT: Jump -> next b2()
+// CHECK-NEXT: b6() role=IterationCleanup subject=v1:
+// CHECK-NEXT: v16 = CatchException
 // CHECK-NEXT: IteratorClose v1 completion=Throw
-// CHECK-NEXT: Rethrow v19
+// CHECK-NEXT: Rethrow v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|[[L_4]]|Generator flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="log"
 // CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="asked"
-// CHECK-NEXT: v5 = Call v3, v1, v4 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v6 = Data data=[[d_7]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[IsExpected]}
-// CHECK-NEXT: v8 = PropGet v7 key=@@iterator
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: v10 = Call v9, v7 calleeKey=@@iterator
-// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=undefined|null|[[L_4]]|Generator flags=[IsExpected]}}]
+// CHECK-NEXT: v3 = String string="asked"
+// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
+// CHECK-NEXT: v5 = Data data=[[d_3]]
+// CHECK-NEXT: v6 = PropGet v5 key=@@iterator
+// CHECK-NEXT: v7 = Call v6, v5 calleeKey=@@iterator
+// CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }

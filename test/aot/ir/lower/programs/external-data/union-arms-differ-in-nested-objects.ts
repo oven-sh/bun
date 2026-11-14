@@ -72,12 +72,10 @@ setTimeout(
 
 // GENERATED: tell
 // CHECK-LABEL: function {{*}}name="tell"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_2]]):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_1]]):
 // CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
+// CHECK-NEXT: b1() handler=b2():
 // CHECK-NEXT: v2 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
 // CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
@@ -89,9 +87,7 @@ setTimeout(
 // CHECK-NEXT: v10 = Add v8, v9
 // CHECK-NEXT: v11 = Call v6, v4, v10 calleeKey="log" calleeName="console.log"
 // CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b4() role=CatchHandler:
+// CHECK-NEXT: b2() role=CatchHandler:
 // CHECK-NEXT: v12 = CatchValue
 // CHECK-NEXT: v13 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v14 = PropGet v13 key="console" [isFreeName]
@@ -102,18 +98,17 @@ setTimeout(
 // CHECK-NEXT: v19 = Add v0, v18
 // CHECK-NEXT: v20 = Builtin builtin=String
 // CHECK-NEXT: v21 = Call v20, -, v12 calleeName="String"
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v23 = PropGet v22 key="split"
 // CHECK-NEXT: v24 = String string="\n"
 // CHECK-NEXT: v25 = Call v23, v22, v24 calleeKey="split" calleeName="split"
-// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|string> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v27 = Integer
 // CHECK-NEXT: v28 = ElemGet v26, v27
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v30 = Add v19, v29
-// CHECK-NEXT: v31 = Call v17, v15, v30 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v32 = Undefined
-// CHECK-NEXT: Return v32
+// CHECK-NEXT: v29 = Add v19, v28
+// CHECK-NEXT: v30 = Call v17, v15, v29 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v31 = Undefined
+// CHECK-NEXT: Return v31
 // CHECK-NEXT: }

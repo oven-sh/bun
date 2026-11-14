@@ -412,7 +412,7 @@ describe("fork() IPC", () => {
     });
 
     it.concurrent.each(["net.Server", "net.Socket", "dgram.Socket"])(
-      "calls the callback of a message that carries a %s, and leaks no descriptor",
+      "calls the callback of a message that carries a %s without an error, like Node, and leaks no descriptor",
       async kind => {
         const files = {
           "parent.js": `
@@ -448,7 +448,7 @@ describe("fork() IPC", () => {
         expect(await run(files)).toEqual({
           stdout: [
             "sent",
-            `with a handle: ${EPIPE}`,
+            "with a handle: null",
             "disconnect",
             "exit 0",
             { "net.Server": "listening: true", "net.Socket": "handle: null", "dgram.Socket": "port: number" }[kind],
@@ -473,7 +473,7 @@ describe("fork() IPC", () => {
         "child.js": closes,
       };
       expect(await run(files)).toEqual({
-        stdout: ["sent", `first: ${EPIPE}`, `second: ${EPIPE}`, "disconnect", "exit 0"],
+        stdout: ["sent", `first: ${EPIPE}`, "second: null", "disconnect", "exit 0"],
         stderr: "",
         exitCode: 0,
       });
@@ -663,6 +663,17 @@ describe("spawn()", () => {
       });
     });
     expect(result.trim()).toBe(tmpdir);
+  });
+
+  it("cwd can be a URL of another implementation", () => {
+    using dir = tempDir("child-process-cwd-url", {});
+    const { href, protocol, hostname, pathname } = Bun.pathToFileURL(String(dir));
+    const { stdout } = spawnSync(bunExe(), ["-e", "console.log(process.cwd())"], {
+      cwd: { href, protocol, hostname, pathname } as URL,
+      env: bunEnv,
+      encoding: "utf8",
+    });
+    expect(stdout.trim()).toBe(String(dir));
   });
 
   it("should allow us to write to stdin", async () => {

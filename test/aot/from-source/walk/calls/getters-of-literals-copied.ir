@@ -1,0 +1,12 @@
+# f1 = copy
+# -- source: main.mjs
+# function copy(width, height) { const shape = { width, get area() { return this.width * height; }, set area(v) { this.width = v / height; } }; const made = { ...shape }; return made.area + made.width; }
+# let n = 0; for (let k = 0; k < 20; k++) n += copy(k & 7, 3);
+# print(n);
+# -- end of source
+# The copy of a literal in sight calls its getters in place.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: CopyDataProperties
+# CHECK-NOT: CopyObject
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 248

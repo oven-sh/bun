@@ -1,4 +1,5 @@
 use super::PrimitiveKinds;
+use crate::atom::Atom;
 use crate::check::aot::answers::GaveUp;
 use crate::check::aot::queries::Queries;
 use crate::check::relate::Relation;
@@ -18,28 +19,56 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ty: TypeId,
     ) -> Result<PrimitiveKinds, GaveUp> {
         let mut accepted = PrimitiveKinds::empty();
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !self.type_shape(ty)?.can_accept_primitives() {
             return Ok(accepted);
         }
-        let members = self.c.members(ty);
-        // A string satisfies `Iterable<T>` for some `T`, and is not assignable to it while `T` is free.
+        // A class of many members, most of them inherited, is not listed to find that no primitive has the first of them.
+        let no_primitive_has_what_is_required = PRIMITIVE_SOURCES.iter().all(|&(_, source)| {
+            self.c.has_required_properties_of_unlisted_class(source, ty) == Some(false)
+        });
+        if no_primitive_has_what_is_required {
+            return Ok(accepted);
+        }
+        let mut possible = PrimitiveKinds::all();
+        if let Some(members) = self.c.members(ty) {
+            for prop in &members.shape().props {
+                if prop.flags.contains(PropFlags::OPTIONAL) {
+                    continue;
+                }
+                possible &= self.primitives_with_property(prop.name);
+                if possible.is_empty() {
+                    return Ok(accepted);
+                }
+            }
+        }
         let for_some_arguments = self.c.permissive_instantiation(ty);
-        // That a source shares no property with a type of optional properties alone is an error for whoever writes the assignment.
         let relation = match self.c.is_weak_type(for_some_arguments) {
             true => Relation::Comparable,
             false => Relation::Assignable,
         };
         for (kind, source) in PRIMITIVE_SOURCES {
-            let can_be_related = match members {
-                Some(members) => self.has_required_properties(source, members.shape()),
-                None => true,
-            };
-            if can_be_related && self.is_related(source, for_some_arguments, relation)? {
+            if possible.contains(kind) && self.is_related(source, for_some_arguments, relation)? {
                 accepted |= kind;
             }
         }
         Ok(accepted)
+    }
+
+    fn primitives_with_property(&mut self, name: Atom) -> PrimitiveKinds {
+        if let Some(&known) = self.kept.primitives_with_property.get(&name) {
+            return known;
+        }
+        let mut found = PrimitiveKinds::empty();
+        for (kind, source) in PRIMITIVE_SOURCES {
+            if self.c.get_property_of_type(source, name).is_some() {
+                found |= kind;
+            }
+        }
+        if !name.is_own() {
+            self.kept.primitives_with_property.insert(name, found);
+        }
+        found
     }
 
     pub(super) fn is_related(

@@ -1,8 +1,8 @@
 // Native `SSLContextCache`: every JS-thread consumer that turns an SSL
 // config into an `SSL_CTX*` should hit the same per-VM cache, so identical
 // configs (including `{servername}`-only and inline-CA configs) allocate one
-// CTX, not one per connection. The cache holds a ref on the 16 contexts asked
-// for last that read no file. Any other goes when its last real owner drops it:
+// CTX, not one per connection. The cache holds a ref on the 16 contexts that
+// clients asked for last and that read no file. Any other goes when its last real owner drops it:
 // BoringSSL's ex_data free callback tombstones the entry.
 import { describe, expect, test } from "bun:test";
 import { X509Certificate } from "node:crypto";
@@ -372,8 +372,16 @@ test("setDefaultCACertificates() override applies to plain tls.connect (no expli
   }
 });
 
-test("ca: [] verifies against the setDefaultCACertificates() list, like no ca", async () => {
-  // Node trusts nothing for an empty list. Here it means no `ca` was given, in every API that takes TLS options.
+test("ca: [] skips the setDefaultCACertificates override (distinct from ca: undefined)", async () => {
+  // Providing any `ca` value - including an empty array - bypasses the
+  // process-default override that setDefaultCACertificates() installs (the
+  // override only applies when `ca` is absent), so the connection verifies
+  // against the bundled roots instead. NOTE: this is not Node's full
+  // "ca: [] = empty trust store" semantics (an explicitly-empty list should
+  // trust NOTHING, not fall back to bundled roots) - that needs an explicit
+  // empty-CA flag through the native config and remains a follow-up. Make a
+  // fixture CA a process default first so the two cases are observably
+  // different.
   const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
   const prevCerts = tls.getCACertificates("default");
   tls.setDefaultCACertificates([keys("ca1-cert.pem")]);
@@ -390,9 +398,12 @@ test("ca: [] verifies against the setDefaultCACertificates() list, like no ca", 
     c1.end();
     await once(c1, "close");
 
+    // ca: [] -> the override is skipped, the bundled roots apply (which do not
+    // include ca1) -> NOT authorized.
     const c2 = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, servername: "agent1", ca: [] });
     await once(c2, "secureConnect");
-    expect(c2.authorized).toBe(true);
+    expect(c2.authorized).toBe(false);
+    expect(c2.authorizationError).toBeTruthy();
     c2.end();
     await once(c2, "close");
 
@@ -479,6 +490,38 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
   } finally {
     tls.setDefaultCACertificates(prevCerts);
   }
+});
+
+// stop(), which `tls.Server.close()` calls, must release the listener's SSL_CTX ref immediately.
+// It used to be dropped only when the GC finalized the Listener, so a listener
+// the program still references — or any at process exit — kept its CTX
+// alive. That is the leak `leak:create_ssl_context_from_bun_options` used to
+// suppress. The listen socket up_refs its own ref in
+// `us_internal_init_listen_socket` and each accepted socket's `SSL_new()` takes
+// another, so releasing at stop() cannot dangle.
+test("Listener.stop() releases its SSL_CTX without waiting for GC", () => {
+  // A tls.Server's listener serves the Server's own context, which outlives close(). One from
+  // Bun.listen() is the only owner of the context it builds, so the count shows its reference.
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+
+  // Hold strong references so the GC can never finalize these Listeners.
+  const kept: Bun.TCPSocketListener[] = [];
+  let peak = 0;
+  for (let i = 0; i < 5; i++) {
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsCerts, socket: { data() {} } });
+    kept.push(listener);
+    peak = Math.max(peak, sslCtxLiveCount() - before);
+    listener.stop();
+  }
+
+  // No Bun.gc() here on purpose: the point is that stop() alone frees them.
+  // `peak: 1` proves each listener did hold a context of its own meanwhile.
+  expect({ leaked: sslCtxLiveCount() - before, peak, listeners: kept.length }).toEqual({
+    leaked: 0,
+    peak: 1,
+    listeners: 5,
+  });
 });
 
 // In a process of its own, so that the cache keeps nothing from an earlier test. Prints what `script` assigns to `result`.
@@ -568,22 +611,26 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
   test("the one used last stays, not the one made last", async () => {
     expect(
       await inAFreshProcess(`
-        const listen = options => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: options, socket: { data() {} } });
-        // The others stay open and so hold their contexts. Pushing one out frees nothing, so a build shows as one more.
+        using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+        // A WebSocket that stays open holds its context. Pushing that one out frees nothing, so a build shows as one more.
+        using server = Bun.serve({ port: 0, tls, fetch: (request, server) => void server.upgrade(request), websocket: { message() {} } });
         const open = [];
-        function builtFor(options) {
-          const live = sslCtxLiveCount();
-          listen(options).stop();
-          return sslCtxLiveCount() - live;
+        async function builtFor(options) {
+          builds = 0;
+          await connectOnce(listener.port, options);
+          await turn();
+          await turn();
+          return builds;
         }
-        const used = own(tls), unused = own(tls);
-        result.first = [builtFor(used), builtFor(unused)];
+        const used = own({ ca: tls.cert }), unused = own({ ca: tls.cert });
+        result.first = [await builtFor(used), await builtFor(unused)];
         result.usedAfterEachOther = 0;
         for (let i = 0; i < 30; i++) {
-          open.push(listen(own(tls)));
-          result.usedAfterEachOther += builtFor(used);
+          open.push(new WebSocket("wss://localhost:" + server.port, { tls: own({ ca: tls.cert }) }));
+          await require("node:events").once(open.at(-1), "open");
+          result.usedAfterEachOther += await builtFor(used);
         }
-        result.notUsedSince = builtFor(unused);
+        result.notUsedSince = await builtFor(unused);
       `),
     ).toEqual({ result: { first: [1, 1], usedAfterEachOther: 0, notUsedSince: 1 }, stderr: "", exitCode: 0 });
   });
@@ -806,24 +853,49 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
     ).toEqual({ result: { importKey: "DataError", listening: true }, stderr: "", exitCode: 0 });
   });
 
-  // It used to be dropped only when the GC finalized the Listener, so a listener the program still
-  // references, or any at process exit, kept its CTX alive. A tls.Server's listener serves the
-  // Server's own context, which outlives close(). One from Bun.listen() shows its reference in the count.
-  test("Listener.stop() releases its SSL_CTX without waiting for GC", async () => {
+  const listen = `Bun.listen({ ...at, socket: { data: socket => void socket.end("x") } })`;
+  const serve = `Bun.serve({ ...at, fetch: () => new Response("x") })`;
+  const upgrade = `Bun.listen({
+    ...at,
+    tls: undefined,
+    socket: {
+      open: socket => void socket.upgradeTLS({ isServer: true, tls, socket: { data: socket => void socket.end("x") } }),
+      data() {},
+    },
+  })`;
+  const withAnOpenConnection = `
+    const open = connect(first);
+    await once(open, "secureConnect");
+    first.stop();`;
+  test.each([
+    ["Bun.listen()", listen, "first.stop(true);"],
+    ["Bun.serve()", serve, "await first.stop(true);"],
+    ["upgradeTLS()", upgrade, "first.stop(true); await turn(); await turn();"],
+    ["Bun.listen() with a connection left", listen, withAnOpenConnection],
+    ["Bun.serve() with a connection left", serve, withAnOpenConnection],
+  ])("the sessions of %s end with the server, also if a client had its options", async (_, start, stop) => {
     expect(
       await inAFreshProcess(`
-        const before = sslCtxLiveCount();
-        // The program holds every Listener, so no collection can finalize one.
-        const listeners = [];
-        for (let i = 0; i < 20; i++) {
-          listeners.push(Bun.listen({ hostname: "127.0.0.1", port: 0, tls: own(tls), socket: { data() {} } }));
+        const { once } = require("node:events");
+        const at = { hostname: "127.0.0.1", port: 0, tls };
+        const connect = (server, session) =>
+          require("node:tls").connect({ host: "127.0.0.1", port: server.port, ca: tls.cert, servername: "localhost", maxVersion: "TLSv1.2", session });
+        async function visit(server, session) {
+          const socket = connect(server, session);
+          await once(socket, "secureConnect");
+          const seen = { session: socket.getSession(), reused: socket.isSessionReused() };
+          socket.resume().write("GET / HTTP/1.0\\r\\n\\r\\n");
+          await once(socket, "close");
+          return seen;
         }
-        result.listening = sslCtxLiveCount() - before;
-        for (const listener of listeners) listener.stop();
-        result.stopped = sslCtxLiveCount() - before;
+        const first = ${start};
+        await connectOnce(first.port, tls);
+        const { session } = await visit(first);
+        ${stop}
+        const second = ${start};
+        result.reused = (await visit(second, session)).reused;
       `),
-      // `listening` is the control: a listener does hold its context. What is left is what the cache keeps.
-    ).toEqual({ result: { listening: 20, stopped: 16 }, stderr: "", exitCode: 0 });
+    ).toEqual({ result: { reused: false }, stderr: "", exitCode: 0 });
   });
 
   test("Bun.serve() and Bun.listen() servers with the same tls options share one SSL_CTX", async () => {
@@ -843,11 +915,12 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
   // A Worker's thread reports 'close' as its last step, after its VM and the cache in it are gone, so there's nothing to wait for after that.
   // The Worker counts for itself, because one that has nothing left to do may be gone by the time its message arrives.
   test.each([
-    ["terminate()", "if (i < 19) listener.stop();", "worker.terminate();"],
-    ["the end of its script", "listener.stop();", ""],
-  ])("a Worker's contexts go with the Worker, after %s", async (_name, stop, end) => {
+    ["terminate()", "setInterval(() => {}, 1000);", "worker.terminate();"],
+    ["the end of its script", "", ""],
+  ])("a Worker's contexts go with the Worker, after %s", async (_name, stay, end) => {
     expect(
       await inAFreshProcess(`
+        using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
         const before = sslCtxLiveCount();
         result.whileAWorkerRuns = [];
         result.afterItsEnd = [];
@@ -858,9 +931,16 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
                 import { sslCtxLiveCount } from "bun:internal-for-testing";
                 const tls = \${JSON.stringify(tls)};
                 for (let i = 0; i < 20; i++) {
-                  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ...tls, passphrase: String(i) }, socket: { data() {} } });
-                  ${stop}
+                  const { promise, resolve } = Promise.withResolvers();
+                  Bun.connect({
+                    hostname: "127.0.0.1",
+                    port: \${listener.port},
+                    tls: { ca: tls.cert, passphrase: String(i) },
+                    socket: { data() {}, handshake: socket => void socket.end(), close: resolve },
+                  });
+                  await promise;
                 }
+                ${stay}
                 postMessage(sslCtxLiveCount());
               \`),
           );
@@ -1087,15 +1167,9 @@ test("the default client context follows tls.DEFAULT_CIPHERS, and the one it rep
     });
     await step("connection after the assignment", 1, async () => close(await open()));
     await step("another one", 0, async () => close(await open()));
-    await step("the first connection closes", 0, () => close(kept));
-    await step("reassignment", 0, () => assign("ECDHE-RSA-AES128-GCM-SHA256"));
+    await step("the first connection closes", -1, () => close(kept));
+    await step("reassignment", -1, () => assign("ECDHE-RSA-AES128-GCM-SHA256"));
     await step("connection after the reassignment", 1, async () => close(await open()));
-    // The cache keeps the 16 contexts asked for last, so only 16 others show whether anything else holds a replaced one.
-    await step("16 other contexts push out the two that were replaced", 14, async () => {
-      for (let i = 0; i < 16; i++) {
-        Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ...${JSON.stringify(tlsCerts)}, passphrase: String(i) }, socket: { data() {} } }).stop();
-      }
-    });
     console.log(JSON.stringify(deltas));
     process.exit(0);
   `;
@@ -1114,10 +1188,9 @@ test("the default client context follows tls.DEFAULT_CIPHERS, and the one it rep
     "that connection still works": 0,
     "connection after the assignment": 1,
     "another one": 0,
-    "the first connection closes": 0,
-    "reassignment": 0,
+    "the first connection closes": -1,
+    "reassignment": -1,
     "connection after the reassignment": 1,
-    "16 other contexts push out the two that were replaced": 14,
   });
   expect(exitCode).toBe(0);
 });

@@ -1,0 +1,15 @@
+# -- source: main.js
+# function two(k, ...rest) { if (k === 0) return "none"; if (k === 1) return "one" + rest.length; return "more" + rest.join(); }
+# globalThis.two = two;
+# const f = globalThis.two;
+# print(f(0, 1), f(1, 2, 3), f(2, 4, 5), f(0), f(1), f(2));
+# -- end of source
+# Two ways name the list and neither comes through the other: it is made in the block from which they part, which the way that returns at once does not come through.
+# RUN: run-in-shell
+# CHECK: none one2 more4,5 none one0 more
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f1:GenericCallEntry mechanisms=all
+# FORM-NOT: CreateRest
+# FORM: Branch
+# FORM: CreateRest
+# FORM-NOT: CreateRest

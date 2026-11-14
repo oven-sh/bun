@@ -46,6 +46,8 @@ struct ScriptConfig {
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
+    /// Index of its group: pre, main and post scripts share a color.
+    color_idx: usize,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -71,7 +73,7 @@ impl<'a> PipeReader<'a> {
         }
     }
 
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop {
+    fn event_loop(&self) -> &'static MiniEventLoop {
         // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
         // outlives all handles (lives on `run`'s stack frame for the whole event loop).
         unsafe { (*(*self.handle).state).event_loop }
@@ -102,8 +104,8 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
-    event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
+    loop_           = |this| bun_io::uws_to_native((*this).event_loop().loop_);
+    event_loop      = |this| (*(*(*this).handle).state).event_loop.as_event_loop_ctx();
 }
 
 struct ProcessSlot {
@@ -117,7 +119,6 @@ struct ProcessSlot {
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
-    color_idx: usize,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -152,19 +153,16 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
-            // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *env_ptr };
+            // SAFETY: state.env points at the process-lifetime DotEnv loader; nothing else reaches it before the guard drops.
+            let env = unsafe { &mut *state.env };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard(original_path, move |original_path| {
-                // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+            let mut env = scopeguard::guard(env, move |env| {
+                let _ = env.map.put(b"PATH", &original_path);
             });
-            // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
             envp = crate::cli::script_or_command::with_package_script(
-                unsafe { &mut *env_ptr },
+                &mut env,
                 &self.config.name,
                 &self.config.cwd,
                 |env| env.map.create_null_delimited_env_map(),
@@ -261,23 +259,21 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        // The exit handler re-borrows `self.process`, so go through the
-        // `Process` allocation itself rather than a borrow of the slot.
-        // SAFETY: just spawned; the slot's handle keeps it live.
-        let process = unsafe { &mut *self.process.as_ref().unwrap().process.as_ptr() };
+        // Not a borrow of the slot, which the exit handler borrows again.
+        let process = self.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
-        match process.watch_or_reap() {
+        match spawn::Process::watch_or_reap(process) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
                 }
             }
         }
@@ -318,7 +314,7 @@ impl<'a> ProcessHandle<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             let slot = (*this).process.as_mut().unwrap();
             slot.status = status;
             slot.end_time = Some(Instant::now());
@@ -345,10 +341,9 @@ const RESET: &[u8] = ansi::RESET.as_bytes();
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
     /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
@@ -378,8 +373,8 @@ impl<'a> State<'a> {
         while let Some(newline_pos) = strings::index_of_char_usize(&pipe.line_buffer, b'\n') {
             let line = &pipe.line_buffer[0..newline_pos + 1];
             // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let handle = unsafe { &*pipe.handle };
-            self.write_line_with_prefix(handle, line, writer)?;
+            let config = unsafe { (*pipe.handle).config };
+            self.write_line_with_prefix(config, line, writer)?;
             // Remove processed line from buffer
             pipe.line_buffer.drain_front(newline_pos + 1);
         }
@@ -388,22 +383,22 @@ impl<'a> State<'a> {
 
     fn write_line_with_prefix(
         &self,
-        handle: &ProcessHandle,
+        config: &ScriptConfig,
         line: &[u8],
         writer: &mut OutputWriter,
     ) -> Result<(), Error> {
-        self.write_prefix(handle, writer)?;
+        self.write_prefix(config, writer)?;
         writer.write_all(line)?;
         Ok(())
     }
 
-    fn write_prefix(&self, handle: &ProcessHandle, writer: &mut OutputWriter) -> Result<(), Error> {
+    fn write_prefix(&self, config: &ScriptConfig, writer: &mut OutputWriter) -> Result<(), Error> {
         if self.use_colors {
-            writer.write_all(COLORS[handle.color_idx % COLORS.len()])?;
+            writer.write_all(COLORS[config.color_idx % COLORS.len()])?;
         }
 
-        writer.write_all(&handle.config.label)?;
-        let padding = self.max_label_len.saturating_sub(handle.config.label.len());
+        writer.write_all(&config.label)?;
+        let padding = self.max_label_len.saturating_sub(config.label.len());
         for _ in 0..padding {
             writer.write_all(b" ")?;
         }
@@ -418,7 +413,7 @@ impl<'a> State<'a> {
 
     fn flush_pipe_buffer(
         &self,
-        handle: &ProcessHandle<'a>,
+        config: &ScriptConfig,
         pipe: &mut PipeReader<'a>,
     ) -> Result<(), Error> {
         if !pipe.line_buffer.is_empty() {
@@ -429,7 +424,7 @@ impl<'a> State<'a> {
             } else {
                 Output::writer()
             };
-            self.write_line_with_prefix(handle, line, writer)?;
+            self.write_line_with_prefix(config, line, writer)?;
             if needs_newline {
                 let _ = writer.write_all(b"\n");
             }
@@ -454,21 +449,12 @@ impl<'a> State<'a> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        // Reshaped for borrowck — `flush_pipe_buffer` would need both
-        // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
-        // through a raw ptr (the State/handle backref pattern is already
-        // raw-ptr-based throughout this file).
-        let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
-        // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
-        // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
-        unsafe {
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
-        }
+        self.flush_pipe_buffer(handle.config, &mut handle.stdout_reader)?;
+        self.flush_pipe_buffer(handle.config, &mut handle.stderr_reader)?;
 
         // Print exit status to stderr (status messages always go to stderr)
         let writer = Output::error_writer();
-        self.write_prefix(handle, writer)?;
+        self.write_prefix(handle.config, writer)?;
 
         let slot = handle.process.as_ref().unwrap();
         match &slot.status {
@@ -776,6 +762,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
 
@@ -790,6 +777,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
 
@@ -803,6 +791,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
     } else {
@@ -837,6 +826,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
+            color_idx: group_infos.len(),
         });
     }
 
@@ -890,7 +880,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(
+    let (this_transpiler, _) = RunCommand::configure_env_for_run(
         ctx,
         &mut this_transpiler_slot,
         None,
@@ -899,8 +889,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             store_root_fd: false,
         },
     )?;
-    // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
-    let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
@@ -908,7 +896,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),
-        None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
@@ -1129,7 +1116,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let mut state = State {
         handles: Box::default(),
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         max_label_len,
         shell_bin,
@@ -1141,20 +1127,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Initialize handles
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
-    for (i, config) in configs.iter().enumerate() {
-        // Find which group this belongs to, for color assignment
-        let mut color_idx: usize = 0;
-        for (gi, group) in group_infos.iter().enumerate() {
-            if i >= group.start && i < group.start + group.count {
-                color_idx = gi;
-                break;
-            }
-        }
-
+    for config in &configs {
         handles.push(ProcessHandle {
             state: &raw const state,
             config,
-            color_idx,
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,
@@ -1249,8 +1225,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
+        event_loop.tick_once((&raw const state).cast_mut().cast::<c_void>());
     }
 
     let status = state.finalize();

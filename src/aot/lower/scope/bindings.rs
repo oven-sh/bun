@@ -1,11 +1,12 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind, CodeUnit, ScopeId, SymbolId};
-use bun_sema::hir::{ExprId, FnId};
+use bun_sema::hir::{ExprId, FnId, StmtId};
+use smallvec::SmallVec;
 
 use super::lexical_owners::find_container_binding;
-use super::{BindingForm, BindingRef, ScopeSlot, Storage, environments};
-use crate::ir::ValueId;
+use super::{BindingForm, BindingRef, DeadZone, ScopeSlot, Storage, environments};
 use crate::ir::generated::{ECMAMode, RuntimeErrorKind};
+use crate::ir::{FunctionKey, LocalVariable, ValueId};
 use crate::lower::captures::Capture;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, convert, function};
@@ -20,9 +21,13 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn code_unit_slot(&self, unit: CodeUnit, slot: ScopeSlot) -> BindingRef {
         BindingRef::Slot(self.bound.top_scope(self.hir, unit), slot)
     }
+
+    pub(in crate::lower) fn instance_slot(&self) -> BindingRef {
+        self.code_unit_slot(CodeUnit::File, ScopeSlot::ModuleInstance)
+    }
 }
 
-// Only the text of a CommonJS file that keeps the five names as parameters is a function with an arguments object.
+#[inline]
 pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Binding) -> Binding {
     match binding {
         Binding::Arguments(CodeUnit::File) if !file.scopes.has_wrapper_parameters() => {
@@ -36,11 +41,48 @@ pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Bi
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn get_environment(&mut self, scope: ScopeId) -> ValueId {
+        self.make_environment_put_off(scope);
         match self.scopes.find_environment(scope) {
             Some(variable) => self.builder.read_variable(variable),
             None => self
                 .find_captured_value(Capture::Environment(scope))
                 .expect("a function captures every environment it reaches"),
+        }
+    }
+
+    pub(in crate::lower) fn reaches_stored(&self, binding: BindingRef) -> bool {
+        if self.scopes.find_local(binding).is_some()
+            || self.find_captured_value(Capture::Value(binding)).is_some()
+        {
+            return true;
+        }
+        match self.file.scopes.placement(binding).map(|it| it.storage) {
+            Some(Storage::Field { scope, .. }) => {
+                self.scopes.find_environment(scope).is_some()
+                    || self
+                        .find_captured_value(Capture::Environment(scope))
+                        .is_some()
+            }
+            Some(Storage::Variable(_)) => true,
+            Some(Storage::Instance { .. }) => self.reaches_stored(self.file.instance_slot()),
+            Some(Storage::Local) | None => false,
+        }
+    }
+
+    pub(in crate::lower) fn get_module_instance(&mut self) -> ValueId {
+        if let Some(instance) = self.scopes.allocated_instance {
+            return instance;
+        }
+        let slot = self.file.instance_slot();
+        match self.reaches_stored(slot) {
+            true => self.get_stored(slot),
+            false => {
+                debug_assert!(
+                    matches!(self.key, FunctionKey::ModuleBody(_)),
+                    "only the body of a file runs with the current instance"
+                );
+                self.emit_current_instance(self.file.file)
+            }
         }
     }
 
@@ -64,9 +106,51 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let variable = self.file.ensure_variable(key);
                 self.builder.get_module_variable(variable)
             }
+            Storage::Instance { field } => {
+                let instance = self.get_module_instance();
+                let layout = environments::instance_layout(self.file);
+                self.builder.get_environment_field(instance, layout, field)
+            }
             Storage::Local => {
                 unreachable!("the scope of a local is entered before code that names it")
             }
+        }
+    }
+
+    pub(in crate::lower) fn read_what_was_stored_under_handlers(&mut self, statement: StmtId) {
+        let bindings = self.file.scopes.stored_under_handlers(statement);
+        let bindings: SmallVec<[BindingRef; 8]> = SmallVec::from_slice(bindings);
+        let mut read: SmallVec<[(LocalVariable, ValueId); 8]> = SmallVec::new();
+        for binding in bindings {
+            let placement = self.file.scopes.placement(binding);
+            let (Some(local), Some(placement)) = (self.scopes.find_local(binding), placement)
+            else {
+                continue;
+            };
+            let (Storage::Field { scope, field }, BindingRef::Symbol(symbol)) =
+                (placement.storage, binding)
+            else {
+                continue;
+            };
+            if local.dead_zone == DeadZone::Uninitialized {
+                continue;
+            }
+            let environment = self.get_environment(scope);
+            let layout = environments::environment_layout(self.file, scope);
+            let value = self
+                .builder
+                .get_environment_field(environment, layout, field);
+            let value = match local.dead_zone {
+                DeadZone::Initialized => {
+                    let name = self.file.bound.symbol(symbol).name;
+                    self.emit_initialization_check(value, symbol, name)
+                }
+                DeadZone::Never | DeadZone::Uninitialized | DeadZone::DecidedAtRunTime => value,
+            };
+            read.push((local.variable, value));
+        }
+        for (variable, value) in read {
+            self.builder.write_variable(variable, value);
         }
     }
 
@@ -76,7 +160,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let local = self.scopes.find_local(binding);
         if let Some(local) = local {
-            self.builder.write_variable(local.variable, value);
+            match &placement.storage {
+                Storage::Field { .. } => {
+                    self.builder
+                        .write_variable_kept_in_field(local.variable, value);
+                }
+                _ => self.builder.write_variable(local.variable, value),
+            }
         }
         match placement.storage {
             Storage::Field { scope, field } => {
@@ -88,6 +178,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Storage::Variable(key) => {
                 let variable = self.file.ensure_variable(key);
                 self.builder.put_module_variable(variable, value);
+            }
+            Storage::Instance { field } => {
+                let instance = self.get_module_instance();
+                let layout = environments::instance_layout(self.file);
+                self.builder
+                    .put_environment_field(instance, layout, field, value);
             }
             Storage::Local => debug_assert!(
                 local.is_some(),
@@ -107,7 +203,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    /// For a read that `FileAnalysis::bindings_read_without_expression` lists.
     pub(crate) fn get_binding_without_expression(
         &mut self,
         binding: Binding,
@@ -126,7 +221,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: Atom,
         value: ValueId,
     ) {
-        self.write_symbol(symbol, name, value, BindingStore::Initialize);
+        self.write_symbol(symbol, name, value, BindingStore::Initialize, None);
     }
 
     pub(super) fn get_arguments_object(&mut self, unit: CodeUnit) -> ValueId {
@@ -164,8 +259,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_throw_runtime_error(error, Some(name));
     }
 
+    pub(in crate::lower) fn store_parameter(
+        &mut self,
+        parameter: SymbolId,
+        name: Atom,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        self.store_binding(Binding::Symbol(parameter), name, value, source, false);
+    }
+
     pub(super) fn store_binding(
         &mut self,
+        binding: Binding,
+        name: Atom,
+        value: ValueId,
+        source: Option<ExprId>,
+        tests_dead_zone: bool,
+    ) {
+        self.store_binding_in(None, binding, name, value, source, tests_dead_zone);
+    }
+
+    pub(super) fn store_member_of(
+        &mut self,
+        container: ValueId,
+        binding: Binding,
+        name: Atom,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        self.store_binding_in(Some(container), binding, name, value, source, false);
+    }
+
+    fn store_binding_in(
+        &mut self,
+        container: Option<ValueId>,
         binding: Binding,
         name: Atom,
         value: ValueId,
@@ -206,13 +334,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.emit_binding_error(error, Binding::Symbol(symbol), name);
         }
         let position = self.file.binding_position(symbol);
-        let subject = convert::Int32Subject::Binding(symbol);
-        self.describe_int32_flow(position, subject, source);
+        self.describe_int32_flow_into_binding(position, symbol, source);
         let value = convert::convert(self, value, position, source);
         if tests_dead_zone && self.file.scopes.form(symbol) == BindingForm::Stored {
             self.check_before_store(symbol, name);
         }
-        self.write_symbol(symbol, name, value, BindingStore::Assign);
+        self.write_symbol(symbol, name, value, BindingStore::Assign, container);
     }
 
     fn get_symbol(&mut self, symbol: SymbolId, name: Atom) -> ValueId {
@@ -230,11 +357,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let key = self.file.name_key(name);
                 self.emit_get(object, PropertyName::Constant(key))
             }
-            BindingForm::Stored => self.get_checked(symbol, name),
+            BindingForm::Stored => match self.file.scopes.function_made_at_first_read(symbol) {
+                Some(function) => self.get_function_made_at_first_read(symbol, name, function),
+                None => self.get_checked(symbol, name),
+            },
         }
     }
 
-    fn write_symbol(&mut self, symbol: SymbolId, name: Atom, value: ValueId, store: BindingStore) {
+    fn get_function_made_at_first_read(
+        &mut self,
+        symbol: SymbolId,
+        name: Atom,
+        function: FnId,
+    ) -> ValueId {
+        if self.file.scopes.is_created_at_each_read(symbol) {
+            let id = function::declare_source_function(self.file, function, None);
+            return self.emit_closure(id, None);
+        }
+        let held = self.get_checked(symbol, name);
+        if self.builder.is_new_closure(held)
+            || self.scopes.created_functions.get(&symbol) == Some(&held)
+        {
+            return held;
+        }
+        let create = |lowering: &mut Self| {
+            let id = function::declare_source_function(lowering.file, function, None);
+            let closure = lowering.emit_closure(id, None);
+            lowering.write_symbol(symbol, name, closure, BindingStore::Assign, None);
+            closure
+        };
+        if self.builder.is_undefined_or_null(held) {
+            return create(self);
+        }
+        let closure = self.lower_unless_nullish(held, create);
+        if let Some(local) = self.scopes.find_local(BindingRef::Symbol(symbol)) {
+            self.builder.write_variable(local.variable, closure);
+            self.scopes.created_functions.insert(symbol, closure);
+        }
+        closure
+    }
+
+    fn write_symbol(
+        &mut self,
+        symbol: SymbolId,
+        name: Atom,
+        value: ValueId,
+        store: BindingStore,
+        container_in_hand: Option<ValueId>,
+    ) {
         match self.file.scopes.form(symbol) {
             BindingForm::Stored => {
                 let binding = BindingRef::Symbol(symbol);
@@ -248,7 +418,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_mapped_argument(unit, index, value);
             }
             BindingForm::ContainerMember { container } => {
-                let object = self.get_container_object(container);
+                let object = match container_in_hand {
+                    Some(object) => object,
+                    None => self.get_container_object(container),
+                };
                 let key = self.file.name_key(name);
                 self.emit_set(object, PropertyName::Constant(key), value);
             }
@@ -292,10 +465,11 @@ pub(super) fn initialize_binding(
     match binding {
         Binding::Symbol(symbol) => {
             let position = lowering.file.binding_position(symbol);
-            let subject = convert::Int32Subject::Binding(symbol);
-            lowering.describe_int32_flow(position, subject, source);
+            if source.is_none() {
+                lowering.describe_int32_flow_into_binding(position, symbol, None);
+            }
             let value = lowering.convert_initializer(value, position, source);
-            lowering.write_symbol(symbol, name, value, BindingStore::Initialize);
+            lowering.write_symbol(symbol, name, value, BindingStore::Initialize, None);
         }
         Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
             lowering.store_binding(binding, name, value, source, true);

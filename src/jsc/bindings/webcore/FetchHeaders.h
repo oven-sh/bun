@@ -121,6 +121,10 @@ public:
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers.willChange() = WTF::move(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers.get(); }
 
+    // Rust's `BodyFacts` for the body of the fetch() response that the list is from. A copy keeps them: HEAD and 304 have no body to hold them.
+    uint8_t bodyFacts() const { return m_bodyFacts; }
+    void setBodyFacts(uint8_t facts) { m_bodyFacts = facts; }
+
     explicit FetchHeaders(HTTPHeaderMap&& = {});
     explicit FetchHeaders(const FetchHeaders&);
 
@@ -146,6 +150,14 @@ private:
         uint64_t m_updateCounter { 0 };
     };
 
+    // Whoever stores one of these describes a body of their own.
+    void willStore(const String& name)
+    {
+        if (m_bodyFacts && (equalLettersIgnoringASCIICase(name, "content-encoding"_s) || equalLettersIgnoringASCIICase(name, "content-length"_s)))
+            m_bodyFacts = 0;
+    }
+
+    uint8_t m_bodyFacts { 0 };
     // How often fastRemove() ran. An iterator compares it with the counter to tell that nothing else changed the map.
     uint16_t m_nativeRemovals { 0 };
     CountedHeaderMap m_headers;
@@ -158,6 +170,7 @@ inline FetchHeaders::FetchHeaders(HTTPHeaderMap&& headers)
 
 inline FetchHeaders::FetchHeaders(const FetchHeaders& other)
     : RefCounted<FetchHeaders>()
+    , m_bodyFacts(other.m_bodyFacts)
     , m_headers(other.internalHeaders())
 {
 }

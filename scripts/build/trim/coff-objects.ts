@@ -5,11 +5,14 @@ const IMAGE_SCN_LNK_REMOVE = 0x800;
 const IMAGE_SCN_MEM_DISCARDABLE = 0x0200_0000;
 export const IMAGE_SCN_LNK_COMDAT = 0x1000;
 export const notLoadedFlags = IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE;
+export const IMAGE_COMDAT_SELECT_NODUPLICATES = 1;
 export const IMAGE_COMDAT_SELECT_ASSOCIATIVE = 5;
 export const IMAGE_SYM_CLASS_EXTERNAL = 2;
+export const IMAGE_SYM_CLASS_STATIC = 3;
 export const IMAGE_SYM_CLASS_WEAK_EXTERNAL = 105;
 export const ordinarySectionName = /^\.(text|rdata|data|bss|xdata|pdata)(\$|$)/;
 export const builtinModulesSection = ".bunblt";
+const lastSectionNumberIn16Bits = 0xfeff;
 
 export const scalarDeleting = (name: string) => (name.startsWith("??_E") ? "??_G" + name.slice(4) : name);
 
@@ -23,6 +26,19 @@ export interface CoffSection {
   selection: number;
   parent: number;
   leader: number;
+  /** The symbol that defines the section. Its auxiliary record follows it. */
+  definition: number;
+  /** Some other symbol lies in the section. */
+  hasSymbol: boolean;
+}
+
+export interface CoffSymbolTable {
+  offset: number;
+  recordBytes: number;
+  isBig: boolean;
+  records: Buffer;
+  /** With the four bytes of its size in front, as in the file. */
+  strings: Buffer;
 }
 
 export class CoffObject {
@@ -37,14 +53,18 @@ export class CoffObject {
   private symbols: Buffer;
   private strings: Buffer;
   private entry: number;
+  private symbolsAt: number;
+  private isBig: boolean;
 
   private constructor(fd: number, base: number, header: Buffer) {
     this.fd = fd;
     this.base = base;
     const isBig = header.readUInt16LE(0) === 0 && header.readUInt16LE(2) === 0xffff;
+    this.isBig = isBig;
     const sectionCount = isBig ? header.readUInt32LE(44) : header.readUInt16LE(2);
     const symbolsAt = header.readUInt32LE(isBig ? 48 : 8);
     const symbolCount = header.readUInt32LE(isBig ? 52 : 12);
+    this.symbolsAt = symbolsAt;
     this.entry = isBig ? 20 : 18;
     this.symbols = readAt(fd, base + symbolsAt, symbolCount * this.entry);
     const stringsAt = base + symbolsAt + symbolCount * this.entry;
@@ -70,6 +90,8 @@ export class CoffObject {
         selection: 0,
         parent: 0,
         leader: -1,
+        definition: -1,
+        hasSymbol: false,
       });
     }
     this.symbolSection = new Int32Array(symbolCount);
@@ -79,7 +101,12 @@ export class CoffObject {
     const defined = new Set<number>();
     for (let index = 0; index < symbolCount; index++) {
       const at = index * this.entry;
-      const section = isBig ? this.symbols.readInt32LE(at + 12) : this.symbols.readInt16LE(at + 12);
+      const narrow = this.symbols.readUInt16LE(at + 12);
+      const section = isBig
+        ? this.symbols.readInt32LE(at + 12)
+        : narrow <= lastSectionNumberIn16Bits
+          ? narrow
+          : narrow - 0x1_0000;
       const storage = this.symbols[at + this.entry - 2]!;
       const auxiliaries = this.symbols[at + this.entry - 1]!;
       this.symbolSection[index] = section;
@@ -97,11 +124,13 @@ export class CoffObject {
           this.nameOf(index) === found.name;
         if (isDefinition) {
           defined.add(section);
+          found.definition = index;
           const auxiliary = at + this.entry;
           found.selection = this.symbols[auxiliary + 14]!;
           found.parent =
             this.symbols.readUInt16LE(auxiliary + 12) | (isBig ? this.symbols.readUInt16LE(auxiliary + 16) << 16 : 0);
         } else {
+          found.hasSymbol = true;
           if (
             found.leader < 0 &&
             found.flags & IMAGE_SCN_LNK_COMDAT &&
@@ -126,6 +155,17 @@ export class CoffObject {
       if (header.readUInt16LE(4) < 2) return undefined;
     } else if (machine !== 0x8664 && machine !== 0xaa64) return undefined;
     return new CoffObject(fd, base, header);
+  }
+
+  get symbolTable(): CoffSymbolTable | undefined {
+    if (this.symbolsAt === 0) return undefined;
+    return {
+      offset: this.base + this.symbolsAt,
+      recordBytes: this.entry,
+      isBig: this.isBig,
+      records: this.symbols,
+      strings: this.strings,
+    };
   }
 
   private stringAt(offset: number): string {

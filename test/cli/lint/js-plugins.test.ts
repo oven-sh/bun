@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
+import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -35,7 +35,7 @@ async function lint(
   reads: string[] = [],
   variables: Record<string, string> = {},
 ) {
-  using dir = tempDir("bun-lint-js-plugins", files);
+  using dir = (variables.BUN_CONFIG_REGISTRY ? autoInstallTempDir : tempDir)("bun-lint-js-plugins", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
     env: { ...env, ...variables },

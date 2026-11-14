@@ -1,0 +1,18 @@
+# Tagged gets a test of its own by a descriptor. The class object leaves with the definition, and whoever looks at it, or at a class below it, finds that it has left. Nothing is said of other classes: what is tested against Other stays in sight.
+# -- source: main.js
+# class Other { constructor() { this.x = 1; } m() { return this.x; } }
+# class Third { constructor() { this.y = 2; } }
+# class Tagged {}
+# Object.defineProperty(Tagged, Symbol.hasInstance, { value: (v) => v === 1 });
+# const o = new Other(), t = new Third();
+# print(o instanceof Other, t instanceof Other, 1 instanceof Tagged, o.m(), t.y);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field {{*}} "x" proven=int[0, 2147483647]
+# CHECK: field {{*}} "y" proven=int[0, 2147483647]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true false true 1 2
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true false true 1 2
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true false true 1 2

@@ -435,8 +435,10 @@ pub mod posix_spawn {
     ) -> sys::Result<pid_t> {
         let mut pid: c_int = 0;
 
-        // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-        let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, argv, envp) };
+        let rc = sys::close_on_fork::with_pending_fork(|fork| {
+            // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
+            unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, fork.cast(), argv, envp) }
+        });
 
         if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)
@@ -661,6 +663,11 @@ pub mod posix_spawn {
         }
     }
 
+    /// The highest `ru_maxrss` of the children reaped since this was last set to zero. The kernel counts in it what a child has
+    /// waited for itself. `bun test --aot` asks for each test file.
+    pub static LARGEST_REAPED_CHILD: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(0);
+
     /// Same as waitpid, but also returns resource usage information.
     pub fn wait4(
         pid: pid_t,
@@ -687,6 +694,14 @@ pub mod posix_spawn {
             };
             match errno(rc) {
                 Errno::SUCCESS => {
+                    if rc > 0 && !usage_ptr.is_null() {
+                        // SAFETY: the kernel has filled what `usage_ptr` points to.
+                        let highest = unsafe { (*usage_ptr).ru_maxrss };
+                        LARGEST_REAPED_CHILD.fetch_max(
+                            u64::try_from(highest).unwrap_or(0),
+                            core::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
                     return sys::Result::Ok(WaitPidResult {
                         pid: pid_t::try_from(rc).expect("int cast"),
                         status: status as u32,

@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# "use strict";
+# function halves(kept, count) {
+#   const most = count | 0;
+#   for (let j = 0; j < most; j++) kept[j] = j * 0.5 + 0.25;
+#   return kept;
+# }
+# function fresh() { const made = []; for (let i = 0; i < 4; i++) made.push(9.5 + i); return made; }
+# print(halves(fresh(), 4).join(), halves(fresh(), 6).join());
+# -- end of source
+# `kept` comes from outside the function, and the loop bound is not its length. So in the specialized version the iteration checks `key < length` itself and stores raw after the check.
+# The store relies on that test.
+# Fault injection, testing=SkipLengthChecks: the iteration skips its check, so the store has no evidence to rely on.
+# The code verifier rejects a raw store without such evidence, unless the library wrote the store.
+# f1 = halves
+# OPTIONS: testing=SkipLengthChecks
+# DIAGNOSTIC: OpcodeNotInForm f1
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: code f1:Body

@@ -5,8 +5,8 @@ use super::stream::{PaddingStrategy, RequestMethod, ResetBy, Stream, StreamTable
 use bun_http::lshpack;
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, RecvWindow, SendWindow};
 use bun_http_types::h2::frame::{
-    self, CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, Frame, FrameHeader, FrameType,
-    NextFrame, flags,
+    self, CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, Frame, FrameError, FrameHeader,
+    FrameType, NextFrame, flags,
 };
 use bun_http_types::h2::header_block::{HeaderBlockAssembler, HeaderBlockError};
 use bun_http_types::h2::settings::{Entries, SettingId, Settings};
@@ -21,6 +21,7 @@ use std::rc::Rc;
 pub(crate) mod lib_error {
     pub(crate) const PROTO: i32 = -505;
     pub(crate) const STREAM_CLOSED: i32 = -510;
+    pub(crate) const FLOW_CONTROL: i32 = -524;
     pub(crate) const BAD_CLIENT_MAGIC: i32 = -903;
     pub(crate) const FLOODED: i32 = -904;
     pub(crate) const TOO_MANY_CONTINUATIONS: i32 = -905;
@@ -102,8 +103,8 @@ pub(crate) struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// What a stream counts toward maxSessionMemory, for its table entry and its `Http2Stream`. Node counts as much: its 10 MB hold 13,866 streams.
-const STREAM_MEMORY_COST: usize = 756;
+/// What an open stream counts toward maxSessionMemory besides its request's header list. Node counts as much: its 10 MB hold 13,866 streams of four short fields.
+const STREAM_MEMORY_COST: usize = 590;
 
 /// nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS: CONTINUATION frames allowed per header block.
 const MAX_CONTINUATIONS: u32 = 8;
@@ -195,7 +196,7 @@ pub(crate) trait Sink {
     /// The block is refused, so the fields `on_header` got for it are dropped.
     fn on_headers_refused(&self);
     /// The header block for `stream_id` is complete. `flags` are those of its HEADERS frame.
-    fn on_headers_complete(&self, stream_id: u32, flags: u8);
+    fn on_headers_complete(&self, stream_id: u32, flags: u8, is_request: bool);
     /// The payload of a DATA frame, or a part of it, without padding.
     fn on_data(&self, stream_id: u32, data: &[u8]);
     /// The peer's END_STREAM arrived. The owner applies it to the table once JS has seen what came before it.
@@ -271,6 +272,8 @@ pub(crate) struct Connection {
     pub last_peer_id: Cell<u32>,
     /// We sent a GOAWAY.
     pub goaway_sent: Cell<bool>,
+    /// The lowest last stream id of our GOAWAY frames. The peer may retry what is above it elsewhere (§6.8).
+    goaway_last_id: Cell<u32>,
 }
 
 impl Default for Connection {
@@ -310,6 +313,7 @@ impl Default for Connection {
             last_stream_id: Cell::new(0),
             last_peer_id: Cell::new(0),
             goaway_sent: Cell::new(false),
+            goaway_last_id: Cell::new(frame::MAX_STREAM_ID),
         }
     }
 }
@@ -334,7 +338,8 @@ impl Connection {
 
     /// node's IsAvailableSessionMemory. New streams are refused while this returns true.
     pub(crate) fn is_over_memory_limit(&self, sink: &impl Sink) -> bool {
-        sink.buffered_output() + self.streams.len() * STREAM_MEMORY_COST
+        let open = self.streams.open_local() as usize + self.streams.open_peer() as usize;
+        sink.buffered_output() + open * STREAM_MEMORY_COST + self.streams.open_request_bytes()
             > self.max_session_memory.get()
     }
 
@@ -357,15 +362,13 @@ impl Connection {
         debug: &[u8],
     ) {
         self.goaway_sent.set(true);
+        let last_stream_id = last_stream_id.min(self.goaway_last_id.get());
+        self.goaway_last_id.set(last_stream_id);
         sink.write_frame(
             FrameType::GoAway,
             0,
             0,
-            &[
-                &(last_stream_id & frame::MAX_STREAM_ID).to_be_bytes(),
-                &code.0.to_be_bytes(),
-                debug,
-            ],
+            &[&last_stream_id.to_be_bytes(), &code.0.to_be_bytes(), debug],
         );
     }
 
@@ -636,10 +639,7 @@ impl Connection {
                 self.send_go_away(sink, e.code, e.reason.as_bytes());
                 return true;
             }
-            Err(e) => {
-                self.reset_stream(sink, e.stream_id, e.code);
-                return false;
-            }
+            Err(e) => return self.handle_stream_error(sink, &e),
         };
         match frame {
             Frame::Settings(entries) => self.handle_settings(sink, entries),
@@ -673,6 +673,21 @@ impl Connection {
             Frame::Origin => self.handle_origin(sink, hdr, payload),
             // Both are ignored (§4.1 for unknown types). nghttp2 charges each one as a glitch.
             Frame::Priority | Frame::Unknown => self.note_glitch(sink),
+        }
+    }
+
+    /// A frame that is invalid by itself only resets a stream that can still be reset (§5.1).
+    fn handle_stream_error(&self, sink: &impl Sink, e: &FrameError) -> bool {
+        match self.streams.inbound(e.stream_id) {
+            Some(s) if !s.was_reset() => {
+                self.reset_stream(sink, e.stream_id, e.code);
+                false
+            }
+            None if !self.has_existed(e.stream_id) => {
+                self.send_go_away(sink, e.code, e.reason.as_bytes());
+                true
+            }
+            _ => self.note_glitch(sink),
         }
     }
 
@@ -730,14 +745,23 @@ impl Connection {
                 sink.on_remote_custom_setting(id, value);
             }
         }
-        // §6.9.2: the change shifts every stream's send window, but not the connection's.
+        // §6.9.2: the change shifts every stream's send window, but not the connection's. One past 2^31-1 is a connection error.
         let snapshot = self.remote_settings.get();
         let delta = snapshot.initial_window_size as i64 - old_initial_window as i64;
         if delta != 0 {
-            // nghttp2 ends the session if a window passes 2^31-1 here. Such a window stays as it was instead.
+            let mut overflowed = false;
             self.streams.for_each(|s| {
-                let _ = update(&s.send_window, |w| w.shift(delta));
+                overflowed |= !s.is_closed() && update(&s.send_window, |w| w.shift(delta)).is_err();
             });
+            if overflowed {
+                self.local_connection_error(
+                    sink,
+                    ErrorCode::FLOW_CONTROL_ERROR,
+                    lib_error::FLOW_CONTROL,
+                    b"SETTINGS: stream flow-control window overflow",
+                );
+                return true;
+            }
         }
         // §6.5.3: ACK first. The peer goes by its old receive window until it sees the ACK.
         self.send_settings_ack(sink);
@@ -1120,6 +1144,14 @@ impl Connection {
             BlockDisposition::StreamClosed => return self.note_glitch(sink),
             BlockDisposition::Deliver => {}
         }
+        if is_request && target > self.goaway_last_id.get() {
+            sink.on_headers_refused();
+            if self.note_glitch(sink) {
+                return true;
+            }
+            self.reset_stream(sink, target, ErrorCode::REFUSED_STREAM);
+            return false;
+        }
         checks.finish();
         if push_parent.is_none()
             && !checks.malformed
@@ -1160,17 +1192,22 @@ impl Connection {
                 ErrorCode::PROTOCOL_ERROR
             };
             self.reset_stream(sink, target, code);
-            sink.on_stream_rejected();
+            if is_request {
+                sink.on_stream_rejected();
+            }
             return false;
         }
         if let Some(s) = stream.as_ref() {
+            if is_request {
+                self.streams.note_request(s, checks.list_size);
+            }
             if push_parent.is_some() {
                 s.request_method.set(Some(checks.method));
             } else if !checks.informational {
                 s.recv_final_headers.set(true);
             }
         }
-        sink.on_headers_complete(target, flags);
+        sink.on_headers_complete(target, flags, is_request);
         if end_stream && let Some(s) = stream.as_ref() {
             sink.on_stream_end(s);
         }
@@ -1212,7 +1249,8 @@ impl Connection {
             .get()
             .max(self.local_settings.get().initial_window_size);
         let verdict = match stream {
-            // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
+            // DATA for a stream nobody opened. Its reset closes nothing, so the peer can ask for it again and again.
+            None if self.note_glitch(sink) => return DataAdmission::Fatal,
             None => Verdict::Reset(ErrorCode::STREAM_CLOSED),
             Some(s) => {
                 if let Some(code) = s.data_refusal(self.is_server.get()) {

@@ -1,0 +1,24 @@
+# f1 = heavy, f2 = small, f3 = other, f4 = route
+# -- source: tail-call-that-must-follow-a-test-of-the-stack-tests-it-itself-ahead-of-the-framed-part.ts
+# declare function print(...values: unknown[]): void;
+# class Item { kind: number; size: number; cached: number; constructor(kind: number, size: number) { this.kind = kind; this.size = size; this.cached = 0; } }
+# function heavy(size: number): number { return size <= 0 ? 0 : size + heavy(size - 1); }
+# function small(item: Item): number { const first = heavy(item.size); const second = heavy(item.kind); return first + second + item.size + 1 - first - second; }
+# function other(item: Item): number { const first = heavy(item.kind); const second = heavy(item.size); return first + second + item.size + 2 - first - second; }
+# function route(item: Item): number {
+#   if (item.kind & 1) return small(item);
+#   if (item.kind & 2) return other(item);
+#   const first = heavy(item.size);
+#   const second = item.size > 1 ? route(new Item(item.kind & 7, item.size - 1)) : heavy(item.size);
+#   return first + second + item.kind;
+# }
+# print(route(new Item(1, 1)), route(new Item(2, 1)), route(new Item(4, 3)));
+# -- end of source
+# `route` calls itself, so it tests the stack; `small` and `other` leave that test to their callers. The two calls in tail position must therefore follow a test. They need nothing else of a frame: ahead of the framed part they compare the stack pointer with the bound themselves, and only the third way sets the frame up.
+# REQUIRES: x86_64 unsanitized-code
+# Calls that stand once are copied, so nothing is copied here.
+# RUN: frame f4:Body mechanisms=all-Inlining
+# CHECK-LABEL: unit f4:Body
+# CHECK: coverage = FramedPart
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2 3 23

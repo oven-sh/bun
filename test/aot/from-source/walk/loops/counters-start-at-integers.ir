@@ -1,0 +1,122 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function holes(rows: Uint16Array, list: number[]): number { let count = 0; for (let x = 0; x < 10; x++) for (let y = 20 - list[x]! + 1; y < 20; y++) if (!(rows[y]! & (1 << x))) count++; return count; }
+# const rows = new Uint16Array(20);
+# for (let i = 12; i < 20; i++) rows[i] = 0b1011011101 ^ (i * 3);
+# const list = [8, 7, 6, 8, 8, 5, 8, 8, 3, 8];
+# let sum = 0;
+# for (let turn = 0; turn < 10; turn++) sum += holes(rows, list);
+# print(sum);
+# -- end of source
+# The list has no holes, so an element inside its length is an int32, and the inner loop begins to count at a difference of integers.
+# f1 = holes
+# RUN(HOLES): walk f1 mechanisms=all
+# HOLES-LABEL: code f1:Body
+# HOLES: i32 @Int32 = ToInt32
+# HOLES: Sub {{*}} form=Integers
+# HOLES: Add {{*}} form=Integers
+# HOLES: isLoopHead=true
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=8}, Number{value=7}, Number{value=6}, Number{value=8}, Number{value=8}, Number{value=5}, Number{value=8}, Number{value=8}, Number{value=3}, Number{value=8}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Uint16Array @271
+    v3 = Integer integer=20 @283
+    v4 = Construct v2, -, v3 calleeName="Uint16Array" @271 @267
+    v5 = Convert v4 declared={type=undefined|null|Uint16Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @267
+    v6 = Integer integer=12 @301
+    v7 = Convert v6 declared={type=number} @301
+    Jump -> next b1(v7) @297
+  b1(v8: number):
+    LoopHint @297
+    v10 = Integer integer=20 @309
+    v11 = Less v8, v10 @305
+    Branch v11 -> taken b2(), notTaken b3() @305
+  b2():
+    v12 = Integer integer=733 @328
+    v13 = Integer integer=3 @348
+    v14 = Mul v8, v13 @344
+    v15 = BitXor v12, v14 @328
+    ElemSet v5, v8, v15 @318
+    v17 = Increment v8 @313
+    v18 = Convert v17 declared={type=number} @313
+    Jump -> next b1(v18) @313
+  b3():
+    v19 = Data data=d0 @365
+    v20 = Convert v19 declared={type=undefined|null|Array<number> flags=[IsExpected, OmitsNull, OmitsUndefined]} @365
+    v21 = Integer @407
+    v22 = Convert v21 declared={type=number} @407
+    v23 = Integer @426
+    v24 = Convert v23 declared={type=number} @426
+    Jump -> next b4(v22, v24) @419
+  b4(v25: number, v26: number):
+    LoopHint @419
+    v28 = Integer integer=10 @436
+    v29 = Less v26, v28 @429
+    Branch v29 -> taken b5(), notTaken b6() @429
+  b5():
+    v30 = Call v1, -, v5, v20 calleeName="holes" @455
+    v31 = Add v25, v30 @455
+    v32 = Convert v31 declared={type=number} @448
+    v33 = Increment v26 @440
+    v34 = Convert v33 declared={type=number} @440
+    Jump -> next b4(v32, v34) @440
+  b6():
+    v35 = Builtin builtin=GlobalThis @474
+    v36 = PropGet v35 key="print" [isFreeName] @474
+    v37 = Call v36, -, v25 calleeName="print" @474
+    v38 = Undefined @474
+    Return v38 @474
+}
+function f1 name="holes" module=m0 position=52 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint16Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint16Array, v1: undefined|null|Array<number>):
+    v2 = Integer @124
+    v3 = Convert v2 declared={type=number} @124
+    v4 = Integer @140
+    v5 = Convert v4 declared={type=number} @140
+    Jump -> next b1(v3, v5) @136
+  b1(v6: number, v7: number):
+    LoopHint @136
+    v9 = Integer integer=10 @147
+    v10 = Less v7, v9 @143
+    Branch v10 -> taken b2(), notTaken b8() @143
+  b2():
+    v11 = Integer integer=20 @169
+    v12 = ElemGet v1, v7 @174
+    v13 = Sub v11, v12 @169
+    v14 = Integer integer=1 @185
+    v15 = Add v13, v14 @169
+    v16 = Convert v15 declared={type=number} @169
+    Jump -> next b3(v6, v16) @165
+  b3(v17: number, v18: number):
+    LoopHint @165
+    v20 = Integer integer=20 @192
+    v21 = Less v18, v20 @188
+    Branch v21 -> taken b4(), notTaken b7() @188
+  b4():
+    v22 = ElemGet v0, v18 @207
+    v23 = Integer integer=1 @219
+    v24 = LShift v23, v7 @219
+    v25 = BitAnd v22, v24 @207
+    v26 = ToBoolean v25 @207
+    Branch v26 -> taken b6(v17), notTaken b5(| 0) @207
+  b5(v27):
+    v28 = Increment v17 @229
+    v29 = Convert v28 declared={type=number} @229
+    Jump -> next b6(v29) @229
+  b6(v30: number):
+    v31 = Increment v18 @196
+    v32 = Convert v31 declared={type=number} @196
+    Jump -> next b3(v30, v32) @196
+  b7():
+    v33 = Increment v7 @151
+    v34 = Convert v33 declared={type=number} @151
+    Jump -> next b1(v17, v34) @151
+  b8():
+    v35 = Convert v6 declared={type=number} @245
+    Return v35 @245
+}

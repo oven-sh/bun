@@ -18,6 +18,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_core::strings::AsciiStatus;
+use bun_http_types::Encoding::Encoding;
 use bun_http_types::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
@@ -44,6 +45,11 @@ pub enum ClosingState {
 pub enum BlobContentType {
     Static(&'static [u8]),
     Owned(std::sync::Arc<[u8]>),
+    /// Script named a type that Bun sends with a charset: `type` is `given`, a `Content-Type` header is `header`.
+    Named {
+        given: &'static [u8],
+        header: &'static [u8],
+    },
 }
 
 impl Default for BlobContentType {
@@ -59,6 +65,16 @@ impl BlobContentType {
         match self {
             Self::Static(s) => s,
             Self::Owned(b) => b,
+            Self::Named { header, .. } => header,
+        }
+    }
+
+    /// What the `type` attribute answers.
+    #[inline]
+    pub fn given(&self) -> &[u8] {
+        match self {
+            Self::Named { given, .. } => given,
+            _ => self.as_slice(),
         }
     }
 
@@ -79,6 +95,30 @@ impl BlobContentType {
             std::borrow::Cow::Borrowed(s) => Self::Static(s),
             std::borrow::Cow::Owned(v) => Self::Owned(std::sync::Arc::from(v.as_slice())),
         }
+    }
+
+    /// The type that script gave to `new Blob()`, `new File()` or `slice()`.
+    pub fn from_script(slice: &[u8]) -> Self {
+        Self::from_known_name(slice).unwrap_or_else(|| Self::from_lowercased(slice))
+    }
+
+    /// The `type` of the Blob that a clone is made from. Not every Blob's is lowercase.
+    pub fn from_clone(given: &[u8]) -> Self {
+        Self::from_known_name(given)
+            .filter(|known| known.given() == given)
+            .unwrap_or_else(|| Self::Owned(std::sync::Arc::from(given)))
+    }
+
+    fn from_known_name(slice: &[u8]) -> Option<Self> {
+        let given = bun_http_types::MimeType::interned_name(slice)?;
+        Some(
+            match bun_http_types::MimeType::by_name_static(given).map(|mime| mime.value) {
+                Some(std::borrow::Cow::Borrowed(header)) if header != given => {
+                    Self::Named { given, header }
+                }
+                _ => Self::Static(given),
+            },
+        )
     }
 
     /// Heap-owned ASCII-lowercased copy of `slice`.
@@ -106,10 +146,29 @@ bitflags::bitflags! {
     pub struct BodyFacts: u8 {
         /// They are a JS string's, which `Bun.serve` sends as `text/plain;charset=utf-8`.
         const STRING = 1 << 0;
-        /// `fetch()` decoded them, so the response's `Content-Encoding` no longer describes them.
-        const DECODED = 1 << 1;
         /// They reach a reader through a stream that Bun made, not one the program made.
-        const NATIVE_STREAM = 1 << 2;
+        const NATIVE_STREAM = 1 << 1;
+        const DECODED_GZIP = 1 << 2;
+        const DECODED_DEFLATE = 1 << 3;
+        const DECODED_BROTLI = 1 << 4;
+        const DECODED_ZSTD = 1 << 5;
+        /// `fetch()` took one of these codings off, so a `Content-Encoding` that names it no longer describes them.
+        const DECODED = Self::DECODED_GZIP.bits()
+            | Self::DECODED_DEFLATE.bits()
+            | Self::DECODED_BROTLI.bits()
+            | Self::DECODED_ZSTD.bits();
+    }
+}
+
+impl BodyFacts {
+    pub fn decoded_from(coding: Encoding) -> Self {
+        match coding {
+            Encoding::Gzip => Self::DECODED_GZIP,
+            Encoding::Deflate => Self::DECODED_DEFLATE,
+            Encoding::Brotli => Self::DECODED_BROTLI,
+            Encoding::Zstd => Self::DECODED_ZSTD,
+            Encoding::Identity | Encoding::Chunked => Self::empty(),
+        }
     }
 }
 
@@ -218,7 +277,7 @@ const _: () = {
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
             // ownership to the codegen wrapper. The S3File fast-path (different
-            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
+            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::into_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
             let ptr = Blob::new(self);
             // SAFETY: the new object takes the one ref `Blob::new` made.

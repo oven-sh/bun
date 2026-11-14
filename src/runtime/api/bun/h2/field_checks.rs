@@ -48,7 +48,7 @@ pub(crate) struct BlockKind {
 
 pub(crate) struct FieldChecks {
     kind: BlockKind,
-    list_size: usize,
+    pub list_size: usize,
     field_count: usize,
     seen_regular: bool,
     seen_pseudo: u8,

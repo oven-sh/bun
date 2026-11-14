@@ -27,6 +27,9 @@
 #endif
 #define CONCURRENT_CONNECTIONS 4
 
+/* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
+extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TCP;
+
 #if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
 #include <assert.h>
 #define US_ASSERT(x) assert(x)
@@ -115,18 +118,19 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
         /* Its owner ended this stream, so nothing of it is held back: every wait is over, and the kernel goes on delivering what it took. */
-        if (!thread_ends && s->ssl && us_internal_ssl_sealed_close_notify(s)) {
+        if (s->ssl && us_internal_ssl_sealed_close_notify(s)) {
             us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
             continue;
         }
-        /* No close_notify from a thread that ends, whose answer nothing would read, nor after a write that fell short: the owner may hold the rest. */
-        us_socket_close(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* A reset after a write that fell short: the owner may hold the rest. No close_notify from a thread that ends, whose answer nothing would read. */
+        const int cut_short = s->ssl ? s->flags.last_write_failed : !thread_ends && s->owner_holds_tail && !s->lingering;
+        us_socket_close(s, cut_short ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
          * reply. Callers (e.g. Listener.deinit) free the embedding storage
          * next, which would leave s->group dangling. */
         if (!us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
         }
     }
     group->iterator = 0;
@@ -147,7 +151,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
          * TLS close (never observed for parked mid-handshake sockets; the
          * assert below encodes that) from turning the re-scan into a spin. */
         struct us_internal_loop_data_t *ld = &group->loop->data;
-        for (uint16_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
+        for (uint32_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
             struct us_socket_t *q = ld->low_prio_head;
             while (q && q->group != group) {
                 q = q->next;
@@ -404,7 +408,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    if (bsd_adopt_socket(fd, SOCK_STREAM)) {
+    if (bsd_check_socket_type(fd, SOCK_STREAM)) {
         *error = LIBUS_ERR;
         return 0;
     }
@@ -413,7 +417,6 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     if (listen(fd, backlog > 0 ? backlog : 512)) {
         int listen_err = LIBUS_ERR;
         if (!bsd_socket_listen_error_is_benign(fd)) {
-            bsd_disown_socket(fd);
             *error = listen_err;
             return 0;
         }
@@ -425,7 +428,6 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
         int saved_errno = LIBUS_ERR;
-        bsd_disown_socket(fd);
         us_poll_free(p, group->loop);
         *error = saved_errno;
         return 0;
@@ -598,11 +600,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
         }
     }
 
-    /* CodeRabbit: us_calloc is mimalloc, which aborts on OOM (matches the
-     * other 13 unchecked allocations in this library). A NULL-check here would
-     * also have to cancel the in-flight ai_req — brittle for an unreachable
-     * path. */
-    struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
+    struct us_connecting_socket_t *c = us_xcalloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
     c->options = options;
     c->kind = kind;

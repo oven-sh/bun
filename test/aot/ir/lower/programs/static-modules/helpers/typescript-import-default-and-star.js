@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 4
+// CHECK-LABEL: function {{*}}name="get"
+// CHECK-LABEL: function {{*}}name="ownKeys"
 
 // FILE: main.js
 // What TypeScript emits for `import plain from`, `import marked from` and `import * as star from` with esModuleInterop: a module without the marker is wrapped, one with it is taken as it is, and the members of the star are getters.
@@ -65,25 +67,3 @@ module.exports = () => "plain";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: get ownKeys
-// CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="ownKeys"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} length=1 captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: env [[L_2]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=ObjectGetOwnPropertyNames
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v3 layout=[[L_2]]
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_2]]
-// CHECK-NEXT: v6 = Call v5, -, v1 calleeName="ownKeys"
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }

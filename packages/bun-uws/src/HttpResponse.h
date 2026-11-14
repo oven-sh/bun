@@ -114,7 +114,15 @@ public:
         return (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_BODY_MASK) == HttpResponseData<SSL>::HTTP_BODY_CHUNKED;
     }
 
-    /* Ends the header section of every HTTP/1 response but one that node:http writes whole (tryWriteHeadAtOnce() in NodeHTTP.cpp). Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
+    /* Bun.serve: a FIN ends this body, and it isn't all out, so only a reset tells the client. Node sends the FIN. */
+    bool isCloseDelimitedAndUnfinished() {
+        const uint32_t state = getHttpResponseData()->state;
+        return (state & HttpResponseData<SSL>::HTTP_BODY_MASK) == HttpResponseData<SSL>::HTTP_BODY_UNTIL_CLOSE
+            && ((state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !Super::hasFullyDrained())
+            && !HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp();
+    }
+
+    /* Ends the header section of every HTTP/1 response but one that node:http writes whole (tryWriteWholeResponse() in NodeHTTP.cpp). Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
     void terminateHeaders(uint64_t bodyLength) {
         using Data = HttpResponseData<SSL>;
         writeStatus(HTTP_200_OK);
@@ -150,10 +158,9 @@ public:
             writeHeaderLine("Transfer-Encoding", "chunked");
         }
         /* RFC 9112 9.6: a client that doesn't see "close" puts the socket back in its pool and loses the next request on it. */
-        if (httpResponseData->closesAfterResponse() && !(httpResponseData->state & Data::HTTP_WROTE_CONNECTION_HEADER)) [[unlikely]] {
+        if ((httpResponseData->state & (Data::HTTP_CONNECTION_CLOSE | Data::HTTP_WROTE_CONNECTION_HEADER)) == Data::HTTP_CONNECTION_CLOSE) [[unlikely]] {
             writeHeaderLine("Connection", "close");
-            /* Nothing may follow a response that says "close", so a graceful stop's mark becomes a hard close. */
-            httpResponseData->state |= Data::HTTP_WROTE_CONNECTION_HEADER | Data::HTTP_CONNECTION_CLOSE;
+            httpResponseData->state |= Data::HTTP_WROTE_CONNECTION_HEADER;
         }
         if (writeContentLength) {
             char digits[utils::U64_MAX_DIGITS];
@@ -317,7 +324,7 @@ public:
     }
 
     /* Closes this connection if it is idle: no request is being received, and no response is in flight or queued. Returns whether it closed it. */
-    bool closeIfIdle() {
+    bool closeIfIdle(bool waitForCloseNotify = false) {
         HttpResponseData<SSL> *data = getHttpResponseData();
         bool idle = data->isIdle;
         if (idle && HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
@@ -341,10 +348,34 @@ public:
         /* A socket is idle from the moment its response completes. When
          * that happens inside onData's parse loop the response can still
          * sit in the cork buffer, and JS that runs before the loop ends
-         * (a graceful stop() from a microtask) gets here. close() sends
-         * it first. */
-        Super::close();
+         * (a graceful stop() from a microtask) gets here. */
+        Super::uncork();
+        if (SSL && !waitForCloseNotify && !Super::getBufferedAmount()) {
+            /* close() counts the connection until the peer has answered the close_notify, which a peer that is gone never does. */
+            closeAfterLastByte();
+        } else {
+            Super::close();
+        }
         return true;
+    }
+
+    /* Bun.serve's graceful stop, for a connection that closeIfIdle() left open. It gets one more dispatch at most: of a request that was parked by now, or if it has none in flight. */
+    void closeWhenIdle() {
+        HttpResponseData<SSL> *data = getHttpResponseData();
+        data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+        if (!data->parkedRequestBytes.isEmpty()) {
+            return;
+        }
+        /* Idle and left open: the response is complete and still drains. */
+        if ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || data->isIdle) {
+            data->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            return;
+        }
+        data->idleTimeout = timeoutAfterStop(data->idleTimeout);
+        /* A TLS handshake keeps its own deadline, and onHandshake arms this one. */
+        if (data->filteredOpen) {
+            resetTimeout();
+        }
     }
 
     /* node:http: the connection of a parked request (NodeHTTPResponse::update_parked) doesn't read and has nothing left to send. Like a libuv handle in that state, it doesn't hold the event loop. The filter hears -3, and +3 when that ends. */
@@ -385,12 +416,21 @@ public:
         if (isChunked()) {
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
 
-            /* We do not have tryWrite-like functionalities, so ignore optional in this path */
-
             /* Write the chunked data if there is any (this will not send zero chunks) */
             const bool terminated = !data.empty() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS);
-            this->write(data, nullptr, terminated);
-
+            if (optional && terminated && totalSize <= UINT_MAX) {
+                /* One last chunk of totalSize bytes. Like below, the caller keeps what the socket doesn't take and calls again from onWritable. */
+                char head[CHUNK_HEAD_MAX];
+                const size_t headLength = (httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED) ? 0 : chunkHead(head, (unsigned int) totalSize);
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+                httpResponseData->offset += Super::writeFramed({head, headLength}, data.data(), data.length(), "\r\n0\r\n\r\n", true).first;
+                if (httpResponseData->offset != totalSize) {
+                    this->resetTimeout();
+                    return false;
+                }
+            } else {
+                this->write(data, nullptr, terminated);
+            }
 
             /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
              * between it and the final CRLF. */
@@ -424,7 +464,6 @@ public:
                 }
             }
 
-            /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
             this->resetTimeout();
             return true;
         } else {
@@ -739,9 +778,7 @@ public:
         return this;
     }
 
-    /* Write a caller-built 1xx informational response line + headers. Shares
-     * the AsyncSocket write path (and buffer) writeStatus/end use, so a
-     * pipelined replay stays ordered ahead of the final response bytes. */
+    /* Write a caller-built 1xx informational response line + headers. */
     HttpResponse *writeRawInformational(std::string_view data) {
         Super::write(data.data(), data.length());
         return this;

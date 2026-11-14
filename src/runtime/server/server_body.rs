@@ -493,10 +493,7 @@ impl AnyRoute {
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(file_route)));
         }
-        match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(s))),
-            None => Ok(None),
-        }
+        Ok(StaticRoute::from_js(global, argument)?.map(AnyRoute::Static))
     }
 }
 
@@ -605,7 +602,7 @@ impl ServePlugins {
         };
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
-        let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
+        let bunfig_path: &[u8] = &global.bun_vm().transpiler.get().options.bunfig_path;
         // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
         let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
             FileSystem::get().top_level_dir()
@@ -629,7 +626,7 @@ impl ServePlugins {
         let plugin_js_array =
             bun_string_jsc::to_js_array(global, StringView::as_strings(&bunstring_array))?;
         // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
-        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get().get() {
             let mut iter = config_plugins.array_iterator(global)?;
             while let Some(config_plugin) = iter.next()? {
                 plugin_js_array.push(global, config_plugin)?;
@@ -644,7 +641,7 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop_mut().enter();
+        global.bun_vm().event_loop().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
@@ -652,7 +649,7 @@ impl ServePlugins {
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        global.bun_vm().event_loop_mut().exit();
+        global.bun_vm().event_loop().exit();
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -767,7 +764,7 @@ impl ServePlugins {
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
-        global.bun_vm().as_mut().run_error_handler(err, None);
+        global.bun_vm().run_error_handler(err, None);
     }
 
     /// Clears the pending `server` before it's freed, so a load that settles later can't call into it.
@@ -903,6 +900,55 @@ fn idle_timeout_warning_user_data() -> *mut c_void {
     IDLE_TIMEOUT_WARNED.as_ptr().cast::<c_void>()
 }
 
+#[inline(never)] // Once, not once for each kind of server.
+fn copy_url_and_headers_of_mux_request(
+    request_object: &Request,
+    req: &uws::AnyRequest,
+    is_https: bool,
+) {
+    // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
+    request_object.set_fetch_headers(Some(unsafe {
+        crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(req.as_ptr()))
+    }));
+    let prefix: Option<Vec<u8>> = req
+        .header(b"host")
+        .filter(|host| Request::is_valid_host_header(host))
+        .map(|host| {
+            let fmt = bun_fmt::HostFormatter {
+                is_https,
+                host,
+                port: None,
+            };
+            let mut s = Vec::new();
+            let _ = write!(
+                &mut s,
+                "{}://{}",
+                if is_https { "https" } else { "http" },
+                fmt
+            );
+            s
+        });
+    let path = req.url();
+    if !path.is_empty() && path[0] == b'/' {
+        if let Some(mut s) = prefix {
+            s.extend_from_slice(path);
+            // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
+            let href = bun_url::href_from_string(&StringView::from_bytes(&s));
+            request_object.url.set(if href.is_empty() {
+                BunString::clone_utf8(&s)
+            } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
+                BunString::clone_latin1(&s[..href.length()])
+            } else {
+                href
+            });
+        } else {
+            request_object.url.set(BunString::clone_utf8(path));
+        }
+    } else {
+        request_object.url.set(BunString::clone_utf8(path));
+    }
+}
+
 fn warn_about_idle_timeout_once() {
     if !crate::cli::Command::get().debug.silent
         && !IDLE_TIMEOUT_WARNED.swap(true, core::sync::atomic::Ordering::Relaxed)
@@ -992,7 +1038,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(super) fn notify_inspector_server_stopped(&self) {
         if self.inspector_server_id.get().get() != 0 {
             bun_core::hint::cold();
-            if let Some(debugger) = &self.vm().as_mut().debugger {
+            if let Some(debugger) = self.vm().debugger.get() {
                 bun_core::hint::cold();
                 // NOTE (layering): the `HTTPServerAgent.notifyServerStopped`
                 // wrapper lives in
@@ -1079,9 +1125,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().enter_event_loop_scope();
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -1097,9 +1141,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(());
         }
         let global = self.global();
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().enter_event_loop_scope();
         jsc::from_js_host_call(&global, || {
             Bun__getOrCreateNodeHTTPServerSocket(
                 SSL,
@@ -1335,11 +1377,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
         upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| {
-            // SAFETY: `p` is the live `upgrader_ptr` whose refcount was bumped by
-            // the `ref_()` above; this guard pairs it with a single `deref()`.
-            unsafe { (*p).deref() }
-        });
+        let _upgrader_guard = scopeguard::guard(upgrader, |upgrader| upgrader.deref());
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -1440,6 +1478,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 &self.config.get().websocket.as_ref().unwrap().handler,
                 options.data,
                 signal,
+                super::server_web_socket::Flags::default(),
             );
             options.data.ensure_still_alive();
 
@@ -1482,6 +1521,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// transfers to `self.config`; the caller's `new_config` is left in a
     /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
     /// Any `Some(ws)` is adopted unconditionally, as on the initial serve.
+    #[optimize(size)]
     pub(crate) fn apply_reload(
         &self,
         new_config: &mut ServerConfig,
@@ -1610,7 +1650,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if self.inspector_server_id.get().get() != 0 {
-            if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
+            if let Some(debugger) = self.vm().debugger.get() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
                     &debugger.http_server_agent,
                     self.as_any_server(),
@@ -2091,13 +2131,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             req.set_yield(true);
             return;
         }
-        self.on_pending_request();
         req.set_yield(false);
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let transpiler = &VirtualMachine::VirtualMachine::get().transpiler;
+        let transpiler = VirtualMachine::VirtualMachine::get().transpiler.get();
         let _ = bun_js_printer::print_json(
             &mut writer,
             BunInfo::generate(transpiler).expect("unreachable"),
@@ -2114,7 +2153,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
         resp.end(buffer, false);
-        self.on_request_complete();
     }
 
     /// Calls a handler of the `routes` option. `upgrade_ctx`: the request is a WebSocket handshake `server.upgrade()` can accept.
@@ -2315,7 +2353,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .addr()
                     .as_ptr()
                     .cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG, MUX>>>(),
-                this,
+                server,
                 req.as_ptr(),
                 resp,
                 should_deinit_context,
@@ -2364,46 +2402,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // `Request.url` and `.headers` read a `uws::Request` lazily. HTTP/2 and HTTP/3 have none, so both are filled in now.
         if MUX {
-            // SAFETY: freshly leaked. What follows takes `&Request`.
-            let request_object: &Request = unsafe { &*request_object_ptr };
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    req.as_ptr(),
-                ))
-            }));
-            let prefix: Option<Vec<u8>> = req
-                .header(b"host")
-                .filter(|host| Request::is_valid_host_header(host))
-                .map(|host| {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: SSL,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
-                    s
-                });
-            let path = req.url();
-            if !path.is_empty() && path[0] == b'/' {
-                if let Some(mut s) = prefix {
-                    s.extend_from_slice(path);
-                    // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
-                    let href = bun_url::href_from_string(&StringView::from_bytes(&s));
-                    request_object.url.set(if href.is_empty() {
-                        BunString::clone_utf8(&s)
-                    } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
-                        BunString::clone_latin1(&s[..href.length()])
-                    } else {
-                        href
-                    });
-                } else {
-                    request_object.url.set(BunString::clone_utf8(path));
-                }
-            } else {
-                request_object.url.set(BunString::clone_utf8(path));
-            }
+            // SAFETY: freshly leaked.
+            copy_url_and_headers_of_mux_request(unsafe { &*request_object_ptr }, &req, SSL);
             ctx.req.set(None);
         }
 

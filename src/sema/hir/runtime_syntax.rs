@@ -1,10 +1,10 @@
 use super::{
     ClassId, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
-    MemberId, MemberKind, ModifierId, ModifierKind, NameKind, PatPropId, Prop, PropId, PropKey,
-    PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body, is_nested_namespace, rare,
+    MemberId, MemberKind, ModifierId, ModifierKind, ModuleName, NameKind, ParamId, PatKind,
+    PatPropId, Prop, PropId, PropKey, PropKind, Span, StmtId, StmtKind, Storage, VarDeclId,
+    has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
-use crate::node::Node;
 use bun_core::strings;
 use std::ops::Range;
 
@@ -86,6 +86,10 @@ impl<S: Storage> FileIn<S> {
                 true
             }
             StmtKind::Import(import) => self.is_type_only_import(import),
+            StmtKind::ImportEquals(alias) => {
+                let erased = Flags::TYPE_ONLY | Flags::AMBIENT;
+                (self.import_equals.get(alias.idx())).is_some_and(|it| it.flags.intersects(erased))
+            }
             StmtKind::ExportNamed(export) => self.is_type_only_export(export),
             StmtKind::ExportStar { type_only, .. } => type_only,
             StmtKind::Var(declarations) => {
@@ -106,38 +110,50 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// Whether `bun run` drops a namespace that has these modifiers and this body: it keeps no statement of the body.
-    /// The namespaces in the body have their answers already.
     pub fn erases_namespace(&self, flags: Flags, body: IdList<StmtId>) -> bool {
         let mut is_prologue = true;
         flags.intersects(Flags::AMBIENT | Flags::REPARSED)
             || self.ids(body).all(|statement| {
-                let is_dropped_directive = is_prologue && self.is_use_strict(statement);
+                let is_dropped_directive = is_prologue && self.is_dropped_directive(statement);
                 is_prologue &= is_dropped_directive || self.is_erased_statement(statement);
                 is_dropped_directive || !self.is_kept_in_namespace(statement)
             })
     }
 
-    fn is_use_strict(&self, statement: StmtId) -> bool {
-        let Some(StmtKind::Expr(text)) = self.stmts.get(statement.idx()).map(|it| it.kind) else {
+    pub fn value_read_as_directive(&self, written: ExprId) -> Option<Atom> {
+        let text = self.skip_type_assertions(written);
+        match self.exprs.get(text.idx())?.kind {
+            ExprKind::String(value)
+                if !self.expr_flags(text).contains(ExprFlags::TEMPLATE_LITERAL) =>
+            {
+                Some(value)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_dropped_directive(&self, statement: StmtId) -> bool {
+        let Some(StmtKind::Expr(written)) = self.stmts.get(statement.idx()).map(|it| it.kind)
+        else {
             return false;
         };
-        let kind = self.exprs.get(text.idx()).map(|it| it.kind);
-        matches!(kind, Some(ExprKind::String(known::use_strict)))
-            && !self.expr_flags(text).contains(ExprFlags::TEMPLATE_LITERAL)
+        let value = self.value_read_as_directive(written);
+        matches!(value, Some(known::use_strict | known::use_asm))
     }
 
     fn is_kept_in_namespace(&self, statement: StmtId) -> bool {
         let Some(kind) = self.stmts.get(statement.idx()).map(|it| it.kind) else {
             return true;
         };
-        // `export declare` names a member of the object, so the object is there.
         let is_member =
             |flags: Flags| !flags.contains(Flags::AMBIENT) || flags.contains(Flags::EXPORT);
         match kind {
             StmtKind::Empty => false,
-            StmtKind::ImportEquals(alias) => (self.import_equals.get(alias.idx()))
-                .is_none_or(|it| it.flags.contains(Flags::EXPORT)),
+            StmtKind::ImportEquals(alias) => {
+                !self.is_erased_statement(statement)
+                    && (self.import_equals.get(alias.idx()))
+                        .is_none_or(|it| it.flags.contains(Flags::EXPORT))
+            }
             StmtKind::Var(declarations) => declarations.iter().any(|it| is_member(self[it].flags)),
             StmtKind::Fn(function) => self.fns.get(function.idx()).is_none_or(|it| {
                 is_member(it.flags) && (has_body(it) || it.flags.contains(Flags::AMBIENT))
@@ -148,7 +164,6 @@ impl<S: Storage> FileIn<S> {
             StmtKind::Enum(enumeration) => {
                 (self.enums.get(enumeration.idx())).is_none_or(|it| is_member(it.flags))
             }
-            // The `b` of `namespace a.b` is kept as a statement of `a` even where it is dropped itself.
             StmtKind::Module(inner) => {
                 self.modules.get(inner.idx()).is_none_or(|it| !it.is_erased)
                     || is_nested_namespace(self, statement)
@@ -171,6 +186,16 @@ impl<S: Storage> FileIn<S> {
                 .any(|statement| self.is_erased_statement(statement))
     }
 
+    /// `IsExternalModule`, asked for a `declare module "m"` or a `declare global` at the top of the file. A script for its
+    /// project declares the modules that it names, though a build runs the file as a module.
+    pub fn is_module_for(&self, name: ModuleName) -> bool {
+        self.has_module_syntax && !self.declares_as_script(name)
+    }
+
+    pub fn declares_as_script(&self, name: ModuleName) -> bool {
+        self.is_script_for_project && matches!(name, ModuleName::String(_))
+    }
+
     pub fn set_strict_by_syntax(&mut self) {
         self.is_strict = true;
         self.is_strict_by_syntax = true;
@@ -182,42 +207,23 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl File<'_> {
-    pub fn follows_dropped_directive(&self, node: Node) -> bool {
-        if self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE == 0 {
-            return false;
-        }
-        let start = self.start(node);
-        let mut enclosing = self.get_containing_function(node);
-        while enclosing.is_some() {
-            let directive = self.find_own_strict_directive(self.function_of(enclosing));
-            if directive.is_some_and(|directive| self[directive].start < start) {
-                return true;
-            }
-            enclosing = self.get_containing_function(enclosing);
-        }
-        false
-    }
-
-    pub fn has_parameters_read_as_strict(&self, function: FnId) -> bool {
-        self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE != 0
-            && (self.find_own_strict_directive(function).is_some()
-                || self.follows_dropped_directive(self.node(function)))
-    }
-
-    fn find_own_strict_directive(&self, function: FnId) -> Option<StmtId> {
-        let FnBody::Block(statements) = self.fns.get(function.idx())?.body else {
-            return None;
-        };
-        let mut directives = self.directives(statements);
-        directives
-            .find(|directive| directive.1 == known::use_strict)
-            .map(|directive| directive.0)
+    /// `Function` makes sloppy functions in strict code too.
+    pub fn makes_sloppy_functions(&self) -> bool {
+        self.known_evaluations
+            .iter()
+            .any(|it| it.is_in_global_scope)
     }
 
     pub fn set_strict(&mut self) {
         self.is_strict = true;
+        let evaluations = &self.known_evaluations[..];
+        let is_made_by_function = |start: u32| {
+            let count = evaluations.partition_point(|it| it.start <= start);
+            let evaluation = evaluations[..count].last();
+            evaluation.is_some_and(|it| it.is_in_global_scope && start < it.end)
+        };
         for function in self.fns.iter_mut() {
-            function.is_strict = true;
+            function.is_strict |= !is_made_by_function(function.start);
         }
     }
 
@@ -244,9 +250,8 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     let is_declaration_only = node.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT);
     match node.kind {
         MemberKind::Property => {
-            let is_decorator =
-                |modifier: ModifierId| matches!(hir[modifier].kind, ModifierKind::Decorator(_));
-            !is_declaration_only || node.modifiers.iter().any(is_decorator)
+            let is_field = !node.flags.contains(Flags::ACCESSOR);
+            !is_declaration_only || (is_field && has_decorator(hir, node.modifiers))
         }
         MemberKind::StaticBlock => !is_declaration_only,
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => {
@@ -258,9 +263,38 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     }
 }
 
+pub fn find_runtime_constructor(hir: &File, class: ClassId) -> Option<MemberId> {
+    hir[class].members.iter().find(|&member| {
+        has_runtime_member(hir, member)
+            && hir.runtime_member_kind(member) == MemberKind::Constructor
+    })
+}
+
+pub fn parameter_properties(hir: &File, constructor: FnId) -> impl Iterator<Item = ParamId> {
+    hir[constructor].params.iter().filter(move |&parameter| {
+        let node = hir[parameter];
+        node.flags.contains(Flags::PARAMETER_PROPERTY)
+            && matches!(hir[node.pat].kind, PatKind::Ident(_))
+    })
+}
+
+pub fn find_super_call_statement(hir: &File, constructor: FnId) -> Option<(StmtId, ExprId)> {
+    let FnBody::Block(statements) = hir[constructor].body else {
+        return None;
+    };
+    hir.ids(statements).find_map(|statement| {
+        if let StmtKind::Expr(expression) = hir[statement].kind
+            && let ExprKind::Call(call) = hir[expression].kind
+            && matches!(hir[hir[call].callee].kind, ExprKind::Super)
+        {
+            return Some((statement, expression));
+        }
+        None
+    })
+}
+
 const TRANSPILED_MARK: &[u8] = b"// @bun";
 
-/// The line that starts with `// @bun`, if it is the first line or follows a hashbang. `bun run` hands such a file to the engine as it is written.
 pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
     let end_of_line = |start: usize| {
         let length = strings::index_of_char_usize(&text[start..], b'\n')?;
@@ -275,7 +309,6 @@ pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
         .then(|| start..end_of_line(start).unwrap_or(text.len()))
 }
 
-/// The text behind such a line is the function that the loader calls with the five values of a CommonJS file. Behind any other mark stands an ES module.
 pub fn is_marked_as_commonjs(mark: &[u8]) -> bool {
     let mut rest = &mark[TRANSPILED_MARK.len()..];
     while let Some(at) = strings::index_of_char_usize(rest, b'@') {
@@ -283,7 +316,6 @@ pub fn is_marked_as_commonjs(mark: &[u8]) -> bool {
         if word.starts_with(b"bun-cjs") {
             return true;
         }
-        // `bun run` does not look at the byte behind a word that it knows, nor at the one behind an `@` that starts none.
         let passed = match word.starts_with(b"bytecode") {
             true => b"bytecode".len() + 1,
             false => 1,

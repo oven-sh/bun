@@ -14,6 +14,11 @@ pub(super) fn record_declared_binding_kinds(hir: &File<'_>, bound: &mut BoundBui
         let symbol = SymbolId(index);
         let kind = declared_binding_kind(hir, bound, symbol);
         record_binding_kind(bound, symbol, kind);
+        let exported = bound.exported_value(symbol);
+        if exported != symbol {
+            let kind = declared_binding_kind_of(hir, bound, symbol, exported);
+            record_binding_kind(bound, exported, kind);
+        }
     }
 }
 
@@ -32,22 +37,34 @@ pub(super) fn variable_binding_kind(
 }
 
 fn declared_binding_kind(hir: &File<'_>, bound: &BoundBuilder, symbol: SymbolId) -> BindingKind {
-    if has_bit(&bound.runtime.declarations.valueless_symbols, symbol.idx()) {
-        return BindingKind::NoBinding;
-    }
-    let decls = bound.symbols[symbol.idx()].decls.iter();
-    let kinds = decls.map(|&decl| {
-        let kind = declaration_binding_kind(hir, bound, decl);
-        if kind != BindingKind::NoBinding && runtime_symbol(bound, decl) == symbol {
-            kind
-        } else {
-            BindingKind::NoBinding
-        }
-    });
-    kinds.max().unwrap_or(BindingKind::NoBinding)
+    declared_binding_kind_of(hir, bound, symbol, symbol)
 }
 
-fn declaration_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> BindingKind {
+fn declared_binding_kind_of(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    listing: SymbolId,
+    binding: SymbolId,
+) -> BindingKind {
+    if has_bit(&bound.runtime.declarations.valueless_symbols, binding.idx()) {
+        return BindingKind::NoBinding;
+    }
+    let mut highest = BindingKind::NoBinding;
+    for &decl in bound.symbols[listing.idx()].decls.iter() {
+        let kind = declaration_binding_kind(hir, bound, decl);
+        if kind > highest && runtime_symbol(bound, decl) == binding {
+            highest = kind;
+        }
+    }
+    highest
+}
+
+#[inline]
+pub(super) fn declaration_binding_kind(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    decl: Decl,
+) -> BindingKind {
     match declaration_kind(hir, bound, decl) {
         DeclarationKind::Var => BindingKind::Var,
         DeclarationKind::Parameter => BindingKind::Parameter,

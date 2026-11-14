@@ -18,7 +18,7 @@ use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
-use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
+use crate::program::{ReadingNoTrees, TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
     has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
@@ -30,6 +30,9 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use std::sync::Arc;
+
+pub(super) type AliasDeclarations = ArrayHashMap<Decl, Sym>;
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -413,45 +416,24 @@ impl Checker<'_, '_> {
     /// `checkExternalModuleExports` or for an alias in a file that has been checked.
     fn are_exports_of_module_resolved_no_later_than(&self, module: Sym, file: FileId) -> bool {
         let files = self.files();
-        let checked = files
-            .order
-            .iter()
-            .take(files.rank_of_file(file) as usize + 1);
         self.are_module_exports_checked(module, file)
-            || checked.copied().any(|other| {
+            || files.files_with_alias_from_exports_of(module).any(|other| {
+                let _reading = ReadingNoTrees::begin();
                 // A leaf's data is freed after its task.
                 (other == file || !files.module(other).is_leaf)
                     && self.is_checked_no_later_than(other, file)
-                    && self.has_alias_from_exports_of_module(other, module)
             })
-    }
-
-    /// True if the target of an alias in `file` is looked up in `getExportsOfModule(module)`, either by
-    /// `getExternalModuleMember` or by `resolveESModuleSymbol` for `import * as ns`.
-    fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
-        let (files, hir) = (self.files(), self.hir(file));
-        let aliases = self.bound(file).symbols.with_flags(SymFlags::ALIAS);
-        aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
-            let specifier = match decl {
-                Decl::ImportNamespace(import) => {
-                    let import = &hir[import];
-                    Some((import.spec, files.mode_of_import(file, import.mode)))
-                }
-                // `{ default as d }` is another syntax for the default import, except in a binding pattern.
-                _ => (files.external_module_member_of(file, decl))
-                    .filter(|it| it.2 != known::default || matches!(decl, Decl::Require(_)))
-                    .map(|it| (it.0, it.1)),
-            };
-            specifier.is_some_and(|(spec, mode)| {
-                files.module_of_specifier_as(file, spec, mode) == Some(module)
-            })
-        })
     }
 
     // ───────────────────────────── alias declarations ─────────────────────────────
 
     /// `node.Symbol` for the alias declarations in `file`, in symbol order.
-    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> ArrayHashMap<Decl, Sym> {
+    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> Arc<AliasDeclarations> {
+        let known = self.alias_declarations.borrow();
+        if let Some((_, symbols)) = known.as_ref().filter(|known| known.0 == file) {
+            return Arc::clone(symbols);
+        }
+        drop(known);
         let mut symbols = ArrayHashMap::new();
         for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
             if symbol.flags.contains(SymFlags::ALIAS) {
@@ -461,6 +443,8 @@ impl Checker<'_, '_> {
                 }
             }
         }
+        let symbols = Arc::new(symbols);
+        *self.alias_declarations.borrow_mut() = Some((file, Arc::clone(&symbols)));
         symbols
     }
 

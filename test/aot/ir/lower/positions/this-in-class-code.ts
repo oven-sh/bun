@@ -1,17 +1,17 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="C"{{*}}kind=BaseConstructor
 // CHECK: [[instance]] = NewObject {{*}}layout=[[layout]]
-// CHECK: = Convert [[instance]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// CHECK: = Convert [[instance]] declared={type=[[layout]]}
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: thisType={type=[[layout]] site=w{{*}}}
+// CHECK: thisType={type=[[layout]]}
 // CHECK-LABEL: function {{*}}name="s"
 // CHECK: thisType={type=function flags=[IsExpected]}
 
 // RUN(INITIALIZER): lower
-// INITIALIZER: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}} flags=[IsFromCompiler]} results=
+// INITIALIZER: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}}} results=
 
 export class C {
-  x = 1;
+  x = Object.keys(this).length;
   constructor() {
     this.x = 2;
   }
@@ -22,3 +22,6 @@ export class C {
     return this;
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.m]; }

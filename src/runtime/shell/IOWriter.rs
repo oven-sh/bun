@@ -291,14 +291,10 @@ impl IOWriter {
 
     /// Stash the interpreter backref so async poll callbacks can drive
     /// `Yield::run`. Idempotent.
-    ///
-    /// # Safety
-    /// `interp` must be null or point to the live owning `Interpreter` (which
-    /// owns the IO struct holding this `Rc`) and outlive it; single-threaded.
+    /// `interp` must outlive this writer (it owns the IO struct that holds this `Rc`).
     #[inline]
-    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
+    pub(crate) fn set_interp(&self, interp: &Interpreter) {
+        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
     }
 
     #[inline]
@@ -1041,7 +1037,7 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop(),
+    uv_loop    = |this| (*this).evtloop().loop_().uv_loop(),
     // INVARIANT: `this` is `Rc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Rc ptr is UB.
     ref_       = |this| std::rc::Rc::increment_strong_count(this.cast_const()),

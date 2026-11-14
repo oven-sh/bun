@@ -122,7 +122,7 @@ impl StatWatcherScheduler {
         self.vm.get()
     }
 
-    pub(crate) fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
+    pub(crate) fn init(vm: &VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
             current_interval: AtomicI32::new(0),
             work_pool_in_flight: AtomicBool::new(false),
@@ -132,8 +132,7 @@ impl StatWatcherScheduler {
                 callback: Self::work_pool_callback,
             },
             main_thread: thread::current().id(),
-            // JSC_BORROW: `vm` is the live per-thread VM (never null).
-            vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
+            vm: BackRef::new(vm),
             ticket: Cell::new(None),
             watchers: WatcherQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
@@ -177,12 +176,7 @@ impl StatWatcherScheduler {
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn set_timer(this: *mut Self, interval: i32) {
-        // jsc/runtime crate cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
-        // not as a value field on the low-tier `VirtualMachine`. Recover it via
-        // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
-        // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
-        // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
-        let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
+        let timer_all = crate::jsc_hooks::timer_all();
         // SAFETY: `this` is live: a scheduler ref is held for the whole call by
         // every caller (`set_interval`'s caller, `timer_callback`'s `&mut self`,
         // `shutdown_for_exit`'s `RareData` ref) or, for `StatWatcherTimerUpdate`
@@ -194,7 +188,8 @@ impl StatWatcherScheduler {
         if interval == 0 {
             // if the timer is active we need to remove it
             // SAFETY: `elt` is the live embedded EventLoopTimer.
-            if unsafe { (*elt).state } == EventLoopTimerState::ACTIVE {
+            let elt = unsafe { &*elt };
+            if elt.state.get() == EventLoopTimerState::ACTIVE {
                 timer_all.remove(elt);
             }
             return;
@@ -220,11 +215,10 @@ impl StatWatcherScheduler {
     }
 
     pub(crate) fn timer_callback(&mut self) {
-        let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
+        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
-        self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        self.event_loop_timer.heap = Default::default();
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
             return;
@@ -358,17 +352,12 @@ impl StatWatcherScheduler {
     /// Without this the queue forms a refcount cycle at exit
     /// (`scheduler.watchers` → `StatWatcher` → `StatWatcher.scheduler`) and
     /// every still-queued watcher leaks.
-    ///
-    /// # Safety
-    /// `vm` is the live per-thread VM. Must be called on the JS thread.
-    pub(crate) unsafe fn shutdown_for_exit(vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract; main-thread only. Touch the raw `rare_data`
-        // option directly so a never-used VM does not lazy-allocate `RareData`
-        // here just to find an empty slot.
-        let Some(rare) = (unsafe { &mut (*vm).rare_data }).as_deref_mut() else {
+    pub(crate) fn shutdown_for_exit(vm: &VirtualMachine) {
+        // Not `rare_data()`, which would allocate it just to find an empty slot.
+        let Some(rare) = vm.rare_data.get() else {
             return;
         };
-        let Some(raw) = core::mem::take(rare.node_fs_stat_watcher_scheduler_slot()) else {
+        let Some(raw) = rare.node_fs_stat_watcher_scheduler.take() else {
             return;
         };
         let this: *mut StatWatcherScheduler = raw.as_ptr().cast();
@@ -426,7 +415,7 @@ pub(crate) struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     /// JS-thread uses only.
-    ctx: BackRef<VirtualMachine, bun_ptr::Mut>,
+    ctx: BackRef<VirtualMachine>,
     /// The pending pool→JS hop, if any (one at a time: the initial stat, then restats).
     pending_hop: Cell<u8>,
 
@@ -446,7 +435,7 @@ pub(crate) struct StatWatcher {
 
     this_value: JsCell<JsRef>,
 
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
 
     last_stat: Guarded<PosixStat>,
 
@@ -472,11 +461,10 @@ impl Drop for StatWatcher {
         // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
         // self-ref keeps the wrapper alive until `close()` downgrades it, so
         // `finalize` cannot drop the wrapper ref first).
-        if cfg!(debug_assertions) && self.poll_ref.get().is_active() {
-            debug_assert!(core::ptr::eq(VirtualMachine::get(), self.ctx.as_ptr())); // We cannot unref() on another thread this way.
+        if self.poll_ref.is_active() {
+            debug_assert!(core::ptr::eq(VirtualMachine::get(), self.ctx.get())); // We cannot unref() on another thread this way.
+            self.poll_ref.unref(self.ctx.loop_ctx());
         }
-        let el_ctx = self.ctx_el_ctx();
-        self.poll_ref.with_mut(|p| p.unref(el_ctx));
     }
 }
 
@@ -492,18 +480,14 @@ impl StatWatcher {
     /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
     /// without a crate cycle; the slot in `RareData` is an erased
     /// `Option<NonNull<c_void>>` (§Dispatch).
-    fn lazy_scheduler(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
-        // SAFETY: `vm` is the live per-thread VM; called only from the JS thread.
-        let slot = unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot();
-        let raw = match *slot {
+    fn lazy_scheduler(vm: &VirtualMachine) -> RefPtr<StatWatcherScheduler> {
+        let slot = &vm.rare_data().node_fs_stat_watcher_scheduler;
+        let raw = match slot.get() {
             Some(p) => p.as_ptr().cast::<StatWatcherScheduler>(),
             None => {
                 let arc = StatWatcherScheduler::init(vm);
                 let raw = arc.into_raw(); // VM owns this ref forever (never deref'd)
-                // SAFETY: `vm` is live; reborrow rare_data after `init` to avoid
-                // an aliasing `&mut RareData` across the call.
-                *unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot() =
-                    core::ptr::NonNull::new(raw.cast());
+                slot.set(core::ptr::NonNull::new(raw.cast()));
                 raw
             }
         };
@@ -526,12 +510,6 @@ impl StatWatcher {
     fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
-    }
-
-    #[inline]
-    fn ctx_el_ctx(&self) -> bun_io::EventLoopCtx {
-        // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
-        unsafe { VirtualMachine::event_loop_ctx(self.ctx.as_ptr()) }
     }
 
     /// `self`'s address as `*mut Self` for `ConcurrentTask` ctx slots. The
@@ -596,16 +574,16 @@ impl StatWatcher {
     pub(crate) fn do_ref(this: &Self) {
         if !this.closed.load(Ordering::Relaxed) && !this.persistent.get() {
             this.persistent.set(true);
-            let el_ctx = this.ctx_el_ctx();
-            this.poll_ref.with_mut(|p| p.ref_(el_ctx));
+            let el_ctx = this.ctx.loop_ctx();
+            this.poll_ref.ref_(el_ctx);
         }
     }
 
     pub(crate) fn do_unref(this: &Self) {
         if this.persistent.get() {
             this.persistent.set(false);
-            let el_ctx = this.ctx_el_ctx();
-            this.poll_ref.with_mut(|p| p.unref(el_ctx));
+            let el_ctx = this.ctx.loop_ctx();
+            this.poll_ref.unref(el_ctx);
         }
     }
 
@@ -619,8 +597,8 @@ impl StatWatcher {
         if self.persistent.get() {
             self.persistent.set(false);
         }
-        let el_ctx = self.ctx_el_ctx();
-        self.poll_ref.with_mut(|p| p.unref(el_ctx));
+        let el_ctx = self.ctx.loop_ctx();
+        self.poll_ref.unref(el_ctx);
         self.closed.store(true, Ordering::Relaxed);
         self.this_value.with_mut(|r| r.downgrade());
     }
@@ -799,13 +777,10 @@ impl StatWatcher {
         // errdefer free → Drop handles it
 
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.
-        let vm = args.global_this.bun_vm_ptr();
+        let vm = args.global_this.bun_vm();
         let this = Box::new(StatWatcher {
             next: bun_threading::Link::new(),
-            // JSC_BORROW: `vm` is the live per-thread VM (never null); write provenance
-            // for the `rare_data()` call in `deinit`.
-            // SAFETY: `bun_vm_ptr()` is the live per-thread VM, non-null, outlives the watcher.
-            ctx: unsafe { BackRef::from_raw_mut(vm) },
+            ctx: BackRef::new(vm),
             pending_hop: Cell::new(0),
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
@@ -817,7 +792,7 @@ impl StatWatcher {
             last_check: Cell::new(Instant::now()),
             global_this: args.global_this,
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
@@ -825,9 +800,6 @@ impl StatWatcher {
             abort_handle: bun_jsc::AbortHandle::for_owner::<StatWatcher>(),
         });
         let this_ptr = bun_core::heap::into_raw(this);
-        // errdefer: on the error path we own the only reference.
-        // SAFETY: sole owner on that path.
-        let guard = scopeguard::guard(this_ptr, |p| drop(unsafe { bun_core::heap::take(p) }));
         // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
         // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
         // suffices (and `to_js_ptr` below creates the JS wrapper, after which
@@ -836,8 +808,8 @@ impl StatWatcher {
         let this_ref = ParentRef::from(NonNull::new(this_ptr).expect("init: watcher"));
 
         if this_ref.persistent.get() {
-            let el_ctx = this_ref.ctx_el_ctx();
-            this_ref.poll_ref.with_mut(|p| p.ref_(el_ctx));
+            let el_ctx = this_ref.ctx.loop_ctx();
+            this_ref.poll_ref.ref_(el_ctx);
         }
 
         // SAFETY: `this_ptr` ownership transfers to the JS wrapper, which holds
@@ -851,9 +823,9 @@ impl StatWatcher {
         // SAFETY: `this_ptr` is heap-allocated; `close()` disarms it before any drop.
         unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, this_ref.ctx.context_of(args.context)) };
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
-        InitialStatTask::create_and_schedule(this_ptr);
+        InitialStatTask::create_and_schedule(this_ptr, this_ref.ctx.ticket());
 
-        Ok(scopeguard::ScopeGuard::into_inner(guard))
+        Ok(this_ptr)
     }
 }
 
@@ -992,7 +964,7 @@ bun_threading::owned_task!(InitialStatTask, task);
 impl InitialStatTask {
     /// # Safety
     /// `watcher` must point to a live `StatWatcher`.
-    fn create_and_schedule(watcher: *mut StatWatcher) {
+    fn create_and_schedule(watcher: *mut StatWatcher, ticket: bun_jsc::Ticket) {
         // SAFETY: per fn contract; we bump its intrusive refcount, held across
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).
@@ -1000,8 +972,7 @@ impl InitialStatTask {
         WorkPool::schedule_new(InitialStatTask {
             watcher,
             // The watcher is JS-owned; its VM waits for this ticket.
-            // SAFETY: per fn contract; JS thread.
-            ticket: unsafe { (*watcher).ctx.get() }.ticket(),
+            ticket,
             task: WorkPoolTask::default(),
         });
     }

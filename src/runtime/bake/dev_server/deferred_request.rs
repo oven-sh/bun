@@ -73,6 +73,18 @@ impl DeferredRequest {
         self.deref_();
     }
 
+    pub(super) fn response_for_error_page(&mut self) -> Option<AnyResponse> {
+        match &mut self.handler {
+            Handler::Aborted => None,
+            Handler::ServerHandler(saved) => {
+                let resp = saved.response;
+                saved.deinit();
+                Some(resp)
+            }
+            Handler::BundledHtmlPage(ram) => Some(ram.response),
+        }
+    }
+
     pub(crate) fn weak_ref(&mut self) {
         debug_assert!(!self.weakly_referenced_by_requestcontext);
         self.weakly_referenced_by_requestcontext = true;
@@ -162,7 +174,7 @@ impl DeferredRequest {
             }
             Handler::BundledHtmlPage(r) => {
                 // Reached from JS event-loop tasks (on_plugins_rejected, the
-                // bundle-completion OOM cleanup defer), so end_without_body
+                // bundle-completion OOM cleanup), so end_without_body
                 // alone cannot close the socket; write Content-Length so the
                 // client has framing.
                 r.response.write_status(b"500 Internal Server Error");

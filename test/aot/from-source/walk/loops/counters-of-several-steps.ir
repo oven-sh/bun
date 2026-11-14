@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# function widen(target, source) {
+#   for (var at = 0, from = 0; at < target.length; at += 4, from += 3) {
+#     target[at] = source[from];
+#     target[at + 1] = source[from + 1];
+#     target[at + 2] = source[from + 2];
+#     target[at + 3] = 255;
+#   }
+# }
+# const target = new Uint8ClampedArray(64), source = new Uint8Array(48);
+# for (let turn = 0; turn < 3; turn++) widen(target, source);
+# console.log(target[5]);
+# -- end of source
+# The counter steps by four, the second counter by three. The preheader compares four times the room of the source with three times the greatest multiple of four below the bound, so the reads ask for no length.
+# RUN: walk f1 mechanisms=all
+# CHECK: Mod
+# CHECK: GetTypedArrayElement {{*}}isInsideView
+# CHECK: PutTypedArrayElement {{*}}isInsideView
+# CHECK: GetTypedArrayElement {{*}}isInsideView
+# CHECK: PutTypedArrayElement {{*}}isInsideView
+# CHECK: GetTypedArrayElement {{*}}isInsideView
+# CHECK: PutTypedArrayElement {{*}}isInsideView

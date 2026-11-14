@@ -3305,6 +3305,31 @@ it("answers 413 without 100 Continue when Content-Length exceeds maxRequestBodyS
   });
 });
 
+// With no 100 Continue the client may skip the body, and its next request would be taken for it.
+it.each(["/fetch", "/static", "/file"])(
+  "closes the connection after %s answers a GET that got no 100 Continue",
+  async path => {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      maxRequestBodySize: 100,
+      routes: { "/static": new Response("ok"), "/file": new Response(file(import.meta.path)) },
+      fetch: () => new Response("ok"),
+    });
+    const socket = net.connect(server.port!, "127.0.0.1");
+    try {
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 101\r\n\r\n`);
+      const ended = once(socket, "end");
+      let reply = "";
+      for await (const [chunk] of on(socket, "data")) if ((reply += chunk).includes("\r\n\r\n")) break;
+      expect(reply.match(/^(HTTP\/1\.1|Connection:) .*$/gm)).toEqual(["HTTP/1.1 200 OK", "Connection: close"]);
+      await ended;
+    } finally {
+      socket.destroy();
+    }
+  },
+);
+
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 
@@ -3346,19 +3371,35 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
-it("responds 500 when a deferred error() resolves without a Response", async () => {
-  using server = Bun.serve({
-    port: 0,
-    development: false,
-    fetch() {
-      throw new Error("boom");
-    },
-    async error() {
-      await new Promise(resolve => setImmediate(resolve));
-    },
+describe.each([false, true])("error() without a Response (development: %p)", development => {
+  it.concurrent.each([
+    ["returns nothing", `() => {}`],
+    ["resolves to nothing", `async () => {}`],
+    ["resolves to nothing later", `() => new Promise(resolve => setImmediate(resolve))`],
+    ["resolves to Response.error() later", `() => new Promise(resolve => setImmediate(resolve, Response.error()))`],
+  ])("responds 500 and reports the error when it %s", async (_, error) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({ port: 0, development: ${development}, fetch() { throw new Error("bo" + "om"); }, error: ${error} });
+        const res = await fetch(server.url);
+        const body = await res.text();
+        console.log(res.status, ${development} ? res.headers.get("content-type") : body);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, reported: stderr.match(/^error: .*$/gm), exitCode }).toEqual({
+      stdout: development ? "500 text/html;charset=utf-8\n" : "500 Something went wrong!\n",
+      reported: ["error: boom"],
+      exitCode: 1,
+    });
   });
-  const res = await fetch(`http://127.0.0.1:${server.port}/`);
-  expect({ status: res.status, body: await res.text() }).toEqual({ status: 500, body: "Something went wrong!" });
 });
 
 if (process.platform === "linux")
@@ -3691,6 +3732,21 @@ it.concurrent.each(["100-Continue", "100-CONTINUE"])("sends 100 Continue for Exp
   expect(reply).toEndWith("echo:hello");
 });
 
+// RFC 9110 10.1.1
+it.concurrent.each(["100-continue", "100-Continue"])("ignores Expect: %s in HTTP/1.0", async expectation => {
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async req => new Response("echo:" + (await req.text())),
+  });
+  const socket = net.connect(server.port!, "127.0.0.1");
+  socket.write(`POST / HTTP/1.0\r\nHost: x\r\nContent-Length: 5\r\nExpect: ${expectation}\r\n\r\nhello`);
+  let reply = "";
+  for await (const chunk of socket) reply += chunk;
+  expect(reply).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(reply).toEndWith("echo:hello");
+});
+
 it.concurrent("we should always send date", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tmpFile = join(tmpdirSync(), "test.bin");
@@ -3977,6 +4033,160 @@ describe("idle timeout with a forced sweep", () => {
     } finally {
       client.destroy();
     }
+  });
+
+  function halfOpenClient(port: number, secure: boolean) {
+    const options = { port, host: "127.0.0.1", allowHalfOpen: true };
+    const client = secure ? nodeTls.connect({ ...options, ca: tls.cert }) : net.connect(options);
+    client.on("error", () => {});
+    return client;
+  }
+
+  /** Returns true if the server stopped reading before it had `limit` bytes. */
+  async function writeUntilBlocked(client: net.Socket, limit: number) {
+    const chunk = Buffer.alloc(256 * 1024, "u");
+    for (let sent = 0; sent < limit; sent += chunk.length) {
+      if (client.write(chunk)) continue;
+      let drained = false;
+      client.once("drain", () => (drained = true));
+      // The server shares this event loop, so a turn is all it needs to read.
+      for (let turn = 0; turn < 200 && !drained; turn++) await new Promise(setImmediate);
+      if (!drained) return true;
+    }
+    return false;
+  }
+
+  async function sweepUntilClosed(client: net.Socket) {
+    for (const deadline = Date.now() + 2_000; !client.destroyed && Date.now() < deadline;) {
+      await sweep();
+      // A server that has closed resets the connection for this byte.
+      client.write("x");
+    }
+    return client.destroyed;
+  }
+
+  describe.each([
+    ["http", false],
+    ["https", true],
+  ] as const)("behind a closing response over %s", (_protocol, secure) => {
+    const upload = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100000000\r\n\r\n";
+
+    it("closes a connection whose upload was paused and whose client never answers the FIN", async () => {
+      const respond = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        idleTimeout: 0,
+        fetch: () => respond.promise.then(() => new Response("bye", { headers: { Connection: "close" } })),
+      });
+      const client = halfOpenClient(server.port!, secure);
+      try {
+        client.resume();
+        client.write(upload);
+        const paused = await writeUntilBlocked(client, 64 * 1024 * 1024);
+        respond.resolve();
+        await once(client, "end");
+        expect({ paused, closed: await sweepUntilClosed(client) }).toEqual({ paused: true, closed: true });
+      } finally {
+        client.destroy();
+      }
+    });
+
+    it("stops reading an upload that it refused", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        maxRequestBodySize: 1000,
+        fetch: () => new Response(),
+      });
+      const client = halfOpenClient(server.port!, secure);
+      try {
+        let reply = "";
+        client.on("data", data => (reply += data));
+        client.write(upload);
+        await once(client, "end");
+        // 8 MiB, and what the kernel buffers on both sides.
+        const blocked = await writeUntilBlocked(client, 64 * 1024 * 1024);
+        expect({ status: reply.slice(0, 12), blocked, reset: client.destroyed }).toEqual({
+          status: "HTTP/1.1 413",
+          blocked: true,
+          reset: false,
+        });
+        expect(await sweepUntilClosed(client)).toBe(true);
+      } finally {
+        client.destroy();
+      }
+    });
+  });
+
+  describe.each([0, 255])("a graceful stop() with idleTimeout: %d", idleTimeout => {
+    const head = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    const preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0";
+    type Step = (client: net.Socket) => unknown;
+    const write = (data: string) => (client: net.Socket) => void client.write(data, "latin1");
+    const exchange = (data: string) => (client: net.Socket) => (client.write(data, "latin1"), once(client, "data"));
+
+    const nothing = () => {};
+
+    async function stopBetween(secure: boolean, before: Step, after: Step) {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        http2: true,
+        idleTimeout,
+        fetch: () => new Response(),
+      });
+      const client = rawClient(server.port!, secure, "TLSv1.2");
+      try {
+        let reply = "";
+        client.on("data", data => (reply += data.toString("latin1")));
+        await once(client, secure ? "secureConnect" : "connect");
+        await before(client);
+        // A round trip on another connection. The server has read what the client wrote before it.
+        await (await fetch(server.url, { tls: { ca: tls.cert } })).text();
+        let stopped = false;
+        server.stop().then(() => (stopped = true));
+        await after(client);
+        // 10 seconds end at the fourth sweep at the latest, and stop() settles before the fifth.
+        for (let i = 0; i < 5 && !stopped; i++) await sweep();
+        return { stopped, reply };
+      } finally {
+        client.destroy();
+      }
+    }
+
+    it.each<[string, boolean, Step, Step]>([
+      ["sent nothing after the TLS handshake", true, nothing, nothing],
+      ["sent a part of its first head", false, write(head.slice(0, 10)), nothing],
+      [
+        "sent a part of its second head",
+        false,
+        async client => (await exchange(head)(client), client.write(head.slice(0, 10))),
+        nothing,
+      ],
+      [
+        "sent a part of a body that was answered",
+        false,
+        async client => (await exchange(head.slice(0, -2) + "Content-Length: 9\r\n\r\n")(client), client.write("x")),
+        nothing,
+      ],
+      ["becomes HTTP/2 and opens no stream", false, write(preface.slice(0, 3)), exchange(preface.slice(3))],
+    ])("ends for a client that %s", async (_name, secure, before, after) => {
+      expect((await stopBetween(secure, before, after)).stopped).toBe(true);
+    });
+
+    it("answers a head that the client completes in time", async () => {
+      const { stopped, reply } = await stopBetween(false, write(head.slice(0, 10)), async client => {
+        await sweep();
+        await sweep();
+        await exchange(head.slice(10))(client);
+      });
+      expect(stopped).toBe(true);
+      expect(reply).toMatch(/^HTTP\/1\.1 200 OK\r\n.*^Connection: close\r\n/ms);
+    });
   });
 
   it.each([
@@ -6301,6 +6511,122 @@ describe("requests pipelined behind a pending response", () => {
     await client.untilClosed();
     await stopped;
     expect(parseResponses(client.reply)).toEqual([ok("/hold"), ok("/after")]);
+  });
+
+  it("answers only the first of the held requests after a graceful stop()", async () => {
+    const handler = holdingHandler();
+    using server = serve({ port: 0, hostname: "127.0.0.1", fetch: handler.fetch });
+    using client = await connectRaw(server);
+    client.write(get("/hold/1") + get("/hold/2") + get("/hold/3"));
+    await Promise.race([handler.entered("/hold/1"), client.untilClosed()]);
+    await probe(server);
+    const stopped = server.stop();
+    for (const path of ["/hold/1", "/hold/2", "/hold/3"]) {
+      await Promise.race([handler.entered(path), client.untilClosed()]);
+      // One event loop turn, so the handler's promise is pending when it returns.
+      await new Promise(resolve => setImmediate(resolve));
+      handler.release(path);
+    }
+    await client.untilClosed();
+    await stopped;
+    expect({
+      hits: handler.hits,
+      closes: client.reply.split("HTTP/1.1 ").map(r => r.includes("Connection: close")),
+    }).toEqual({
+      hits: ["/hold/1", "/probe", "/hold/2"],
+      closes: [false, false, true],
+    });
+  });
+
+  it.each([
+    ["request", ""],
+    [
+      "WebSocket upgrade",
+      "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+    ],
+  ])("drops a %s that arrives after a graceful stop()", async (_, headers) => {
+    const handler = holdingHandler();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => (server.upgrade(req) ? undefined : handler.fetch(req)),
+      websocket: { message() {} },
+    });
+    using client = await connectRaw(server);
+    using lastProbe = await connectRaw(server);
+    client.write(get("/hold"));
+    lastProbe.write(get("/probe").slice(0, -2));
+    await Promise.race([handler.entered("/hold"), client.untilClosed()]);
+    await probe(server);
+    const stopped = server.stop();
+    client.write(get("/late", headers));
+    lastProbe.write("\r\n");
+    expect(await lastProbe.responses(1)).toEqual([ok("/probe")]);
+    handler.release("/hold");
+    await client.until(() => client.reply.split("HTTP/1.1 ").length > 2);
+    expect(client.reply.match(/HTTP\/1\.1 [^\r]*|Connection: [^\r]*/g)).toEqual([
+      "HTTP/1.1 200 OK",
+      "Connection: close",
+    ]);
+    await stopped;
+  });
+
+  describe("holds less than 512 KiB", () => {
+    const post = (size: number) => {
+      const head = (length: number) => `POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`;
+      const length = size - head(size).length;
+      return head(length) + Buffer.alloc(length, "u").toString();
+    };
+
+    it.each([
+      [512 * 1024 - 1, [ok("/hold"), ok("/upload")]],
+      [512 * 1024, []],
+    ])("behind a handler that hasn't answered (%d bytes)", async (size, expected) => {
+      const handler = holdingHandler();
+      using server = serve({ port: 0, hostname: "127.0.0.1", fetch: handler.fetch });
+      using client = await connectRaw(server);
+      client.write(get("/hold"));
+      await handler.entered("/hold");
+      client.write(post(size));
+      if (expected.length) for (let i = 0; i < 10; i++) await probe(server);
+      else await client.untilClosed();
+      handler.release("/hold");
+      expect(await client.responses(2)).toEqual(expected);
+    });
+
+    it("and waits with the rest behind a body that is draining", async () => {
+      const big = Buffer.alloc(8 * 1024 * 1024, "x");
+      using server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: async req => new Response(req.method === "GET" ? big : String((await req.bytes()).length)),
+      });
+      using client = await connectRaw(server);
+      client.write(get("/first"));
+      await client.until(() => client.reply.length > 0);
+      const upload = post(900_000);
+      client.write(upload);
+      const [first, second] = await client.responses(2);
+      expect([first.body.length, second.body]).toEqual([
+        big.length,
+        String(upload.length - upload.indexOf("\r\n\r\n") - 4),
+      ]);
+    });
+  });
+
+  it("ends a graceful stop() for a client that sent a part of a head behind the pending response", async () => {
+    const handler = holdingHandler();
+    using server = serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 0, fetch: handler.fetch });
+    using client = await connectRaw(server);
+    client.write(get("/hold") + "GET / HTT");
+    await Promise.race([handler.entered("/hold"), client.untilClosed()]);
+    await probe(server);
+    let stopped = false;
+    server.stop().then(() => (stopped = true));
+    handler.release("/hold");
+    expect(await client.responses(1)).toEqual([ok("/hold")]);
+    for (let i = 0; i < 5 && !stopped; i++) await sweep();
+    expect(stopped).toBe(true);
   });
 
   it("closes a connection the client reset before the response ahead was sent", async () => {

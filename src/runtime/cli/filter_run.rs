@@ -101,11 +101,8 @@ impl<'a> ProcessHandle<'a> {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
-            let env_ptr = state.env;
-            // The guard below borrows `env_ptr`.
-            let env_of_script = env_ptr;
-            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
-            let env = unsafe { &mut *env_ptr };
+            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env); nothing else reaches it before the guard drops.
+            let env = unsafe { &mut *state.env };
             // Copy to owned — `original_path` borrows env.map which is
             // mutated by put() below.
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
@@ -113,13 +110,11 @@ impl<'a> ProcessHandle<'a> {
             // Restores PATH unconditionally at block exit (success OR error).
             // Keep the guard armed for the whole block so `?` early-returns also
             // restore.
-            scopeguard::defer! {
-                // SAFETY: env_ptr valid for the run loop lifetime (see above).
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            }
-            // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
+            let mut env = scopeguard::guard(env, |env| {
+                let _ = env.map.put(b"PATH", &original_path);
+            });
             let envp = crate::cli::script_or_command::with_package_script(
-                unsafe { &mut *env_of_script },
+                &mut env,
                 &handle.config.script_name,
                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &handle.config.package_json_path,
@@ -135,7 +130,7 @@ impl<'a> ProcessHandle<'a> {
                     envp.as_ptr().cast::<*const c_char>(),
                 )
             }??;
-            // `_guard` drops here (or on `?` above), restoring PATH.
+            // `env` drops here (or on `?` above), restoring PATH.
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
@@ -193,23 +188,21 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
-        // The exit handler re-borrows `handle.process`, so go through the
-        // `Process` allocation itself rather than a borrow of the slot.
-        // SAFETY: just spawned; the slot's handle keeps it live.
-        let process = unsafe { &mut *handle.process.as_ref().unwrap().process.as_ptr() };
+        // Not a borrow of the slot, which the exit handler borrows again.
+        let process = handle.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match process.watch_or_reap() {
+        match spawn::Process::watch_or_reap(process) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
                 }
             }
         }
@@ -275,7 +268,7 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());
@@ -291,9 +284,8 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    fn loop_(&self) -> *mut bun_io::Loop {
-        // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-        bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
+    fn loop_(&self) -> bun_io::LoopRef {
+        bun_io::uws_to_native(self.state.event_loop.loop_)
     }
 }
 
@@ -308,7 +300,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
-    event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
+    event_loop      = |this| (*(*this).state.as_ptr()).event_loop.as_event_loop_ctx();
 }
 
 /// Compile-time ANSI-tag expansion.
@@ -320,12 +312,9 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    // Raw `*mut` — `init_global` returns the
-    // thread-local singleton pointer; aliasing &mut would be UB.
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,
@@ -688,7 +677,7 @@ impl<'a> State<'a> {
     }
 
     fn flush_draw_buf(&self) {
-        let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
+        let _ = bun_sys::File::borrow(&bun_sys::Fd::stdout()).write_all(&self.draw_buf);
     }
 
     fn abort(&mut self) {
@@ -954,7 +943,6 @@ pub(crate) fn run_scripts_with_filter(
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),
-        None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
@@ -962,11 +950,7 @@ pub(crate) fn run_scripts_with_filter(
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    // SAFETY: `event_loop` is the live per-thread `MiniEventLoop` (init'd above);
-    // `as_event_loop_ctx` only stores it as a tagged backref.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
-        &mut *event_loop
-    }));
+    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop.as_event_loop_ctx());
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
         let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
@@ -983,7 +967,6 @@ pub(crate) fn run_scripts_with_filter(
     let mut state = State {
         handles, // placeholder; reassigned after init below
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
@@ -1144,8 +1127,7 @@ pub(crate) fn run_scripts_with_filter(
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
+        event_loop.tick_once(&raw const state as *mut c_void);
     }
 
     let status = state.finalize();

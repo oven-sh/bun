@@ -1,0 +1,13 @@
+# f1 = Noise
+# f2 = fill
+# -- source: main.mjs
+# function Noise(size) { this.table = new Int8Array(size); }
+# Noise.prototype.fill = function (n) { let state = 0x7fff; for (let i = 0; i < n; ++i) { const factor = 1 - (state & 1); this.table[0x100 | i] = factor * 1; this.table[0x200 | i] = factor * 2; this.table[0x300 | i] = factor * 3; this.table[0x400 | i] = factor * 4; this.table[0x500 | i] = factor * 5; this.table[0x600 | i] = factor * 6; this.table[0x700 | i] = factor * 7; this.table[0x800 | i] = factor * 8; this.table[0x900 | i] = factor * 9; this.table[0xa00 | i] = factor * 10; this.table[0xb00 | i] = factor * 11; this.table[0xc00 | i] = factor * 12; this.table[0xd00 | i] = factor * 13; this.table[0xe00 | i] = factor * 14; this.table[0xf00 | i] = factor * 15; const shifted = state >> 1; state = shifted | (((shifted ^ state) & 1) << 14); } return state; };
+# const noise = new Noise(0x1000); globalThis.unseen = noise;
+# print(noise.fill(0x100), noise.table.reduce((sum, value) => sum + value, 0));
+# -- end of source
+# The loop has more than 100 operations. Its stores put results of operators on numbers into elements, so it is versioned: the object, the field and the array are checked before it.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: testedType=Int8Array
+# CHECK: PutTypedArrayElement
+# CHECK-NEXT: BitOr

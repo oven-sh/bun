@@ -40,24 +40,6 @@ fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
-// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
-// ────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
-    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
-    // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
-}
-#[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
-    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
-}
-
 bun_core::declare_scope!(BodyValue, visible);
 
 // R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
@@ -212,7 +194,7 @@ pub struct PendingValue {
     pub(crate) size_hint: blob::SizeType,
     pub(crate) facts: BodyFacts,
     /// The `Content-Type` this body implied before it became a stream. A stream passed in as a body implies none.
-    pub(crate) content_type: blob::BlobContentType,
+    pub(crate) content_type: Option<Box<blob::BlobContentType>>,
 
     pub(crate) deinit: bool,
     pub(crate) action: Action,
@@ -262,7 +244,7 @@ impl Default for PendingValue {
             producer: streams::SourceHandle::None,
             size_hint: 0,
             facts: BodyFacts::empty(),
-            content_type: blob::BlobContentType::default(),
+            content_type: None,
             deinit: false,
             action: Action::None,
         }
@@ -270,6 +252,21 @@ impl Default for PendingValue {
 }
 
 impl PendingValue {
+    fn content_type(&self) -> &blob::BlobContentType {
+        static NONE: blob::BlobContentType = blob::BlobContentType::Static(b"");
+        self.content_type.as_deref().unwrap_or(&NONE)
+    }
+
+    fn take_content_type(&mut self) -> blob::BlobContentType {
+        self.content_type
+            .take()
+            .map_or_else(Default::default, |boxed| *boxed)
+    }
+
+    pub(crate) fn set_content_type(&mut self, content_type: blob::BlobContentType) {
+        self.content_type = (!content_type.is_empty()).then(|| Box::new(content_type));
+    }
+
     /// Once `readable` is set the live handle is `NewSource.producer`; these
     /// hooks go stale when the producer (e.g. `FetchTasklet`) is freed.
     fn detach_producer(&mut self) {
@@ -358,10 +355,9 @@ impl PendingValue {
                 }
                 Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                 Action::GetText => global_this.readable_stream_to_text(readable.value),
-                Action::GetJSONSource => global_this.readable_stream_to_json_source(readable.value),
                 Action::GetBlob => global_this.readable_stream_to_body_blob(
                     readable.value,
-                    bun_string_jsc::create_utf8_for_js(global_this, self.content_type.as_slice())?,
+                    bun_string_jsc::create_utf8_for_js(global_this, self.content_type().given())?,
                 ),
                 Action::GetFormData(encoding) => {
                     let boundary = match *encoding.take().unwrap() {
@@ -406,8 +402,6 @@ pub(crate) enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
-    /// [`AnyBlob::to_json_source`].
-    GetJSONSource,
     GetBlob,
     /// `read_body` fills it in from the owner's `Content-Type`.
     GetFormData(Option<Box<webcore::form_data::Encoding>>),
@@ -426,11 +420,9 @@ impl Action {
         cx: &bun_jsc::JsThread<'_>,
     ) -> JsResult<JSValue> {
         if let Action::GetBlob = self {
-            let blob_ptr = Blob::new(body.use_());
-            // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
-            let blob = unsafe { &*blob_ptr };
-            set_type_of_body_blob(blob, content_type, true);
-            return Ok(blob.to_js(cx.global()));
+            let blob = body.use_();
+            set_type_of_body_blob(&blob, content_type, true);
+            return Ok(blob.into_js(cx.global()));
         }
 
         let mut blob = match self {
@@ -443,7 +435,6 @@ impl Action {
             Action::GetJSON => blob.to_json(cx, Lifetime::Share),
             Action::GetArrayBuffer => blob.to_array_buffer(cx, Lifetime::Transfer),
             Action::GetBytes => blob.to_uint8_array(cx, Lifetime::Transfer),
-            Action::GetJSONSource => blob.to_json_source(cx, Lifetime::Transfer),
             Action::GetFormData(encoding) => {
                 let encoding = encoding.take().expect("read_body sets the encoding");
                 webcore::form_data::FormData::to_js(cx.global(), blob.slice(), &encoding)
@@ -728,7 +719,7 @@ impl Value {
         static NONE: blob::BlobContentType = blob::BlobContentType::Static(b"");
         match self {
             Value::Blob(blob) => blob.content_type.get(),
-            Value::Locked(locked) => &locked.content_type,
+            Value::Locked(locked) => locked.content_type(),
             _ => &NONE,
         }
     }
@@ -753,7 +744,7 @@ impl Value {
     /// Replaces a stream that nothing has read with the bytes lifted out of it. They keep the type this body implied.
     fn replace_stream_with(&mut self, bytes: AnyBlob) {
         let content_type = match self {
-            Value::Locked(locked) => core::mem::take(&mut locked.content_type),
+            Value::Locked(locked) => locked.take_content_type(),
             _ => blob::BlobContentType::default(),
         };
         *self = Value::from(bytes);
@@ -882,13 +873,10 @@ impl Value {
                 ReadableStream::errored(cx.global(), reason)?
             }
         };
-        *self = Value::Locked(PendingValue {
-            content_type,
-            ..PendingValue::from_stream(
-                ReadableStream::from_js_direct(stream).unwrap(),
-                cx.global(),
-            )
-        });
+        let mut locked =
+            PendingValue::from_stream(ReadableStream::from_js_direct(stream).unwrap(), cx.global());
+        locked.set_content_type(content_type);
+        *self = Value::Locked(locked);
         Ok(stream)
     }
 
@@ -971,8 +959,7 @@ impl Value {
             return ReadableStream::empty(cx.global());
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper in
+        // Ownership of the heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -1049,19 +1036,17 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return match Blob::from_dom_form_data(global_this, unsafe { &mut *form_data }) {
+        if let Some(form_data) = DOMFormData::from_js(value) {
+            return match Blob::from_dom_form_data(global_this, form_data) {
                 Ok(blob) => Ok(Value::Blob(blob)),
                 Err(err) => Err(err.throw(global_this)),
             };
         }
 
-        if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
+        if let Some(search_params) = URLSearchParams::from_js(value) {
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                search_params,
             )));
         }
 
@@ -1175,7 +1160,7 @@ impl Value {
 
             if let Some(promise_) = locked.promise.take() {
                 let promise = promise_.as_any_promise().unwrap();
-                let content_type = core::mem::take(&mut locked.content_type);
+                let content_type = locked.take_content_type();
                 // `wrap` turns what the conversion throws (a string too long, a JSON parse error) into a rejection.
                 promise.wrap(cx.global(), |_| {
                     locked.action.convert(new, content_type, cx)
@@ -1727,7 +1712,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 unreachable!()
             };
             if matches!(action, Action::GetBlob) {
-                locked.content_type = content_type;
+                locked.set_content_type(content_type);
             }
             return locked.set_promise(global_object, action, readable);
         }
@@ -1854,29 +1839,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 pub(crate) enum Unusable {
     Disturbed,
     Locked,
-}
-
-/// A promise for what `body.json()` parses, where compiled code parses it by a type (`bodyBytesForm` of the table of built-ins).
-#[unsafe(no_mangle)]
-#[bun_jsc::host_call]
-fn Body__jsonSource(global_this: *mut JSGlobalObject, body: JSValue) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
-    bun_jsc::to_js_host_call(global_this, || {
-        let cx = global_this.js_thread_of_caller();
-        if let Some(request) = body.as_class_ref::<webcore::Request>() {
-            return request.read_body(&cx, Action::GetJSONSource);
-        }
-        if let Some(response) = body.as_class_ref::<webcore::Response>() {
-            return response.read_body(&cx, Action::GetJSONSource);
-        }
-        match body.as_class_ref::<Blob>() {
-            Some(blob) => blob.json_source(&cx),
-            None => Err(global_this.throw_invalid_arguments(format_args!(
-                "Expected a Request, a Response or a Blob",
-            ))),
-        }
-    })
 }
 
 /// If the body already failed, reject the read with that error. Every body

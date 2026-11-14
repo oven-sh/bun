@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAsanQuarantine } from "harness";
 import path from "path";
 
 test(
@@ -8,18 +8,7 @@ test(
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "req-url-leak-fixture.js")],
-      env: {
-        ...bunEnv,
-        // Free eagerly under ASAN so RSS tracks live memory.
-        ASAN_OPTIONS: [
-          bunEnv.ASAN_OPTIONS,
-          "quarantine_size_mb=0",
-          "thread_local_quarantine_size_kb=0",
-          "allocator_release_to_os_interval_ms=0",
-        ]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env: withoutAsanQuarantine(bunEnv),
       stdout: "inherit",
       stderr: "inherit",
       stdin: "ignore",

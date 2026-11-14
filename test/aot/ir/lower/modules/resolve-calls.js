@@ -1,9 +1,9 @@
 // DIAGNOSTIC: TS100150 1
 // RUN(PATH): lower
 // PATH-LABEL: function {{*}}name="path"
-// PATH-NOT: isURL
-// PATH: = ResolveModule module=m
-// PATH-NOT: isURL
+// PATH-NOT: Resolve
+// PATH: = String string="{{*}}imports/values.ts"
+// PATH-NOT: Resolve
 // PATH: Return
 
 // RUN(URL): lower
@@ -23,8 +23,8 @@
 // FEW-LABEL: function {{*}}name="oneOfFew"
 // FEW-NOT: ResolveDynamic
 // FEW: SwitchString
-// FEW: = ResolveModule module=m
-// FEW: = ResolveModule module=m
+// FEW: = String string="{{*}}imports/values.ts"
+// FEW: = String string="{{*}}imports/nested.ts"
 // FEW-NOT: ResolveDynamic
 // FEW: Return
 
@@ -33,7 +33,8 @@
 // MISSING-NOT: isForRequire
 // MISSING: = ResolveDynamic
 // MISSING-NOT: isForRequire
-// MISSING: ThrowModuleFailure failure=q
+// MISSING-NOT: ThrowModuleFailure
+// MISSING: Return
 
 // RUN(PATHS): lower
 // PATHS-LABEL: function {{*}}name="withPaths"

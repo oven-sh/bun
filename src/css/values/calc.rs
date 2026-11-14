@@ -132,7 +132,7 @@ pub trait CalcValue:
     + protocol::TryOpTo
     + protocol::PartialCmp
     + protocol::TryFromAngle
-    + protocol::Parse
+    + for<'bump> protocol::Parse<'bump>
     + protocol::ToCss
     + protocol::IsCompatible
 {
@@ -140,7 +140,10 @@ pub trait CalcValue:
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
     /// Convert a `Calc<Self>` into `Self` if representable.
-    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
+    fn from_calc<'bump>(
+        c: Calc<Self>,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self>;
 }
 
 impl<V: Clone> Clone for Calc<V> {
@@ -234,7 +237,10 @@ impl<V: CalcValue> Calc<V> {
         lhs.add_internal(rhs)
     }
 
-    pub(crate) fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
+    pub(crate) fn into_value<'bump>(
+        self,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, V> {
         V::from_calc(self, input)
     }
 
@@ -242,7 +248,11 @@ impl<V: CalcValue> Calc<V> {
         val.into_calc()
     }
 
-    pub(crate) fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn add<'bump>(
+        self,
+        rhs: Self,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
             // PERF: we can reuse the allocation here
             // Reshaped for borrowck — clone out of boxes then drop originals.
@@ -284,7 +294,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
     }
 
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         // The range of the property clamps the result, not the arguments.
         let non_negative = input.flags.non_negative();
         let calc = input.parse_with_non_negative(false, |i| Self::parse_with(i, &|_| None))?;
@@ -300,24 +310,14 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub(crate) fn parse_with(
-        input: &mut css::Parser,
+    pub(crate) fn parse_with<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
-        // Clone the token before reborrowing `input` so the function
-        // name slice is owned by the cloned `Token` (whose payload already
-        // carries the parser's arena lifetime) instead of being laundered to
-        // `'static` here.
-        let tok = *input.next()?;
-        let unit = match tok {
-            css::Token::Function(f) => match CalcUnit::get_any_case(f) {
-                Some(u) => u,
-                None => {
-                    return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
-                }
-            },
-            other => return Err(location.new_unexpected_token_error(other)),
+        let f = input.expect_function()?;
+        let Some(unit) = CalcUnit::get_any_case(f) else {
+            return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
         };
 
         match unit {
@@ -465,8 +465,7 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
                 let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))?;
-                let val = Self::parse_hypot(&mut args)?;
-                if let Some(v) = val {
+                if let Some(v) = Self::parse_hypot(&mut args) {
                     return Ok(v);
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Hypot(args))))
@@ -510,11 +509,11 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub(crate) fn parse_numeric_fn(
-        input: &mut css::Parser,
+    pub(crate) fn parse_numeric_fn<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         op: NumericFnOp,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         input.parse_nested_block(|i| {
             let v = Self::parse_numeric(i, parse_ident)?;
             Ok(Calc::Number(match op {
@@ -524,13 +523,13 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub(crate) fn parse_math_fn<OC: Copy>(
-        input: &mut css::Parser,
+    pub(crate) fn parse_math_fn<'bump, OC: Copy>(
+        input: &mut css::Parser<'_, 'bump>,
         ctx_for_op_and_fallback: OC,
         op: fn(OC, f32, f32) -> f32,
         fallback: fn(OC, Self, Self) -> MathFunction<V>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         let a = Self::parse_sum(input, parse_ident)?;
         input.expect_comma()?;
         let b = Self::parse_sum(input, parse_ident)?;
@@ -542,10 +541,10 @@ impl<V: CalcValue> Calc<V> {
     }
 
     #[inline(never)]
-    pub(crate) fn parse_sum(
-        input: &mut css::Parser,
+    pub(crate) fn parse_sum<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         let mut cur = Self::parse_product(input, parse_ident)?;
         loop {
             let start = input.state();
@@ -582,10 +581,10 @@ impl<V: CalcValue> Calc<V> {
     }
 
     #[inline(never)]
-    pub(crate) fn parse_product(
-        input: &mut css::Parser,
+    pub(crate) fn parse_product<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         let mut node = Self::parse_value(input, parse_ident)?;
         loop {
             let start = input.state();
@@ -626,10 +625,10 @@ impl<V: CalcValue> Calc<V> {
     }
 
     #[inline(never)]
-    pub(crate) fn parse_value(
-        input: &mut css::Parser,
+    pub(crate) fn parse_value<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         // Parse nested calc() and other math functions.
         match input.try_parse(Self::parse) {
             Ok(calc) => match calc {
@@ -676,16 +675,7 @@ impl<V: CalcValue> Calc<V> {
         }
 
         let location = input.current_source_location();
-        // Reshaped for borrowck — clone the next token inside the
-        // try-parse so the ident slice is owned by the cloned `Token` rather
-        // than laundered to `'static` from the `&mut Parser` borrow.
-        if let Ok(ident) = input.try_parse(|p| {
-            let tok = *p.next()?;
-            match tok {
-                css::Token::Ident(s) => Ok(s),
-                other => Err(p.new_unexpected_token_error(other)),
-            }
-        }) {
+        if let Ok(ident) = input.try_parse(|p| p.expect_ident()) {
             if let Some(c) = parse_ident(ident) {
                 return Ok(c);
             }
@@ -696,12 +686,12 @@ impl<V: CalcValue> Calc<V> {
         Ok(Calc::Value(Box::new(value)))
     }
 
-    pub(crate) fn parse_trig(
-        input: &mut css::Parser,
+    pub(crate) fn parse_trig<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         trig_fn_kind: TrigFnKind,
         to_angle: bool,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
+    ) -> CssResult<'bump, Self> {
         let trig_fn = move |x: f32| -> f32 {
             match trig_fn_kind {
                 TrigFnKind::Sin => x.sin(),
@@ -762,10 +752,10 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub(crate) fn parse_atan2(
-        input: &mut css::Parser,
+    pub(crate) fn parse_atan2<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Angle> {
+    ) -> CssResult<'bump, Angle> {
         let angle_ident = Self::number_ident::<Angle>(parse_ident);
 
         let before_args = input.state();
@@ -773,17 +763,19 @@ impl<V: CalcValue> Calc<V> {
         let hit_unrecoverable =
             |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
 
-        let reconcile =
-            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
-                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
-                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                        return Ok(v);
-                    }
-                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
-                    return Ok(Angle::Rad(an.atan2(*bn)));
+        let reconcile = |input: &mut css::Parser<'_, 'bump>,
+                         a: &Calc<Angle>,
+                         b: &Calc<Angle>|
+         -> CssResult<'bump, Angle> {
+            if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
+                if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+                    return Ok(v);
                 }
-                Err(input.new_custom_error(css::ParserError::invalid_value))
-            };
+            } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
+                return Ok(Angle::Rad(an.atan2(*bn)));
+            }
+            Err(input.new_custom_error(css::ParserError::invalid_value))
+        };
 
         match Calc::<Angle>::parse_sum(input, &angle_ident) {
             Ok(a) => {
@@ -825,10 +817,10 @@ impl<V: CalcValue> Calc<V> {
         Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))
     }
 
-    pub(crate) fn parse_atan2_args(
-        input: &mut css::Parser,
+    pub(crate) fn parse_atan2_args<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Angle> {
+    ) -> CssResult<'bump, Angle> {
         let a = Self::parse_sum(input, parse_ident)?;
         input.expect_comma()?;
         let b = Self::parse_sum(input, parse_ident)?;
@@ -848,10 +840,10 @@ impl<V: CalcValue> Calc<V> {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    pub(crate) fn parse_numeric(
-        input: &mut css::Parser,
+    pub(crate) fn parse_numeric<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
         parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<f32> {
+    ) -> CssResult<'bump, f32> {
         let v: Calc<CSSNumber> =
             Calc::<CSSNumber>::parse_sum(input, &Self::number_ident(parse_ident))?;
         let val = match v {
@@ -862,22 +854,18 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
+    pub(crate) fn parse_hypot(args: &mut [Self]) -> Option<Self> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
-            return Ok(Some(v));
+            return Some(v);
         }
 
         if args.len() == 2 {
-            return Ok(Self::apply_op(&args[0], &args[1], (), |_, a, b| {
-                hypot((), a, b)
-            }));
+            return Self::apply_op(&args[0], &args[1], (), |_, a, b| hypot((), a, b));
         }
 
         let mut i: usize = 0;
-        let Some(first) = Self::apply_map(&args[0], powi2) else {
-            return Ok(None);
-        };
+        let first = Self::apply_map(&args[0], powi2)?;
         i += 1;
         let mut errored = false;
         let mut sum = first;
@@ -890,10 +878,10 @@ impl<V: CalcValue> Calc<V> {
         }
 
         if errored {
-            return Ok(None);
+            return None;
         }
 
-        Ok(Self::apply_map(&sum, sqrtf32))
+        Self::apply_map(&sum, sqrtf32)
     }
 
     pub(crate) fn apply_op<OC: Copy>(
@@ -1075,7 +1063,9 @@ impl<V: CalcValue> Calc<V> {
 }
 
 #[inline]
-fn try_parse_atan2_args<Value: CalcValue>(input: &mut css::Parser) -> CssResult<Angle> {
+fn try_parse_atan2_args<'bump, Value: CalcValue>(
+    input: &mut css::Parser<'_, 'bump>,
+) -> CssResult<'bump, Angle> {
     input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, &|_| None))
 }
 
@@ -1467,7 +1457,10 @@ impl CalcValue for CSSNumber {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc<'bump>(
+        c: Calc<Self>,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         match c {
             Calc::Value(v) => Ok(*v),
             Calc::Number(n) => Ok(n),
@@ -1485,7 +1478,10 @@ impl CalcValue for Angle {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc<'bump>(
+        c: Calc<Self>,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         match c {
             Calc::Value(v) => Ok(*v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
@@ -1591,12 +1587,12 @@ macro_rules! calc_protocol_forwarders {
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; parse_to_css: forward, $($r:tt)*) => {
-        impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
+        impl<'bump> protocol::Parse<'bump> for $T { #[inline] fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> { <$T>::parse(input) } }
         impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(self, dest) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; parse_to_css: forward_copy, $($r:tt)*) => {
-        impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
+        impl<'bump> protocol::Parse<'bump> for $T { #[inline] fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> { <$T>::parse(input) } }
         impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(*self, dest) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
@@ -1622,7 +1618,10 @@ impl CalcValue for Percentage {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc<'bump>(
+        c: Calc<Self>,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         match c {
             Calc::Value(v) => Ok(*v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
@@ -1664,7 +1663,10 @@ impl CalcValue for Time {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc<'bump>(
+        c: Calc<Self>,
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         match c {
             Calc::Value(v) => Ok(*v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
@@ -1700,7 +1702,10 @@ impl CalcValue for Length {
     fn into_calc(self) -> Calc<Self> {
         Length::into_calc(self)
     }
-    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc<'bump>(
+        c: Calc<Self>,
+        _input: &mut css::Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         Ok(Length::Calc(Box::new(c)))
     }
 }
@@ -1748,7 +1753,10 @@ macro_rules! dim_pct_protocol {
         impl CalcValue for DimensionPercentage<$D> {
             #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }
             #[inline] fn into_calc(self) -> Calc<Self> { DimensionPercentage::into_calc(self) }
-            fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+            fn from_calc<'bump>(
+                c: Calc<Self>,
+                _input: &mut css::Parser<'_, 'bump>,
+            ) -> CssResult<'bump, Self> {
                 Ok(DimensionPercentage::Calc(Box::new(c)))
             }
         }

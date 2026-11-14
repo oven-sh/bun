@@ -188,32 +188,47 @@ test("req.complete stays false while a declared body is still arriving", async (
   assert.deepStrictEqual(seen, { listener: false, nextTick: false, end: true });
 });
 
-test("'end' comes after the promise jobs of the last chunk's 'data' listeners", async () => {
-  const order: string[] = [];
-  const { promise: firstChunk, resolve: onFirstChunk } = Promise.withResolvers<void>();
-  const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
-  const server = http.createServer((req, res) => {
-    req.on("data", async chunk => {
-      order.push(`data ${chunk}`);
-      await null;
-      await null;
-      order.push(`jobs ${chunk}`);
-      onFirstChunk();
+for (const [framing, header, first, last] of [
+  ["Content-Length", "Content-Length: 5", "he", "llo"],
+  ["chunked", "Transfer-Encoding: chunked", "2\r\nhe\r\n", "3\r\nllo\r\n0\r\n\r\n"],
+]) {
+  test(`a ${framing} body is complete after the ticks and promise jobs of the last chunk's 'data' listeners`, async () => {
+    const order: string[] = [];
+    const { promise: firstChunk, resolve: onFirstChunk } = Promise.withResolvers<void>();
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      req.on("data", async chunk => {
+        order.push(`data ${chunk}`);
+        await null;
+        await null;
+        order.push(`jobs ${chunk} ${req.complete}`);
+        await new Promise(process.nextTick);
+        order.push(`tick ${chunk} ${req.complete}`);
+        onFirstChunk();
+      });
+      req.on("end", () => {
+        order.push("end");
+        res.end();
+        onEnd();
+      });
     });
-    req.on("end", () => {
-      order.push("end");
-      res.end();
-      onEnd();
+    await withServer(server, async port => {
+      const socket = send(port, `POST / HTTP/1.1\r\nHost: x\r\n${header}\r\n\r\n${first}`, reject);
+      await firstChunk;
+      socket.write(last);
+      await ended;
     });
+    assert.deepStrictEqual(order, [
+      "data he",
+      "jobs he false",
+      "tick he false",
+      "data llo",
+      "jobs llo false",
+      "tick llo false",
+      "end",
+    ]);
   });
-  await withServer(server, async port => {
-    const socket = send(port, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe", reject);
-    await firstChunk;
-    socket.write("llo");
-    await ended;
-  });
-  assert.deepStrictEqual(order, ["data he", "jobs he", "data llo", "jobs llo", "end"]);
-});
+}
 
 // A write larger than the uWS cork buffer releases the cork, so the response that closes the connection is out before the body is parsed.
 for (const respond of ["write() and end()", "end(chunk)"]) {
@@ -399,6 +414,59 @@ describe("a connection given to the server with emit('connection')", () => {
     );
     assert.ok(mostHeld < length / 4, `the request held ${mostHeld} of ${length} bytes`);
   });
+
+  // Resolves with the body that the server got. `feed` hands it the socket and the bytes.
+  async function bodyFedBy(payload: string, feed: (socket: Socket, handOver: () => void) => void) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => resolve(body));
+      req.on("end", () => res.end());
+    });
+    server.on("clientError", reject);
+    const front = createNetServer(socket => feed(socket, () => server.emit("connection", socket)));
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = send((front.address() as AddressInfo).port, payload, reject);
+    try {
+      return await promise;
+    } finally {
+      client.destroy();
+      front.close();
+    }
+  }
+
+  test("no tick or microtask runs inside the emit('data') of a listener that hands over its read", async () => {
+    const order: string[] = [];
+    const body = await bodyFedBy("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc", (socket, handOver) => {
+      socket.once("data", chunk => {
+        queueMicrotask(() => order.push("microtask"));
+        process.nextTick(() => order.push("tick"));
+        handOver();
+        socket.emit("data", chunk);
+        order.push("returned");
+      });
+    });
+    assert.deepStrictEqual({ body, first: order[0] }, { body: "abc", first: "returned" });
+  });
+
+  for (const [name, later] of [
+    ["ticks", process.nextTick],
+    ["microtasks", queueMicrotask],
+  ] as const) {
+    test(`a body that the program replays from ${name} arrives whole`, async () => {
+      const body = await bodyFedBy("", (socket, handOver) => {
+        handOver();
+        later(() => socket.emit("data", Buffer.from("2\r\nef\r\n")));
+        later(() => socket.emit("data", Buffer.from("2\r\ngh\r\n0\r\n\r\n")));
+        socket.emit(
+          "data",
+          Buffer.from("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n2\r\ncd\r\n"),
+        );
+      });
+      assert.strictEqual(body, "abcdefgh");
+    });
+  }
 });
 
 for (const expectation of ["100-continue", "something-else"]) {

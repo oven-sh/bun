@@ -16,6 +16,7 @@ use bun_jsc::{
 use bun_ptr::RefPtr;
 
 use super::request_init::HeadersInit;
+use crate::generated_bindgen::ssl_config::TLSOptions;
 use crate::socket::ssl_config::ParsedTls;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
@@ -35,18 +36,22 @@ pub(crate) enum ProxyOption {
 
 /// `tls` as given to `fetch()` or to a session.
 pub(crate) struct TlsOption {
-    pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
+    pub(crate) given: Option<http::ssl_config::Builder>,
     pub(crate) reject_unauthorized: Option<bool>,
     pub(crate) check_server_identity: Option<JSValue>,
 }
 
-pub(crate) fn parse_tls(
+/// `given`, and the defaults of this moment for what it leaves out.
+pub(crate) fn resolve_tls(
     vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    tls: JSValue,
-) -> JsResult<TlsOption> {
+    given: http::ssl_config::Builder,
+) -> http::ssl_config::SharedPtr {
+    http::ssl_config::global_registry::intern(vm.tls_config(given, false))
+}
+
+pub(crate) fn parse_tls(global: &JSGlobalObject, tls: JSValue) -> JsResult<TlsOption> {
     let mut parsed = TlsOption {
-        ssl_config: None,
+        given: None,
         reject_unauthorized: None,
         check_server_identity: None,
     };
@@ -69,9 +74,7 @@ pub(crate) fn parse_tls(
         }
     }
     // `tls: {}` is a request without TLS options.
-    parsed.ssl_config = ParsedTls::from_js(vm, global, tls, false)?
-        .or_none()
-        .map(http::ssl_config::global_registry::intern);
+    parsed.given = ParsedTls::given(global, &TLSOptions::from_js(global, tls)?, false)?;
     Ok(parsed)
 }
 
@@ -161,7 +164,9 @@ static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct FetchSession {
     pool: http::PoolOptions,
     keep_alive: bool,
-    ssl_config: Option<http::ssl_config::SharedPtr>,
+    tls: Option<http::ssl_config::Builder>,
+    /// `tls` resolved at a `tls_defaults_version()`.
+    ssl_config: JsCell<Option<(u64, http::ssl_config::SharedPtr)>>,
     reject_unauthorized: Option<bool>,
     proxy: Option<ProxyOption>,
     unix: Box<[u8]>,
@@ -213,8 +218,18 @@ impl SessionHold {
     pub(crate) fn keep_alive(&self) -> bool {
         self.session().keep_alive
     }
-    pub(crate) fn ssl_config(&self) -> Option<http::ssl_config::SharedPtr> {
-        self.session().ssl_config.clone()
+    pub(crate) fn ssl_config(&self, vm: &VirtualMachine) -> Option<http::ssl_config::SharedPtr> {
+        let session = self.session();
+        let given = session.tls.as_ref()?;
+        let version = vm.tls_defaults_version();
+        if let Some((resolved_at, config)) = session.ssl_config.get()
+            && *resolved_at == version
+        {
+            return Some(config.clone());
+        }
+        let config = resolve_tls(vm, given.clone());
+        session.ssl_config.set(Some((version, config.clone())));
+        Some(config)
     }
     pub(crate) fn reject_unauthorized(&self) -> Option<bool> {
         self.session().reject_unauthorized
@@ -257,7 +272,8 @@ impl FetchSession {
                 max_idle_sockets: 0,
             },
             keep_alive: true,
-            ssl_config: None,
+            tls: None,
+            ssl_config: JsCell::new(None),
             reject_unauthorized: None,
             proxy: None,
             unix: Box::default(),
@@ -302,8 +318,8 @@ impl FetchSession {
 
         if let Some(tls) = options.get(global, "tls")? {
             if tls.is_object() {
-                let parsed = parse_tls(vm, global, tls)?;
-                this.ssl_config = parsed.ssl_config;
+                let parsed = parse_tls(global, tls)?;
+                this.tls = parsed.given;
                 this.reject_unauthorized = parsed.reject_unauthorized;
                 check_server_identity = parsed.check_server_identity;
             } else if !tls.is_undefined_or_null() {

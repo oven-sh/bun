@@ -1,0 +1,18 @@
+# -- source: main.js
+# function Base() { this.count = 0; }
+# Base.prototype.on = function on(ev, fn) { this.count += ev; return this; };
+# function Heir() { Base.call(this); this.extra = 1; }
+# Object.setPrototypeOf(Heir.prototype, Base.prototype);
+# Heir.prototype.on = function heirOn(ev, fn) { const res = Base.prototype.on.call(this, ev, fn); this.extra += 1; return res; };
+# var h = new Heir();
+# for (var i = 0; i < 1000; i++) h.on(i, null);
+# print(h.count + h.extra);
+# -- end of source
+# The idiom of an ES5 heir. Behind the guard of the member the method is a constant and the reads of `prototype` and `on` are not made. f4 = heirOn
+# RUN(WALK): walk f4 mechanisms=all
+# WALK-LABEL: code f4:Body
+# WALK: frame 1 callee=f3
+# WALK: AreMembersUnchanged conditions=[{layout=L0 key="on"}
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 500501
+# ANSWERS-NEXT: exited with 0

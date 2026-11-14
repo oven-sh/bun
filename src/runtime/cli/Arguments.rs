@@ -17,7 +17,9 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{
+    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
+};
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -37,6 +39,49 @@ use crate::cli::{DefineColonList, LoaderColonList};
 #[inline]
 fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+}
+
+/// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
+fn reads_as_path_of_tests(argument: &[u8]) -> bool {
+    bun_paths::is_absolute(argument)
+        || argument.starts_with(b"./")
+        || argument.starts_with(b"../")
+        || (cfg!(windows) && (argument.starts_with(b".\\") || argument.starts_with(b"..\\")))
+}
+
+/// `bun test --files-from <list>`. Every line is a path, never a filter. A list
+/// with no paths is an error: with no positionals `bun test` runs everything.
+fn append_test_files_from(list: &[u8], positionals: &mut Vec<Box<[u8]>>) {
+    let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), list) {
+        Ok(contents) => contents,
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: failed to read --files-from file <b>{}<r>: {}",
+                BStr::new(list),
+                err
+            );
+            Global::exit(1);
+        }
+    };
+    let before = positionals.len();
+    for line in strings::split(&contents, b"\n") {
+        let path = strings::trim(line, b" \t\r");
+        if path.is_empty() {
+            continue;
+        }
+        positionals.push(if reads_as_path_of_tests(path) {
+            path.into()
+        } else {
+            [b"./".as_slice(), path].concat().into()
+        });
+    }
+    if positionals.len() == before {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --files-from file <b>{}<r> lists no test files",
+            BStr::new(list)
+        );
+        Global::exit(1);
+    }
 }
 
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
@@ -183,10 +228,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
     ),
     parse_param!(
-        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only"
+        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only. <b>bun test<r> compiles it and runs the compiled code"
     ),
     parse_param!(
-        "--aot-log-type-mismatches         Compile the program like bun compile, run it, and log every value that doesn't match its declared type"
+        "--aot-allow-code-from-disk        With --aot: let import() and require() load code from disk that wasn't compiled. The build takes longer"
     ),
     parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
@@ -399,6 +444,8 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
 
 pub(crate) const AUTO_REQUIREMENTS: [RuntimeRequirement; AUTO_PARAMS.len()] =
     startup_options::requirements_of(AUTO_PARAMS, AUTO_REQUIREMENT_ROWS);
+pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
+    startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
 /// These need `Feature::HotReload` besides what their rows say.
@@ -433,7 +480,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (
-            Long(b"aot-log-type-mismatches"),
+            Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (Long(b"smol"), Nothing),
@@ -673,16 +720,13 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript and TypeScript to machine code at build time. Requires --compile"
         ),
         parse_param!(
-            "--aot-log-type-mismatches        With --aot: the executable logs every value that doesn't match its declared type"
-        ),
-        parse_param!(
-            "--explain <STR>?...              With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, missed-optimizations, allocations"
+            "--explain <STR>?...              With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, allocations"
         ),
         parse_param!(
             "--aot-huge-heap                  With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower"
         ),
         parse_param!(
-            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws"
+            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
         ),
         parse_param!(
             "--compile-in-place               With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it"
@@ -694,41 +738,30 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--trim-locales <STR>...          Keep only these locales, such as en,de-AT. Implies --trim"
         ),
         parse_param!(
-            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. Same as --sourcemap=external"
+            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. The name of every function and class is empty"
         ),
         parse_param!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"
         ),
         parse_param!(
-            "--aot-allow-code-from-disk       With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+            "--aot-allow-code-from-disk       With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+        ),
+        parse_param!(
+            "--aot-harden <STR>...            With --aot: make a bug in the compiler harder to turn into a memory bug. Takes proof-checks, ignore-told-ranges. Runs slower"
         ),
         parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
         ),
-        parse_param!("--aot-validate"),
         parse_param!("--aot-check <STR>..."),
-        parse_param!("--aot-disable <STR>..."),
-        parse_param!("--aot-only-passes <STR>"),
-        parse_param!("--aot-disable-in <STR>"),
-        parse_param!("--aot-limit <STR>"),
-        parse_param!("--aot-heat <STR>"),
-        parse_param!("--aot-flow <STR>"),
         parse_param!("--aot-testing <STR>..."),
-        parse_param!("--aot-sabotage <STR>"),
-        parse_param!("--aot-count-branches"),
-        parse_param!("--aot-count-arrivals"),
-        parse_param!("--aot-drop-guard <STR>"),
-        parse_param!("--aot-layout-seed <STR>"),
-        parse_param!("--aot-report <STR>"),
-        parse_param!("--aot-report-detail <STR>"),
-        parse_param!("--aot-list <STR>"),
-        parse_param!("--aot-verify-each-pass"),
         parse_param!("--aot-references <STR>"),
+        parse_param!("--aot-cpu <STR>"),
         parse_param!("--aot-threads <STR>"),
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
-        parse_param!("--aot-separate-programs"),
         parse_param!("--aot-out <STR>"),
+        parse_param!("--aot-stored-strings <STR>"),
+        parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),
@@ -929,6 +962,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
     ),
     parse_param!(
+        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default) gives each block its own \\<testsuite\\>, 'flat' prefixes test names with the block names."
+    ),
+    parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
     ),
     parse_param!(
@@ -942,7 +978,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
-        "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
+        "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another. \"modules\": keep the global object and load each file's modules afresh (faster; files can see each other's changes to globals)."
     ),
     parse_param!(
         "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
@@ -957,6 +993,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."
     ),
     parse_param!(
+        "--files-from <STR>...            Read test file paths from a file, one per line, besides those on the command line. For lists longer than a command line may be."
+    ),
+    parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
     parse_param!(
@@ -964,6 +1003,15 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
+    ),
+    parse_param!(
+        "--environment <STR>              DOM for test files: 'node' (default, no DOM), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
+    ),
+    parse_param!(
+        "--globals <STR>?                 Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
+    ),
+    parse_param!(
+        "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1058,9 +1106,9 @@ pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::Atom
     core::sync::atomic::AtomicBool::new(false);
 
 /// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
-fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
+fn replace_pid_placeholder(name: &'static [u8]) -> &'static [u8] {
     if !bun_core::strings::contains(name, b"${pid}") {
-        return name.into();
+        return name;
     }
     let pid = std::process::id().to_string();
     let mut out = Vec::with_capacity(name.len() + pid.len());
@@ -1074,7 +1122,7 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
             i += 1;
         }
     }
-    out.into_boxed_slice()
+    out.leak()
 }
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
@@ -1279,11 +1327,30 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
+    if cmd == CommandTag::TestCommand {
+        let typed = ctx.positionals.len();
+        for list in args.options(b"--files-from") {
+            append_test_files_from(list, &mut ctx.positionals);
+        }
+        // Beside a path every argument is a path, and one that leads nowhere is passed over: the listed files would run as if the filter were not there.
+        let (typed, listed) = ctx.positionals.split_at(typed);
+        if !listed.is_empty()
+            && let Some(filter) = typed.iter().skip(1).find(|it| !reads_as_path_of_tests(it))
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>{}<r> is a filter, and --files-from takes none beside it. For the file or folder of that name write <b>./{}<r>",
+                BStr::new(filter),
+                BStr::new(filter)
+            );
+            Global::exit(1);
+        }
+    }
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
         if may_refuse_options {
-            startup_options::reject_unusable_bunfig_settings(ctx);
+            let named_file = args.option(b"--config").filter(|file| !file.is_empty());
+            startup_options::reject_unusable_bunfig_settings(ctx, named_file);
         }
     }
 
@@ -1469,7 +1536,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(port_str) = args.option(b"--port") {
             if cmd == CommandTag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
-                ctx.runtime_options.eval.script = port_str.into();
+                ctx.runtime_options.eval.script = port_str;
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
@@ -1554,10 +1621,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.script = script;
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
-            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.script = script;
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
@@ -1572,7 +1639,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
-        ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
+        ctx.runtime_options.preconnect = args.options(b"--fetch-preconnect").to_vec();
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
@@ -1682,7 +1749,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
-                ctx.runtime_options.cpu_prof.dir = dir.into();
+                ctx.runtime_options.cpu_prof.dir = dir;
             }
             // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
             ctx.runtime_options.cpu_prof.md_format = cpu_prof_md_flag;
@@ -1733,10 +1800,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = true;
             if let Some(name) = args.option(b"--heap-prof-name") {
-                ctx.runtime_options.heap_prof.name = name.into();
+                ctx.runtime_options.heap_prof.name = name;
             }
             if let Some(dir) = args.option(b"--heap-prof-dir") {
-                ctx.runtime_options.heap_prof.dir = dir.into();
+                ctx.runtime_options.heap_prof.dir = dir;
             }
         } else if heap_prof_v8 || heap_prof_md {
             // --heap-prof-interval is accepted for node CLI parity but unused:
@@ -1744,10 +1811,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
-                ctx.runtime_options.heap_prof.name = name.into();
+                ctx.runtime_options.heap_prof.name = name;
             }
             if let Some(dir) = args.option(b"--heap-prof-dir") {
-                ctx.runtime_options.heap_prof.dir = dir.into();
+                ctx.runtime_options.heap_prof.dir = dir;
             }
         } else {
             // Node parity: heap-profiler-scoped options without a profiler flag
@@ -2114,6 +2181,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
+    if let Some(name) = args.option(b"--reporter-junit-suites") {
+        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --reporter-junit-suites expects 'nested' or 'flat', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.reporters.junit_suites = Some(suites);
+    }
+
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
@@ -2293,6 +2371,31 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         );
         Global::exit(1);
     }
+    if let Some(name) = args.option(b"--environment") {
+        let Some(environment) = TestEnvironment::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --environment expects 'node', 'jsdom' or 'happy-dom', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.environment = Some(environment);
+    }
+    // Vitest's --globals is a boolean, and Bun always defines the globals.
+    let globals = args.option(b"--globals");
+    if let Some(name) = globals.filter(|name| !matches!(*name, b"" | b"true" | b"false")) {
+        let Some(globals) = TestGlobals::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --globals expects 'bun' or 'vitest', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.globals = Some(globals);
+    }
+    if args.flag(b"--react-compiler") {
+        ctx.test_options.react_compiler = Some(Default::default());
+    }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
@@ -2300,7 +2403,19 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
-    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
+    let isolate = args.option(b"--isolate");
+    ctx.test_options.isolate = isolate.is_some() && !no_isolate;
+    ctx.test_options.isolate_modules = match isolate {
+        None | Some(b"" | b"global") => false,
+        Some(b"modules") => !no_isolate,
+        Some(other) => {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --isolate expects \"global\" or \"modules\", received \"{}\"",
+                BStr::new(other)
+            );
+            Global::exit(1);
+        }
+    };
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -2342,7 +2457,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(seed_str) = args.option(b"--seed") {
-        ctx.test_options.randomize = true;
+        // A --parallel worker always gets --seed, so for a worker it doesn't imply --randomize.
+        ctx.test_options.randomize |= !ctx.test_options.test_worker;
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {
@@ -2396,6 +2512,16 @@ fn parse_build_command_options(
             .is_some_and(|format| format != b"esm" && format != b"cjs")
         {
             Output::err_generic("--library only supports --format=esm and --format=cjs", ());
+            Global::exit(1);
+        }
+        if args
+            .option(b"--target")
+            .is_some_and(|target| !matches!(target, b"bun" | b"node" | b"browser"))
+        {
+            Output::err_generic(
+                "--library only supports --target=bun, --target=node and --target=browser",
+                (),
+            );
             Global::exit(1);
         }
         ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();

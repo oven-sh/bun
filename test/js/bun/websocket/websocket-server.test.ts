@@ -2463,6 +2463,87 @@ it.each(["server", "client"] as const)(
   },
 );
 
+describe.concurrent("unmasks client frames", () => {
+  const key = [0xa7, 0x3c, 0xe1, 0x5a] as const;
+
+  function payloadOf(length: number) {
+    const payload = Buffer.allocUnsafe(length);
+    for (let i = 0; i < length; i++) payload[i] = i * 131 + length;
+    return payload;
+  }
+
+  function echoServer() {
+    return serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+      websocket: {
+        message(ws, message) {
+          ws.sendBinary(message as Buffer);
+        },
+      },
+    });
+  }
+
+  // The server unmasks up to 4 bytes more than the payload has, which must not reach the header of the next frame.
+  it("of every length, one after the other in a single write", async () => {
+    await using server = echoServer();
+    using client = await RawClient.upgrade(server.port);
+    const payloads = [...Array(300).keys(), 65535, 1, 65536, 2, 65537, 3, 70001, 0].map(payloadOf);
+    client.write(Buffer.concat(payloads.map(payload => client.frame(OP.binary, payload, { key }))));
+
+    const wrongLengths: number[] = [];
+    for (const payload of payloads) {
+      const echoed = await client.nextFrame();
+      if (!echoed?.payload.equals(payload)) wrongLengths.push(payload.length);
+    }
+    expect(wrongLengths).toEqual([]);
+  });
+
+  it("larger than the 512 KiB receive buffer", async () => {
+    await using server = echoServer();
+    using client = await RawClient.upgrade(server.port);
+    const payload = payloadOf(2 * 512 * 1024 + 5);
+    client.binary(payload, { key });
+    const echoed = await client.nextFrame();
+    expect(echoed?.payload.equals(payload)).toBe(true);
+  });
+
+  // The rest of a frame is unmasked with the key rotated by however many bytes came before it.
+  it.each([
+    [6, 125],
+    [8, 300],
+    [14, 65536 + 77],
+  ])("whose payload arrives in three reads after a %d byte header", async (header, length) => {
+    await using server = echoServer();
+    using client = await RawClient.upgrade(server.port);
+    using other = await RawClient.upgrade(server.port);
+    const payload = payloadOf(length);
+    const frame = client.frame(OP.binary, payload, { key });
+    expect(frame.length - length).toBe(header);
+
+    const wrongSplits: [number, number][] = [];
+    for (const first of [0, 1, 2, 3, 4, 17, 34, 71]) {
+      for (const second of [1, 2, 3, 4, 19, 33, 130]) {
+        if (first + second >= length) continue;
+        // Both ends share this thread's event loop: when the pong gets here, the server has read what was written
+        // before the ping.
+        client.write(frame.subarray(0, header + first));
+        await other.roundTrip();
+        client.write(frame.subarray(header + first, header + first + second));
+        await other.roundTrip();
+        client.write(frame.subarray(header + first + second));
+        const echoed = await client.nextFrame();
+        if (!echoed?.payload.equals(payload)) wrongSplits.push([first, second]);
+      }
+    }
+    expect(wrongSplits).toEqual([]);
+  });
+});
+
 // RFC 6455 §4.2.1 / §4.4: server.upgrade() must refuse a client handshake
 // whose Upgrade token, Sec-WebSocket-Key, or Sec-WebSocket-Version is invalid.
 describe("server.upgrade() validates the opening handshake", () => {
@@ -3864,7 +3945,7 @@ describe.concurrent.each([
   });
 });
 
-// In a child, under `bun test`: expect().resolves is what runs the event loop from inside a handler.
+// Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.
 it("stop(true) survives a close handler that terminates the other sockets and runs the event loop", async () => {
   using dir = tempDir("ws-stop-nested-tick", {
     "stop.test.js": /* js */ `
@@ -3874,6 +3955,7 @@ it("stop(true) survives a close handler that terminates the other sockets and ru
         const count = 6;
         const sockets = [];
         const stopped = Promise.withResolvers();
+        let closed = false;
         let ranLoop = false;
         const server = Bun.serve({
           hostname: "127.0.0.1",
@@ -3889,10 +3971,15 @@ it("stop(true) survives a close handler that terminates the other sockets and ru
             },
             message() {},
             close() {
-              if (ranLoop) return;
-              ranLoop = true;
+              if (closed) return;
+              closed = true;
               for (const ws of sockets) ws.terminate();
-              expect(new Promise(resolve => setTimeout(resolve, 400, 1))).resolves.toBe(1);
+              let waited = false;
+              Bun.build({
+                entrypoints: ["./none.js"],
+                plugins: [{ name: "nested tick", setup: () => Bun.sleep(400).then(() => void (waited = true)) }],
+              }).catch(() => {});
+              ranLoop = waited;
             },
           },
         });
@@ -3916,5 +4003,51 @@ it("stop(true) survives a close handler that terminates the other sockets and ru
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
+// A sweep is 4 seconds, and the upgrade comes a moment after one.
+it.concurrent.each([
+  [8, "ping 2, close 3"],
+  [10, "ping 2, close 3"],
+  [16, "ping 3, close 5"],
+  [120, "ping 27, close 31"],
+])("idleTimeout %d closes a silent client within 4 seconds of it: %s", async (idleTimeout, expected) => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import { once } from "node:events";
+      import net from "node:net";
+      let sweeps = 0, ping, close;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: (request, server) => void server.upgrade(request),
+        websocket: { idleTimeout: ${idleTimeout}, message() {}, close: () => void (close = sweeps) },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {});
+      await once(client, "connect");
+      sweepSocketTimers(1);
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
+      await once(client, "data");
+      const pinged = once(client, "data");
+      while (close === undefined) {
+        sweeps++;
+        sweepSocketTimers(1);
+        if (sweeps === ${Number.parseInt(expected.slice(5))}) ping = (await pinged)[0][0] === 0x89 && sweeps;
+      }
+      console.log("ping " + ping + ", close " + close);
+      client.destroy();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(expected);
   expect(exitCode).toBe(0);
 });

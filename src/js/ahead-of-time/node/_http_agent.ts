@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_agent.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 12e303f4d76b25fe585741696f2d1512d94cdd9a5829d93f2f436aa743f66545.
+// Written against that file with the SHA-256 60c5e9732a6b2278590ae78ce23c9a84db6ed5ff26b24f7bc1c7aa4923626f5d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_agent.js
@@ -11,11 +11,13 @@ const { parseProxyConfigFromEnv, checkShouldUseProxy } = http;
 const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
 const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyTunnel;
 const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
-const { kEmptyObject, once } = require("internal/shared");
+const shared = require("internal/shared");
+const { kEmptyObject, once } = shared;
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
 const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
+const handleHasPendingRead: (handle: unknown) => boolean = $bindgen("socket_body.bind.ts", "hasPendingRead");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -27,6 +29,16 @@ const kRequestAsyncResource = Symbol("requestAsyncResource");
 const kOwnerFrame = Symbol("ownerFrame");
 const AsyncContextFrame = require("internal/async_context_frame");
 const ObjectDefineProperty = Object.defineProperty;
+
+// kDestroyOnRead only acts when the event loop polls for I/O. Data that
+// reached the OS socket buffer after the last poll has not been seen by it
+// yet, so check for it directly before handing an idle socket to a request.
+function hasPendingRead(socket: $Node.HttpClientSocket) {
+  // A socket that is still connecting has nothing to read yet, and a pending
+  // connect error must be reported to the request rather than swallowed here.
+  if (socket.connecting) return false;
+  return handleHasPendingRead(socket._handle);
+}
 
 function freeSocketErrorListener(this: $Node.HttpClientSocket, err: Error) {
   const socket = this;
@@ -99,6 +111,7 @@ declare global {
     }
 
     interface HttpClientSocket {
+      _handle?: unknown;
       [kDestroyOnRead]?: boolean;
     }
   }
@@ -176,6 +189,12 @@ function Agent(this: $Node.Agent, options?: $Node.AgentOptions): void {
 
     const requests = this.requests[name];
     if (requests?.length) {
+      if (hasPendingRead(socket)) {
+        // onClose() will create a new socket for the pending request.
+        $debug("PENDING DATA on released socket - destroying");
+        socket.destroy();
+        return;
+      }
       const req = requests.shift()!;
       const reqAsyncRes = req[kRequestAsyncResource];
       if (reqAsyncRes) {
@@ -272,8 +291,23 @@ Agent.prototype.createConnection = function createConnection(this: $Node.Agent, 
   $assert(false, `Unexpected proxy protocol ${proxyProtocol}`);
 };
 
+// The name that getName() made last. Every request asks for it several times and looks sockets up under it.
+const cachedName: { host: string | undefined; port: unknown; name: string } = {
+  host: undefined,
+  port: undefined,
+  name: "",
+};
 Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.ClientRequestOptions = kEmptyObject) {
   const { host, port, localAddress, family, socketPath } = options;
+  const isCacheable =
+    typeof host === "string" &&
+    (typeof port === "number" || typeof port === "string" || port === undefined) &&
+    !localAddress &&
+    family !== 4 &&
+    family !== 6 &&
+    !socketPath;
+  if (isCacheable && host === cachedName.host && port === cachedName.port) return cachedName.name;
+
   let name = host || "localhost";
 
   name += ":";
@@ -287,6 +321,11 @@ Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.Cli
 
   if (socketPath) name += `:${socketPath}`;
 
+  if (isCacheable) {
+    cachedName.host = host;
+    cachedName.port = port;
+    cachedName.name = name;
+  }
   return name;
 };
 
@@ -333,6 +372,11 @@ Agent.prototype.addRequest = function addRequest(
       freeSockets.shift();
     }
     socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    while (socket && hasPendingRead(socket)) {
+      $debug("PENDING DATA on FREE socket - destroying");
+      socket.destroy();
+      socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    }
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 

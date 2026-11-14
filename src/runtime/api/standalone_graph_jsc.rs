@@ -57,9 +57,12 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
         let _ = store.clone().into_raw();
         blob.size.set(store.size());
         blob.store.set(Some(store));
-        let name = file.display_name();
+        let name = match bun_standalone_graph::Graph::get_ref() {
+            Some(graph) => graph.display_name_of(file),
+            None => file.display_name().into(),
+        };
         if !name.is_empty() {
-            let mut name = bstring::String::clone_utf8(name);
+            let mut name = bstring::String::clone_utf8(&name);
             name.make_thread_shareable();
             blob.name.set(name);
         }

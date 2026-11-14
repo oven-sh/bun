@@ -137,7 +137,7 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
 pub mod encoded_slice;
-pub use encoded_slice::{CompiledJsonParser, EncodedSliceJsc};
+pub use encoded_slice::EncodedSliceJsc;
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "JSArray.rs"]
@@ -471,6 +471,8 @@ pub mod bun_string_jsc;
 pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
+#[path = "declared_results_testing.rs"]
+pub(crate) mod declared_results_testing;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]
@@ -502,6 +504,9 @@ pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
+    if options.runs_compiled_code {
+        bindgen::hold_results_to_declared_types();
+    }
     let env = bun_sys::environ();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
@@ -900,6 +905,8 @@ pub enum BuiltinName {
     sharedFd,
     /// Private name (`$defaultTimeout` in builtins); user code cannot set it.
     defaultTimeout,
+    /// Private name (`$fdIsWriteOnly` in builtins); user code cannot set it.
+    fdIsWriteOnly,
 }
 
 #[allow(non_upper_case_globals)]
@@ -942,7 +949,7 @@ pub use self::js_promise::Status as PromiseStatus;
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+/// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
@@ -1276,12 +1283,18 @@ pub trait SysErrorJsc {
     fn throw(&self, global: &JSGlobalObject) -> JsError;
 }
 impl SysErrorJsc for bun_sys::Error {
+    #[cold]
+    #[inline(never)]
     fn to_system_error(&self) -> SystemError {
         SystemError::from(bun_sys::Error::to_system_error(self))
     }
+    #[cold]
+    #[inline(never)]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)
     }
+    #[cold]
+    #[inline(never)]
     fn throw(&self, global: &JSGlobalObject) -> JsError {
         global.throw_value(<Self as SysErrorJsc>::to_js(self, global))
     }
@@ -1391,24 +1404,24 @@ pub trait JsClass: Sized {
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]
 pub struct Ref {
-    pub has: bool,
+    pub has: core::cell::Cell<bool>,
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if !self.has {
+    pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
+        if !self.has.get() {
             return;
         }
-        self.has = false;
-        vm.active_tasks -= 1;
+        self.has.set(false);
+        vm.active_tasks.update(|n| n - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if self.has {
+    pub fn r#ref(&self, vm: &virtual_machine::VirtualMachine) {
+        if self.has.get() {
             return;
         }
-        self.has = true;
-        vm.active_tasks += 1;
+        self.has.set(true);
+        vm.active_tasks.update(|n| n + 1);
     }
 }
 

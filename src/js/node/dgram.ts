@@ -46,7 +46,7 @@ const guessHandleType = internalDgram.guessHandleType;
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented, ErrnoException, ExceptionWithHostPort, bindException } = require("internal/shared");
+const { throwNotImplemented, ErrnoException, ExceptionWithHostPort } = require("internal/shared");
 const {
   validateString,
   validateNumber,
@@ -523,13 +523,10 @@ function handleGetSendQueueCount(this: UDPHandle) {
 function onMessage(nread: number, handle: UDPHandle, buf: Buffer, rinfo: RemoteInfo) {
   const self = handle[kOwnerSymbol]!;
   if (nread < 0) {
-    return self.emit(
-      "error",
-      Object.assign(new Error("recvmsg"), {
-        syscall: "recvmsg",
-        errno: nread,
-      }),
-    );
+    const error: NodeJS.ErrnoException = new Error("recvmsg");
+    error.syscall = "recvmsg";
+    error.errno = nread;
+    return self.emit("error", error);
   }
   rinfo.size = buf.length; // compatibility
   self.emit("message", buf, rinfo);
@@ -933,11 +930,14 @@ function startBunSocket(
       err => {
         state.bindState = BIND_STATE_UNBOUND;
         if (sharedHandle) releaseSharedHandle(state, sharedHandle);
-        self.emit("error", bindException(err, createOptions.hostname, createOptions.port));
+        self.emit(
+          "error",
+          require("internal/net/errors").bindException(err, createOptions.hostname, createOptions.port),
+        );
       },
     );
   } catch (nativeError) {
-    const err = bindException(nativeError, createOptions.hostname, createOptions.port);
+    const err = require("internal/net/errors").bindException(nativeError, createOptions.hostname, createOptions.port);
     state.bindState = BIND_STATE_UNBOUND;
     if (sharedHandle) releaseSharedHandle(state, sharedHandle);
     // bind({ fd }) is the caller, and node throws what handle.open(fd) returns.

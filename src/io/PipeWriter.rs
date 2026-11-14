@@ -511,7 +511,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
-        let loop_ = self.parent_event_loop().loop_();
+        let loop_ = self.parent_event_loop().native_loop();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
                 // Same report as a failed write (the streaming writer does the
@@ -622,7 +622,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 p
             }
         };
-        let loop_ = self.parent_event_loop().loop_();
+        let loop_ = self.parent_event_loop().native_loop();
 
         match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
@@ -665,16 +665,13 @@ pub trait PosixStreamingWriterParent: WriterParent {
     unsafe fn on_error(this: *mut Self, err: sys::Error);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_ready(_this: *mut Self) {}
-    /// # Safety
-    /// `this` must point to a live `Self`.
     unsafe fn on_close(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
+    unsafe fn loop_(this: *mut Self) -> crate::LoopRef;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -885,7 +882,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
+        let loop_ = unsafe { Parent::loop_(self.parent()) };
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => self.report_error_and_close(err),
             sys::Result::Ok(()) => {}
@@ -1158,7 +1155,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
         };
 
-        match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
+        match poll.register_with_fd(loop_.native_loop(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if existing_poll.is_none() {
@@ -2771,7 +2768,6 @@ pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
     pub use ::bun_sys::windows::libuv::Loop as UvLoop;
-    pub use ::bun_uws_sys::Loop as UwsLoop;
 }
 
 /// Stamp `WriterParent` + `PosixStreamingWriterParent` + `WindowsWriterParent` +
@@ -2816,11 +2812,6 @@ macro_rules! impl_streaming_writer_parent {
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) }
             }
             #[inline]
-            unsafe fn on_ready(this: *mut Self) {
-                // SAFETY: see on_write.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) }
-            }
-            #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
@@ -2833,7 +2824,7 @@ macro_rules! impl_streaming_writer_parent {
                 unsafe { $el }
             }
             #[inline]
-            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UwsLoop {
+            unsafe fn loop_(this: *mut Self) -> $crate::LoopRef {
                 // SAFETY: see on_write. Shared-only read.
                 let $uws_this = this;
                 #[allow(unused_unsafe)]
@@ -2871,7 +2862,6 @@ macro_rules! impl_streaming_writer_parent {
 
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsStreamingWriterParent for $Ty {
-            // Same body as POSIX `on_ready`.
             const HAS_ON_WRITABLE: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {

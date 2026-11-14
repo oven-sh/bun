@@ -24,13 +24,15 @@ pub enum PassPoint {
 }
 
 /// Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver.
+/// The poll's timeout predates `BeforePoll`, so a pass that ran the application's code there returns 0.
 pub type Pass = unsafe extern "C" fn(driver: *mut Driver, point: PassPoint) -> c_int;
 
 unsafe extern "C" {
-    fn us_quic_driver_create(loop_: *mut Loop, pass: Pass, owner: *mut c_void) -> *mut Driver;
+    fn us_quic_driver_create(loop_: &Loop, pass: Pass, owner: *mut c_void) -> *mut Driver;
     safe fn us_quic_driver_close(driver: &Driver);
     fn us_quic_driver_free(driver: *mut Driver);
     safe fn us_quic_driver_owner(driver: &Driver) -> *mut c_void;
+    fn us_quic_driver_remove_engine(driver: *mut Driver, engine: *mut c_void);
     safe fn us_quic_driver_process(driver: &Driver);
     safe fn us_quic_driver_next_tick_us(driver: &Driver) -> c_int;
     safe fn us_quic_driver_set_pending(driver: &Driver);
@@ -63,7 +65,7 @@ unsafe extern "C" {
 
 impl Driver {
     /// `pass` runs before and after each poll of `loop_` (this thread's), and after a microtask drain while the driver is pending. `owner` must outlive the driver.
-    pub unsafe fn create(loop_: *mut Loop, pass: Pass, owner: *mut c_void) -> *mut Driver {
+    pub unsafe fn create(loop_: &'static Loop, pass: Pass, owner: *mut c_void) -> *mut Driver {
         // SAFETY: caller contract.
         unsafe { us_quic_driver_create(loop_, pass, owner) }
     }
@@ -81,6 +83,12 @@ impl Driver {
 
     pub fn owner(&self) -> *mut c_void {
         us_quic_driver_owner(self)
+    }
+
+    /// Destroys `engine`, one of this driver's. No engine may be on the stack.
+    pub unsafe fn remove_engine(&self, engine: *mut c_void) {
+        // SAFETY: caller contract.
+        unsafe { us_quic_driver_remove_engine(self.as_mut_ptr(), engine) }
     }
 
     /// `lsquic_engine_process_conns` on every engine. Does nothing while an engine is on the stack.

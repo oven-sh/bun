@@ -594,6 +594,15 @@ describe("method", () => {
     expect(requestLine(await onTheWire(url => fetch({ url, ...init } as any)))).toBe(`${expected} / HTTP/1.1`);
   });
 
+  test.each(["Connect", "cONNECT", "Trace", "TRACK", "track", "Track"])("%s is forbidden", async method => {
+    using server = Bun.serve({ port: 0, fetch: req => new Response(req.method) });
+    const forbidden = new TypeError(`'${method}' HTTP method is unsupported.`);
+    expect(() => new Request(server.url.href, { method })).toThrow(forbidden);
+    await expect(fetch(server.url, { method })).rejects.toThrow(forbidden);
+    await expect(fetch({ url: server.url.href, method } as any)).rejects.toThrow(forbidden);
+    await expect((async () => server.fetch(server.url.href, { method }))()).rejects.toThrow(forbidden);
+  });
+
   test.concurrent("a method outside the table can carry a body", async () => {
     const request = await onTheWire(url => fetch(url, { method: "LIST", body: "payload" }));
     expect(requestLine(request)).toBe("LIST / HTTP/1.1");

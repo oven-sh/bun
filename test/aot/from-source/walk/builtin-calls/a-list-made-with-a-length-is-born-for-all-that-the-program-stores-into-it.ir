@@ -1,0 +1,44 @@
+# -- source: a-list-made-with-a-length-is-born-for-all-that-the-program-stores-into-it.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function forFractions(n: number): unknown[] {
+#   const list = new Array(n);
+#   for (let i = 0; i < list.length; i++) list[i] = 0;
+#   return list;
+# }
+# function forWholeNumbers(n: number): unknown[] {
+#   const list = new Array(n);
+#   for (let i = 0; i < list.length; i++) list[i] = 0;
+#   return list;
+# }
+# function forTexts(n: number): unknown[] {
+#   const list = new Array(n);
+#   for (let i = 0; i < list.length; i++) list[i] = 0;
+#   return list;
+# }
+# function forNobodyKnowsWhat(n: number): unknown[] {
+#   const list = new Array(n);
+#   for (let i = 0; i < list.length; i++) list[i] = 0;
+#   return list;
+# }
+# const n = id(9) | 0;
+# const fractions = forFractions(n), wholeNumbers = forWholeNumbers(n), texts = forTexts(n), unseen = id(forNobodyKnowsWhat(n));
+# for (let i = 0; i < n; i++) {
+#   fractions[i] = i * 0.5;
+#   wholeNumbers[i] = i | 1;
+#   texts[i] = "t" + i;
+#   unseen[i] = i * 0.5;
+# }
+# print(fractions.join(), wholeNumbers.join(), texts.join(), unseen.join());
+# -- end of source
+# f1 = forFractions, f2 = forWholeNumbers, f3 = forTexts, f4 = forNobodyKnowsWhat
+# A list made with a length is born for all that Link sees stored into lists born at that place; where Link has no word (the list went to unseen code) the first loop's word stands and the site remembers what its lists became.
+# RUN: walk f1:Body f2:Body f3:Body f4:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArrayLike {{*}} arrayStorage=Double
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewArrayLike {{*}} arrayStorage=Int32
+# CHECK-LABEL: code f3:Body
+# CHECK: = NewArrayLike {{*}} arrayStorage=Int32 {{*}}remembersStorageAtSite
+# CHECK-LABEL: code f4:Body
+# CHECK: = NewArrayLike {{*}} arrayStorage=Int32 {{*}}remembersStorageAtSite

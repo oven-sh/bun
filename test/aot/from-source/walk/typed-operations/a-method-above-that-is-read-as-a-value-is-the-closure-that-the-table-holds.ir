@@ -1,0 +1,16 @@
+# -- source: a-method-above-that-is-read-as-a-value-is-the-closure-that-the-table-holds.js
+# class Base { constructor(n) { this.n = n; } twice() { return this.n * 2; } }
+# class Derived extends Base {}
+# function run(o, turns) { let same = 0; const first = Base.prototype.twice; for (let i = 0; i < turns; i++) { if (i === 3) Base.prototype.twice = function later() { return 0; }; const f = o.twice; if (f === first) same++; } return same; }
+# print(run(new Derived(1), 6));
+# -- end of source
+# `const f = o.twice`: the method is not called, its value is compared. The records declare it above the receiver, and the closure table holds its one closure: that closure IS the object under
+# `Base.prototype.twice`. So the read is built as a read for a call is: behind the guard of the name, on every class from the receiver up, stands the closure of the table, and the comparison is one of
+# two words. In the fourth turn the program lays another function under the name: the guard ends, the closed read in the rare arm gives what lies there now.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewClosure function=f3 {{*}}[isHeldByClosureTable]
+# CHECK: = AreMembersUnchanged {{*}}key="twice"
+# CHECK: = StrictEq {{*}}form=Bits
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3

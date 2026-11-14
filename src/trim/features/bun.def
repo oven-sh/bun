@@ -3,6 +3,20 @@ feature InternalForTesting "bun:internal-for-testing and internal/test/binding"
 
 feature Test "bun:test and node:test"
   minimum 100000
+  cxx-function JSModuleMock (^|\s)Zig::JSModuleMock::
+  cxx-function JSMockFunction (^|\s)Bun::JSMockFunction::
+  cxx-function JSMockModule ::callFunc<Bun::JSMockModule::create\(
+  cxx-function runModuleMock (^|\s)Bun::runModuleMock\(
+  cxx-function keyOfImportWhileModuleMocksRun (^|\s)Bun::keyOfImportWhileModuleMocksRun\(
+  cxx-function requireOriginalModule (^|\s)Zig::requireOriginalModule\(
+  cxx-function importOriginalModule (^|\s)Zig::importOriginalModule\(
+  cxx-function jsFunctionEvaluateModuleMock (^|\s)Zig::jsFunctionEvaluateModuleMock\w*\(
+  cxx-function rankWaitingModuleMocks (^|\s)Zig::rankWaitingModuleMocks\(
+  cxx-function waitsForMockOf (^|\s)Zig::waitsForMockOf\(
+  cxx-function isWaitingForModule (^|\s)Zig::isWaitingForModule\(
+  cxx-function fetchedCompiledMockTurn (^|\s)Zig::fetchedCompiledMockTurn\(
+  cxx-function removeLingeringMock (^|\s)JSC::AOT::Modules::removeLingeringMock\(
+  cxx-function runFileBesideMock (^|\s)JSC::AOT::Modules::runFileBesideMock\(
 
 feature WebView "Bun.WebView"
 
@@ -79,6 +93,7 @@ feature BunJsc "bun:jsc"
 feature ModuleGraph "Bun.ModuleGraph"
 
 feature Valkey "Bun.redis and Bun.RedisClient"
+  cxx-function create_no_js_no_pubsub JSValkeyClient>::create_no_js_no_pubsub$
 
 feature RuntimeTranspiler "Bun.Transpiler and the transpiler for code loaded at run time"
   minimum 700000
@@ -171,8 +186,6 @@ feature TlsSockets "TLS sockets and servers"
   cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<(?:true|1)[,>]
 
 feature X509 "crypto.X509Certificate and crypto.KeyObject"
-
-feature SystemCaCertificates "tls.getCACertificates('system')"
 
 feature Tls "TLS"
   c-function us_internal_ssl_attach us_internal_ssl_detach us_internal_ssl_close us_internal_ssl_shutdown

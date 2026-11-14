@@ -237,6 +237,7 @@ const GRAMMAR_EARLY_ERRORS: &[(&str, u32)] = &[
     ("function f() { switch (a) { default: default: } }", 1113),
     ("a?.b`t`;", 1358),
     ("new.x;", 17012),
+    ("function f() { new.t\\u0061rget; }", 17012),
 ];
 
 fn parsed(path: &str, text: &str, test: impl for<'s> FnOnce(&Workspace<'s>, &File<'s>) + Send) {
@@ -750,6 +751,23 @@ fn legacy_octal_forms() {
             assert_eq!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
         });
     }
+}
+
+#[test]
+fn legacy_octal_forms_without_an_extension() {
+    for &text in LEGACY_OCTAL_FORMS {
+        parsed("bin/tool", text, |_, hir| {
+            assert!(!hir.is_js);
+            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
+            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
+        });
+        parsed("a.ts", text, |_, hir| {
+            assert!(!hir.diagnostics.is_empty(), "{text}");
+        });
+    }
+    parsed("bin/tool", r#"const x: string = "\033[0m";"#, |_, hir| {
+        assert!(hir.diagnostics.is_empty(), "{:?}", hir.diagnostics);
+    });
 }
 
 #[test]

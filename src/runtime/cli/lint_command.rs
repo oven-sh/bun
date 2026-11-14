@@ -7,7 +7,7 @@ use bstr::BStr;
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
-use bun_sys::File;
+use bun_sys::{Fd, File};
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
@@ -109,9 +109,11 @@ const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
-        && File::stdin().read_to_end_into(&mut program).is_ok()
+        && File::borrow(&Fd::stdin())
+            .read_to_end_into(&mut program)
+            .is_ok()
     {
-        ctx.runtime_options.eval.script = program.into_boxed_slice();
+        ctx.runtime_options.eval.script = program.leak();
         ctx.runtime_options.eval.reads_configuration = true;
     }
 }
@@ -228,7 +230,7 @@ fn run_to_end(
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },
@@ -264,8 +266,12 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
     let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
     let _ = Output::error_writer().write_all(stderr);
+    let reader_is_gone = |error: &bun_sys::Error| {
+        use bun_sys::E;
+        matches!(error.get_errno(), E::EPIPE | E::ENOTCONN | E::ECONNRESET)
+    };
     let exit_code = match write_result {
-        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+        Err(error) if !reader_is_gone(&error) => {
             let why = error.msg().unwrap_or(b"unknown error");
             Output::err_generic(
                 "Cannot write standard output: {}: {}",

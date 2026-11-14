@@ -1,4 +1,5 @@
-use super::support::{TestProgram, check_only, disk, with_program};
+use super::super::load::default_project;
+use super::support::{TestProgram, check_whole_files, disk, with_program};
 use crate::{Diagnostic, host};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -6,7 +7,9 @@ use bun_sema::atom::Interner;
 use bun_sema::config::{self, ConfigError, Project};
 use bun_sema::hir;
 use bun_sema::json::Json;
-use bun_sema::resolve::{Host, JsxEmit, ModuleKind, Options, ParseOptions, ScriptKind};
+use bun_sema::resolve::{
+    CodeOptions, Host, JsxEmit, ModuleKind, Options, ParseOptions, ScriptKind,
+};
 use bun_sema::session::{Arena, Session};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,7 +42,7 @@ fn is_governed(files: &[TestFile], path: &str) -> bool {
 }
 
 fn diagnostics_of(program: &TestProgram<'_, '_>) -> Vec<Diagnostic> {
-    let build = check_only(program);
+    let build = check_whole_files(program);
     let all = program.loaded.diagnostics.iter().chain(build.diagnostics());
     all.map(|it| it.diagnostic.clone()).collect()
 }
@@ -66,7 +69,6 @@ fn nearest_configuration_governs() {
     });
 }
 
-// What `npm create vite` writes: the tsconfig.json lists projects and has no file and no option of its own.
 const SOLUTION: [TestFile; 7] = [
     (
         CONFIG,
@@ -91,6 +93,49 @@ const SOLUTION: [TestFile; 7] = [
     ("test/t.ts", "export const t = 1;"),
     ("other/o.ts", "export const o = 1;"),
 ];
+
+#[test]
+fn configuration_of_most_entry_points_is_that_of_the_program() {
+    let files = &[
+        ("small/first.ts", "export const first = 1;"),
+        (
+            "small/tsconfig.json",
+            r#"{ "compilerOptions": { "strict": false } }"#,
+        ),
+        ("b.ts", "export const b = 1;"),
+        ("c.ts", "export const c = 1;"),
+        (CONFIG, r#"{ "compilerOptions": { "strict": true } }"#),
+    ];
+    let is_governed = |entry_points: &[&str]| {
+        with_program(files, entry_points, 1, |program| {
+            ["small/first.ts", "b.ts"].map(|path| governing_options(program, path).is_some())
+        })
+    };
+    assert_eq!(
+        is_governed(&["./small/first.ts", "./b.ts", "./c.ts"]),
+        [true, false]
+    );
+    assert_eq!(is_governed(&["./small/first.ts", "./b.ts"]), [false, true]);
+    assert_eq!(is_governed(&["./b.ts", "./small/first.ts"]), [true, false]);
+}
+
+#[test]
+fn entry_points_without_a_configuration_do_not_choose_that_of_the_program() {
+    let files = &[
+        ("node_modules/p/index.js", "export const p = 1;"),
+        ("node_modules/q/index.js", "export const q = 1;"),
+        ("b.ts", "export const b = 1;"),
+        (CONFIG, "{}"),
+    ];
+    let has_config_file = |entry_points: &[&str]| {
+        with_program(files, entry_points, 1, |program| {
+            program.files().options.has_config_file
+        })
+    };
+    let packages = ["./node_modules/p/index.js", "./node_modules/q/index.js"];
+    assert!(has_config_file(&[packages[0], packages[1], "./b.ts"]));
+    assert!(!has_config_file(&packages));
+}
 
 #[test]
 fn referenced_project_that_has_a_file_governs_it_under_references_alone() {
@@ -646,11 +691,53 @@ fn class_fields_stay_where_they_are_written_whatever_the_target() {
     let old_target = options_of(r#"{ "compilerOptions": { "target": "es2017" } }"#);
     assert!(old_target.use_define_for_class_fields);
     assert!(old_target.emit_standard_class_fields);
+    assert!(!old_target.reports_define_for_class_fields);
+    assert!(!old_target.reports_standard_class_fields);
     let assigned =
         r#"{ "compilerOptions": { "target": "esnext", "useDefineForClassFields": false } }"#;
     let assigned = options_of(assigned);
     assert!(!assigned.use_define_for_class_fields);
     assert!(!assigned.emit_standard_class_fields);
+    assert!(!assigned.reports_define_for_class_fields);
+    assert!(!assigned.reports_standard_class_fields);
+    for (written, reports_standard_class_fields) in [
+        (r#"{ "compilerOptions": { "target": "es2022" } }"#, true),
+        (
+            r#"{ "compilerOptions": { "target": "es2017", "useDefineForClassFields": true } }"#,
+            false,
+        ),
+        ("{}", true),
+    ] {
+        let options = options_of(written);
+        assert!(options.use_define_for_class_fields, "{written}");
+        assert!(options.emit_standard_class_fields, "{written}");
+        assert!(options.reports_define_for_class_fields, "{written}");
+        assert_eq!(
+            options.reports_standard_class_fields, reports_standard_class_fields,
+            "{written}"
+        );
+    }
+}
+
+#[test]
+fn a_folder_without_a_configuration_file_takes_the_default_library_of_tsc() {
+    let code = CodeOptions::bun_run(b"/project");
+    let entry_points = [project_path(A.0)];
+    let project = default_project(&disk_of(&[A]), &code, &entry_points);
+    assert!(!project.options.specifies_lib);
+    assert_eq!(project.options.libs, [b"esnext.full".to_vec()]);
+}
+
+#[test]
+fn a_project_that_writes_no_check_is_checked_and_keeps_what_is_found() {
+    let options_of =
+        |written: &'static str| load_project(&disk_of(&[(CONFIG, written), A])).options;
+    let written = options_of(r#"{ "compilerOptions": { "noCheck": true } }"#);
+    assert!(!written.no_check);
+    assert!(written.keeps_type_errors_to_itself);
+    for other in [r#"{ "compilerOptions": { "noCheck": false } }"#, "{}"] {
+        assert!(!options_of(other).keeps_type_errors_to_itself, "{other}");
+    }
 }
 
 #[test]

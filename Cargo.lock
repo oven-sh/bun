@@ -172,8 +172,6 @@ dependencies = [
  "bun_core",
  "bun_glob",
  "bun_js_parser",
- "bun_lint",
- "bun_lint_react_compiler",
  "bun_options_types",
  "bun_paths",
  "bun_react_compiler",
@@ -183,6 +181,7 @@ dependencies = [
  "bun_sema_driver",
  "bun_sema_parser",
  "bun_sema_standalone",
+ "bun_sort_by_number",
  "bun_sys",
  "bun_threading",
  "bun_trim",
@@ -212,6 +211,7 @@ dependencies = [
  "bun_core",
  "bun_removable_features",
  "bun_sema",
+ "bun_sort_by_number",
  "smallvec",
 ]
 
@@ -225,6 +225,7 @@ dependencies = [
  "bun_js_parser",
  "bun_options_types",
  "bun_paths",
+ "bun_react_compiler",
  "bun_sema",
  "bun_sema_driver",
  "bun_trim",
@@ -242,7 +243,6 @@ dependencies = [
  "bun_sys",
  "bun_tar",
  "bun_wyhash",
- "scopeguard",
  "thiserror",
 ]
 
@@ -367,6 +367,7 @@ dependencies = [
  "bun_paths",
  "bun_perf",
  "bun_ptr",
+ "bun_react_compiler",
  "bun_removable_features",
  "bun_resolve_builtins",
  "bun_resolver",
@@ -556,7 +557,6 @@ dependencies = [
  "bun_css_derive",
  "bun_io",
  "bun_paths",
- "bun_ptr",
  "bun_wyhash",
  "strum",
  "thiserror",
@@ -581,7 +581,6 @@ dependencies = [
  "bun_core",
  "bun_css",
  "bun_jsc",
- "bun_ptr",
 ]
 
 [[package]]
@@ -643,7 +642,6 @@ dependencies = [
  "bun_dispatch",
  "bun_dotenv",
  "bun_io",
- "bun_paths",
  "bun_ptr",
  "bun_sys",
  "bun_threading",
@@ -904,7 +902,6 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sys",
- "scopeguard",
 ]
 
 [[package]]
@@ -955,11 +952,14 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_glob",
  "bun_highway",
+ "bun_node_path",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
  "bun_react_compiler",
+ "bun_sys",
  "bun_url",
  "bun_wyhash",
  "criterion",
@@ -1464,6 +1464,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_png"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_highway",
+ "bun_zlib",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_pod"
 version = "0.0.0"
 dependencies = [
@@ -1627,6 +1638,7 @@ dependencies = [
  "bun_jsc",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lint",
  "bun_lint_driver",
  "bun_lsquic_sys",
  "bun_md",
@@ -1639,6 +1651,7 @@ dependencies = [
  "bun_paths",
  "bun_picohttp",
  "bun_platform",
+ "bun_png",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolve_builtins",
@@ -1722,6 +1735,7 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sema_standalone",
+ "bun_sort_by_number",
  "bun_threading",
  "bun_wyhash",
  "bun_zstd",
@@ -1851,6 +1865,10 @@ name = "bun_simdutf_sys"
 version = "0.0.0"
 
 [[package]]
+name = "bun_sort_by_number"
+version = "0.0.0"
+
+[[package]]
 name = "bun_sourcemap"
 version = "0.0.0"
 dependencies = [
@@ -1887,6 +1905,7 @@ dependencies = [
  "bun_jsc",
  "bun_options_types",
  "bun_paths",
+ "bun_removable_features",
  "bun_sourcemap",
  "bun_wyhash",
 ]
@@ -1962,7 +1981,6 @@ dependencies = [
  "bun_event_loop",
  "bun_io",
  "bun_jsc",
- "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",
@@ -1996,6 +2014,7 @@ dependencies = [
  "bun_paths",
  "bun_perf",
  "bun_resolver",
+ "bun_sema_standalone",
  "bun_sourcemap",
  "bun_sys",
  "bun_threading",

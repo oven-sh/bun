@@ -1,0 +1,35 @@
+# `for (..) s = (s + list[i] + t) | 0` with `t: number` from in front of the loop. The sum is cut to an int32, so it may be made in integers where every addend is one that fits.
+# `t` was held as a double: the generator turned it into an integer and asked whether that was exact IN EVERY TURN (six instructions), or left the whole sum in doubles: fifteen cycles a turn from one sum to the next.
+# A number from in front of the loop that a turn adds or takes away under a bit operator is asked for an int32 once, in front of the typed copy, and a double is held there as a number made out of its int32 word: whoever cuts the sum finds the word.
+# Only what cannot hold a fraction by its type is asked: `(position + drift) | 0` is how a sum with a fraction is cut, and a test that fails at every entry would cost the whole typed copy. In `any` the number may be a fraction, so nothing is asked of it. In `scaled` it is multiplied, not added.
+# -- source: a-number-from-in-front-of-the-loop-that-a-turn-adds-under-a-cut-to-an-int32-is-asked-for-one-in-front.ts
+# declare function hidden(): number;
+# declare function say(x: number): void;
+# function cut(list: number[], t: number): number { let s = 0; for (let i = 0; i < list.length; i++) s = (s + list[i]! + t) | 0; return s; }
+# function any(list: number[], t: number): number { let s = 0; for (let i = 0; i < list.length; i++) s = (s + list[i]! + t) | 0; return s; }
+# function scaled(list: number[], t: number): number { let s = 0; for (let i = 0; i < list.length; i++) s = (s + list[i]! * t) | 0; return s; }
+# const list = [hidden(), hidden(), hidden()], turns = hidden();
+# for (let k = 0; k < turns; k++) say(cut(list, k));
+# for (let k = 0; k < 7; k++) say(any(list, hidden()));
+# say(scaled(list, hidden()));
+# -- end of source
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest v1 testedType=i32
+# CHECK: @Int64 = Narrowed v1
+# CHECK: @Double = IntegerToNumber
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: = TypeTest v1 testedType=i32
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = TypeTest v1 testedType=i32
+# RUN(SHELL): run-in-shell const all = [1, 2147483647, 5, 2, 3, 0.5, 2147483648, -2147483649, NaN, -0, 4294967296, 1.5]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: -2147483643
+# SHELL-NEXT: -2147483640
+# SHELL-NEXT: -2147483634
+# SHELL-NEXT: -2147483642
+# SHELL-NEXT: 5
+# SHELL-NEXT: 2
+# SHELL-NEXT: 0
+# SHELL-NEXT: -2147483643
+# SHELL-NEXT: -2147483643
+# SHELL-NEXT: -1073741817

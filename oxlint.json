@@ -56,6 +56,10 @@
     "src/js/internal/repl/await.ts",
     "src/js/internal/repl/acorn.ts",
     "src/js/internal/repl/acorn-walk.ts",
+    "src/js/ahead-of-time/node/repl.ts",
+    "src/js/ahead-of-time/node/readline.ts",
+    "src/js/ahead-of-time/internal/readline/**",
+    "src/js/ahead-of-time/internal/repl/history.ts",
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors
@@ -70,6 +74,7 @@
 
     // TODO: fix these
     "src/js/node/http2.ts",
+    "src/js/ahead-of-time/node/http2.ts",
     "src/js/node/http.ts",
     "src/js/ahead-of-time/node/http.ts"
   ],
@@ -107,13 +112,21 @@
         "bun/no-duplicate-conditional-property-access": "error",
 
         // The same rule, except that `"unlikely";` may be the first statement of an arm of an `if`, which tells
-        // `bun build --compile --aot` that the arm rarely runs.
+        // `bun build --compile --aot` that the arm rarely runs, and `("frames are native code");` or
+        // `("has no frames");` the first statement of a function, which tells it how a stack trace lists the function.
         "no-unused-expressions": "off",
         "bun/no-unused-expressions": "error"
       }
     },
     {
-      "files": ["src/js/builtins/**"],
+      "files": ["src/js/builtins/**", "src/js/ahead-of-time/builtins/**"],
+      "rules": {
+        "bun/no-unused-expressions": "off"
+      }
+    },
+    {
+      // These read `error.stack` for what the read does, and say so to the rule of the other name.
+      "files": ["src/js/internal/streams/destroy.ts", "src/js/internal/streams/writable.ts"],
       "rules": {
         "bun/no-unused-expressions": "off"
       }

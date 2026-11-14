@@ -593,6 +593,7 @@ bun_core::comptime_string_map! {
         b"latin1" => Encoding::Latin1,
         b"buffer" => Encoding::Buffer,
         b"utf16le" => Encoding::Utf16le,
+        b"utf-16le" => Encoding::Utf16le,
         b"utf16-le" => Encoding::Utf16le,
         b"base64url" => Encoding::Base64url,
     };
@@ -1079,6 +1080,19 @@ impl PathLikeExt for PathLike<'_> {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathLike<'static>>> {
+        // The common road: a string, and no folder of an executable to start from.
+        let Some(arg) = arguments.next() else {
+            return Ok(None);
+        };
+        if arg.js_type() == jsc::JSType::String
+            && bun_core::working_directory_in_executable().is_none()
+            && !bun_standalone_graph::has_written_files()
+        {
+            let str = arg.to_bun_string(ctx)?;
+            arguments.eat();
+            let path = path_like_from_string(ctx, str, arguments.will_be_async)?;
+            return Valid::path_length(path, ctx, arguments).map(Some);
+        }
         Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
     }
 
@@ -1098,12 +1112,8 @@ impl PathLikeExt for PathLike<'_> {
         relative_paths: RelativePaths,
     ) -> JsResult<Option<PathLike<'static>>> {
         let will_be_async = arguments.will_be_async;
-        let from_string = |str: bun_core::String| match relative_paths {
-            RelativePaths::StartAtWorkingDirectory => {
-                path_like_from_working_directory(ctx, str, will_be_async)
-            }
-            RelativePaths::StayAsWritten => path_like_from_string(ctx, str, will_be_async),
-        };
+        let from_string =
+            |str: bun_core::String| path_like_resolved_by(ctx, str, relative_paths, will_be_async);
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
@@ -1124,9 +1134,9 @@ impl PathLikeExt for PathLike<'_> {
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();
-                match join_onto_working_directory_in_executable(buffer.slice()) {
-                    Some(path) if relative_paths == RelativePaths::StartAtWorkingDirectory => path,
-                    _ => PathLike::Buffer(buffer),
+                match find_path_meant(buffer.slice(), relative_paths) {
+                    Some(path) => path,
+                    None => PathLike::Buffer(buffer),
                 }
             }
 
@@ -1189,7 +1199,8 @@ impl PathLikeExt for PathLike<'_> {
         str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike<'static>> {
-        let path = path_like_from_working_directory(global, str, will_be_async)?;
+        let relative_paths = RelativePaths::StartAtWorkingDirectory;
+        let path = path_like_resolved_by(global, str, relative_paths, will_be_async)?;
         match Valid::path_too_long(path.slice()) {
             Some(err) => Err(global.throw_value(err.to_error_instance(global))),
             None => Ok(path),
@@ -1204,25 +1215,43 @@ pub(crate) enum RelativePaths {
 }
 
 /// The system resolves a relative path against its own working directory, which is never a folder of the executable.
-fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<PathLike<'static>> {
+fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
     use bun_paths::resolve_path::{self, platform};
     let directory = bun_core::working_directory_in_executable()?;
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
         return None;
     }
+    Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+}
+
+/// Whether `find_path_meant` may find another path than the one that is written.
+fn may_mean_another_path() -> bool {
+    bun_standalone_graph::has_written_files()
+        || bun_core::working_directory_in_executable().is_some()
+}
+
+/// The path that `path` means, where the system would take it for another: a relative one starts at the working directory of the program, and a file of the executable that the program has written is on the disk.
+fn find_path_meant(path: &[u8], relative_paths: RelativePaths) -> Option<PathLike<'static>> {
+    let joined = match relative_paths {
+        RelativePaths::StartAtWorkingDirectory => join_onto_working_directory_in_executable(path),
+        RelativePaths::StayAsWritten => None,
+    };
+    let on_disk = bun_standalone_graph::find_written_file(joined.as_deref().unwrap_or(path));
+    let joined = on_disk.map(<[u8]>::into_vec).or(joined)?;
     Some(PathLike::Joined(Box::new(bun_jsc::node_path::JoinedPath {
-        joined: resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec(),
+        joined,
         written: path.to_vec(),
     })))
 }
 
-fn path_like_from_working_directory(
+fn path_like_resolved_by(
     global: &JSGlobalObject,
     str: bun_core::String,
+    relative_paths: RelativePaths,
     will_be_async: bool,
 ) -> JsResult<PathLike<'static>> {
-    if bun_core::working_directory_in_executable().is_some()
-        && let Some(path) = join_onto_working_directory_in_executable(str.to_utf8().slice())
+    if may_mean_another_path()
+        && let Some(path) = find_path_meant(str.to_utf8().slice(), relative_paths)
     {
         return Ok(path);
     }

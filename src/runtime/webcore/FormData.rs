@@ -125,7 +125,7 @@ pub(crate) fn to_js_from_multipart_data(
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
-                    let ct = field.content_type.slice(buf);
+                    let ct = field.content_type.slice(buf).to_ascii_lowercase();
                     blob.content_type
                         .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
                     blob.content_type_was_set.set(true);

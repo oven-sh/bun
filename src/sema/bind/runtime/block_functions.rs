@@ -3,9 +3,13 @@ use super::bits::{has_bit, insert_bit};
 use super::declaration_kinds::{
     Declaration, DeclarationKind, FunctionPosition, declaration_kind, function_position,
 };
-use super::declarations::{Declarations, is_var_scope};
+use super::declarations::{Declarations, append_symbol, is_var_scope};
+use super::lookup::COMMONJS_VARIABLES;
 use super::{AnnexBFunction, BindingKind};
-use crate::bind::{BoundBuilder, ClassOwner, Decl, FnOwner, ScopeId, SymFlags, SymbolId};
+use crate::atom::known;
+use crate::bind::{
+    BoundBuilder, ClassOwner, Decl, FnOwner, ScopeId, ScopeKind, SymFlags, SymbolId,
+};
 use crate::hir::*;
 
 pub(super) fn has_sloppy_labeled_function(
@@ -58,10 +62,13 @@ impl Declarations<'_, '_> {
                 .intersects(Flags::ASYNC | Flags::GENERATOR);
             if is_plain
                 && self.is_sloppy(scope)
-                && !self.hir.follows_dropped_directive(self.hir.node(f))
                 && let Some(var_symbol) = self.find_annex_b_var(f, start)
             {
                 record_binding_kind(self.bound, var_symbol, BindingKind::Var);
+                insert_bit(
+                    &mut self.bound.runtime.variables_stored_by_functions_of_blocks,
+                    var_symbol.idx(),
+                );
                 let hoisted = AnnexBFunction {
                     function: f,
                     block_symbol,
@@ -116,8 +123,25 @@ impl Declarations<'_, '_> {
         existing.flags.contains(SymFlags::PARAMETER)
             || existing.decls.iter().any(|&decl| {
                 let kind = declaration_kind(hir, bound, decl);
-                matches!(kind, DeclarationKind::Lexical | DeclarationKind::Import)
+                matches!(
+                    kind,
+                    DeclarationKind::Lexical
+                        | DeclarationKind::Import
+                        | DeclarationKind::ImportEquals
+                )
             })
+    }
+
+    fn holds_arguments_object(&self, scope: ScopeId, declared: Option<SymbolId>) -> bool {
+        let (hir, bound) = (self.hir, &*self.bound);
+        let has_arguments = match bound.scopes[scope.idx()].kind {
+            ScopeKind::File => true,
+            ScopeKind::Fn(function) => bound.has_arguments(hir, function),
+            _ => false,
+        };
+        let is_var = |&decl: &Decl| declaration_kind(hir, bound, decl) == DeclarationKind::Var;
+        has_arguments
+            && declared.is_none_or(|symbol| bound.symbols[symbol.idx()].decls.iter().all(is_var))
     }
 
     fn find_annex_b_var(&mut self, f: FnId, start: ScopeId) -> Option<SymbolId> {
@@ -131,14 +155,23 @@ impl Declarations<'_, '_> {
             }
             scope = self.bound.scopes[scope.idx()].parent;
         }
-        if let Some((symbol, _)) = self.visible_binding(scope, name) {
-            return (!self.blocks_annex_b_var(symbol))
-                .then(|| self.bound.export_symbol_of_value_symbol_if_exported(symbol));
+        let mut parameters = COMMONJS_VARIABLES.into_iter();
+        let is_wrapper_parameter = self.bound.scopes[scope.idx()].kind == ScopeKind::File
+            && parameters.any(|parameter| parameter.name() == name);
+        let declared = self.visible_binding(scope, name);
+        let symbol = declared.map(|(symbol, _)| symbol);
+        if name == known::arguments && self.holds_arguments_object(scope, symbol) {
+            return None;
+        }
+        if let Some(symbol) = symbol {
+            return (!is_wrapper_parameter && !self.blocks_annex_b_var(symbol))
+                .then(|| self.bound.exported_value(symbol));
         }
         let (decl, kind) = (Decl::Fn(f), DeclarationKind::Var);
         let flags = SymFlags::FUNCTION_SCOPED_VARIABLE;
         let declaration = Declaration { decl, kind };
-        Some(self.append_binding(scope, name, flags, BindingKind::Var, declaration))
+        let variable = self.append_binding(scope, name, flags, BindingKind::Var, declaration);
+        (!is_wrapper_parameter).then_some(variable)
     }
 
     pub(super) fn create_class_bindings(&mut self) {
@@ -162,11 +195,20 @@ impl Declarations<'_, '_> {
                     inner
                 }
             };
-            self.bound
-                .runtime
-                .declarations
-                .inner_class_symbols
-                .push((id, inner));
+            let declarations = &mut self.bound.runtime.declarations;
+            declarations.inner_class_symbols.push((id, inner));
+            let has_legacy_decorators = hir.has_typescript_semantics() && hir.legacy_decorators;
+            let is_decorator =
+                |modifier: ModifierId| matches!(hir[modifier].kind, ModifierKind::Decorator(_));
+            if has_legacy_decorators || !class.modifiers.iter().any(is_decorator) {
+                continue;
+            }
+            let scope = declarations.symbol_scopes[inner.idx()];
+            let (flags, kind) = (SymFlags::CLASS, BindingKind::ClassInnerName);
+            let own = append_symbol(self.bound, class.name, flags, kind, Decl::Class(id), scope);
+            let declarations = &mut self.bound.runtime.declarations;
+            let own_bindings = &mut declarations.own_bindings_of_decorated_classes;
+            own_bindings.push((inner, own));
         }
     }
 }

@@ -1,0 +1,31 @@
+import { test, vi } from "bun:test";
+const turns = async count => {
+  for (let turn = 0; turn < count; turn++) await new Promise(done => setImmediate(done));
+};
+const required = name => {
+  try {
+    return String(require(name).label);
+  } catch {
+    return "refused";
+  }
+};
+let open;
+const gate = new Promise(done => (open = done));
+const left = () =>
+  vi.doMock("./spool.mjs", async () => {
+    await gate;
+    return { thread: "first" };
+  });
+test("a left load that waits for another mock too does not finish", async () => {
+  left();
+  vi.doMock("./dye.mjs", async () => {
+    await gate;
+    return { color: "late" };
+  });
+  console.log(required("./vat.mjs"));
+  vi.doMock("./spool.mjs", () => ({ thread: "later" }));
+  console.log(required("./loom.mjs"));
+  open();
+  await turns(4);
+  console.log("settled");
+});

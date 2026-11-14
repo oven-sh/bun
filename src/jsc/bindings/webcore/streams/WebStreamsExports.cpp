@@ -204,7 +204,7 @@ extern "C" uint8_t ReadableStream__bodyFacts(JSC::EncodedJSValue possibleReadabl
 extern "C" void ReadableStream__setBodyFacts(JSC::EncodedJSValue possibleReadableStream, uint8_t facts)
 {
     if (auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream)))
-        stream->m_bodyFacts = facts & 0x7;
+        stream->m_bodyFacts = facts;
 }
 
 // Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
@@ -411,15 +411,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     auto* stream = toReadableStream(globalObject, scope, streamValue);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSON(globalObject, stream)));
-}
-
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = toReadableStream(globalObject, scope, streamValue);
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSONSource(globalObject, stream)));
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBodyBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue contentType)

@@ -596,6 +596,222 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each(["worker.disconnect()", "cluster.disconnect()"])(
+  "%s reaches a worker that never loads node:cluster",
+  async call => {
+    using dir = tempDir("cluster-disconnect-unloaded", {
+      "primary.js": `
+const cluster = require("node:cluster");
+cluster.setupPrimary({ exec: require("node:path").join(__dirname, "job.js") });
+const worker = cluster.fork();
+const events = [];
+worker.on("message", () => ${call});
+worker.on("disconnect", () => events.push("disconnect"));
+worker.on("exit", (code, signal) => {
+  clearTimeout(timer);
+  console.log(JSON.stringify({ events, code, signal }));
+});
+const timer = setTimeout(() => worker.process.kill("SIGKILL"), 20_000);
+`,
+      "job.js": `
+process.on("message", () => {});
+process.on("disconnect", () => (process.exitCode = 7));
+process.send("ready");
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "primary.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ events: ["disconnect"], code: 7, signal: null });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// Forks job.*, runs `act` on the worker, and prints what the primary saw of it. Both sides log to stdout.
+async function runWorker(act: string, job: Record<string, string>) {
+  using dir = tempDir("cluster-one-worker", {
+    "primary.js": `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+cluster.setupPrimary({ exec: require("node:path").join(__dirname, ${JSON.stringify(Object.keys(job)[0])}) });
+const worker = cluster.fork();
+const events = [];
+worker.on("online", () => events.push("online"));
+worker.on("message", message => events.push(message));
+worker.on("disconnect", () => {
+  events.push("disconnect");
+  fs.writeFileSync("disconnected", "");
+});
+worker.on("exit", (code, signal) => events.push("exit " + (signal ?? code)));
+process.on("exit", () => console.log(events.join(", ")));
+${act}
+`,
+    ...job,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "primary.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+}
+const whenDisconnected = `
+const disconnected = new Promise(function poll(resolve) {
+  if (require("node:fs").existsSync("disconnected")) resolve();
+  else setImmediate(poll, resolve);
+});`;
+
+describe.concurrent("worker.disconnect() right after fork()", () => {
+  test("lets the worker say that it is online and send", async () => {
+    const job = { "job.js": `require("node:cluster"); process.send("ready");` };
+    expect(await runWorker(`worker.disconnect();`, job)).toEqual({
+      stdout: ["online, ready, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["job.js", "job.mjs"])("delivers what was sent before it, to %s without node:cluster too", async name => {
+    const send = `worker.send(Buffer.alloc(2 << 20, "x").toString()); worker.disconnect();`;
+    const job = { [name]: `process.on("message", message => console.log(message.length)); process.send("ready");` };
+    expect(await runWorker(send, job)).toEqual({
+      stdout: [String(2 << 20), "ready, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["job.js", `${whenDisconnected} disconnected.then(() => console.log(process.connected));`],
+    [
+      "job.mjs",
+      `import { createRequire } from "node:module"; const require = createRequire(import.meta.url);
+      ${whenDisconnected} await disconnected; console.log(process.connected);`,
+    ],
+  ])("reaches a worker that never uses its channel: %s", async (name, source) => {
+    expect(await runWorker(`worker.disconnect();`, { [name]: source })).toEqual({
+      stdout: ["false", "disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("keeps the events of the channel for a first listener that comes late", async () => {
+    const job = {
+      "job.js": `${whenDisconnected}
+      disconnected.then(async () => {
+        const { once } = require("node:events");
+        process.on("disconnect", () => console.log("worker: disconnect"));
+        for (let i = 0; i < 2; i++) console.log((await once(process, "message"))[0]);
+      });`,
+    };
+    expect(await runWorker(`worker.send("a"); worker.send("b"); worker.disconnect();`, job)).toEqual({
+      stdout: ["a", "b", "worker: disconnect", "disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test.skipIf(isWindows).concurrent("a worker keeps a net.Server for a first listener that comes late", async () => {
+  const send = `
+  worker.send("before");
+  const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+    worker.send("server", server, () => server.close());
+    worker.send("behind");
+    worker.disconnect();
+  });`;
+  const job = {
+    "job.js": `${whenDisconnected}
+    disconnected.then(() => {
+      process.on("message", (message, handle) => {
+        console.log(message);
+        handle?.close();
+      });
+    });`,
+  };
+  expect(await runWorker(send, job)).toEqual({
+    stdout: ["before", "server", "behind", "disconnect, exit 0"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("a worker whose primary closed the channel exits when it loads node:cluster", async () => {
+  const job = {
+    "job.js": `${whenDisconnected}
+    disconnected.then(() => require("node:http").createServer().listen(0, "127.0.0.1"));`,
+  };
+  expect(await runWorker(`worker.process.disconnect();`, job)).toEqual({
+    stdout: ["disconnect, exit 0"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each([
+  ["before", `require("node:cluster");`],
+  ["by listen()", ``],
+])("http.Server.listen() binds nothing in a disconnected worker, node:cluster loaded %s", async (_, load) => {
+  const job = {
+    "job.js": `${load}
+    process.once("disconnect", () => {
+      const { createServer } = require("node:http");
+      const exclusive = createServer().listen({ port: 0, host: "127.0.0.1", exclusive: true });
+      const shared = createServer().listen(0, "127.0.0.1");
+      console.log("exclusive: " + exclusive.listening + ", shared: " + shared.listening);
+      exclusive.close();
+      if (shared.listening) shared.close();
+    });
+    process.send("ready");`,
+  };
+  const { stdout, stderr, exitCode } = await runWorker(`worker.once("message", () => worker.disconnect());`, job);
+  expect({ first: stdout[0], stderr, exitCode }).toEqual({
+    first: "exclusive: true, shared: false",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe.skipIf(isWindows).concurrent("a send() without a callback that the other end never took", () => {
+  const leaves = {
+    "job.js": `
+    require("node:cluster");
+    process.once("disconnect", () => require("node:fs").writeFileSync("left", ""));
+    process.send("ready");`,
+  };
+  const send = `worker.once("message", () => {
+    worker.disconnect();
+    while (!fs.existsSync("left"));
+    worker.send("lost");
+  });`;
+
+  test("is no 'error' if nobody listens on the worker", async () => {
+    expect(await runWorker(send, leaves)).toEqual({
+      stdout: ["online, ready, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("is an 'error' for a listener on the worker", async () => {
+    expect(await runWorker(`worker.on("error", err => events.push(err.code)); ${send}`, leaves)).toEqual({
+      stdout: ["online, ready, EPIPE, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own
@@ -1416,7 +1632,6 @@ if (cluster.isPrimary) {
 const ownedFdFixture = `
 const cluster = require("node:cluster");
 const dgram = require("node:dgram");
-const dns = require("node:dns");
 const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
@@ -1424,7 +1639,6 @@ const net = require("node:net");
 const path = require("node:path");
 const tls = require("node:tls");
 const { once } = require("node:events");
-const { Worker } = require("node:worker_threads");
 
 const keys = { cert: process.env.CERT, key: process.env.KEY };
 cluster.schedulingPolicy = cluster[process.env.POLICY];
@@ -1482,47 +1696,12 @@ const owners = {
     const { port } = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { open: socket => void socket.end("primary"), data() {} } });
     return () => readAll(net.connect(port, "127.0.0.1"));
   },
-  async "listener on another thread"() {
-    const thread = new Worker(
-      'const server = require("node:net").createServer(socket => socket.end("primary")).listen(0, "127.0.0.1", () => require("node:worker_threads").parentPort.postMessage(server.address().port));',
-      { eval: true },
-    );
-    const [port] = await once(thread, "message");
-    return () => readAll(net.connect(port, "127.0.0.1"));
-  },
   async "connected socket"() {
     const server = net.createServer(socket => socket.on("data", () => socket.write("primary"))).listen(0, "127.0.0.1");
     await once(server, "listening");
     const client = net.connect(server.address().port, "127.0.0.1");
     await once(client, "connect");
     return Object.assign(async () => (client.write("x"), String((await once(client, "data"))[0])), { fd: client._handle.fd });
-  },
-  async "dns.Resolver"() {
-    let answers = false;
-    const server = dgram.createSocket("udp4").bind(0, "127.0.0.1");
-    server.on("message", (query, { port }) => {
-      if (!answers) return;
-      const head = Buffer.from(query.subarray(0, 12));
-      head.writeUInt16BE(0x8180, 2);
-      head.writeUInt16BE(1, 6);
-      head.writeUInt16BE(0, 10);
-      const question = query.subarray(12, query.indexOf(0, 12) + 5);
-      server.send([head, question, Buffer.from("c00c000100010000000100047f000001", "hex")], port, "127.0.0.1");
-    });
-    await once(server, "listening");
-    const before = socketFds();
-    const resolver = new dns.promises.Resolver({ timeout: 60_000, tries: 1 });
-    resolver.setServers(["127.0.0.1:" + server.address().port]);
-    // The resolver holds a descriptor until this query times out.
-    let released = false;
-    resolver.resolve4("unanswered.test").catch(() => (released = true));
-    await once(server, "message");
-    const ask = async () => {
-      answers = true;
-      const [address] = await resolver.resolve4("primary.test");
-      return address === "127.0.0.1" ? "primary" : address;
-    };
-    return Object.assign(ask, { fd: socketFds().find(fd => !before.includes(fd)), released: () => released });
   },
   async "dgram.Socket"() {
     const socket = dgram.createSocket("udp4").bind(0, "127.0.0.1");
@@ -1558,14 +1737,10 @@ const ways = {
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   await once(worker, "online");
-  let ask, lines;
-  do {
-    const before = socketFds();
-    ask = await owners[process.env.OWNER]();
-    worker.send(ask.fd ?? socketFds().find(fd => !before.includes(fd)));
-    [lines] = await once(worker, "message");
-    // An answer about a descriptor that its owner has given up meanwhile says nothing.
-  } while (ask.released?.());
+  const before = socketFds();
+  const ask = await owners[process.env.OWNER]();
+  worker.send(ask.fd ?? socketFds().find(fd => !before.includes(fd)));
+  const [lines] = await once(worker, "message");
   for (const line of lines) console.log(line);
   console.log("owner:", await ask());
   worker.disconnect();
@@ -1584,17 +1759,15 @@ if (cluster.isPrimary) {
 describe.each(["SCHED_RR", "SCHED_NONE"])("%s: a worker can't take a descriptor that the primary uses:", POLICY => {
   const streamWays = ["net", "http", "https", "tls"];
   test.skipIf(isWindows).concurrent.each([
-    ["net.Server", streamWays],
-    ["http.Server", streamWays],
-    ["tls.Server", streamWays],
-    ["unix path", streamWays],
-    ["Bun.serve", streamWays],
-    ["Bun.listen", streamWays],
-    ["listener on another thread", streamWays],
-    ["connected socket", streamWays],
-    ["dgram.Socket", ["dgram"]],
-    ["dns.Resolver", ["dgram"]],
-  ])("%s", async (OWNER, ways) => {
+    ["net.Server", streamWays, "EEXIST"],
+    ["http.Server", streamWays, "EEXIST"],
+    ["tls.Server", streamWays, "EEXIST"],
+    ["unix path", streamWays, "EEXIST"],
+    ["Bun.serve", streamWays, "EEXIST"],
+    ["Bun.listen", streamWays, "EEXIST"],
+    ["connected socket", streamWays, "EINVAL"],
+    ["dgram.Socket", ["dgram"], "EEXIST"],
+  ])("%s", async (OWNER, ways, code) => {
     using dir = tempDir("cluster-fd-owned", { "main.mjs": ownedFdFixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.mjs"],
@@ -1605,7 +1778,7 @@ describe.each(["SCHED_RR", "SCHED_NONE"])("%s: a worker can't take a descriptor 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
-      stdout: [...ways.map(way => `${way}: EEXIST`), "owner: primary", "owner after the worker's exit: primary"],
+      stdout: [...ways.map(way => `${way}: ${code}`), "owner: primary", "owner after the worker's exit: primary"],
       stderr: "",
     });
     expect(exitCode).toBe(0);

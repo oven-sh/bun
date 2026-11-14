@@ -1,0 +1,24 @@
+# f1 = total
+# -- source: for-of-over-a-set.ts
+# function total(values: Set<number>): number {
+#   let sum = 0;
+#   for (const value of values) sum += value;
+#   return sum;
+# }
+# declare const input: any;
+# const values = new Set<number>();
+# values.add(+input);
+# (globalThis as any).answer = total(values);
+# -- end of source
+# The compiler before this one: 14 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 0, patches 0, moves 0, unlikely 6.
+# RUN(X64): loops most:0 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 0
+# The compiler before this one: 81 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 42, patches 2, moves 9, unlikely or rare 34.
+# RUN(X64N6): steps most:51 f1 mechanisms=all-Inlining
+# REQUIRES(X64N6): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64N6-LABEL: unit f1:Body
+# X64N6-NEXT: steps: at most 51

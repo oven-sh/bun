@@ -134,15 +134,24 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
   test(
     "a queued response does not write before it has the connection",
     async () => {
-      const head = (length: number) =>
-        `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
-      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational"];
+      const first =
+        "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 10\r\n\r\nfirst-body";
+      const chunked = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+      const whole = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nsecond-body";
+      const second = {
+        write: `${chunked}5\r\nearly\r\nb\r\nsecond-body\r\n0\r\n\r\n`,
+        end: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nearly",
+        writeHead: "HTTP/1.1 201 Created\r\nx-early: yes\r\nContent-Length: 11\r\n\r\nsecond-body",
+        flushHeaders: `${chunked}b\r\nsecond-body\r\n0\r\n\r\n`,
+        writeContinue: `HTTP/1.1 100 Continue\r\n\r\n${whole}`,
+        writeInformational: `early${whole}`,
+      };
       expect(await run("queued", transport)).toEqual({
-        results: calls.map(call => ({
+        results: Object.entries(second).map(([call, sent]) => ({
           call,
           queued: true,
           result: "returned",
-          received: head(10) + "first-body" + head(11) + "second-body",
+          received: first + sent,
         })),
         stderr: "",
         exitCode: 0,

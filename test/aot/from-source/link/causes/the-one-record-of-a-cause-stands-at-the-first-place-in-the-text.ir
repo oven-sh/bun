@@ -1,0 +1,12 @@
+# two calls of one evaluator, the first in the text in a function, the second at the top level, in a build that asks for no report: the one record stands at the first in the text, not in the function with the lowest number
+# f1 = late
+# -- source: the-one-record-of-a-cause-stands-at-the-first-place-in-the-text.ts
+# declare const input: any;
+# function late() { return new Function(input); }
+# new Function(input);
+# late();
+# -- end of source
+# RUN: causes
+# CHECK-COUNT-1: cause EvaluatesText Function at f
+# RUN(FIRST): causes
+# FIRST: cause EvaluatesText Function at f1 v

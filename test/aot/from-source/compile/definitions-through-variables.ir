@@ -1,0 +1,15 @@
+# -- source: main.mjs
+# function make() { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } return function (e, r, n) { i ? i(e, r, { value: n, enumerable: !n }) : e[r] = n; }; }
+# const define = make(), made = {};
+# define(made, "a", 1);
+# define(made, "b", 0);
+# print(Object.keys(made), made.a, made.b, JSON.stringify(Object.getOwnPropertyDescriptor(made, "a")));
+# -- end of source
+# A variable is initialized with Object.defineProperty: where it holds the built-in, the built-in is called.
+# RUN: print f2
+# CHECK: Builtin builtin=ObjectDefineProperty
+# CHECK: StrictEq
+# CHECK: Builtin builtin=ObjectDefineProperty
+# CHECK: calleeName="i"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: b 1 0 {"value":1,"writable":false,"enumerable":false,"configurable":false}

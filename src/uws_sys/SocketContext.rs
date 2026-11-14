@@ -244,9 +244,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
-                // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
-                let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
+                let path = bun_core::ZStr::from_cstr(unsafe { bun_core::ffi::cstr(s) });
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
@@ -350,6 +348,8 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        // safe: no args; computed once per process and never freed.
+        pub safe fn us_get_default_ca_store_digest() -> &'static [u8; 32];
         /// Appends the certificates in the NUL-terminated PEM `content` to
         /// `ctx`'s trust store; returns 0 when nothing could be added.
         pub fn us_ssl_ctx_add_ca_cert(

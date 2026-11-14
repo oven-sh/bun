@@ -5,6 +5,7 @@ import { bunEnv, bunExe, expiredTls, isDebug, isLinux, tempDir, tls } from "harn
 import { createPrivateKey } from "node:crypto";
 import { join } from "node:path";
 import { listen, QuicError } from "node:quic";
+import { frames, tamperingRelay } from "../../node/quic/tampering-relay";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -1237,6 +1238,31 @@ describe("a response stream that ends without a FIN", () => {
   });
 });
 
+test.each([
+  ["wholeData", "abc"],
+  ["dataThenCutFrameHeader", "HTTP3ProtocolError"],
+  ["dataCutInItsPayload", "HTTP3ProtocolError"],
+] as const)("a response with a FIN after %s reads as %j", async (frame, expected) => {
+  const origin = await listen(
+    (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      keylog: true,
+      onkeylog: (line: string) => relay.keylog(line),
+      onheaders: () => relay.sendStream0("client", Buffer.from([...frames.status200, ...frames[frame]])),
+    } as any,
+  );
+  using relay = await tamperingRelay(origin.address!.port);
+  const received = await fetch(`https://127.0.0.1:${relay.port}/`, h3)
+    .then(res => res.text())
+    .catch(e => e.code);
+  origin.destroy();
+  expect(received).toBe(expected);
+});
+
 // fetch() follows a redirect from inside lsquic's callback for the connection
 // that delivered it. The request it queues on another origin's pooled
 // connection has to go out right away, not with that connection's next packet
@@ -1981,7 +2007,22 @@ describe("per-request tls options over http3", () => {
     expect(await attempt(`${base}/hello`, { ca: tls.cert, maxVersion: 0x0303 })).toBe("HTTP3Unsupported");
   });
 
-  test("verifies against tls.ca after an Alt-Svc upgrade", async () => {
+  test("reports options that can't be loaded as HTTP/1.1 does", async () => {
+    const codes = (options: object) =>
+      Promise.all([
+        attempt(`${base}/hello`, options),
+        fetch(`${base}/hello`, { protocol: "http1.1", tls: options } as RequestInit).catch(e => e.code),
+      ]);
+    expect({
+      ca: await codes({ ca: "not a certificate" }),
+      crl: await codes({ ca: tls.cert, crl: "not a CRL" }),
+    }).toEqual({
+      ca: ["FailedToOpenSocket", "FailedToOpenSocket"],
+      crl: ["InvalidCRL", "InvalidCRL"],
+    });
+  });
+
+  test("keep a request on TCP when Alt-Svc offers HTTP/3", async () => {
     const fixture = `
       import { fetchH3Internals } from "bun:internal-for-testing";
       const tls = ${JSON.stringify(tls)};
@@ -1999,7 +2040,7 @@ describe("per-request tls options over http3", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "0,1\n", stderr: "" });
+    expect({ stdout, stderr }).toEqual({ stdout: "0,0\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

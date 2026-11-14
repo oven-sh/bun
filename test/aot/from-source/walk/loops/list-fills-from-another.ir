@@ -1,0 +1,22 @@
+# -- source: list-fills-from-another.js
+# function doubled(data) {
+#   const out = [];
+#   for (let i = 0; i < data.length; i++)
+#     out[i] = data[i] * 2;
+#   return `[${out.join()}]`;
+# }
+# print(doubled(JSON.parse("[1,2,3]")));
+# print(doubled(JSON.parse("[1.5,2,3,4,5,6,7,8,9]")));
+# print(doubled(JSON.parse("[]")));
+# print(doubled(JSON.parse('["4",5]')));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK: ReserveArrayCapacity
+# CHECK: ExtendArrayLength
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: [2,4,6]
+# SHELL-NEXT: [3,4,6,8,10,12,14,16,18]
+# SHELL-NEXT: []
+# SHELL-NEXT: [8,10]
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

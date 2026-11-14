@@ -622,13 +622,103 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
     });
   });
 
-  test("is kept for HEAD, which has no body to decode", async () => {
-    using upstream = serveEncoded("gzip", gzipped);
-    using proxy = Bun.serve({
-      port: 0,
-      fetch: req => fetch(`http://127.0.0.1:${upstream.port}/`, { method: req.method }),
+  test("is kept when it names another coding than the one fetch() decoded", async () => {
+    const stored = brotliCompressSync(payload);
+    using upstream = serveEncoded("gzip", gzipSync(stored));
+    const get = () => fetch(`http://127.0.0.1:${upstream.port}/`);
+    const seen: Record<string, unknown> = {};
+    for (const encoding of ["br", "br, gzip", "aes128gcm"]) {
+      const init = { headers: { "content-encoding": encoding } };
+      using proxy = Bun.serve({
+        port: 0,
+        routes: {
+          "/static": new Response(await (await get()).blob(), init),
+          "/blob": async () => new Response(await (await get()).blob(), init),
+          "/stream": async () => new Response((await get()).body, init),
+        },
+      });
+      for (const path of ["/static", "/blob", "/stream"]) {
+        const res = await fetch(`http://127.0.0.1:${proxy.port}${path}`, { decompress: false });
+        seen[encoding + path] = [res.headers.get("content-encoding"), stored.equals(await res.bytes())];
+        expect(seen).toMatchObject({ [encoding + path]: [encoding, true] });
+      }
+    }
+  });
+
+  test.each(["GZIP", "x-gzip", "identity, gzip"])("is dropped when it's spelled %s", async encoding => {
+    using upstream = serveEncoded(encoding, gzipped);
+    using proxy = Bun.serve({ port: 0, fetch: () => fetch(`http://127.0.0.1:${upstream.port}/`) });
+    expect(await readWire(proxy)).toEqual({ encoding: null, length: String(payload.length), body: payload });
+  });
+
+  // They stand in for the GET, whose body goes out decoded.
+  describe.each([
+    ["HEAD", 200],
+    ["GET", 304],
+  ])("%s answered with %d", (method, status) => {
+    test.each<[string, (res: Response) => Response]>([
+      ["res", res => res],
+      ["res.clone()", res => res.clone()],
+      ["new Response(res.body, res)", res => new Response(res.body, res)],
+      ["{ status, headers }", res => new Response(res.body, { status: res.status, headers: res.headers })],
+      ["new Headers(res.headers)", res => new Response(null, { status, headers: new Headers(res.headers) })],
+    ])("goes with the encoded length: %s", async (_, shape) => {
+      using upstream = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(null, {
+            status,
+            headers: { "content-encoding": "gzip", "content-length": String(gzipped.length) },
+          }),
+      });
+      for (const decompress of [true, false]) {
+        using proxy = Bun.serve({
+          port: 0,
+          fetch: async () => shape(await fetch(`http://127.0.0.1:${upstream.port}/`, { method, decompress })),
+        });
+        expect(await readWire(proxy, method)).toEqual(
+          decompress
+            ? { encoding: null, length: null, body: "" }
+            : { encoding: "gzip", length: String(gzipped.length), body: "" },
+        );
+      }
     });
-    expect(await readWire(proxy, "HEAD")).toEqual({ encoding: "gzip", length: String(gzipped.length), body: "" });
+
+    test.each<[string, (headers: Headers) => void]>([
+      ["set()", headers => (headers.set("Content-Encoding", "gzip"), headers.set("Content-Length", "35"))],
+      ["append()", headers => (headers.delete("content-length"), headers.append("content-length", "35"))],
+    ])("is kept when the handler describes a body of its own with %s", async (_, describeBody) => {
+      using upstream = serveEncoded("gzip", gzipped);
+      using proxy = Bun.serve({
+        port: 0,
+        async fetch() {
+          const headers = new Headers((await fetch(`http://127.0.0.1:${upstream.port}/`)).headers);
+          describeBody(headers);
+          return new Response(null, { status, headers });
+        },
+      });
+      expect(await readWire(proxy, method)).toEqual({ encoding: "gzip", length: "35", body: "" });
+    });
+  });
+
+  test("a 206 with all of the encoded bytes becomes a 200", async () => {
+    const range = `bytes 0-${gzipped.length - 1}/${gzipped.length}`;
+    using upstream = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(gzipped, { status: 206, headers: { "content-encoding": "gzip", "content-range": range } }),
+    });
+    const seen: unknown[] = [];
+    for (const decompress of [true, false]) {
+      using proxy = Bun.serve({ port: 0, fetch: () => fetch(`http://127.0.0.1:${upstream.port}/`, { decompress }) });
+      const res = await fetch(`http://127.0.0.1:${proxy.port}/`, { decompress: false });
+      const { length } = await res.bytes();
+      seen.push([res.status, res.headers.get("content-encoding"), res.headers.get("content-range"), length]);
+    }
+    expect(seen).toEqual([
+      [200, null, null, payload.length],
+      [206, "gzip", range, gzipped.length],
+    ]);
   });
 
   // With `late`, the upstream holds most of the body back until fetch() has resolved.

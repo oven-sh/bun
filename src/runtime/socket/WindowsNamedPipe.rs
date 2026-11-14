@@ -38,13 +38,13 @@ use bun_uws::ssl_wrapper::{self, SSLWrapper};
 use bun_uws::{self as uws, Transport, us_bun_verify_error_t};
 
 use crate::socket::{NewSocket, TCPSocket, TLSSocket};
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 /// Live pipes, read by `bun:internal-for-testing` leak tests: `heapStats()` only sees the JS wrappers.
 pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -80,7 +80,7 @@ pub(crate) struct WindowsNamedPipe {
     pub(crate) incoming: JsCell<Vec<u8>>, // Maybe we should use IPCBuffer here as well
     pub(crate) connect_req: JsCell<uv::uv_connect_t>,
 
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) current_timeout: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
 }
@@ -247,7 +247,7 @@ impl WindowsNamedPipe {
     fn queue_free(this: *mut Self) {
         // SAFETY: the count just reached zero; `this` is live until the task runs.
         unsafe { (*this).vm }
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(bun_jsc::Task::init(this));
     }
 
@@ -520,13 +520,10 @@ impl WindowsNamedPipe {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED
+        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
 
-        self.event_loop_timer.with_mut(|t| {
-            t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
-        });
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if has_been_cleared {
             return;
@@ -557,9 +554,7 @@ impl WindowsNamedPipe {
             writer: JsCell::new(StreamingWriter::default()),
             incoming: JsCell::new(Vec::new()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::WindowsNamedPipe,
-            )),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: Cell::new(0),
             flags: Cell::new(Flags::DISCONNECTED),
         }));
@@ -915,8 +910,8 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            timer_all().remove(&self.event_loop_timer);
         }
         self.current_timeout.set(ms);
 
@@ -926,20 +921,9 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        self.event_loop_timer.next.set(next);
+        timer_all().insert(&raw const self.event_loop_timer);
     }
 
     /// Free internal resources, it can be called multiple times.

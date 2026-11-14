@@ -314,7 +314,7 @@ struct us_socket_group_t {
     /* Sockets currently parked in loop->data.low_prio_head with s->group == this.
      * They are NOT in head_sockets while queued, so close_all/deinit must
      * account for them separately. */
-    uint16_t low_prio_count;
+    uint32_t low_prio_count;
     unsigned char linked;
 };
 
@@ -336,7 +336,7 @@ void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
  * finalize, closing here would be a UAF on the owner's raw pointer).
- * `thread_ends`: a TLS socket sends no close_notify and ends with a FIN, as at the exit of a process. Otherwise it is reset, after a close_notify unless its last write fell short. */
+ * A TLS socket whose last write fell short is reset. `thread_ends`: any other sends no close_notify and ends with a FIN, as at the exit of a process. Otherwise it is reset after a close_notify. */
 void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners, int thread_ends) nonnull_fn_decl;
 
 /* Teardown: close_all_ex(g, 0, 1) on every group currently linked to the loop
@@ -344,6 +344,8 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners, i
  * connections, 0 if the loop was already idle. Listen sockets are NOT closed
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
+/* Whether `fd` is the descriptor of a listen socket of this loop. */
+int us_loop_listens_on(us_loop_r loop, LIBUS_SOCKET_DESCRIPTOR fd) nonnull_fn_decl;
 
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;
@@ -720,8 +722,12 @@ struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __att
 struct us_socket_t *us_socket_close_now(us_socket_r s) nonnull_fn_decl;
 /* How long a socket whose owner let go waits for its peer: to answer the FIN, or over TLS to take the unsent ciphertext and then to answer the close_notify. */
 #define LIBUS_LINGER_SECONDS 10
-/* For an owner that has sent its last byte: sends the FIN, drops input, and closes at the peer's FIN or after LIBUS_LINGER_SECONDS. close(2) over input that is unread or still arrives would reset the connection, and a reset can take what the peer hasn't read yet. on_close is the only event the owner still gets. */
+/* How much input us_socket_close_lingering drops. Past it the socket stops reading, so the peer's send blocks and it turns to what it hasn't read yet. */
+#define LIBUS_LINGER_MAX_BYTES (8 * 1024 * 1024)
+/* For an owner that has sent its last byte: sends the FIN, drops input, and closes at the peer's FIN or after LIBUS_LINGER_SECONDS. close(2) over input that is unread or still arrives would reset the connection, and a reset can take what the peer hasn't read yet. No us_socket_timeout() moves that deadline. The owner of a plain socket only gets on_close. Over TLS it has to drop what comes ahead of the peer's close_notify. */
 struct us_socket_t *us_socket_close_lingering(us_socket_r s) nonnull_fn_decl;
+/* The owner queued the end of the stream and calls us_socket_close_lingering once it is sent. Closing the group before that resets the connection. */
+void us_socket_set_owner_holds_tail(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_local_port(us_socket_r s) nonnull_fn_decl;
 int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
@@ -776,6 +782,9 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+#ifndef WIN32
+void us_socket_read_now(us_socket_r s);
+#endif
 
 #ifdef __cplusplus
 }

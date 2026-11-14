@@ -122,6 +122,24 @@ fn with_trait_bounds(input: &DeriveInput, trait_path: &TokenStream2) -> syn::Gen
     g
 }
 
+/// The arena lifetime, and impl generics that bound each type parameter by `trait_name<'bump>`.
+fn with_arena_trait_bounds(
+    input: &DeriveInput,
+    trait_name: &syn::Ident,
+) -> (Lifetime, syn::Generics) {
+    let existing = input.generics.lifetimes().next();
+    let bump_lt = existing.map_or_else(
+        || Lifetime::new("'__bump", Span::call_site()),
+        |l| l.lifetime.clone(),
+    );
+    let mut g = with_trait_bounds(input, &quote!(::bun_css::generics::#trait_name<#bump_lt>));
+    if existing.is_none() {
+        let param = LifetimeParam::new(bump_lt.clone());
+        g.params.insert(0, GenericParam::Lifetime(param));
+    }
+    (bump_lt, g)
+}
+
 fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let generics = with_trait_bounds(input, &quote!(::bun_css::generics::CssEql));
@@ -478,42 +496,7 @@ fn expand_is_compatible(input: &DeriveInput) -> syn::Result<TokenStream2> {
 fn expand_deep_clone(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 
-    // Pick the arena lifetime: reuse the type's first lifetime param, or mint
-    // a fresh `'__bump` if it has none.
-    let existing_lt = input
-        .generics
-        .lifetimes()
-        .next()
-        .map(|l| l.lifetime.clone());
-    let bump_lt = existing_lt
-        .clone()
-        .unwrap_or_else(|| Lifetime::new("'__bump", Span::call_site()));
-
-    // Build the impl-side generics (may need an extra lifetime + where-bounds).
-    let mut impl_generics = input.generics.clone();
-    if existing_lt.is_none() {
-        impl_generics.params.insert(
-            0,
-            GenericParam::Lifetime(LifetimeParam::new(bump_lt.clone())),
-        );
-    }
-    {
-        // `T: DeepClone<'bump>` for every type parameter.
-        let ty_params: Vec<_> = input
-            .generics
-            .type_params()
-            .map(|tp| tp.ident.clone())
-            .collect();
-        if !ty_params.is_empty() {
-            let wc = impl_generics.make_where_clause();
-            for ident in ty_params {
-                wc.predicates.push(parse_quote! {
-                    #ident: ::bun_css::generics::DeepClone<#bump_lt>
-                });
-            }
-        }
-    }
-
+    let (bump_lt, impl_generics) = with_arena_trait_bounds(input, &format_ident!("DeepClone"));
     let (impl_g, _, where_g) = impl_generics.split_for_impl();
     let (_, ty_g, _) = input.generics.split_for_impl();
 
@@ -729,21 +712,21 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
         #[automatically_derived]
-        impl ::bun_css::generics::Parse for #name {
+        impl<'__bump> ::bun_css::generics::Parse<'__bump> for #name {
             #[inline]
             fn parse(
-                __input: &mut ::bun_css::css_parser::Parser<'_>,
-            ) -> ::bun_css::Result<Self> {
+                __input: &mut ::bun_css::css_parser::Parser<'_, '__bump>,
+            ) -> ::bun_css::Result<'__bump, Self> {
                 <Self as ::bun_css::EnumProperty>::parse(__input)
             }
         }
         #[automatically_derived]
-        impl ::bun_css::generics::ParseWithOptions for #name {
+        impl<'__bump> ::bun_css::generics::ParseWithOptions<'__bump> for #name {
             #[inline]
             fn parse_with_options(
-                __input: &mut ::bun_css::css_parser::Parser<'_>,
+                __input: &mut ::bun_css::css_parser::Parser<'_, '__bump>,
                 _: &::bun_css::css_parser::ParserOptions,
-            ) -> ::bun_css::Result<Self> {
+            ) -> ::bun_css::Result<'__bump, Self> {
                 <Self as ::bun_css::EnumProperty>::parse(__input)
             }
         }
@@ -756,9 +739,9 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 match *self { #(#to_str_arms)* }
             }
             #[inline]
-            pub fn parse(
-                __input: &mut ::bun_css::css_parser::Parser<'_>,
-            ) -> ::bun_css::Result<Self> {
+            pub fn parse<'__bump>(
+                __input: &mut ::bun_css::css_parser::Parser<'_, '__bump>,
+            ) -> ::bun_css::Result<'__bump, Self> {
                 <Self as ::bun_css::EnumProperty>::parse(__input)
             }
             #[inline]
@@ -1034,6 +1017,7 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
     };
     let shapes = classify(data)?;
     let (_, ty_g, _) = input.generics.split_for_impl();
+    let (bump_lt, bounded) = with_arena_trait_bounds(input, &format_ident!("Parse"));
 
     // Void variants and payload variants must each be contiguous, and are
     // tried in declaration-block order: split into the two contiguous groups
@@ -1074,16 +1058,13 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         quote! {
-            |__p: &mut ::bun_css::css_parser::Parser<'_>| -> ::bun_css::Result<Self> {
+            |__p: &mut ::bun_css::css_parser::Parser<'_, #bump_lt>|
+             -> ::bun_css::Result<#bump_lt, Self> {
                 let __loc = __p.current_source_location();
                 let __id = __p.expect_ident()?;
                 #(#arms)*
                 ::core::result::Result::Err(
-                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(
-                        // SAFETY: `__id` is a sub-slice of the parser's source
-                        // buffer (see `enum_property_util::parse`).
-                        unsafe { ::bun_css::css_parser::src_str(__id) },
-                    )),
+                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(__id)),
                 )
             }
         }
@@ -1156,16 +1137,15 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // `parse` is kept as a thin forwarder for call sites that don't import the
     // trait. `ParseWithOptions` ignores options — types that
     // genuinely consume options hand-write their own impl instead of deriving.
-    let bounded = with_trait_bounds(input, &quote!(::bun_css::generics::Parse));
     let (b_impl_g, _, b_where_g) = bounded.split_for_impl();
 
     Ok(quote! {
         #[automatically_derived]
-        impl #b_impl_g ::bun_css::generics::Parse for #name #ty_g #b_where_g {
+        impl #b_impl_g ::bun_css::generics::Parse<#bump_lt> for #name #ty_g #b_where_g {
             #[allow(unreachable_code)]
             fn parse(
-                __input: &mut ::bun_css::css_parser::Parser<'_>,
-            ) -> ::bun_css::Result<Self> {
+                __input: &mut ::bun_css::css_parser::Parser<'_, #bump_lt>,
+            ) -> ::bun_css::Result<#bump_lt, Self> {
                 #[allow(unused_imports)]
                 use ::bun_css::generics::Parse as _;
                 #body
@@ -1173,12 +1153,12 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        impl #b_impl_g ::bun_css::generics::ParseWithOptions for #name #ty_g #b_where_g {
+        impl #b_impl_g ::bun_css::generics::ParseWithOptions<#bump_lt> for #name #ty_g #b_where_g {
             #[inline]
             fn parse_with_options(
-                __input: &mut ::bun_css::css_parser::Parser<'_>,
+                __input: &mut ::bun_css::css_parser::Parser<'_, #bump_lt>,
                 _: &::bun_css::css_parser::ParserOptions,
-            ) -> ::bun_css::Result<Self> {
+            ) -> ::bun_css::Result<#bump_lt, Self> {
                 <Self as ::bun_css::generics::Parse>::parse(__input)
             }
         }
@@ -1187,8 +1167,8 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl #b_impl_g #name #ty_g #b_where_g {
             #[inline]
             pub fn parse(
-                __input: &mut ::bun_css::css_parser::Parser<'_>,
-            ) -> ::bun_css::Result<Self> {
+                __input: &mut ::bun_css::css_parser::Parser<'_, #bump_lt>,
+            ) -> ::bun_css::Result<#bump_lt, Self> {
                 <Self as ::bun_css::generics::Parse>::parse(__input)
             }
         }

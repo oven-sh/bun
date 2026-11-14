@@ -1,5 +1,6 @@
 //! https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
 
+use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
@@ -65,7 +66,7 @@ impl CondExpr {
                     if (idx as usize) >= n.args.len() {
                         return Self::command_impl_start(interp, this, n.op);
                     }
-                    let atom: *const ast::Atom = n.args.get_const(idx as usize);
+                    let atom = n.args.get_const(idx as usize);
                     let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }
@@ -97,7 +98,7 @@ impl CondExpr {
                 // back on the main thread via `on_stat_task_done`.
                 let (cwd_fd, mut path) = {
                     let me = interp.as_condexpr(this);
-                    let cwd_fd = me.base.shell().cwd_fd;
+                    let cwd_fd = me.base.shell().cwd_fd.fd();
                     (cwd_fd, me.args[0].clone())
                 };
                 if path.last() != Some(&0) {
@@ -192,15 +193,20 @@ impl CondExpr {
         path: &[u8],
     ) {
         // Evaluate `op` against the stat result.
-        let _ = path;
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
             CondExprState::WaitingStat
         ));
         let op = interp.as_condexpr(this).node.op;
-        let exit = match stat {
-            Err(_) => 1,
-            Ok(st) => {
+        let cwd = interp.as_condexpr(this).base.shell().cwd();
+        let operand = path.strip_suffix(b"\0").unwrap_or(path);
+        let embedded = match stat {
+            Err(_) => stat_embedded_shell_operand(cwd, operand),
+            Ok(_) => None,
+        };
+        let exit = match stat.as_ref().ok().or(embedded.as_ref()) {
+            None => 1,
+            Some(st) => {
                 let mode = st.st_mode as _;
                 let ok = match op {
                     ast::CondExprOp::DashF => bun_sys::S::ISREG(mode),

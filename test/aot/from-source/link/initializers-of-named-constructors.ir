@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# function Box(n) { this.count = n; this.late(); }
+# Box.prototype.late = function () { this.lateSum = 0; this.reset(1); };
+# Box.prototype.reset = function (by) { this.lateSteps = by; };
+# Box.prototype.other = function () { this.more = 1; };
+# var b = new Box(3);
+# b.other();
+# print(b.count + b.lateSum + b.lateSteps + b.more);
+# -- end of source
+# The fields that methods store which the constructor calls are fields of the constructor's layout.
+# RUN: link fields mechanisms=all
+# CHECK: "lateSum"
+# CHECK-NOT: "lateSum" appended
+# CHECK-NOT: "lateSteps" appended
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 5

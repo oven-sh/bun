@@ -1,7 +1,7 @@
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use super::{Kind, TimerObjectInternals};
+use super::{Clock, Kind, TimerObjectInternals};
 
 // `Immediate`, declared in `Timer.bind.ts`.
 super::impl_timer_object!(ImmediateObject);
@@ -12,8 +12,9 @@ impl ImmediateObject {
         id: u64,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments, clock)
     }
 
     /// Thin forwarder to
@@ -24,9 +25,9 @@ impl ImmediateObject {
     ///
     /// # Safety
     /// `this` was produced by `enqueue_immediate_task` from a live
-    /// heap-allocated `ImmediateObject`; `vm` is the live per-thread VM.
+    /// heap-allocated `ImmediateObject`.
     #[inline]
-    pub(crate) unsafe fn run_immediate_task(this: *mut Self, vm: *mut VirtualMachine) -> bool {
+    pub(crate) unsafe fn run_immediate_task(this: *mut Self, vm: &VirtualMachine) -> bool {
         // SAFETY: per fn contract — `this` is live; `internals` is an embedded
         // field. Do NOT form `&mut *this` (the body may `deref()` and free).
         // `run_immediate_task` takes `*mut Self` (noalias re-entrancy).
@@ -38,7 +39,7 @@ impl ImmediateObject {
     /// # Safety
     /// `this` must be a live heap-allocated `ImmediateObject`.
     #[inline]
-    pub(crate) unsafe fn cancel_pending(this: *mut Self, vm: *mut VirtualMachine) {
+    pub(crate) unsafe fn cancel_pending(this: *mut Self, vm: &VirtualMachine) {
         // SAFETY: do not form `&mut *this` — the body derefs and may free `*this`.
         unsafe {
             TimerObjectInternals::cancel_pending_immediate(

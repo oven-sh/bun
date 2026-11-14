@@ -100,6 +100,13 @@ impl Handlers {
         self.cell.root(global)
     }
 
+    /// Keeps the cell alive for a frame that reads it after running JS: a `connect()` made there puts another cell in the wrapper's slot.
+    #[inline]
+    #[must_use = "the cell is collectable as soon as this drops"]
+    pub(crate) fn keep_cell_alive(&self) -> bun_jsc::EnsureStillAlive {
+        bun_jsc::EnsureStillAlive(self.cell())
+    }
+
     /// Records the listener that accepted these sockets (server mode only), or
     /// clears it when that listener is dropped.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
@@ -209,9 +216,10 @@ impl Handlers {
     pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
         let context = self.vm.enter_context(self.context);
-        self.vm.event_loop_ref().enter();
+        self.vm.event_loop().enter();
         Scope {
             handlers: Rc::clone(self),
+            _cell: self.keep_cell_alive(),
             _context: context,
         }
     }
@@ -259,7 +267,7 @@ impl Handlers {
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                listener.poll_ref.unref(bun_io::js_vm_ctx());
                 listener.this_value.with_mut(|r| r.downgrade());
                 listener
                     .strong_data
@@ -287,16 +295,13 @@ impl Handlers {
         let on_error = self.on_error();
 
         if on_error.is_empty() {
-            // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object
+                .bun_vm()
+                .uncaught_exception(&global_object, args[1], false);
             return Ok(());
         }
 
-        global_object.bun_vm().event_loop_mut().run_callback(
+        global_object.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             on_error,
             &global_object,
@@ -304,6 +309,31 @@ impl Handlers {
             args,
         );
         Ok(())
+    }
+
+    /// Calls `callback(socket)` and routes what it throws to `call_error_handler`.
+    pub(crate) fn call_with_socket(&self, callback: JSValue, this_value: JSValue) -> JsResult<()> {
+        let global = self.global_object;
+        match callback.call(&global, this_value, &[this_value]) {
+            Ok(_) => Ok(()),
+            Err(err) => self.call_error_handler(this_value, &[this_value, global.take_error(err)]),
+        }
+    }
+
+    /// Calls `writeComplete(socket, status)`. What it throws is an uncaught exception, as in Node.
+    pub(crate) fn call_write_complete(&self, this_value: JSValue, status: core::ffi::c_int) {
+        let callback = self.on_write_complete();
+        if callback.is_empty() {
+            return;
+        }
+        let global = self.global_object;
+        global.bun_vm().event_loop().run_callback(
+            self.context,
+            callback,
+            &global,
+            this_value,
+            &[this_value, JSValue::js_number_from_int32(status)],
+        );
     }
 
     pub(crate) fn from_js(
@@ -439,6 +469,7 @@ impl Handlers {
 /// to invoke outlive a `close()` from inside them.
 pub(crate) struct Scope {
     pub(crate) handlers: Rc<Handlers>,
+    _cell: bun_jsc::EnsureStillAlive,
     _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
@@ -449,7 +480,7 @@ impl Scope {
     /// `upgradeTLS` the socket, so the caller must observe the resulting
     /// `handlers` state before deciding whether to decrement.
     pub(crate) fn exit_event_loop(&self) {
-        self.handlers.vm.event_loop_ref().exit();
+        self.handlers.vm.event_loop().exit();
     }
 
     /// The `active_connections` half: decrements and, on reaching zero,
@@ -466,10 +497,13 @@ pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
+    /// node:net sets the private `$fdIsWriteOnly`: `fd` is a pipe, a terminal or a socket that is only written to, in its own blocking mode.
     pub(crate) fd_is_write_only: bool,
     pub(crate) local_binding: Option<(Box<[u8]>, u16)>,
     pub(crate) ssl: Option<SSLConfig>,
     pub(crate) handlers: Rc<Handlers>,
+    /// No wrapper holds the cell of `handlers` yet.
+    _cell_root: Strong,
     pub(crate) default_data: JSValue,
     pub(crate) exclusive: bool,
     pub(crate) allow_half_open: bool,
@@ -527,7 +561,9 @@ impl SocketConfig {
                     }
                 }
             };
+            let handlers = Handlers::from_generated(global, &generated.handlers, mode)?;
             break 'blk SocketConfig {
+                _cell_root: handlers.root_cell(global),
                 hostname_or_unix: Utf8Bytes::EMPTY,
                 port: None,
                 fd: generated.fd.map(|v| {
@@ -537,13 +573,13 @@ impl SocketConfig {
                     }
                     Fd::from_uv(v)
                 }),
-                fd_is_write_only: generated.fd_is_write_only,
+                fd_is_write_only: false,
                 local_binding: generated.local_address.map(|address| {
                     let port = generated.local_port.unwrap_or(0.0).clamp(0.0, 65535.0) as u16;
                     (address.into_utf8().into_vec().into_boxed_slice(), port)
                 }),
                 ssl,
-                handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
+                handlers,
                 default_data: if generated.data.is_undefined() {
                     JSValue::ZERO
                 } else {
@@ -615,6 +651,9 @@ impl SocketConfig {
         config.default_timeout = opts
             .fast_get(global_object, bun_jsc::BuiltinName::defaultTimeout)?
             .is_none_or(|value| value.to_boolean());
+        config.fd_is_write_only = opts
+            .fast_get(global_object, bun_jsc::BuiltinName::fdIsWriteOnly)?
+            .is_some_and(|value| value.to_boolean());
         Ok(config)
     }
 }

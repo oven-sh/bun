@@ -43,14 +43,7 @@ pub(crate) fn set_callbacks<'a>(
     let global = cx.global();
     // Only the first call takes effect; subsequent calls are ignored
     // (node/src/quic/bindingdata.cc `BindingData::SetCallbacks`).
-    if global
-        .bun_vm()
-        .as_mut()
-        .rare_data()
-        .node_quic_callbacks
-        .get()
-        .is_some()
-    {
+    if global.bun_vm().rare_data().node_quic_callbacks.get().has() {
         return Ok(());
     }
     let callbacks_obj = callbacks.to_js();

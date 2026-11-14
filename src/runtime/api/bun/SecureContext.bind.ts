@@ -16,6 +16,7 @@ export const SecureContext = b.class({
     _external: { getter: b.any.returning("undefined"), capability: "heap" },
     addCACert: { args: { cert: b.any }, capability: "js", throws: true },
     getTicketKeys: { returns: b.bufferSource, capability: "heap", throws: true },
+    setSessionIdContext: { args: { name: b.string.utf8 }, capability: "js", throws: true },
     /** `node:tls` has checked the type and the length, with Node's messages. */
     setTicketKeys: { args: { keys: b.bytes({ from: ["buffer"] }) }, capability: "heap", throws: true },
   },

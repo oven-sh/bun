@@ -1,0 +1,8 @@
+# -- source: constant-sums-are-integers.ts
+# declare function sink(value: unknown): void;
+# function total(turns: number) { let n = 0; for (let k = 0; k < turns; k++) n += 3; return n; }
+# sink(total(100000));
+# -- end of source
+# The constant that each unrolled iteration adds is added as an integer.
+# RUN: compile UnrolledLoopIntegerSums mechanisms=all
+# CHECK: statistic UnrolledLoopIntegerSums 1

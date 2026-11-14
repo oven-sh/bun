@@ -694,6 +694,124 @@ describe("https.createServer forwards every TLS server option", () => {
   });
 });
 
+// Node needs the listener, so it answers only where it gets called. Here the server has always answered.
+describe.concurrent.each([
+  ["http", "connection"],
+  ["https", "connection"],
+  ["https", "secureConnection"],
+] as const)("an %s server without its own '%s' listener", (protocol, event) => {
+  type Hand = (socket: net.Socket) => void;
+  test.each<[string, ((socket: net.Socket, hand: Hand) => void) | undefined]>([
+    ["removed", undefined],
+    ["called at once", (socket, hand) => hand(socket)],
+    ["called later", (socket, hand) => void setImmediate(hand, socket)],
+    [
+      "called after a look at the first byte",
+      (socket, hand) =>
+        void socket.once("readable", () => {
+          socket.unshift(socket.read(1));
+          hand(socket);
+        }),
+    ],
+  ])("answers, reports and closes: %s", async (_, replacement) => {
+    const timeouts: number[] = [];
+    const onRequest: http.RequestListener = (req, res) => {
+      timeouts.push(req.socket.listenerCount("timeout"));
+      res.end("ok");
+    };
+    const server = protocol === "http" ? http.createServer(onRequest) : https.createServer(validCert, onRequest);
+    const own = server.listeners(event);
+    server.removeAllListeners(event);
+    if (replacement) {
+      server.on(event, socket => replacement(socket, socket => own.forEach(listener => listener.call(server, socket))));
+    }
+    const port = await listen(server);
+
+    const client =
+      protocol === "http"
+        ? net.connect(port, "127.0.0.1")
+        : tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    const [response] = await once(client, "data");
+    expect(String(response)).toEndWith("\r\n\r\nok");
+    expect(timeouts).toEqual([1]);
+
+    client.write("not http\r\n\r\n");
+    const [error] = await once(server, "clientError");
+    expect(error.code).toBe("HPE_INVALID_METHOD");
+
+    client.on("error", () => {});
+    server.closeAllConnections();
+    await new Promise(resolve => client.once("close", resolve));
+    await once(server.close(), "close");
+  });
+});
+
+test.concurrent.each(["http", "https"])("an %s server answers after a prepended listener threw", async protocol => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const module = require("node:${protocol}");
+      process.on("uncaughtException", err => console.log(err.message));
+      const server = module.createServer(${protocol === "https" ? JSON.stringify(validCert) : "{}"}, (req, res) => res.end("ok"));
+      for (const event of ["connection", "secureConnection"]) server.prependListener(event, () => { throw new Error(event); });
+      server.listen(0, "127.0.0.1", () => {
+        module.get({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false, agent: false }, res => {
+          res.on("data", chunk => console.log(String(chunk))).on("end", () => server.close());
+        });
+      });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: protocol === "https" ? "connection\nsecureConnection\nok\n" : "connection\nok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("a listening http server takes a TLSSocket that is emitted as 'connection' before its handshake", async () => {
+  await using server = http.createServer((req, res) => res.end(String(req.socket.listenerCount("timeout"))));
+  await listen(server);
+  await using front = net.createServer(socket =>
+    server.emit("connection", new tls.TLSSocket(socket, { isServer: true, ...validCert })),
+  );
+  expect(await tlsRequest(await listen(front as http.Server))).toEndWith("\r\n\r\n1");
+});
+
+describe("the members that tls.Server keeps its options in", () => {
+  const names = ["_requestCert", "_rejectUnauthorized", "_handshakeTimeout", "_ALPNCallback", "_SNICallback"];
+
+  test.each(names)("%s takes an assignment", name => {
+    for (const server of [http.createServer(), https.createServer(validCert)] as any[]) {
+      server[name] = 1;
+      expect(server[name]).toBe(1);
+    }
+  });
+
+  test("tls.Server can be called on an heir of https.Server", () => {
+    const heir = Object.create(https.Server.prototype);
+    (tls.Server as any).call(heir, { ...validCert, requestCert: true });
+    expect(heir._requestCert).toBe(true);
+  });
+
+  test.each(["listen()", "emit('connection')"])("an assigned _SNICallback is asked over %s", async kind => {
+    const server = https.createServer(validCert);
+    const asked: string[] = [];
+    (server as any)._SNICallback = (name: string, done: (err: null) => void) => (asked.push(name), done(null));
+    await using front = kind === "listen()" ? server : net.createServer(socket => server.emit("connection", socket));
+    const port = await listen(front as http.Server);
+    const client = tls.connect({ port, host: "127.0.0.1", servername: "a.example", rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    client.destroy();
+    expect(asked).toEqual(["a.example"]);
+  });
+});
+
 describe("https.Server has the methods of tls.Server", () => {
   const read = (name: string) => readFileSync(join(import.meta.dirname, "../test/fixtures/keys", name), "utf8");
   // agent2 is self-signed. ca1 signs agent1, ca2 signs agent3.
@@ -901,7 +1019,7 @@ describe("https.Server has the methods of tls.Server", () => {
         },
         (req, res) => res.end((req.socket as tls.TLSSocket).servername),
       );
-      // Only the default SNICallback reads these.
+      // Bun only, like tls.Server: in Node a user SNICallback replaces the addContext() entries.
       server.addContext("b.example.com", agent3);
       const port = await listen(server);
 
@@ -909,9 +1027,10 @@ describe("https.Server has the methods of tls.Server", () => {
         a: await servedCN(port, "a.example.com"),
         raw: await servedCN(port, "raw.example.com"),
         b: await servedCN(port, "b.example.com"),
+        c: await servedCN(port, "c.example.com"),
         none: await servedCN(port),
-      }).toEqual({ a: "agent1", raw: "agent3", b: "agent2", none: "agent2" });
-      expect(calls).toEqual(["a.example.com true true", "raw.example.com true true", "b.example.com true true"]);
+      }).toEqual({ a: "agent1", raw: "agent3", b: "agent3", c: "agent2", none: "agent2" });
+      expect(calls).toEqual(["a", "raw", "b", "c"].map(name => `${name}.example.com true true`));
 
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       const options = {
@@ -1873,6 +1992,35 @@ test.skipIf(!isLinux)("every request of one read is dispatched when the client l
   await connectionClosed.promise;
   await new Promise<void>(resolve => server.close(() => resolve()));
   expect({ requests, closed }).toEqual({ requests: 20, closed: 20 });
+});
+
+// The wait for the peer's close_notify takes 8 s or more.
+test.concurrent.each([
+  ["close()", (server: http.Server) => void server.close()],
+  ["close() and closeIdleConnections()", (server: http.Server) => server.close().closeIdleConnections()],
+  ["closeIdleConnections() and close()", (server: http.Server) => (server.closeIdleConnections(), server.close())],
+])("%s doesn't wait for an idle peer to answer the close_notify", async (_label, stop) => {
+  const body = Buffer.alloc(32 * 1024, "x").toString();
+  const finished = Promise.withResolvers<void>();
+  const server = https.createServer({ ...validCert, keepAliveTimeout: 60_000 }, (_req, res) =>
+    res.end(body, finished.resolve),
+  );
+  const client = tls.connect({ port: await listen(server), host: "127.0.0.1", ca: validCert.cert, allowHalfOpen: true } as tls.ConnectionOptions); // prettier-ignore
+  try {
+    await once(client, "secureConnect");
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await finished.promise;
+    const startedAt = performance.now();
+    stop(server);
+    await once(server, "close");
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+    let response = "";
+    client.on("data", chunk => (response += chunk));
+    await once(client, "end");
+    expect(response.split("\r\n\r\n")[1]).toBe(body);
+  } finally {
+    client.destroy();
+  }
 });
 
 describe("https.Server reads its TLS options the way Node does", () => {

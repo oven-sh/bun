@@ -1,0 +1,21 @@
+# `scale.times.bind(scale)`: what is bound is a method read off an object: its type at the call is not the one function that the bound function will enter.
+# The call that binds is known by what it reads: the built-in name `bind` off the value that is also its receiver: the number of bound arguments is read off it (0, and 1 for `bind(scale, 2)`),
+# and the target is entered in the loop behind the test of that number. Once the receiver's TYPE was asked for the target: no number, no guess: the closed call in every turn: eleven times the instructions.
+# RUN(ONE): walk f1:Body mechanisms=all
+# ONE: = HasNumberOfBoundArguments {{*}}count=1
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: 1876
+# SAID-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Scale { constructor(public factor: number) {} times(value: number, more: number): number { return value * this.factor + more; } }
+# function main(turns: number): number {
+#   const scale = new Scale(3);
+#   const times = scale.times.bind(scale), timesTwo = scale.times.bind(scale, 2);
+#   let total = 0;
+#   for (let i = 0; i < turns; i++) total += times(i & 7, 1) + timesTwo(i & 3);
+#   return total;
+# }
+# print(main(id(100)));
+# -- end of source

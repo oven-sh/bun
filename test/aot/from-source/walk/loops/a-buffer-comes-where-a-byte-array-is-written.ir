@@ -1,0 +1,10 @@
+# -- source: main.ts
+# function total(a: Uint8Array): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]!; return s; }
+# const table: any = { total };
+# declare const sink: any;
+# sink(table);
+# -- end of source
+# The front of the loop asks for the byte array or for what the class below it makes, and the turns read the length and the elements of either without asking again.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = IsPristine {{*}}builtinClass=Uint8Array aspects=[InheritedNamesKept]
+# WALK: = GetTypedArrayElement {{*}}isInsideView

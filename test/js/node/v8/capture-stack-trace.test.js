@@ -3,6 +3,10 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { createContext, runInContext } from "node:vm";
+import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
+
+const storesFixture = join(import.meta.dir, "..", "..", "bun", "jsc", "stores-that-end-in-a-definition-fixture.js");
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -2103,6 +2107,44 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   30_000,
 );
 
+test.each([
+  ["a Proxy", () => new Proxy({}, {})],
+  ["a Proxy of an Error", () => new Proxy(new Error("target"), {})],
+  [
+    "a revoked Proxy",
+    () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      return proxy;
+    },
+  ],
+  ["import.meta.env", () => import.meta.env],
+])("Error.captureStackTrace throws for %s, as V8 does for a Proxy", (_, object) => {
+  expect(() => Error.captureStackTrace(object())).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "invalid_argument" }),
+  );
+});
+
+test("Error.captureStackTrace accepts objects that aren't themselves a Proxy", () => {
+  const context = createContext({});
+  const inherits = Object.create(new Proxy({}, {}));
+  Error.captureStackTrace(inherits);
+  function fn() {}
+  Error.captureStackTrace(fn);
+  expect({
+    // Like Node, neither call throws and neither leaves a `stack` property behind.
+    globalOfContextFromInside: runInContext("Error.captureStackTrace(globalThis); typeof globalThis.stack", context),
+    globalOfContextFromOutside: Error.captureStackTrace(runInContext("this", context)),
+    inherits: typeof inherits.stack,
+    fn: typeof fn.stack,
+  }).toEqual({
+    globalOfContextFromInside: "undefined",
+    globalOfContextFromOutside: undefined,
+    inherits: "string",
+    fn: "string",
+  });
+});
+
 test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   // (type $s (struct (field (mut i32))))
   // (func (export "mk") (result (ref null $s)) struct.new_default $s)
@@ -2117,6 +2159,92 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
   expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
 });
+
+// Error.prepareStackTrace is a data property to a script, and native code keeps the function it calls. Each store of
+// the fixture ends in a definition of the value on Error, and that definition has to reach the native side: a
+// definition that puts a plain value in the property's place leaves every later store without effect.
+// A class field is left out. It says that the property is enumerable, and Error.prepareStackTrace is not: a definition
+// that changes an attribute puts a plain value in the property's place.
+const storesOnError = Object.keys(storesThatEndInADefinition).filter(what => !what.startsWith("a class field"));
+
+test.concurrent(
+  "Error.prepareStackTrace: every store that ends in a definition on Error installs the function",
+  async () => {
+    const src = `
+    const fixture = require(${JSON.stringify(storesFixture)});
+    const stores = Object.fromEntries(${JSON.stringify(storesOnError)}.map(what => [what, fixture[what]]));
+    const { getCallSites } = require("node:util");
+    // Code of a node:vm context reaches the property of this realm's Error too.
+    const inContext = require("node:vm").runInNewContext;
+    Object.assign(stores, {
+      "a proxy made in a node:vm context": (target, name, value) => {
+        inContext("target => new Proxy(target, {})")(target)[name] = value;
+      },
+      "a proxy, by code of a node:vm context": inContext(
+        "(target, name, value) => { new Proxy(target, {})[name] = value; }",
+      ),
+      "Object.defineProperty with a value, by code of a node:vm context": inContext(
+        "(target, name, value) => { Object.defineProperty(target, name, { value }); }",
+      ),
+    });
+    const formatter = who => (error, callSites) =>
+      who + " formats " + error.message + " from " + (Array.isArray(callSites) ? "call sites" : typeof callSites);
+    function callSitesHere() {
+      return getCallSites();
+    }
+    const results = {};
+    for (const [what, store] of Object.entries(stores)) {
+      const first = formatter("the first");
+      store(Error, "prepareStackTrace", first);
+      const readBack = Error.prepareStackTrace === first;
+      const stored = new Error("one").stack;
+      Error.prepareStackTrace = formatter("the second");
+      const storedDirectly = new Error("two").stack;
+      // util.getCallSites() stores a function of its own for one capture, and the previous one again.
+      const callSites = callSitesHere();
+      const afterGetCallSites = new Error("three").stack;
+      new Proxy(Error, {}).prepareStackTrace = undefined;
+      const cleared = new Error("four").stack.split("\\n")[0];
+      results[what] = [
+        readBack,
+        stored,
+        storedDirectly,
+        Array.isArray(callSites) ? callSites[0].functionName : typeof callSites,
+        afterGetCallSites,
+        cleared,
+        JSON.stringify(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")),
+      ];
+    }
+    console.log(JSON.stringify(results));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const names = [
+      ...storesOnError,
+      "a proxy made in a node:vm context",
+      "a proxy, by code of a node:vm context",
+      "Object.defineProperty with a value, by code of a node:vm context",
+    ];
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: Object.fromEntries(
+        names.map(what => [
+          what,
+          [
+            true,
+            "the first formats one from call sites",
+            "the second formats two from call sites",
+            "callSitesHere",
+            "the second formats three from call sites",
+            "Error: four",
+            `{"writable":true,"enumerable":false,"configurable":true}`,
+          ],
+        ]),
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
   using dir = tempDir("stack-while-commonjs-loads", {

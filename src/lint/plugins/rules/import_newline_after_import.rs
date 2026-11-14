@@ -12,7 +12,7 @@ pub struct NewlineAfterImport {
     consider_comments: bool,
 }
 
-const NEWLINE_AFTER_IMPORT: Message = Message::new(
+const NEWLINE_AFTER_IMPORT: &Message = &Message::new(
     "",
     "Expected {{count}} empty line{{line_suffix}} after {{keyword}} statement not followed by another {{keyword}}.",
 );

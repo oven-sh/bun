@@ -3859,9 +3859,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
-
-  type AotHeat = "everything-is-hot" | "everything-is-cold" | "only-loops-are-hot" | "nothing-is-hottest" | "shuffled";
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations" | "forms" | "statistics";
 
   interface TrimOptions {
     /**
@@ -3955,7 +3953,7 @@ declare module "bun" {
      *
      * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
      * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
-     * `obfuscate` implies `false`.
+     * `obfuscate` and `sourcemap: "external"` imply `false`.
      *
      * Equivalent CLI flag: `--no-compile-function-source`
      *
@@ -3963,8 +3961,9 @@ declare module "bun" {
      */
     functionSource?: boolean;
     /**
-     * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
-     * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
+     * With `aot`: let a dynamic `import()`, `require()` or `new Worker()` load code that isn't in the
+     * executable from disk when the program runs, such as a plugin or a config file. Bun interprets
+     * that code.
      *
      * Without it, the executable only runs code that was compiled into it, and such a load throws.
      * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
@@ -4016,11 +4015,10 @@ declare module "bun" {
      * `eval()` or `new Function()`, runs in the interpreter.
      *
      * Built-in objects such as `Object.prototype`, `Array.prototype` and `Promise` are read-only in
-     * the executable. Assigning to one throws a `TypeError` in strict mode and does nothing in
-     * sloppy mode. Breakpoints aren't available.
+     * the executable. Assigning to one throws a `TypeError`. Breakpoints aren't available.
      *
-     * Requires `format: "esm"` (the default with `aot`) and a `target` that matches the platform
-     * and Bun version running the build.
+     * Requires a `target` that matches the platform and Bun version running the build. `format` has
+     * no effect: each file keeps the module format it is written in.
      *
      * Equivalent CLI flag: `--aot`
      *
@@ -4029,7 +4027,8 @@ declare module "bun" {
     aot?: boolean;
     /**
      * With `aot`: strip function names and file names from the executable and write a source map
-     * next to it. `sourcemap: "external"` does the same.
+     * next to it. `sourcemap: "external"` does the same for stack traces and leaves the `name` of
+     * functions and classes alone. With `obfuscate` it is `""`.
      *
      * Equivalent CLI flag: `--obfuscate`
      *
@@ -4049,19 +4048,6 @@ declare module "bun" {
      */
     inspector?: boolean;
     /**
-     * With `aot`: log every value that doesn't match its declared type.
-     *
-     * A mismatch never changes what the program does: the function falls back to its slow path and
-     * behaves as it does under `bun run`. Each log line has the location, the expected type and the
-     * kind of value it got, never the value itself. Lines go to stderr, or to the file in the
-     * `BUN_AOT_TYPE_MISMATCH_LOG` environment variable.
-     *
-     * Equivalent CLI flag: `--aot-log-type-mismatches`
-     *
-     * @default false
-     */
-    aotLogTypeMismatches?: boolean;
-    /**
      * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
      *
      * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
@@ -4070,44 +4056,30 @@ declare module "bun" {
      *   and how to fix it
      * - `"guards-json"`: the same, one JSON object per line
      * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
-     * - `"missed-optimizations"`: calls that weren't inlined, loops that weren't optimized, and why
      * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     * - `"forms"`: how many operations of each kind compiled to inline code, to a call of shared code, or to a call into the runtime
+     * - `"statistics"`: what the build counted, one name and number per line
      *
      * Equivalent CLI flag: `--explain`
      */
     aotExplain?: AotReport | AotReport[];
     /**
-     * With `aot`: build without some steps of the compiler. The program behaves the same. The
-     * executable can be larger and slower.
+     * With `aot`: add run-time checks, so that a bug in the compiler is harder to turn into a memory
+     * bug. Each name costs speed, and none is on unless it is listed here.
      *
-     * When the compiler can't finish a build, the error names the step to list here, such as
-     * `"pass:PlaceTypeTests"`. Apart from that, the option is for working on the compiler.
+     * - `"proof-checks"`: check the type that the compiler has proven of a value again at each read,
+     *   and check again what the compiler remembers from earlier code. Objects stay on the heap, not
+     *   on the stack. The build also runs the compiler's own verifier.
+     * - `"ignore-told-ranges"`: check every index against the length, where the index is used.
      *
-     * - `"pass:<name>"`: one optimization pass
-     * - `"flow:<name>"`: one kind of result of the whole-program analysis
-     * - `"flow-results"`: the whole-program analysis and all its results
+     * A check that fails aborts the process.
      *
-     * Takes a list of names, or one string with commas between the names. `Bun.build` throws if
-     * the compiler doesn't know a name.
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws on a
+     * name that it doesn't know.
      *
-     * Equivalent CLI flag: `--aot-disable`
+     * Equivalent CLI flag: `--aot-harden`
      */
-    aotDisable?: string | string[];
-    /**
-     * With `aot`: replace the compiler's estimate of how often each part of the program runs. The
-     * program behaves the same. The option is for working on the compiler.
-     *
-     * The compiler makes code that it expects to run often fast, and the rest small.
-     *
-     * - `"everything-is-hot"`: all code runs often
-     * - `"everything-is-cold"`: all code runs rarely
-     * - `"only-loops-are-hot"`: every function is entered equally often, so only loops run often
-     * - `"nothing-is-hottest"`: the estimate, without its list of the hottest functions
-     * - `"shuffled"`: each function gets an estimate at random, the same one in every build
-     *
-     * Equivalent CLI flag: `--aot-heat`
-     */
-    aotHeat?: AotHeat;
+    aotHarden?: string | string[];
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
@@ -4811,6 +4783,11 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
+        /**
+         * The strings whose characters are only in the machine code of this executable, such as the labels of
+         * a `switch`. A search of the file's bytes doesn't find them. Only for builds with `compile.aot`.
+         */
+        inlinedStrings?: string[];
         /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
         /** Path to the associated CSS bundle (for JS entrypoints with CSS) */
@@ -6321,7 +6298,7 @@ declare module "bun" {
     /**
      * Finalize the hash
      *
-     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time. It must hold at least {@link byteLength} bytes. `shake128` and `shake256` fill all of it.
      */
     digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
 
@@ -6687,6 +6664,7 @@ declare module "bun" {
     | "tsx"
     | "json"
     | "jsonc"
+    | "json5"
     | "toml"
     | "yaml"
     | "xml"
@@ -6694,6 +6672,7 @@ declare module "bun" {
     | "napi"
     | "wasm"
     | "text"
+    | "md"
     | "css"
     | "html";
 
@@ -6789,7 +6768,12 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
+  /**
+   * Return `undefined` or `null` to skip the module. The next matching `onLoad`
+   * callback runs instead. If every callback skips it, the module is loaded as
+   * if no plugin had matched it.
+   */
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | null | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
@@ -6801,7 +6785,8 @@ declare module "bun" {
 
   interface OnResolveArgs {
     /**
-     * The import specifier of the module being loaded
+     * The import specifier of the module being loaded, exactly as written:
+     * `"react"`, `"@/utils"`, `"./file"`, `"./file.ts"`
      */
     path: string;
     /**
@@ -7175,7 +7160,7 @@ declare module "bun" {
      * This sends a TCP FIN packet after writing the data.
      *
      * Unlike `write()`, `end(data)` accepts the whole chunk. Bytes the socket can't take right away are queued and sent
-     * before the FIN.
+     * before the FIN. If they can't be, the {@link SocketHandler.close `close`} handler gets the error.
      *
      * @param data Optional final data to write before closing. Same types as `write()`.
      * @param byteOffset Optional offset for buffer data.
@@ -7208,7 +7193,7 @@ declare module "bun" {
      * Call the {@link SocketHandler.timeout `timeout`} handler once, `seconds` seconds from now.
      *
      * The socket stays open. Call {@link end `end()`} or {@link terminate `terminate()`} in the handler to close it.
-     * Both drop the data an earlier `end(data)` queued and the peer hasn't taken yet.
+     * If the peer took none of the data an earlier `end(data)` queued in that time, Bun resets the connection after the handler.
      *
      * Reads and writes don't restart the timer. To reset the timeout, call this function again. `0` cancels it.
      *
@@ -7603,6 +7588,7 @@ declare module "bun" {
      * Closes the socket.
      *
      * This is a wrapper around `end()` and `shutdown()`.
+     * It resets the connection if data queued by `end(data)` isn't sent yet.
      *
      * @see {@link end}
      * @see {@link shutdown}
@@ -7670,7 +7656,7 @@ declare module "bun" {
     open?(socket: Socket<Data>): void | Promise<void>;
     /**
      * Called once the socket has closed. `error` is set when the connection
-     * failed: a read reported a reset (`syscall: "read"`), or the peer was gone
+     * failed: a read reported a reset (`syscall: "read"`), or the socket closed
      * before the data queued by `end(data)` was sent (`syscall: "write"`).
      */
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -9814,12 +9800,18 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
+     *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back flat grey.
+     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
+     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
+     *   before its last row, or inside the data of the `IDAT` chunk that holds
+     *   it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
+     *   that its decode or encode needs.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9831,6 +9823,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
     /**
@@ -9857,8 +9850,10 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
-       * A lower limit also lowers how much a compressed PNG chunk, such as an
-       * ICC profile, may inflate to before the image is refused.
+       * A decoded image takes 4 bytes per pixel, which is 1 GiB at the default.
+       * A PNG of 32 KiB can decode to that size. Decoding a PNG that is one very
+       * wide row needs up to 20 bytes of memory per pixel, 5 GiB at the default.
+       * For untrusted input, set this to the largest image you accept.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;
@@ -9897,9 +9892,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
-   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
-   * are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. Ships JPEG and WebP via
+   * statically-linked libjpeg-turbo / libwebp, and its own PNG codec; resize
+   * and rotate are SIMD kernels — no native module install, no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
@@ -9911,7 +9906,8 @@ declare module "bun" {
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
-   * images don't shift colour.
+   * images don't shift colour. Bun leaves out the profile of a PNG if it is
+   * damaged or inflates to more than a JPEG has room for (16,707,345 bytes).
    *
    * @example
    * ```ts

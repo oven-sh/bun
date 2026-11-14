@@ -1,0 +1,38 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# const state = new Uint32Array(4);
+# const words = new Uint32Array(8);
+# function mix(a: number, b: number, word: number): void { state[a] = state[a] + state[b] + word; state[b] = (state[b] ^ state[a]) >>> 3; state[a] = state[a] + state[b] + word; state[b] = (state[b] ^ state[a]) >>> 5; }
+# function stir(view: Uint32Array): void { view[0] = view[0] + view[1] + 7; view[1] = (view[1] ^ view[0]) >>> 3; view[0] = view[0] + view[1] + 9; view[1] = (view[1] ^ view[0]) >>> 5; }
+# function mixAll(): number { for (let i = 0; i < 8; i++) words[i] = i * 40503 + 11; for (let i = 0; i < 8; i++) mix(i & 3, (i + 1) & 3, words[i]); return state[0] + state[3]; }
+# function stirAll(): number { for (let i = 0; i < 8; i++) stir(state); return state[0] + state[1]; }
+# function mixCounts(turns: number): number { for (let i = 0; i < turns; i++) mix(i & 3, (i + 1) & 3, i * 40503); return state[1] + state[2]; }
+# print(mixAll());
+# print(stirAll());
+# print(mixCounts(words.length));
+# -- end of source
+# f1 = mix, f2 = stir, f3 = mixAll, f4 = stirAll, f5 = mixCounts
+# A leaf is Link's word: no loop, at most a hundred operations, it calls leaves alone. Both leaves here weigh more than the twelve that a leaf may weigh to be copied for its size.
+# A call in a loop that hands a leaf what the turn has read out of a view pays for the number at the call and behind it: the leaf is copied as far as the window of a written call in loops reaches.
+# RUN(ELEMENT): walk f3 mechanisms=all
+# ELEMENT: frame 1 callee=f1
+# ELEMENT-NOT: CallDirect {{*}} function=f1
+# So is a leaf that is handed a view which no iteration changes: its vector and its length are read before the loop.
+# RUN(VIEW): walk f4 mechanisms=all
+# VIEW: frame 1 callee=f2
+# VIEW: [[vector]]: opaque(ViewVector) @RawWord = GetTypedArrayVector
+# VIEW: isInLoop=true isLoopHead=true
+# VIEW: = GetTypedArrayElement {{*}}, [[vector]] typedArrayType=7 level=Proven
+# VIEW: = PutTypedArrayElement {{*}}, [[vector]]
+# A leaf that is handed numbers that the turn has reckoned stays a call.
+# RUN(RECKONED): walk f5 mechanisms=all
+# RECKONED-NOT: frame 1 callee=f1
+# RECKONED: CallDirect {{*}} function=f1
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 1180702
+# ANSWER: 2076985
+# ANSWER: 5182058
+# RUN(WITHOUT): run-in-shell mechanisms=none
+# WITHOUT: 1180702
+# WITHOUT: 2076985
+# WITHOUT: 5182058

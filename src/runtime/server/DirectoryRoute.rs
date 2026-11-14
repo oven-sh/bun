@@ -249,7 +249,6 @@ impl DirectoryRoute {
             pollable: false,
             offset: body_offset,
             length: Some(body_len),
-            idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });
     }

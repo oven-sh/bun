@@ -39,7 +39,6 @@ pub(crate) struct FileResponseStream {
     event_loop_handle: Cell<EventLoopHandle>,
     fd: Cell<Fd>,
     auto_close: Cell<bool>,
-    idle_timeout: Cell<u8>,
 
     /// Taken by whichever of complete / abort / error fires first.
     owner: Cell<Option<StreamOwner>>,
@@ -109,7 +108,6 @@ pub(crate) struct StartOptions {
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
-    pub idle_timeout: u8,
     pub owner: StreamOwner,
 }
 
@@ -169,7 +167,6 @@ impl FileResponseStream {
                 event_loop_handle: Cell::new(EventLoopHandle::init(opts.vm.event_loop_ptr())),
                 fd: Cell::new(opts.fd),
                 auto_close: Cell::new(opts.auto_close),
-                idle_timeout: Cell::new(opts.idle_timeout),
                 owner: Cell::new(Some(opts.owner)),
                 mode: Cell::new(if use_sendfile {
                     Mode::Sendfile
@@ -187,7 +184,8 @@ impl FileResponseStream {
         let this_ref = unsafe { &*this };
 
         let resp = this_ref.resp.get();
-        resp.timeout(opts.idle_timeout);
+        // Arm only: the value is the response's (`server.timeout()` may have set it). The timer can be off here: uWS clears it at the last request-body chunk, the WebSocket-upgrade fetch entry never arms it, and sendfile(2) makes no uWS write that would arm it.
+        resp.reset_timeout();
         resp.on_aborted(
             |p: *mut FileResponseStream, r| {
                 // SAFETY: uWS hands back the userdata pointer set below; the
@@ -311,7 +309,6 @@ impl FileResponseStream {
         }
 
         let resp = self.resp.get();
-        resp.timeout(self.idle_timeout.get());
 
         if state == ReadState::Eof {
             self.insert_state(State::RESPONSE_DONE);
@@ -388,7 +385,6 @@ impl FileResponseStream {
             self.finish();
             return true;
         }
-        self.resp.get().timeout(self.idle_timeout.get());
         self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
         self.reader_mut().unpause();

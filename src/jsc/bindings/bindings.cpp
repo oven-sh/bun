@@ -1793,8 +1793,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
             if (mode.checkPrototypes) {
-                // node also compares `lastIndex` and own enumerable properties.
-                bool sameLastIndex = JSC::sameValue(globalObject, left->getLastIndex(), right->getLastIndex());
+                // node compares `lastIndex` with ===, not Object.is, then own enumerable properties:
+                // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L148-L152
+                bool sameLastIndex = JSC::JSValue::strictEqual(globalObject, left->getLastIndex(), right->getLastIndex());
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!sameLastIndex) {
                     return false;

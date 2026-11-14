@@ -67,6 +67,7 @@ A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXE
 | `module._compile()`, and a `require.extensions` handler that calls it                                 | allowed | refused   |
 | Assigning a different `Module.wrapper`                                                                | allowed | refused   |
 | `import`, `import()` and `require()` of a `data:` or `blob:` URL that holds code                      | allowed | refused   |
+| `import`, `import()` and `require()` of a `data:` or `blob:` URL that Bun loads as text or Markdown   | allowed | refused   |
 | A `Worker` started from a `data:` or `blob:` URL, or with `eval: true`                                | allowed | refused   |
 | A [plugin](/runtime/plugins) that returns `contents`                                                  | allowed | refused   |
 | [Macros](/bundler/macros)                                                                             | allowed | refused   |
@@ -86,8 +87,11 @@ These keep working at both levels:
 - WebAssembly.
 - Native addons and `bun:ffi`. See [What the flag does not cover](#what-the-flag-does-not-cover).
 - A plugin that returns an `exports` object.
-- `import()` of a `data:` or `blob:` URL that holds data, such as JSON, and of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
+- `import()` of a `data:` or `blob:` URL that Bun loads as JSON, JSONC, JSON5, TOML, YAML or XML, for example with `{ type: "json" }`. Bun makes the value without making code.
+- `import()` of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
+
+With `{ type: "text" }` or `{ type: "md" }`, Bun makes a module that exports a string. That module is code made at run time for a `data:` URL and for a `blob:` URL that is not made from `Bun.file()`, so `=strict` refuses it. Read the text with `await blob.text()` or `await (await fetch(url)).text()` instead. [`Bun.markdown.html()`](/runtime/markdown) renders Markdown to HTML.
 
 A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Files on disk are not part of the program](#files-on-disk-are-not-part-of-the-program).
 

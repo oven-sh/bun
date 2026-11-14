@@ -358,6 +358,46 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
+  it("keeps an excerpt of a logged source line of more than 1,000 bytes", async () => {
+    await Bun.$`echo ${"export default 1;"} > index.ts`;
+
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      outdir,
+      entrypoints: [path.join(tempdir, "index.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "long-line",
+          setup(build) {
+            build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl_long_line_error", external });
+          },
+        },
+      ],
+    });
+
+    // The plugin logs a line of 5,000 `a` and a `]`, with the error at the `]`.
+    const excerpt = Buffer.alloc(119, "a").toString() + "]";
+    const [message] = result.logs;
+    expect({
+      success: result.success,
+      text: message.message,
+      line: message.position?.line,
+      column: message.position?.column,
+      lineText: message.position?.lineText,
+      printed: Bun.inspect(message, { colors: false }).split("\n").slice(0, 2),
+    }).toEqual({
+      success: false,
+      text: "Unexpected ]",
+      line: 1,
+      column: 5001,
+      lineText: excerpt,
+      printed: ["1 | " + excerpt, Buffer.alloc(4 + 119, " ").toString() + "^"],
+    });
+  });
+
   it("works with versioning", async () => {
     const filter = /\.ts/;
 

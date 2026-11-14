@@ -253,6 +253,454 @@ describe("safeIntegers", () => {
   }
 }
 
+describe("strict: a Statement does not start a run while a parameter has no value", () => {
+  const open = () => {
+    const db = new Database(":memory:", { strict: true });
+    db.run("create table t (a, b)");
+    return db;
+  };
+  const rows = db => db.query("select a, b from t order by rowid").values();
+  const executions = {
+    "get()": q => q.get(),
+    "all()": q => q.all(),
+    "values()": q => q.values(),
+    "raw()": q => q.raw(),
+    "run()": q => q.run(),
+    "iterate()": q => [...q.iterate()],
+    "[Symbol.iterator]()": q => [...q],
+    "native.get()": q => q.native.get(),
+    "columnTypes": q => q.columnTypes,
+  };
+
+  describe("it runs with a value in every parameter, or it does not run", () => {
+    const missing = 'Missing parameter "?1"';
+    const count = (expected, received) => `SQLite query expected ${expected} values, received ${received}`;
+    // The values, then what a statement of one parameter and a statement of two do with them: `true` when it runs
+    // with 7 (and 8), else the message that it throws. 7 and 8 are the only values script passes, so a NULL in a
+    // row is a parameter that has no value.
+    const shapes = [
+      ["nothing", [], missing, missing],
+      ["one value", [7], true, count(2, 1)],
+      ["two values", [7, 8], count(1, 2), true],
+      ["a list of one", [[7]], true, count(2, 1)],
+      ["a list of two", [[7, 8]], count(1, 2), true],
+      ["an empty list", [[]], missing, missing],
+      ["an empty object", [{}], missing, missing],
+      ["an object with the first position", [{ 0: 7 }], true, 'Missing parameter "?2"'],
+      ["an object with both positions", [{ 0: 7, 1: 8 }], true, true],
+    ];
+    const placeholders = { 1: "?", 2: "?, ?" };
+    const columns = { 1: "? as a", 2: "? as a, ? as b" };
+    const stored = (db, n) => db.query(`select * from t${n}`).values().flat();
+    // How the values reach the statement. Each returns the values that the statement ran with.
+    const entries = {
+      "statement.get(...values)": (db, n, values) => Object.values(db.query(`select ${columns[n]}`).get(...values)),
+      "statement.all(...values)": (db, n, values) => Object.values(db.query(`select ${columns[n]}`).all(...values)[0]),
+      "statement.run(...values)": (db, n, values) => {
+        db.query(`insert into t${n} values (${placeholders[n]})`).run(...values);
+        return stored(db, n);
+      },
+      "db.prepare(sql, values).get()": (db, n, values) =>
+        Object.values(db.prepare(`select ${columns[n]}`, ...values).get()),
+      "db.prepare(sql, values).run()": (db, n, values) => {
+        db.prepare(`insert into t${n} values (${placeholders[n]})`, ...values).run();
+        return stored(db, n);
+      },
+    };
+
+    const cells = [];
+    for (const entry of Object.keys(entries))
+      for (const [shape, values, ...outcomes] of shapes)
+        for (const n of [1, 2]) {
+          const atPrepare = entry.startsWith("db.prepare");
+          // db.prepare() takes one argument for the values.
+          if (atPrepare && values.length > 1) continue;
+          // db.prepare() drops a lone value that the statement has no one parameter for, so the run has no values.
+          const dropped = atPrepare && shape === "one value" && n === 2;
+          cells.push([entry, n, shape, values, dropped ? missing : outcomes[n - 1]]);
+        }
+
+    it.each(cells)("%s, %d parameter(s), %s", (entry, n, _, values, outcome) => {
+      using db = new Database(":memory:", { strict: true });
+      db.run("create table t1 (a); create table t2 (a, b)");
+      if (outcome === true) {
+        expect(entries[entry](db, n, values)).toEqual([7, 8].slice(0, n));
+        return;
+      }
+      expect(() => entries[entry](db, n, values)).toThrow(outcome);
+      if (entry.includes(".run(")) expect(stored(db, n)).toEqual([]);
+    });
+  });
+
+  describe("a statement that never got values throws in", () => {
+    for (const [name, execute] of Object.entries(executions)) {
+      it(name, () => {
+        const db = open();
+        expect(() => execute(db.query("select $id as v"))).toThrow('Missing parameter "id"');
+        expect(() => execute(db.prepare("select ? as v"))).toThrow('Missing parameter "?1"');
+      });
+    }
+  });
+
+  it("a delete or an insert without values changes nothing", () => {
+    const db = open();
+    db.run("insert into t values (1, 'ann'), (2, 'bob')");
+    expect(() => db.query("delete from t where a = $a").run()).toThrow('Missing parameter "a"');
+    expect(() => db.query("insert into t values ($a, $b)").run()).toThrow('Missing parameter "a"');
+    expect(rows(db)).toEqual([
+      [1, "ann"],
+      [2, "bob"],
+    ]);
+  });
+
+  it("an EXPLAIN needs its values too, because the plan that SQLite reports can depend on them", () => {
+    const db = open();
+    db.run("create table names (name text collate nocase); create index names_name on names (name)");
+    const text = "explain query plan select name from names where name like ?";
+    for (const execute of Object.values(executions)) {
+      expect(() => execute(db.query(text))).toThrow('Missing parameter "?1"');
+      expect(() => execute(db.prepare("explain select $a as v"))).toThrow('Missing parameter "a"');
+    }
+
+    const detail = pattern =>
+      db
+        .query(text)
+        .all(pattern)
+        .map(row => row.detail);
+    expect(detail("ab%")).toHaveLength(1);
+    // The bundled SQLite reads the pattern to make the plan. On macOS the library of the system runs.
+    if (!isMacOS) {
+      expect(detail("ab%")).toEqual(["SEARCH names USING COVERING INDEX names_name (name>? AND name<?)"]);
+      expect(detail(null)).toEqual(["SCAN names"]);
+    }
+  });
+
+  it("an empty array clears the values, so the call throws", () => {
+    const db = open();
+    const q = db.query("select ? as v");
+    for (const method of ["get", "all", "values", "raw", "run"]) {
+      expect(() => q[method]([])).toThrow('Missing parameter "?1"');
+    }
+    expect(() => [...q.iterate([])]).toThrow('Missing parameter "?1"');
+
+    // It also clears the values of the call before it.
+    expect(q.get(5)).toEqual({ v: 5 });
+    expect(() => q.get([])).toThrow('Missing parameter "?1"');
+    expect(() => q.get()).toThrow('Missing parameter "?1"');
+  });
+
+  it("a call without values after a bind that failed throws", () => {
+    const db = open();
+    const q = db.query("select $a as a, $b as b");
+    expect(q.get({ a: 1, b: 2 })).toEqual({ a: 1, b: 2 });
+    expect(() => q.get({ a: 1 })).toThrow('Missing parameter "b"');
+    expect(() => q.get()).toThrow('Missing parameter "a"');
+    expect(q.get({ a: 3, b: 4 })).toEqual({ a: 3, b: 4 });
+    expect(q.get()).toEqual({ a: 3, b: 4 });
+  });
+
+  describe("a call without values throws after a bind that failed by", () => {
+    const throwing = {
+      get() {
+        throw new Error("getter threw");
+      },
+    };
+    const positional = "insert into t values (?, ?)";
+    const named = "insert into t values ($a, $b)";
+    const unsupported = "Binding expected string, TypedArray, boolean, number, bigint or null";
+    const outOfRange = "BigInt value '18446744073709551616' is out of range";
+    // [kind, statement, the values of the bind that fails, its message, the parameter that the next call names]
+    const kinds = [
+      ["too few values", positional, [9], "SQLite query expected 2 values, received 1", "?1"],
+      ["too many values", positional, [9, 9, 9], "SQLite query expected 2 values, received 3", "?1"],
+      ["an unsupported value in a list", positional, [9, Symbol("x")], unsupported, "?1"],
+      ["an unsupported value in an object", named, [{ a: 9, b: Symbol("x") }], unsupported, "a"],
+      ["an element getter that throws", positional, [Object.defineProperty([9, 9], 1, throwing)], "getter threw", "?1"],
+      ["a property getter that throws", named, [Object.defineProperty({ a: 9 }, "b", throwing)], "getter threw", "a"],
+      ["a BigInt out of range in a list", positional, [9, 2n ** 64n], outOfRange, "?1"],
+      ["a BigInt out of range in an object", named, [{ a: 9, b: 2n ** 64n }], outOfRange, "a"],
+      ["a missing key", named, [{ a: 9 }], 'Missing parameter "b"', "a"],
+    ];
+
+    it.each(kinds)("%s", (_, sql, values, message, first) => {
+      using db = new Database(":memory:", { strict: true, safeIntegers: true });
+      db.run("create table t (a, b)");
+      const insert = db.query(sql);
+      const good = sql === positional ? [1, 2] : [{ a: 1, b: 2 }];
+      insert.run(...good);
+      expect(() => insert.run(...values)).toThrow(message);
+      expect(() => insert.run()).toThrow(`Missing parameter "${first}"`);
+      expect(db.query("select a, b from t").values()).toEqual([[1n, 2n]]);
+
+      // A complete bind gives the statement its values again.
+      insert.run(...good);
+      insert.run();
+      expect(db.query("select count(*) from t").values()).toEqual([[3n]]);
+    });
+  });
+
+  describe("db.prepare() with a lone value that the statement has no one parameter for", () => {
+    it("returns a statement, and its first run without values throws", () => {
+      const db = open();
+      const insert = db.prepare("insert into t values (?, ?)", 5);
+      expect(() => insert.run()).toThrow('Missing parameter "?1"');
+      expect(() => db.prepare("insert into t values ($a, $b)", "x").run()).toThrow('Missing parameter "a"');
+      expect(() => db.prepare("select ? as a, ? as b", 5).get()).toThrow('Missing parameter "?1"');
+      expect(() => db.prepare("select ? as a, ? as b", 5).columnTypes).toThrow('Missing parameter "?1"');
+      expect(rows(db)).toEqual([]);
+    });
+
+    it("texts.map(db.prepare, db) gives statements that run once they get values", () => {
+      const db = open();
+      const [select, insert] = ["select ? as a, ? as b", "insert into t values (?, ?)"].map(db.prepare, db);
+      expect(select.get(1, 2)).toEqual({ a: 1, b: 2 });
+      insert.run(3, 4);
+      expect(rows(db)).toEqual([[3, 4]]);
+    });
+  });
+
+  it("db.prepare() with an empty array returns a statement without values", () => {
+    const db = open();
+    const q = db.prepare("select ? as v", []);
+    expect(() => q.get()).toThrow('Missing parameter "?1"');
+    expect(q.get(5)).toEqual({ v: 5 });
+  });
+
+  it.each([null, undefined])("db.prepare() with a lone %p returns a statement without values", nothing => {
+    const db = open();
+    const q = db.prepare("select ? as v", nothing);
+    expect(() => q.get()).toThrow('Missing parameter "?1"');
+    expect(() => q.columnTypes).toThrow('Missing parameter "?1"');
+    expect(() => db.prepare("insert into t (a) values (?)", nothing).run()).toThrow('Missing parameter "?1"');
+    expect(rows(db)).toEqual([]);
+
+    // NULL for the one parameter is a list of one, or a value of a call.
+    expect(db.prepare("select ? as v", [null]).get()).toEqual({ v: null });
+    expect(q.get(null)).toEqual({ v: null });
+  });
+
+  describe("a getter that uses the statement while its values are being read", () => {
+    const boundAgain = "This statement was bound again while its parameters were being read";
+
+    it("with a bind that fails: the outer bind throws and nothing runs", () => {
+      const db = open();
+      const insert = db.query("insert into t values ($a, $b)");
+      const values = {
+        a: 1,
+        get b() {
+          expect(() => insert.run({})).toThrow('Missing parameter "a"');
+          return 5;
+        },
+      };
+      expect(() => insert.run(values)).toThrow(boundAgain);
+      expect(() => insert.run()).toThrow('Missing parameter "a"');
+      expect(rows(db)).toEqual([]);
+      expect(insert.run({ a: 1, b: 5 })).toEqual({ changes: 1, lastInsertRowid: 1 });
+    });
+
+    it("with a bind of an empty array: the outer bind throws and nothing runs", () => {
+      const db = open();
+      const insert = db.query("insert into t values ($a, $b)");
+      const values = {
+        a: 1,
+        get b() {
+          expect(() => insert.run([])).toThrow('Missing parameter "a"');
+          return 5;
+        },
+      };
+      expect(() => insert.run(values)).toThrow(boundAgain);
+      expect(rows(db)).toEqual([]);
+    });
+
+    it("from an array: the outer bind throws and nothing runs", () => {
+      const db = open();
+      const insert = db.query("insert into t values (?, ?)");
+      const values = [1, 2];
+      Object.defineProperty(values, 1, {
+        get() {
+          expect(() => insert.run([1])).toThrow("SQLite query expected 2 values, received 1");
+          return 5;
+        },
+      });
+      expect(() => insert.run(values)).toThrow(boundAgain);
+      expect(rows(db)).toEqual([]);
+    });
+
+    it("with a complete run: that run happens, and the outer bind throws", () => {
+      const db = open();
+      const insert = db.query("insert into t values ($a, $b)");
+      const values = {
+        get a() {
+          insert.run({ a: 1, b: 2 });
+          return 3;
+        },
+        b: 4,
+      };
+      expect(() => insert.run(values)).toThrow(boundAgain);
+      expect(rows(db)).toEqual([[1, 2]]);
+      // The values of the run that succeeded are the ones a call without values reuses.
+      insert.run();
+      expect(rows(db)).toEqual([
+        [1, 2],
+        [1, 2],
+      ]);
+    });
+
+    it("with a run without values: that run throws, and the outer run has every value", () => {
+      const db = open();
+      const q = db.query("select $a as a, $b as b");
+      expect(q.get({ a: 0, b: 0 })).toEqual({ a: 0, b: 0 });
+      const values = {
+        a: 1,
+        get b() {
+          expect(() => q.get()).toThrow('Missing parameter "a"');
+          return 5;
+        },
+      };
+      expect(q.get(values)).toEqual({ a: 1, b: 5 });
+    });
+
+    it("from the getter of the first value: the outer bind throws too", () => {
+      const db = open();
+      const q = db.query("select $a as a, $b as b");
+      const values = {
+        get a() {
+          return q.get({ a: 1, b: 2 }).a + 10;
+        },
+        b: 20,
+      };
+      expect(() => q.get(values)).toThrow(boundAgain);
+      expect(q.get()).toEqual({ a: 1, b: 2 });
+    });
+
+    it.each(["first", "second"])(
+      "with an iterate() that stays open, from the getter of the %s value: the open run keeps its values",
+      position => {
+        const db = open();
+        db.run("insert into t (a) values (1), (2), (3)");
+        const q = db.query("select $p as p, $s as s, a from t order by a");
+        let iterator;
+        const start = () => {
+          iterator = q.iterate({ p: "inner", s: 8 });
+          expect(iterator.next().value).toEqual({ p: "inner", s: 8, a: 1 });
+        };
+        const values = {
+          get p() {
+            if (position === "first") start();
+            return "outer";
+          },
+          get s() {
+            if (position === "second") start();
+            return 80;
+          },
+        };
+        expect(() => q.get(values)).toThrow(boundAgain);
+        expect([...iterator]).toEqual([
+          { p: "inner", s: 8, a: 2 },
+          { p: "inner", s: 8, a: 3 },
+        ]);
+      },
+    );
+  });
+
+  describe("is as before", () => {
+    for (const [name, execute] of Object.entries(executions)) {
+      it(`${name} without values after a bind reuses its values`, () => {
+        const db = open();
+        const q = db.query("select $id as v");
+        expect(q.get({ id: 5 })).toEqual({ v: 5 });
+        expect(() => execute(q)).not.toThrow();
+        expect(q.get()).toEqual({ v: 5 });
+      });
+    }
+
+    it("a call without values reuses the values given to prepare()", () => {
+      const db = open();
+      expect(db.prepare("select $id as v", { id: 8 }).get()).toEqual({ v: 8 });
+      expect(db.prepare("select ? as v", [7]).all()).toEqual([{ v: 7 }]);
+      expect(db.prepare("select ? as v", 6).get()).toEqual({ v: 6 });
+    });
+
+    it("iterate() with values yields every row", () => {
+      const db = open();
+      db.run("insert into t (a) values (1), (2), (3)");
+      expect([...db.query("select a from t where a >= ?").iterate(2)]).toEqual([{ a: 2 }, { a: 3 }]);
+    });
+
+    it("null, undefined and a hole in an array bind NULL", () => {
+      const db = open();
+      const q = db.query("select ? as a, ? as b, ? as c");
+      expect(q.get(1, null, 3)).toEqual({ a: 1, b: null, c: 3 });
+      expect(q.get([1, undefined, 3])).toEqual({ a: 1, b: null, c: 3 });
+      expect(q.get([1, , 3])).toEqual({ a: 1, b: null, c: 3 });
+      expect(db.query("select $a as a").get({ a: undefined })).toEqual({ a: null });
+    });
+
+    it("db.run() and db.exec() run a statement that got no values with NULL", () => {
+      const db = open();
+      expect(db.run("insert into t (a) values (?); insert into t (a) values (?); insert into t (a) values (:a)", [1])).toEqual({ changes: 3, lastInsertRowid: 3 }); // prettier-ignore
+      db.run("insert into t (a) values ($a)");
+      db.exec("insert into t (a) values (?)", []);
+      expect(rows(db).map(row => row[0])).toEqual([1, null, null, null, null]);
+    });
+
+    it("a statement without parameters", () => {
+      const db = open();
+      const q = db.query("select 1 as v");
+      expect(q.get()).toEqual({ v: 1 });
+      expect(q.get([])).toEqual({ v: 1 });
+      expect(q.columnTypes).toEqual(["INTEGER"]);
+      expect(() => q.native.get([1])).toThrow("SQLite query expected 0 values, received 1");
+      expect(q.native.get()).toEqual({ v: 1 });
+      expect(db.prepare("select 1 as a", "x").get()).toEqual({ a: 1 });
+      db.transaction(() => db.run("insert into t (a) values (5)"))();
+      expect(rows(db)).toEqual([[5, null]]);
+    });
+
+    it("statement.native with a list of arguments that has a hole, after a bind", () => {
+      const db = open();
+      const q = db.query("select ? as a, ? as b");
+      expect(q.get(1, 2)).toEqual({ a: 1, b: 2 });
+      expect(q.native.get([, 5])).toEqual({ a: null, b: 5 });
+    });
+
+    it("a finalized statement reports that it is finalized", () => {
+      const db = open();
+      const q = db.prepare("select ? as v");
+      q.finalize();
+      expect(() => q.get()).toThrow("Statement has finalized");
+    });
+
+    it("the default mode binds NULL", () => {
+      const db = new Database(":memory:");
+      db.run("create table t (a, b)");
+      for (const execute of Object.values(executions)) {
+        expect(() => execute(db.query("select $id as v"))).not.toThrow();
+      }
+      expect(db.query("select $id as v").get()).toEqual({ v: null });
+      expect(db.query("select ? as v").get([])).toEqual({ v: null });
+      expect(db.prepare("select ? as v", []).get()).toEqual({ v: null });
+      expect(db.prepare("select ? as a, ? as b", 5).get()).toEqual({ a: null, b: null });
+
+      const q = db.query("select ? as a, ? as b");
+      expect(() => q.get(1)).toThrow("SQLite query expected 2 values, received 1");
+      expect(q.get()).toEqual({ a: null, b: null });
+
+      // A getter that binds the statement again is not refused.
+      const insert = db.query("insert into t values ($a, $b)");
+      const values = {
+        $a: 1,
+        get $b() {
+          expect(() => insert.run([1])).toThrow("SQLite query expected 2 values, received 1");
+          return 5;
+        },
+      };
+      expect(insert.run(values)).toEqual({ changes: 1, lastInsertRowid: 1 });
+      expect(rows(db)).toEqual([[null, 5]]);
+    });
+  });
+});
+
 describe("bind parameters object mutated by a getter during bind", () => {
   // A getter that runs while binding can add/delete properties, changing the
   // object's layout mid-bind. Lookups for later parameters must see the

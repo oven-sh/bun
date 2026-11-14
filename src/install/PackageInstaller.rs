@@ -2044,60 +2044,13 @@ impl<'a> PackageInstaller<'a> {
                         path: self.node_modules.path.clone(),
                         dependency_id,
                     });
-                let queued = match resolution.tag {
-                    resolution::Tag::Git => package_manager::enqueue_git_for_checkout(
-                        self.manager_mut(),
-                        dependency_id,
-                        package_id,
-                        alias.slice(string_buf!()),
-                        context,
-                        patch_name_and_version_hash,
-                    ),
-                    resolution::Tag::Github => {
-                        let url = self.manager_mut().alloc_github_url(resolution.github());
-                        package_manager::enqueue_tarball_for_download(
-                            self.manager_mut(),
-                            dependency_id,
-                            package_id,
-                            &url,
-                            context,
-                        )
-                    }
-                    resolution::Tag::LocalTarball => package_manager::enqueue_tarball_for_reading(
-                        self.manager_mut(),
-                        dependency_id,
-                        package_id,
-                        alias.slice(string_buf!()),
-                        resolution,
-                        context,
-                    ),
-                    resolution::Tag::RemoteTarball => {
-                        package_manager::enqueue_tarball_for_download(
-                            self.manager_mut(),
-                            dependency_id,
-                            package_id,
-                            resolution.remote_tarball().slice(string_buf!()),
-                            context,
-                        )
-                    }
-                    resolution::Tag::Npm => {
-                        let npm = *resolution.npm();
-                        package_manager::enqueue_package_for_download(
-                            self.manager_mut(),
-                            pkg_name.slice(string_buf!()),
-                            dependency_id,
-                            package_id,
-                            npm.version,
-                            npm.url.slice(string_buf!()),
-                            context,
-                        )
-                    }
-                    _ => {
-                        debug_assert!(false, "unreachable, handled above");
-                        Err(ForTarballError::InvalidURL)
-                    }
-                };
-                match queued {
+                match package_manager::enqueue_package_for_cache(
+                    self.manager_mut(),
+                    dependency_id,
+                    package_id,
+                    context,
+                    patch_name_and_version_hash,
+                ) {
                     Ok(()) => {}
                     Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(ForTarballError::InvalidURL) => {

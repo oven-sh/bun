@@ -21,8 +21,7 @@
 //
 // The kernel accumulates the running (generated/original/source/name) state
 // and writes one row of ABSOLUTE values per 4- or 5-field segment. 1-field
-// segments advance the generated-column accumulator without emitting a row
-// (matching the scalar parser, which skips them). On any anomaly (invalid
+// segments get a row with -1 for all but the generated position. On any anomaly (invalid
 // byte, unsupported field count, out-of-range accumulated value, a segment
 // that doesn't fit in one block, capacity exhausted, < one block of input
 // remaining) the kernel writes *err_at = byte-offset-of-that-segment and
@@ -280,6 +279,18 @@ static inline int32_t WrapAdd(int32_t a, int32_t b)
 static inline int32_t WrapSub(int32_t a, int32_t b)
 {
     return static_cast<int32_t>(static_cast<uint32_t>(a) - static_cast<uint32_t>(b));
+}
+
+// The row of a 1-field segment: -1 is no source index, line or column of a mapping. PERF: out of line. Inlined, these stores cost each mapped segment of the loop around them 2 instructions.
+static HWY_NOINLINE void StoreRowWithoutSource(int32_t* og, int32_t* oo, int32_t* os, int32_t* on, int32_t gen_line, int32_t gen_col)
+{
+    og[0] = gen_line;
+    og[1] = gen_col;
+    oo[0] = -1;
+    oo[1] = -1;
+    *os = -1;
+    if (on)
+        *on = -1;
 }
 
 } // namespace sourcemap_vlq
@@ -899,14 +910,13 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 if (field_count == 5)
                     d_name = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
             } else if (field_count == 1) {
-                // 1-field segments don't emit a row (scalar skips them),
-                // only gen-col moves. seg_len <= 10; a 1-field VLQ of >= 9
+                // seg_len <= 10; a 1-field VLQ of >= 9
                 // sextets (>= 8 continuation bytes) makes the scalar
                 // decoder return no-progress, so bail to scalar for
                 // byte-identical error reporting. Bailing at > 7 is
                 // conservative for seg_len == 8 (scalar succeeds there)
                 // and keeps DecodeVlqSextets' shift <= 30.
-                if (HWY_UNLIKELY(seg_len > 7))
+                if (HWY_UNLIKELY(seg_len > 7 || os >= os_end))
                     goto bail;
                 size_t q = p;
                 d_gen = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
@@ -924,6 +934,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             if (HWY_UNLIKELY(field_count == 1)) {
                 needs_sort |= (d_gen < 0) ? 1 : 0;
                 gen_col = n_gen_col;
+                StoreRowWithoutSource(og, oo, os, on, gen_line, gen_col);
+                og += 2;
+                oo += 2;
+                os += 1;
+                if (on)
+                    on += 1;
                 const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
                 p += adv;
                 if (p >= N)

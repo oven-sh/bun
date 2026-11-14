@@ -621,7 +621,7 @@ impl InternalSourceMap {
         reader.parse(se.byte_offset as usize)
     }
 
-    /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
+    /// Matches the semantics of `mapping::List::find_segment`: returns the last mapping with
     /// generated position `<= (line, column)` whose generated line equals `line`.
     pub fn find(self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         let target_line = line.zero_based();
@@ -1171,6 +1171,7 @@ pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
         generated_column = accumulate(generated_column, gc.value)?;
         remain = &remain[gc.start as usize..];
 
+        // `mapping::parse` keeps a row for a one-field segment. A blob has none: the bundler's printer, which writes the input, writes no such segment.
         if remain.is_empty() || remain[0] == b',' || remain[0] == b';' {
             if !remain.is_empty() && remain[0] == b',' {
                 remain = &remain[1..];

@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { isDeepStrictEqual } from "node:util";
 import { createContext, runInContext } from "node:vm";
 import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
@@ -2310,6 +2311,410 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
     stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
     stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// An Error has a `line`, a `column` and a `sourceURL` that the engine defines. One that user code stores, defines or
+// deletes is user code's from then on: the engine does not write it again, whenever the frames of the error arrive.
+// (An Error that nobody wrote to still has the three names, which Node does not define.)
+const positionNames = ["line", "column", "sourceURL"];
+// The value, then W(ritable), E(numerable), C(onfigurable).
+function describeOwn(error, name) {
+  const descriptor = Object.getOwnPropertyDescriptor(error, name);
+  if (!descriptor) return "none";
+  if (!("value" in descriptor)) return "accessor";
+  const flags = ["writable", "enumerable", "configurable"].map(flag =>
+    descriptor[flag] ? flag[0].toUpperCase() : "-",
+  );
+  return `${JSON.stringify(descriptor.value)} ${flags.join("")}`;
+}
+function withoutFrames(make = () => new Error("m")) {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    return make();
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+}
+// What gives an Error made without frames its frames afterwards.
+const frameInstallers = {
+  "Error.captureStackTrace": async error => void Error.captureStackTrace(error),
+  "Error.appendStackTrace": async error => void Error.appendStackTrace(new Error("source"), error),
+  "a stream read that rejects with it": async error => {
+    let controller;
+    const reader = new ReadableStream({ start: c => void (controller = c) }).getReader();
+    const read = (async () => await reader.read())();
+    controller.error(error);
+    expect(await read.catch(thrown => thrown)).toBe(error);
+  },
+  "an expect() of a pending promise that fails with it": async error => {
+    let thrown;
+    try {
+      await expect(Promise.resolve().then(() => 1)).resolves.toSatisfy(() => {
+        throw error;
+      });
+    } catch (caught) {
+      thrown = caught;
+    }
+    expect(thrown).toBe(error);
+  },
+};
+// What looks at the error first afterwards.
+const firstLooks = {
+  "a read of line": error => void error.line,
+  "a read of stack": error => void error.stack,
+  "Object.getOwnPropertyNames": error => void Object.getOwnPropertyNames(error),
+  "JSON.stringify": error => void JSON.stringify(error),
+  "structuredClone": error => void structuredClone(error),
+  "Bun.inspect": error => void Bun.inspect(error),
+  "a deep comparison": error => void isDeepStrictEqual(error, withoutFrames()),
+};
+
+test("an Error that nobody wrote to has the line, column and sourceURL of the engine", () => {
+  const error = new Error("m");
+  expect(positionNames.map(name => typeof error[name])).toEqual(["number", "number", "string"]);
+  expect(positionNames.map(name => Object.getOwnPropertyDescriptor(error, name).enumerable)).toEqual([
+    false,
+    false,
+    false,
+  ]);
+  expect(Object.keys(error)).toEqual([]);
+  // Frames that arrive later give their position to the names that nobody wrote.
+  const late = withoutFrames();
+  late.line = 5;
+  Error.captureStackTrace(late);
+  expect([describeOwn(late, "line"), typeof late.column, typeof late.sourceURL]).toEqual(["5 WEC", "number", "string"]);
+});
+
+for (const [installer, install] of Object.entries(frameInstallers)) {
+  test.each(Object.keys(firstLooks))(
+    `an Error made without frames keeps what user code wrote after ${installer}, then %s`,
+    async look => {
+      const assigned = withoutFrames();
+      assigned.line = 5;
+      assigned.column = 7;
+      assigned.sourceURL = "input.css";
+      // A name that user code deleted, one that it locked, and one that it made an accessor.
+      const shaped = withoutFrames();
+      delete shaped.line;
+      Object.defineProperty(shaped, "column", { value: 7, enumerable: true });
+      let calls = 0;
+      Object.defineProperty(shaped, "sourceURL", { get: () => (calls++, "input.css"), configurable: true });
+      for (const error of [assigned, shaped]) {
+        await install(error);
+        firstLooks[look](error);
+      }
+      expect(positionNames.map(name => describeOwn(assigned, name))).toEqual(["5 WEC", "7 WEC", '"input.css" WEC']);
+      expect(Object.keys(assigned)).toEqual(["line", "column", "sourceURL"]);
+      expect(positionNames.map(name => describeOwn(shaped, name))).toEqual(["none", "7 -E-", "accessor"]);
+      expect(["line" in shaped, calls]).toEqual([false, 0]);
+      // The frames did arrive.
+      expect(assigned.stack).toMatch(/^Error: m\n\s+at /);
+    },
+  );
+
+  // The store after the frames arrive is the first thing to look at the error: it materializes what the frames give.
+  test(`an Error made without frames takes a second store after ${installer}`, async () => {
+    const storeByValue = (error, name, value) => void (error[name] = value);
+    const error = withoutFrames();
+    error.line = 5;
+    error.column = 7;
+    error.sourceURL = "input.css";
+    await install(error);
+    error.line = 6;
+    storeByValue(error, "column", 8);
+    expect(positionNames.map(name => describeOwn(error, name))).toEqual(["6 WEC", "8 WEC", '"input.css" WEC']);
+    expect(Object.keys(error)).toEqual(["line", "column", "sourceURL"]);
+    expect(error.stack).toMatch(/^Error: m\n\s+at /);
+
+    // The shape of a TypeScript class with declared fields: the fields are defined, then the constructor stores.
+    class WithFields extends Error {
+      column;
+      line;
+      constructor(message, line, column) {
+        super(message);
+        this.line = line;
+        this.column = column;
+      }
+    }
+    const withFields = withoutFrames(() => new WithFields("m", 5, "email"));
+    await install(withFields);
+    expect([describeOwn(withFields, "line"), describeOwn(withFields, "column")]).toEqual(["5 WEC", '"email" WEC']);
+    expect(Object.keys(withFields)).toEqual(["column", "line"]);
+  });
+}
+
+test("line, column and sourceURL that a constructor assigns stay when the Error is made without frames", () => {
+  // The shape of postcss's CssSyntaxError.
+  class CssSyntaxError extends Error {
+    constructor(message, line, column) {
+      super(message);
+      this.name = "CssSyntaxError";
+      this.line = line;
+      this.column = column;
+      this.sourceURL = "input.css";
+      Error.captureStackTrace(this, CssSyntaxError);
+    }
+  }
+  const error = withoutFrames(() => new CssSyntaxError("Unclosed block", 1, 2));
+  const own = { name: "CssSyntaxError", line: 1, column: 2, sourceURL: "input.css" };
+  expect(error.stack).toStartWith("CssSyntaxError: Unclosed block");
+  expect(positionNames.map(name => describeOwn(error, name))).toEqual(["1 WEC", "2 WEC", '"input.css" WEC']);
+  expect(Object.keys(error)).toEqual(["name", "line", "column", "sourceURL"]);
+  expect(JSON.parse(JSON.stringify(error))).toEqual(own);
+  expect({ ...error }).toEqual(own);
+});
+
+test("a line that Error.prepareStackTrace assigns is the line of the error", () => {
+  Error.prepareStackTrace = error => ((error.line = 99), "prepared");
+  const error = new Error("m");
+  expect(error.stack).toBe("prepared");
+  expect(describeOwn(error, "line")).toBe("99 WEC");
+});
+
+test("Bun.inspect of an Error that got its frames later leaves the stack to Error.prepareStackTrace", () => {
+  let calls = 0;
+  Error.prepareStackTrace = () => (calls++, "prepared");
+  const error = withoutFrames();
+  error.line = 5;
+  Error.captureStackTrace(error);
+  // The printer reads the line that user code owns without the frames formatted, so it does not call the hook.
+  expect(Bun.inspect(error)).toContain("line: 5");
+  expect([calls, error.stack, calls]).toEqual([0, "prepared", 1]);
+});
+
+test("a deep comparison sees the line assigned to an Error made without frames", () => {
+  const make = line => {
+    const error = withoutFrames();
+    error.line = line;
+    Error.captureStackTrace(error);
+    return error;
+  };
+  const [five, alsoFive, six] = [make(5), make(5), make(6)];
+  expect([isDeepStrictEqual(five, alsoFive), Bun.deepEquals(five, alsoFive, true)]).toEqual([true, true]);
+  expect([isDeepStrictEqual(five, six), Bun.deepEquals(five, six), Bun.deepEquals(five, six, true)]).toEqual([
+    false,
+    false,
+    false,
+  ]);
+  expect(five).toEqual(alsoFive);
+  expect(five).not.toEqual(six);
+  // The comparisons leave the errors as they were.
+  expect([five, alsoFive, six].map(error => [describeOwn(error, "line"), Object.keys(error)])).toEqual([
+    ["5 WEC", ["line"]],
+    ["5 WEC", ["line"]],
+    ["6 WEC", ["line"]],
+  ]);
+});
+
+test("store sites that run hot keep what they stored before and after the frames arrive", () => {
+  function storeLine(error, value) {
+    error.line = value;
+  }
+  function storeByValue(error, name, value) {
+    error[name] = value;
+  }
+  const wrong = [];
+  for (let i = 0; i < 1000; i++) {
+    const name = positionNames[i % 3];
+    const error = withoutFrames();
+    storeLine(error, i);
+    storeByValue(error, name, i);
+    if (i & 1) Error.captureStackTrace(error);
+    else Error.appendStackTrace(new Error("source"), error);
+    if (i & 2) void error.stack;
+    storeLine(error, -i);
+    storeByValue(error, name, -i);
+    if (error.line !== -i || error[name] !== -i || !Object.keys(error).includes(name)) wrong.push(i);
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("an Error with so many properties that its shape is a dictionary keeps what user code wrote", () => {
+  const make = create => {
+    const error = create();
+    for (let i = 0; i < 600; i++) error["property" + i] = i;
+    delete error.property7;
+    return error;
+  };
+  const untouched = make(() => new Error("m"));
+  expect(positionNames.map(name => typeof untouched[name])).toEqual(["number", "number", "string"]);
+  const late = make(() => withoutFrames());
+  late.line = 5;
+  delete late.column;
+  Error.captureStackTrace(late);
+  late.line = 6;
+  expect([describeOwn(late, "line"), describeOwn(late, "column"), typeof late.sourceURL]).toEqual([
+    "6 WEC",
+    "none",
+    "string",
+  ]);
+});
+
+test("random sequences of stores, definitions, deletes and late frames leave what user code owns", () => {
+  // xorshift32: every run makes the same sequences, so a sequence that fails can be run again.
+  let state = 0x9e3779b9;
+  const random = below => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) % below;
+  };
+  const pick = list => list[random(list.length)];
+  // Every sequence stores at these sites, so they run hot and inline caches answer them.
+  const storeById = {
+    line: (error, value) => void (error.line = value),
+    column: (error, value) => void (error.column = value),
+    sourceURL: (error, value) => void (error.sourceURL = value),
+  };
+  const storeByValue = (error, name, value) => void (error[name] = value);
+  const makers = [
+    () => new Error("m"),
+    () => new RangeError("m", { cause: 1 }),
+    () => {
+      try {
+        null.property;
+      } catch (error) {
+        return error;
+      }
+    },
+    () => {
+      const error = new Error("m");
+      for (let i = 0; i < 70; i++) error["property" + i] = i;
+      delete error.property3;
+      return error;
+    },
+  ];
+  const failures = [];
+  let value = 1000;
+  for (let sequence = 0; sequence < 1000; sequence++) {
+    const make = pick(makers);
+    const error = random(2) ? withoutFrames(make) : make();
+    // What user code last did to each name: { value, enumerable }, { get } or { deleted }.
+    const owned = {};
+    const stored = name => {
+      const descriptor = Object.getOwnPropertyDescriptor(error, name);
+      if (descriptor?.value === value) owned[name] = { value, enumerable: descriptor.enumerable };
+    };
+    const operations = {
+      "store": name => (storeById[name](error, value), stored(name)),
+      "store by value": name => (storeByValue(error, name, value), stored(name)),
+      "Reflect.set": name => (Reflect.set(error, name, value), stored(name)),
+      "Object.assign": name => (Object.assign(error, { [name]: value }), stored(name)),
+      "define the value": name => (Object.defineProperty(error, name, { value }), stored(name)),
+      "define every attribute": name => (
+        Object.defineProperty(error, name, { value, writable: true, enumerable: true, configurable: true }),
+        stored(name)
+      ),
+      "define an accessor": name => {
+        const get = () => 7;
+        Object.defineProperty(error, name, { get, configurable: true });
+        owned[name] = { get };
+      },
+      "delete": name => {
+        delete error[name];
+        owned[name] = { deleted: true };
+      },
+      "read the stack": () => void error.stack,
+      "read the name": name => void error[name],
+      "list the keys": () => void [Object.keys(error), JSON.stringify(error), Object.getOwnPropertyNames(error)],
+      "Bun.inspect": () => void Bun.inspect(error),
+      "structuredClone": () => void structuredClone(error),
+      "Error.captureStackTrace": () => void Error.captureStackTrace(error),
+      "Error.appendStackTrace": () => void Error.appendStackTrace(new Error("source"), error),
+      "delete the stack": () => void delete error.stack,
+      "store the stack": () => void (error.stack = String(value)),
+      "close": () => void Object[pick(["preventExtensions", "seal", "freeze"])](error),
+      "read the stack with a hook that stores": name => {
+        Error.prepareStackTrace = formatted => {
+          try {
+            storeById[name](formatted, value);
+          } catch {}
+          if (formatted === error) stored(name);
+          return "prepared";
+        };
+        try {
+          void error.stack;
+        } finally {
+          Error.prepareStackTrace = undefined;
+        }
+      },
+    };
+    const labels = Object.keys(operations);
+    const trace = [];
+    for (let step = 3 + random(10); step > 0; step--) {
+      const label = random(3) ? pick(labels) : "store";
+      const name = pick(positionNames);
+      value++;
+      trace.push(`${label} ${name}`);
+      try {
+        operations[label](name);
+      } catch {
+        // A store, a definition or a delete that the Error refuses (it is closed, or the name is locked) changes nothing.
+      }
+      for (const owner of positionNames) {
+        const expected = owned[owner];
+        if (!expected) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(error, owner);
+        const kept = expected.deleted
+          ? !descriptor
+          : expected.get
+            ? descriptor?.get === expected.get
+            : descriptor?.value === expected.value && descriptor.enumerable === expected.enumerable;
+        if (!kept && failures.length < 5) failures.push({ owner, expected, got: describeOwn(error, owner), trace });
+      }
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
+test.concurrent("a collection that formats the frames of an Error keeps what user code wrote", async () => {
+  // The functions that the frames name are garbage once install() returns. The twin is made in the same frames: a
+  // collection that formats its stack formats the error's too, and then Error.prepareStackTrace is not asked for it.
+  const src = `
+    const withoutFrames = () => {
+      const limit = Error.stackTraceLimit;
+      Error.stackTraceLimit = 0;
+      try { return new Error("m"); } finally { Error.stackTraceLimit = limit; }
+    };
+    const install = error => new Function(
+      "error",
+      '"use strict"; function capturer() { try { Error.captureStackTrace(error); return new Error("twin"); } finally {} } try { return capturer(); } finally {}',
+    )(error);
+    const describeOwn = (error, name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(error, name);
+      if (!descriptor) return "none";
+      return JSON.stringify(descriptor.value) + " " + ["writable", "enumerable", "configurable"].map(flag => (descriptor[flag] ? flag[0].toUpperCase() : "-")).join("");
+    };
+    const samples = Array.from({ length: 8 }, () => {
+      const error = withoutFrames();
+      error.line = 5;
+      delete error.column;
+      Object.defineProperty(error, "sourceURL", { value: "input.css", enumerable: true });
+      return { error, twin: install(error) };
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+    const formattedByTheCollection = ({ twin }) => {
+      let asked = false;
+      const builtin = Error.prepareStackTrace;
+      Error.prepareStackTrace = () => ((asked = true), "");
+      void twin.stack;
+      Error.prepareStackTrace = builtin;
+      return !asked;
+    };
+    const formatted = samples.filter(formattedByTheCollection);
+    const results = new Set(formatted.map(({ error }) => JSON.stringify(["line", "column", "sourceURL"].map(name => describeOwn(error, name)).concat([Object.keys(error)]))));
+    console.log(JSON.stringify({ formattedByTheCollection: formatted.length > 0, results: [...results].map(result => JSON.parse(result)) }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    formattedByTheCollection: true,
+    results: [["5 WEC", "none", '"input.css" -E-', ["line", "sourceURL"]]],
   });
   expect(exitCode).toBe(0);
 });

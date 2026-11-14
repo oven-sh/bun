@@ -11,6 +11,7 @@ import {
   isLinux,
   isRoot,
   isWindows,
+  normalizeBunSnapshot,
   tempDir,
   tempDirWithFiles,
 } from "harness";
@@ -149,6 +150,72 @@ describe.concurrent(".env file is loaded", () => {
     });
     const { stdout } = bunTest(`${dir}/index.test.ts`);
     expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "test");
+  });
+
+  // Only the process environment replaces the `test` default of `bun test`.
+  describe("NODE_ENV in an env file under bun test", () => {
+    const header = `bun test ${Bun.version_with_sha}\n`;
+    const summary = "index.test.ts:\n\n 0 pass\n 0 fail\nRan 0 tests across 1 file.";
+    const printer = "console.log(process.env.NODE_ENV, process.env.FROM_FILE);";
+
+    async function run(files: Record<string, string>, cmd: string[], env: Record<string, string> = {}) {
+      using dir = tempDir("dotenv-node-env", { ...files, "index.test.ts": printer });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        env: { ...bunEnv, NODE_ENV: undefined, ...env },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: normalizeBunSnapshot(stderr), exitCode };
+    }
+
+    const envFiles: [name: string, args: string[]][] = [
+      [".env", []],
+      [".env.test", []],
+      [".env.test.local", []],
+      ["custom.env", ["--env-file=custom.env"]],
+    ];
+    test.each(envFiles)("NODE_ENV in %s does not replace the default", async (name, args) => {
+      const files = { [name]: "NODE_ENV=staging\nFROM_FILE=yes\n" };
+      expect(await run(files, ["test", ...args, "index.test.ts"])).toEqual({
+        stdout: header + "test yes",
+        stderr: summary,
+        exitCode: 0,
+      });
+    });
+
+    test("NODE_ENV in the process environment beats the default and the file", async () => {
+      const files = { ".env": "NODE_ENV=staging\nFROM_FILE=yes\n" };
+      expect(await run(files, ["test", "index.test.ts"], { NODE_ENV: "development" })).toEqual({
+        stdout: header + "development yes",
+        stderr: summary,
+        exitCode: 0,
+      });
+    });
+
+    test("${NODE_ENV} in an env file expands to the default", async () => {
+      expect(await run({ ".env": "FROM_FILE=app_${NODE_ENV}\n" }, ["test", "index.test.ts"])).toEqual({
+        stdout: header + "test app_test",
+        stderr: summary,
+        exitCode: 0,
+      });
+    });
+
+    test("bun --env-file=<file> run <script> passes the NODE_ENV of the file to bun test", async () => {
+      const script = `'${bunExe()}' test`;
+      const files = {
+        "package.json": JSON.stringify({ scripts: { test: script } }),
+        ".env.staging": "NODE_ENV=staging\nFROM_FILE=yes\n",
+      };
+      expect(await run(files, ["--env-file=.env.staging", "run", "test"])).toEqual({
+        stdout: header + "staging yes",
+        stderr: normalizeBunSnapshot(`$ ${script}\n\n${summary}`),
+        exitCode: 0,
+      });
+    });
   });
 });
 describe.concurrent("dotenv priority", () => {

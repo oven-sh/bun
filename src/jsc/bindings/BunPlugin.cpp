@@ -882,15 +882,23 @@ static String originalModuleKey(const String& specifier)
     return makeString(specifier, specifier.contains('?') ? '&' : '?', "actual"_s);
 }
 
-// Removes what originalModuleKey() and friends append ("?actual", any number of "&actual", "&spy"), leaving the file path.
+// Removes what originalModuleKey() and friends append ("?actual", "&actual" and "&spy", any number of them), leaving the file path.
 static String withoutOriginalModuleQuery(const String& key)
 {
-    String path = key;
-    if (path.endsWith("&spy"_s))
-        path = path.left(path.length() - "&spy"_s.length());
-    while (path.endsWith("?actual"_s) || path.endsWith("&actual"_s))
-        path = path.left(path.length() - "?actual"_s.length());
-    return path;
+    StringView path { key };
+    // Few keys end in the character that a tail ends in, so that character is compared first.
+    const auto endsWith = [&](ASCIILiteral tail) {
+        return !path.isEmpty() && path[path.length() - 1] == tail[tail.length() - 1] && path.endsWith(tail);
+    };
+    while (true) {
+        if (endsWith("&spy"_s))
+            path = path.left(path.length() - "&spy"_s.length());
+        else if (endsWith("?actual"_s) || endsWith("&actual"_s))
+            path = path.left(path.length() - "?actual"_s.length());
+        else
+            break;
+    }
+    return path.length() == key.length() ? key : key.left(path.length());
 }
 
 // A second module for a mock: it has the mock's exports and waits for nothing. For what a factory loads while the mock's own module waits for that factory.
@@ -8869,6 +8877,11 @@ JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject* globalObject, JSC::J
 std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key)
 {
     return Zig::builtinModuleOfOriginalKey(key);
+}
+
+String withoutOriginalModuleQuery(const String& key)
+{
+    return Zig::withoutOriginalModuleQuery(key);
 }
 
 __attribute__((minsize)) static JSC::JSObject* generateSettledModuleMock(JSValue source, JSC::JSGlobalObject* globalObject, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)

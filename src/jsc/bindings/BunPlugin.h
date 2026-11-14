@@ -365,6 +365,8 @@ void didDeleteModuleMockKey(Zig::GlobalObject*, const String& key);
 JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 // "node:fs" for "node:fs?actual", the key of the original of a mocked builtin.
 std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
+// "/app/tax.ts" for "/app/tax.ts?actual", the key of the original of a mocked module. Any other key as it is.
+String withoutOriginalModuleQuery(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);

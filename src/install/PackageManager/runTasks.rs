@@ -255,11 +255,7 @@ pub(crate) fn run_tasks(
         if ptask_ptr.is_null() {
             break;
         }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` is the `Box` that `enqueue_patch_task` /
-        // `enqueue_patch_task_pre` handed to the fifo via `heap::into_raw`;
-        // reclaim ownership exactly once here so the `Box` drops at end of
-        // iteration on every path.
+        // SAFETY: the `Box` that `PatchTask::run` pushed; `next` read its link before returning it.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
@@ -1380,26 +1376,13 @@ pub fn flush_network_queue(this: &mut PackageManager) {
     }
 }
 
-pub fn flush_patch_task_queue(this: &mut PackageManager) {
-    while let Some(patch_task) = this.patch_task_fifo.read_item() {
-        // SAFETY: fifo stores live `*mut PatchTask` pushed by
-        // `enqueue_patch_task`; exclusive ownership transferred here.
-        let pt = unsafe { &mut *patch_task };
-        pt.schedule(if matches!(pt.callback, PatchTaskCallback::Apply(_)) {
-            &mut this.patch_apply_batch
-        } else {
-            &mut this.patch_calc_hash_batch
-        });
-    }
-}
-
 pub fn flush_dependency_queue(this: &mut PackageManager) {
     let mut last_count = this.total_tasks;
     loop {
         flush_network_queue(this);
         enqueue::advance(this);
         flush_network_queue(this);
-        flush_patch_task_queue(this);
+        this.task_batch.push(core::mem::take(&mut this.patch_batch));
 
         if this.total_tasks == last_count {
             break;
@@ -1411,17 +1394,9 @@ pub fn flush_dependency_queue(this: &mut PackageManager) {
 pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     let count = manager.task_batch.len
         + manager.network_resolve_batch.len()
-        + manager.network_tarball_batch.len()
-        + manager.patch_apply_batch.len
-        + manager.patch_calc_hash_batch.len;
+        + manager.network_tarball_batch.len();
 
     manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.patch_apply_batch));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.patch_calc_hash_batch));
     manager
         .thread_pool
         .schedule(core::mem::take(&mut manager.task_batch));

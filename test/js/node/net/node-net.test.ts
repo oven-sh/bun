@@ -1626,10 +1626,11 @@ describe("Socket fd adoption", () => {
   });
 
   // In its own process: the assertion it used to fail aborts.
+  // Like connect() on a live TCP socket: the pipe is dropped (stdio stays open) and the socket dials.
   it.skipIf(isWindows).each([
-    ["port", `1, "127.0.0.1"`],
-    ["path", `"missing.sock"`],
-  ])("connect(%s) on a socket over a pipe fails with EISCONN", async (_, address) => {
+    ["port", `1, "127.0.0.1"`, "ECONNREFUSED"],
+    ["path", `"missing.sock"`, "ENOENT"],
+  ])("connect(%s) on a socket over a write-only pipe drops the pipe and dials", async (_, address, code) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1647,7 +1648,7 @@ describe("Socket fd adoption", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "before", stderr: "error EISCONN connect\nclose true\n" });
+    expect({ stdout, stderr }).toEqual({ stdout: "before", stderr: `error ${code} connect\nclose true\n` });
     expect(exitCode).toBe(0);
   });
 

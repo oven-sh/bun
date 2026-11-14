@@ -15,7 +15,8 @@ import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/no
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
-import { clangTargetArch, toolchainOverride } from "./tools.ts";
+import { ask, printed } from "./probe.ts";
+import { toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
@@ -335,7 +336,7 @@ export interface Config {
   /**
    * `clang -print-resource-dir` — builtin headers live at `<dir>/include`.
    * Used by darwin cross-compiles, which rebuild the C++ include search path
-   * explicitly. undefined on Windows (nothing consumes it there).
+   * explicitly. undefined for every other build (nothing consumes it there).
    */
   clangResourceDir: string | undefined;
   ar: string;
@@ -566,8 +567,15 @@ export interface Toolchain extends JsToolchain {
    * version parsing failed — shouldn't happen since we version-gate cc.
    */
   clangVersion: string | undefined;
-  /** `clang -print-resource-dir`. undefined on Windows. */
+  /** `clang -print-resource-dir`, asked where a macOS target is built on another host. undefined elsewhere. */
   clangResourceDir: string | undefined;
+  /** The arch `cc` targets by default: `Target:` of the `--version` answer that tool discovery accepted it on. */
+  clangTargetArch?: Arch | undefined;
+  /**
+   * What each tool that tool discovery asked for its version said it is (tools.ts `toolIdentity`), by path, so
+   * that writeToolIdentities() does not ask it again.
+   */
+  toolIdentities?: Readonly<Record<string, string>> | undefined;
   ar: string;
   ld: string;
   /**
@@ -663,14 +671,8 @@ export function glibcLoadsPackedRelocations(version: string): boolean {
 }
 
 function hostLoadsPackedRelocations(): boolean {
-  try {
-    const version = /^glibc (\d+\.\d+)/.exec(
-      execSync("getconf GNU_LIBC_VERSION", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
-    );
-    return version !== null && glibcLoadsPackedRelocations(version[1]!);
-  } catch {
-    return false;
-  }
+  const version = /^glibc (\d+\.\d+)/.exec(printed(ask("getconf", ["GNU_LIBC_VERSION"], { budgetMs: null })) ?? "");
+  return version !== null && glibcLoadsPackedRelocations(version[1]!);
 }
 
 /**
@@ -1056,7 +1058,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // in project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
   // target is what we actually build for. Cross-compiles from a unix host
   // skip this (the host clang-cl's default arch is just the host's).
-  const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
+  const compilerArch = os === "windows" && host.os === "windows" ? toolchain.clangTargetArch : undefined;
   const arch = partial.arch ?? compilerArch ?? host.arch;
   const {
     abi,
@@ -1830,12 +1832,9 @@ function getGitRevision(cwd: string, pinDir: string | undefined): string {
     const pinned = readFileSync(pinFile, "utf8").trim();
     if (/^[0-9a-f]{40}$/.test(pinned)) return pinned;
   }
-  let sha: string;
-  try {
-    sha = execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
-  } catch {
-    return "unknown";
-  }
+  // No git, or no repository, is "unknown". A git that was killed has not said that (probe.ts).
+  const sha = printed(ask("git", ["rev-parse", "HEAD"], { budgetMs: null, cwd, stderr: "inherit" }))?.trim();
+  if (sha === undefined) return "unknown";
   if (pinFile !== undefined) {
     mkdirSync(pinDir!, { recursive: true });
     writeFileSync(pinFile, sha + "\n");

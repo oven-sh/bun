@@ -1539,6 +1539,36 @@ for (const separateSSRGraph of [false, true]) {
   });
 }
 
+// The barrel is bundled again with each importer, and has the same code.
+devTest("barrel optimization: server: a save of one importer of a barrel does not evaluate its other importers again", {
+  framework: minimalFramework,
+  files: {
+    "counter.ts": `
+      import { Beta } from 'barrel-lib';
+      let requests = 0;
+      export const count = () => Beta + " request " + ++requests;
+    `,
+    "routes/index.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { count } from '../counter';
+      export default function () {
+        return new Response("v1 " + Alpha + " " + count());
+      }
+    `,
+    ...barrelLib,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1 ALPHA BETA request 1");
+    await dev.patch("routes/index.ts", { find: "v1", replace: "v2" });
+    await dev.fetch("/").equals("v2 ALPHA BETA request 2");
+    await dev.patch("routes/index.ts", { find: "v2", replace: "v3" });
+    await dev.fetch("/").equals("v3 ALPHA BETA request 3");
+    // A save of the module itself starts over.
+    await dev.patch("counter.ts", { find: " request ", replace: " call " });
+    await dev.fetch("/").equals("v3 ALPHA BETA call 1");
+  },
+});
+
 // Pins a known cost. The first request for /other makes a build in which the barrel has one more
 // re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
 // counter.ts runs again at that request, which imports it, and its count starts over.

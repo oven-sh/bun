@@ -2085,26 +2085,6 @@ impl Lockfile {
         slicable.slice(self.buffers.string_bytes.as_slice())
     }
 
-    /// [`str`](Self::str) with the borrow detached from `self`.
-    ///
-    /// The install pipeline frequently needs to read a string out of
-    /// `buffers.string_bytes` and then call back into `&mut PackageManager`
-    /// (which owns the `Lockfile`). The caller would otherwise have to write
-    /// `unsafe { detach_lifetime(self.str(x)) }` at
-    /// every site. Consolidating that here keeps the SAFETY argument in one
-    /// place.
-    ///
-    /// SAFETY (internal): `string_bytes` is append-only for the lifetime of a
-    /// resolve/enqueue pass and is never reallocated while a detached slice is
-    /// live. The returned slice must not outlive the
-    /// `Lockfile`.
-    #[inline]
-    pub(crate) fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
-        // SAFETY: see doc comment — same invariant every prior call site
-        // already relied on via `bun_ptr::detach_lifetime`.
-        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
-    }
-
     /// Construct an empty Lockfile value in place.
     #[inline(never)]
     pub fn init_empty(&mut self) {

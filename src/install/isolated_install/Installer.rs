@@ -2943,7 +2943,7 @@ fn append_dependency_link_name(
     entry_node_modules_name: Option<&[u8]>,
 ) -> sys::Result<()> {
     PathLike::append(dest, dep_name)?;
-    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name)) {
         // It has the same name as the entry itself, so nest it one `node_modules` deeper to avoid
         // the collision.
         PathLike::append(dest, b"node_modules")?;

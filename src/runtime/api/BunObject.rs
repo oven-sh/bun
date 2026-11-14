@@ -663,7 +663,7 @@ pub(crate) fn open_in_editor<'a>(
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            if !strings::eql_long(&edit.name, name, true) {
+            if !strings::eql_long(&edit.name, name) {
                 let prev = core::mem::take(edit);
                 edit.name = name.to_vec();
                 edit.detect_editor(env);

@@ -3,6 +3,7 @@
 use core::ptr::NonNull;
 use std::rc::Rc;
 
+use bun_collections::smallvec::SmallVec;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -253,20 +254,22 @@ impl TestContext {
         };
         // SAFETY: owned by the describe tree, which `buntest` keeps alive.
         let test = unsafe { test.as_ref() };
-        let name = test.base.name.as_deref().unwrap_or(b"");
         let buntest = buntest.get();
         let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
+        let id = format!("{}_{}_{}", buntest.file_id, self.group_index, self.sequence_index);
+        let (file, suite) = tasks(global, buntest, test.base.parent.filter(|&parent| parent != root))?;
+        let name = bun_string_jsc::create_utf8_for_js(global, test.base.name.as_deref().unwrap_or(b""))?;
+        let full_test_name = join(global, suite.and_then(SuiteTask::full_test_name), test.base.name.as_deref(), name)?;
 
         let task = JSValue::create_empty_object(global, 16);
-        let id = format!("{}_{}_{}", buntest.file_id, self.group_index, self.sequence_index);
         task.put(global, b"id", bun_string_jsc::create_utf8_for_js(global, id.as_bytes())?);
         task.put(global, b"type", ascii(global, "test")?);
-        task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, name)?);
-        put_full_names(global, task, buntest, &test.base)?;
+        task.put(global, b"name", name);
+        file.put_full_names(global, task, full_test_name)?;
         task.put(global, b"mode", ascii(global, mode(&test.base))?);
-        task.put(global, b"file", suite_task(global, buntest, root)?);
-        if let Some(parent) = test.base.parent.filter(|&parent| parent != root) {
-            task.put(global, b"suite", suite_task(global, buntest, parent)?);
+        task.put(global, b"file", file.task.get());
+        if let Some(suite) = suite {
+            task.put(global, b"suite", suite.task.get());
         }
         if test.base.mode == ScopeMode::Fails {
             task.put(global, b"fails", JSValue::TRUE);
@@ -565,65 +568,155 @@ fn file_name(buntest: &BunTest) -> Vec<u8> {
     name
 }
 
-#[optimize(size)]
-fn put_full_names(
-    global: &JSGlobalObject,
-    task: JSValue,
-    buntest: &BunTest,
-    base: &BaseScope,
-) -> JsResult<()> {
-    let mut names: Vec<&[u8]> = Vec::new();
-    let mut next = Some(base);
-    while let Some(base) = next {
-        names.extend(base.name.as_deref());
-        // SAFETY: a parent outlives its children.
-        next = base.parent.map(|parent| unsafe { &(*parent).base });
-    }
-    names.reverse();
-    task.put(global, b"fullTestName", bun_string_jsc::create_utf8_for_js(global, &names.join(&b" > "[..]))?);
-    let file_name = file_name(buntest);
-    names.insert(0, &file_name);
-    task.put(global, b"fullName", bun_string_jsc::create_utf8_for_js(global, &names.join(&b" > "[..]))?);
-    Ok(())
+/// A rope: it refers to both strings and copies neither.
+fn concat(global: &JSGlobalObject, left: JSValue, right: JSValue) -> JsResult<JSValue> {
+    jsc::cpp::Bun__JSString__concat(global, left, right)
 }
 
-/// Vitest's `Suite` for a describe block, or its `File` for the root scope. Cached in `DescribeScope::task`.
+fn new_suite(global: &JSGlobalObject, base: &BaseScope) -> JsResult<JSValue> {
+    let task = JSValue::create_empty_object(global, 10);
+    task.put(global, b"type", ascii(global, "suite")?);
+    task.put(global, b"mode", ascii(global, mode(base))?);
+    task.put(global, b"meta", JSValue::create_empty_object_with_null_prototype(global));
+    Ok(task)
+}
+
+const SEPARATOR: &[u8] = b" > ";
+
+/// `outer`, the separator and `name`, which JS has as `string`. A `None` is no name and adds nothing. "" is a name.
+fn join(global: &JSGlobalObject, outer: Option<JSValue>, name: Option<&[u8]>, string: JSValue) -> JsResult<Option<JSValue>> {
+    let (Some(outer), Some(name)) = (outer, name) else {
+        return Ok(outer.or_else(|| name.map(|_| string)));
+    };
+    let mut rest: SmallVec<[u8; 128]> = SmallVec::from_slice(SEPARATOR);
+    rest.extend_from_slice(name);
+    concat(global, outer, bun_string_jsc::create_utf8_for_js(global, &rest)?).map(Some)
+}
+
+/// Vitest's `File` for a test file. `BunTest::file_task` has it once a test or hook of the file needs a task.
+pub(crate) struct FileTask {
+    task: Strong,
+    /// The file's `name`. Also the `fullName` of what has no name and is in no named scope.
+    name: Strong,
+    /// `name`, then the separator. Every other `fullName` starts with it.
+    prefix: Strong,
+}
+
+impl FileTask {
+    #[optimize(size)]
+    fn create(global: &JSGlobalObject, buntest: &BunTest) -> JsResult<FileTask> {
+        let mut prefix = file_name(buntest);
+        let name = bun_string_jsc::create_utf8_for_js(global, &prefix)?;
+        prefix.extend_from_slice(SEPARATOR);
+        let prefix = bun_string_jsc::create_utf8_for_js(global, &prefix)?;
+        let task = new_suite(global, &buntest.collection.root_scope.base)?;
+        task.put(global, b"name", name);
+        task.put(global, b"fullName", name);
+        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
+        task.put(global, b"file", task);
+        Ok(FileTask {
+            task: Strong::create(task, global),
+            name: Strong::create(name, global),
+            prefix: Strong::create(prefix, global),
+        })
+    }
+
+    fn put_full_names(&self, global: &JSGlobalObject, task: JSValue, full_test_name: Option<JSValue>) -> JsResult<()> {
+        let (full_test_name, full_name) = match full_test_name {
+            Some(name) => (name, concat(global, self.prefix.get(), name)?),
+            None => (JSValue::js_empty_string(global), self.name.get()),
+        };
+        task.put(global, b"fullTestName", full_test_name);
+        task.put(global, b"fullName", full_name);
+        Ok(())
+    }
+}
+
+/// Vitest's `Suite` for a describe block. `DescribeScope::task` has it once a test or hook needs it.
+pub(crate) struct SuiteTask {
+    task: Strong,
+    /// The names inside the block are built from this, not from the Suite's `fullTestName`, which a test can assign.
+    full_test_name: Option<Strong>,
+}
+
+impl SuiteTask {
+    fn full_test_name(&self) -> Option<JSValue> {
+        self.full_test_name.as_ref().map(Strong::get)
+    }
+}
+
+/// The `File`, and the Suite of `block`. Builds the Suites that `block` and the blocks around it lack, outermost first.
 #[optimize(size)]
+fn tasks<'a>(
+    global: &JSGlobalObject,
+    buntest: &'a mut BunTest,
+    block: Option<*mut DescribeScope>,
+) -> JsResult<(&'a FileTask, Option<&'a SuiteTask>)> {
+    let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
+    let file: &FileTask = match buntest.file_task {
+        Some(ref file) => file,
+        None => {
+            let file = FileTask::create(global, buntest)?;
+            buntest.file_task.insert(file)
+        }
+    };
+
+    // Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
+    let mut missing: SmallVec<[*mut DescribeScope; 8]> = SmallVec::new();
+    let mut next = block;
+    let mut parent: Option<&SuiteTask> = loop {
+        let Some(scope) = next.filter(|&scope| scope != root) else {
+            break None;
+        };
+        // SAFETY: `scope` is `block` or a describe block around it, in `buntest`'s tree. A parent outlives its children.
+        if let Some(suite) = unsafe { (*scope).task.as_deref() } {
+            break Some(suite);
+        }
+        missing.push(scope);
+        // SAFETY: as above.
+        next = unsafe { (*scope).base.parent };
+    };
+    while let Some(scope) = missing.pop() {
+        // SAFETY: as above.
+        let base = unsafe { &(*scope).base };
+        let name = bun_string_jsc::create_utf8_for_js(global, base.name.as_deref().unwrap_or(b""))?;
+        let full_test_name = join(global, parent.and_then(SuiteTask::full_test_name), base.name.as_deref(), name)?;
+        let task = new_suite(global, base)?;
+        task.put(global, b"name", name);
+        file.put_full_names(global, task, full_test_name)?;
+        task.put(global, b"file", file.task.get());
+        if let Some(parent) = parent {
+            task.put(global, b"suite", parent.task.get());
+        }
+        let suite = SuiteTask {
+            task: Strong::create(task, global),
+            full_test_name: full_test_name.map(|name| Strong::create(name, global)),
+        };
+        // SAFETY: as above. The Suite is complete, so a build that fails leaves none in the cache.
+        parent = Some(unsafe { (*scope).task.insert(Box::new(suite)) });
+    }
+    Ok((file, parent))
+}
+
+/// Vitest's `Suite` for a describe block, or its `File` for the root scope and for the preload hook scope.
 pub(crate) fn suite_task(
     global: &JSGlobalObject,
     buntest: &mut BunTest,
     scope: *mut DescribeScope,
 ) -> JsResult<JSValue> {
     let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
-    // SAFETY: `scope` is in `buntest`'s describe tree, or is the preload hook scope above it.
-    let scope = if unsafe { (*scope).base.parent.is_none() } { root } else { scope };
-    // SAFETY: as above; the borrow ends before the recursive calls.
-    if let Some(task) = unsafe { &(*scope).task } {
+    // SAFETY: `scope` is in `buntest`'s describe tree, or is the preload hook scope above it, which alone has no parent.
+    let block = (scope != root && unsafe { (*scope).base.parent.is_some() }).then_some(scope);
+    let cached = match block {
+        // SAFETY: as above.
+        Some(block) => unsafe { (*block).task.as_deref() }.map(|suite| &suite.task),
+        None => buntest.file_task.as_ref().map(|file| &file.task),
+    };
+    if let Some(task) = cached {
         return Ok(task.get());
     }
-    let task = JSValue::create_empty_object(global, 10);
-    // SAFETY: as above.
-    unsafe { (*scope).task = Some(Strong::create(task, global)) };
-    // SAFETY: as above.
-    let base = unsafe { &(*scope).base };
-    task.put(global, b"type", ascii(global, "suite")?);
-    task.put(global, b"mode", ascii(global, mode(base))?);
-    task.put(global, b"meta", JSValue::create_empty_object_with_null_prototype(global));
-    if scope == root {
-        let name = bun_string_jsc::create_utf8_for_js(global, &file_name(buntest))?;
-        task.put(global, b"name", name);
-        task.put(global, b"fullName", name);
-        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
-        task.put(global, b"file", task);
-        return Ok(task);
-    }
-    task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, base.name.as_deref().unwrap_or(b""))?);
-    put_full_names(global, task, buntest, base)?;
-    task.put(global, b"file", suite_task(global, buntest, root)?);
-    if let Some(parent) = base.parent.filter(|&parent| parent != root) {
-        task.put(global, b"suite", suite_task(global, buntest, parent)?);
-    }
-    Ok(task)
+    let (file, suite) = tasks(global, buntest, block)?;
+    Ok(suite.map_or(&file.task, |suite| &suite.task).get())
 }
 
 /// Rejects rather than throws, so the report shows the error's own stack and not the `throw` site's.

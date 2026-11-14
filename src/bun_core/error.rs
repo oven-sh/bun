@@ -10,8 +10,6 @@ pub enum Error {
     Unexpected,
     #[error("InvalidByteSequence")]
     InvalidByteSequence,
-    #[error("StringTooLong")]
-    StringTooLong,
     #[error("InvalidCharacter")]
     InvalidCharacter,
     // errno-category names kept local (bun_core cannot depend on bun_errno):
@@ -40,7 +38,6 @@ impl Error {
             Self::FmtError => "FmtError",
             Self::Unexpected => "Unexpected",
             Self::InvalidByteSequence => "InvalidByteSequence",
-            Self::StringTooLong => "StringTooLong",
             Self::InvalidCharacter => "InvalidCharacter",
             Self::NoSpaceLeft => "NoSpaceLeft",
             Self::NameTooLong => "NameTooLong",

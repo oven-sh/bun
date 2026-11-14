@@ -112,6 +112,28 @@ describe("path.resolve", () => {
     expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));
   });
 
+  test("UNC first part that exactly fills the device buffer", () => {
+    // The UNC device `\\first\rest` is built in a fixed-size buffer. A first
+    // part that filled it together with the two leading separators left no
+    // room for the separator after it, which was then written past the end
+    // (an index out of bounds panic). The lengths around it are ENAMETOOLONG.
+    const resolveUnc = length => path.win32.resolve("\\\\" + "a".repeat(length) + "\\b");
+    // The longest first part that still fits (the buffer's size differs by platform).
+    let fits = 1;
+    let tooLong = 1 << 20;
+    while (tooLong - fits > 1) {
+      const mid = (fits + tooLong) >> 1;
+      if (typeof resolveUnc(mid) === "string") fits = mid;
+      else tooLong = mid;
+    }
+    expect(resolveUnc(fits)).toBe("\\\\" + "a".repeat(fits) + "\\b\\");
+    for (const length of [fits + 1, fits + 2, fits + 3]) {
+      const result = resolveUnc(length);
+      expect(result).toBeInstanceOf(Error);
+      expect(result.code).toBe("ENAMETOOLONG");
+    }
+  });
+
   // Drive-relative paths ("C:foo") resolve against the per-drive cwd in `=C:`.
   // Spawn a child with a known `=C:` so the expected output is deterministic.
   test.skipIf(!isWindows)("win32 drive-relative input resolves against the per-drive cwd (=X: env var)", async () => {

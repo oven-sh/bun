@@ -414,6 +414,167 @@ describe("bun", () => {
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
       });
     });
+
+    // The bash script uses associative arrays (bash 4). macOS ships bash 3.2 at /bin/bash.
+    const bashMajor = (() => {
+      try {
+        return Number(spawnSync({ cmd: ["bash", "-c", 'echo "${BASH_VERSINFO[0]}"'] }).stdout.toString());
+      } catch {
+        return 0;
+      }
+    })();
+
+    describe.skipIf(!(bashMajor >= 4))("bun.bash", () => {
+      const script = join(import.meta.dir, "..", "..", "completions", "bun.bash");
+
+      // Sources completions/bun.bash and completes `bun <words...>` in cwd, like bash does on <TAB>.
+      // The last word is the one under the cursor. Returns the completions, one per line.
+      // The shell options the script sets while it runs must not leak into the user's shell.
+      async function complete(cwd: string, ...words: string[]) {
+        await using proc = Bun.spawn({
+          cmd: [
+            "bash",
+            "-c",
+            'source "$1"; shift; COMP_WORDS=(bun "$@"); COMP_CWORD=$#; _bun_completions; ' +
+              'shopt -q extglob && { echo "extglob leaked" >&2; exit 1; }; ' +
+              'shopt -q nocasematch && { echo "nocasematch leaked" >&2; exit 1; }; ' +
+              'printf "%s\\n" "${COMPREPLY[@]}"',
+            "bash",
+            script,
+            ...words,
+          ],
+          cwd,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        return stdout.split("\n").filter(Boolean);
+      }
+
+      test.concurrent("bun test completes the test runner flags and the test files", async () => {
+        using dir = tempDir("completions-bash-test", {
+          "foo.test.ts": "",
+          "bar_spec.js": "",
+          "my feature.test.ts": "",
+          "Button.Spec.tsx": "",
+          "helper.ts": "",
+          "notes.txt": "",
+          "tsconfig.build.json": "{}",
+          "sub": { "nested.test.js": "" },
+        });
+        const cwd = String(dir);
+
+        // `bun test -<TAB>`: every flag of `bun test --help` (except the internal --test-worker) and
+        // none of the global bun flags
+        const flags = await complete(cwd, "test", "-");
+        await using help = Bun.spawn({
+          cmd: [bunExe(), "test", "--help"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [helpText, helpStderr, helpExitCode] = await Promise.all([
+          help.stdout.text(),
+          help.stderr.text(),
+          help.exited,
+        ]);
+        expect(helpStderr).toBe("");
+        expect(helpExitCode).toBe(0);
+        const helpFlags = [...helpText.matchAll(/^\s+(?:(-[a-zA-Z]), )?(--[a-z-]+)/gm)]
+          .flatMap(m => [m[1], m[2]])
+          .filter(flag => flag && flag !== "--test-worker");
+        expect(helpFlags).toContain("--bail");
+        expect(flags).toEqual(expect.arrayContaining(helpFlags));
+        expect(flags).toEqual(
+          expect.arrayContaining([
+            "--watch",
+            "--preload",
+            "-r",
+            "--env-file",
+            "--cwd",
+            "--config",
+            "-c",
+            "--help",
+            "-h",
+          ]),
+        );
+        for (const global of ["--bunfile", "--jsx-runtime", "--public-dir", "--bun", "-b"]) {
+          expect(flags).not.toContain(global);
+        }
+        // every offered flag starts with a dash and appears once
+        expect(flags.every(flag => flag.startsWith("-"))).toBe(true);
+        expect(new Set(flags).size).toBe(flags.length);
+
+        // `bun test --co<TAB>`
+        expect((await complete(cwd, "test", "--co")).sort()).toEqual([
+          "--concurrent",
+          "--config",
+          "--coverage",
+          "--coverage-dir",
+          "--coverage-reporter",
+        ]);
+
+        // `bun test <TAB>`: the test files in cwd and the flags, not the other files
+        const empty = await complete(cwd, "test", "");
+        // readline inserts the entries as they are, so the space is escaped
+        expect(empty.filter(word => !word.startsWith("-")).sort()).toEqual([
+          "Button.Spec.tsx",
+          "bar_spec.js",
+          "foo.test.ts",
+          "my\\ feature.test.ts",
+        ]);
+        expect(empty).toContain("--bail");
+
+        // `bun test f<TAB>`
+        expect(await complete(cwd, "test", "f")).toEqual(["foo.test.ts"]);
+
+        // flag values
+        expect((await complete(cwd, "test", "--reporter", "")).sort()).toEqual(["dots", "junit"]);
+        expect((await complete(cwd, "test", "--coverage-reporter", "")).sort()).toEqual(["lcov", "text"]);
+        expect(await complete(cwd, "test", "--coverage-dir", "")).toEqual(["sub"]);
+        expect(await complete(cwd, "test", "--timeout", "")).toEqual([]);
+        expect(await complete(cwd, "test", "--tsconfig-override", "t")).toEqual(["tsconfig.build.json"]);
+        // `bun test --cwd sub <TAB>`: the test files under sub
+        const underCwd = await complete(cwd, "test", "--cwd", "sub", "");
+        expect(underCwd.filter(word => !word.startsWith("-"))).toEqual(["nested.test.js"]);
+        // `bun test --cwd=sub <TAB>`: readline splits the word at the `=`
+        const underCwdEq = await complete(cwd, "test", "--cwd", "=", "sub", "");
+        expect(underCwdEq.filter(word => !word.startsWith("-"))).toEqual(["nested.test.js"]);
+        // `bun test --cwd=s<TAB>`: the value itself completes a directory
+        expect(await complete(cwd, "test", "--cwd", "=", "s")).toEqual(["sub"]);
+        // `bun test sub/n<TAB>`, and a full name: nothing is added to a name without a space
+        expect(await complete(cwd, "test", "sub/n")).toEqual(["sub/nested.test.js"]);
+        expect(await complete(cwd, "test", "foo.test.ts")).toEqual(["foo.test.ts"]);
+        expect((await complete(cwd, "test", "--preload", "")).sort()).toEqual([
+          "Button.Spec.tsx",
+          "bar_spec.js",
+          "foo.test.ts",
+          "helper.ts",
+          "my feature.test.ts",
+          "notes.txt",
+          "sub",
+          "tsconfig.build.json",
+        ]);
+      });
+
+      test.concurrent("file completion works without extglob and with an empty word", async () => {
+        using dir = tempDir("completions-bash-run", {
+          "app.ts": "",
+          "notes.txt": "",
+        });
+        const cwd = String(dir);
+
+        // `bun run <TAB>` listed no files at all: the empty-word branch passed `-X` to `-G`.
+        const empty = await complete(cwd, "run", "");
+        expect(empty.filter(word => !word.startsWith("-"))).toEqual(["app.ts"]);
+
+        // `bun run a<TAB>` listed nothing unless bash-completion had turned extglob on.
+        expect(await complete(cwd, "run", "a")).toEqual(["app.ts"]);
+      });
+    });
   });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };

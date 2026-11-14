@@ -57,7 +57,7 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
  * @returns {void}
  */
 export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
-  const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $bindgen(
+  const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object | number) => void = $bindgen(
     "ipc_host.bind.ts",
     "emitHandleIPCMessage",
   );
@@ -75,6 +75,18 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
       emit(target, serialized.msg, socket);
+      return;
+    }
+    case "fd": {
+      // A raw connected descriptor for `server.adopt(fd)` (a hostname router
+      // hands over the connection after peeking the ClientHello). Nothing
+      // reads it here, so the ClientHello stays in the kernel buffer.
+      // Whoever handles "message" owns the descriptor; with no handler, close it.
+      if (target === null && process.listenerCount("message") === 0) {
+        require("node:fs").closeSync(fd);
+        return;
+      }
+      emit(target, serialized.msg, fd);
       return;
     }
     case "dgram.Native": {

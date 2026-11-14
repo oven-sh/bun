@@ -679,7 +679,9 @@ const NativeStackTrace = ({
         onClick={openWithoutFlashOfNewTab}
         className="BunError-NativeStackTrace-filename"
       >
-        {filename}:{position.line}:{position.column}
+        {filename}
+        {position.line > -1 && `:${position.line}`}
+        {position.column > -1 && `:${position.column}`}
       </a>
       {sourceLines.length > 0 && (
         <SourceLines

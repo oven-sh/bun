@@ -1258,7 +1258,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   );
   assert(
     !hardened || toolchain.llvmStrip !== undefined,
-    "hardened=true requires llvm-strip (GNU strip writes a file without PT_GNU_RELRO)",
+    "hardened=true requires llvm-strip (its strip is llvm-strip followed by close-elf-gaps.ts, see bun.ts)",
     { hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent)." },
   );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
@@ -1558,10 +1558,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
     ld: ld64StripSwap?.ld ?? toolchain.ld,
-    // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
-    // fully; host strip rejects foreign-arch ELF); other cross targets use
-    // llvm-strip. Hardened: llvm-strip, native or cross. Removing a mapped section makes GNU strip write
-    // new program headers, without PT_GNU_RELRO.
+    // Cross strips: linux-gnu uses <triple>-strip (GNU; host strip rejects
+    // foreign-arch ELF); other cross targets use llvm-strip. Hardened:
+    // llvm-strip, native or cross, with close-elf-gaps.ts after it (bun.ts).
     strip:
       ld64StripSwap?.strip ??
       (hardened ? toolchain.llvmStrip : undefined) ??

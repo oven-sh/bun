@@ -3,8 +3,8 @@
  *
  * Design: ONE flat table per flag category. Each entry has a `when` predicate
  * and a `desc`. To find out why a flag is set, grep for it in this file.
- * Related flags (e.g. `-fno-unwind-tables` + `--no-eh-frame-hdr` + strip
- * `-R .eh_frame`) live adjacent so their coupling is obvious.
+ * Related flags (e.g. `-fno-unwind-tables` + `--no-eh-frame-hdr`) live
+ * adjacent so their coupling is obvious.
  *
  * Note: dependency include paths (WebKit, boringssl, etc.) are NOT here —
  * they come from each dep's `Provides.includes`. This file covers only flags
@@ -525,9 +525,8 @@ export const globalFlags: Flag[] = [
   },
 
   // ─── Unwinding / exception tables ───
-  // These go together: -fno-unwind-tables at compile, --no-eh-frame-hdr at
-  // link (release glibc), and strip -R .eh_frame at post-link (release glibc).
-  // See linkerFlags and stripFlags below — kept adjacent intentionally.
+  // These go together: -fno-unwind-tables at compile and --no-eh-frame-hdr
+  // at link (release glibc). See linkerFlags below — kept adjacent intentionally.
   {
     flag: ["-fno-unwind-tables", "-fno-asynchronous-unwind-tables"],
     when: c => c.unix,
@@ -1464,7 +1463,7 @@ export const linkerFlags: Flag[] = [
     // both sides). Debug builds keep .eh_frame for gdb/libunwind.
     flag: "-Wl,--no-eh-frame-hdr",
     when: c => c.linux && c.abi === "gnu" && c.release,
-    desc: "Omit eh_frame header (release; size/RSS opt; see stripFlags for matching -R .eh_frame)",
+    desc: "Omit eh_frame header (release; size/RSS opt)",
   },
   {
     flag: "-Wl,--eh-frame-hdr",
@@ -1499,7 +1498,15 @@ export const linkerFlags: Flag[] = [
     flag: c => [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      ...(c.hardened ? ["-Wl,-z,now", "-Wl,-z,relro", "-Wl,-z,separate-code"] : ["-Wl,-z,lazy", "-Wl,-z,norelro"]),
+      // Full RELRO and eager binding: the loader resolves every import at
+      // start and then maps the GOT and the other relocated data read-only.
+      // The link has about 380 JUMP_SLOT and 24 GLOB_DAT relocations
+      // (readelf -rW), which the loader resolves at start instead of on the
+      // first call. The strip must keep PT_GNU_RELRO: it removes no mapped
+      // section (see stripFlags).
+      "-Wl,-z,now",
+      "-Wl,-z,relro",
+      ...(c.hardened ? ["-Wl,-z,separate-code"] : []),
       // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
       // and we wrap symbols for portability down to 2.17. With -no-pie
       // there are <500 R_*_RELATIVE entries anyway — not worth the compat
@@ -1517,7 +1524,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
-    desc: "Linux linker tuning: lazy binding, large stack",
+    desc: "Linux linker tuning: full RELRO, eager binding, large stack",
   },
   {
     flag: "-Wl,-z,pack-relative-relocs",
@@ -1666,8 +1673,8 @@ export const linkerFlags: Flag[] = [
       "-Wl,-O2",
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,-z,lazy",
-      "-Wl,-z,norelro",
+      "-Wl,-z,now",
+      "-Wl,-z,relro",
       "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
       "-Wl,--hash-style=both",
@@ -1862,9 +1869,10 @@ export function linkDepends(cfg: Config): string[] {
  * Platform extras remove unwind/exception sections we compile without
  * (no -fexceptions, lolhtml built with panic=abort).
  *
- * Linux section removal: CMake notes llvm-strip doesn't fully delete
- * these (leaves [LOAD #2 [R]]), GNU strip does. If size matters and
- * llvm-strip's output is larger, swap to /usr/bin/strip for this step.
+ * No Linux entry removes a mapped section: GNU strip writes the program
+ * headers anew without PT_GNU_RELRO when it removes one. `-R .eh_frame`
+ * did, for 806 KB of unwind tables that -Cforce-unwind-tables=no (rust.ts)
+ * has since cut to 18 KB.
  */
 export const stripFlags: Flag[] = [
   {
@@ -1880,22 +1888,6 @@ export const stripFlags: Flag[] = [
     ],
     when: c => c.darwin,
     desc: "Remove unwind/exception sections (we compile with -fno-exceptions; these come from lolhtml etc., built with panic=abort)",
-  },
-  {
-    // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
-    //
-    // Gated on release to match -Wl,--no-eh-frame-hdr in linkerFlags above
-    // (both fire on `c.linux && c.abi === "gnu" && c.release`). GNU strip
-    // does not rewrite the program header table, so the PT_GNU_EH_FRAME
-    // phdr must already be absent at link time — which the matching
-    // --no-eh-frame-hdr above guarantees. Nothing unwinds at runtime
-    // (`panic = "abort"`, `-fno-exceptions`); release backtraces use frame
-    // pointers. Saves ~962 KB of R-segment (.eh_frame 806 KB +
-    // .eh_frame_hdr 142 KB + .gcc_except_table 13 KB) that otherwise gets
-    // dragged into RSS via 64 KB fault-around on adjacent .rodata reads.
-    flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi === "gnu" && c.release,
-    desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];
 

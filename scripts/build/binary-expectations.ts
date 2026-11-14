@@ -543,15 +543,18 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         ...(staticInitializers && { staticInitializers }),
         ...(forbiddenSymbols && { forbiddenSymbols }),
         elf: {
-          // Android requires PIE; everywhere else bun is a fixed-address
-          // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
-          // flags.ts links `-z norelro -z lazy` (a startup-time choice from
-          // the CMake era, kept as is); recorded so a change is deliberate.
+          // Android and hardened builds are PIE; everywhere else bun is a
+          // fixed-address executable (-fno-pic, see flags.ts): PIC codegen
+          // cost about 6 MB of file size (#12582), and an ET_EXEC image
+          // shares its file-backed pages between processes without
+          // relocation. Full RELRO and BIND_NOW everywhere: flags.ts links
+          // `-z relro -z now`, and the strip removes no mapped section, so
+          // PT_GNU_RELRO survives it. Recorded so a change is deliberate.
           type: android || cfg.hardened ? "DYN" : "EXEC",
           execStack: false,
           rwxLoad: false,
-          relro: cfg.hardened,
-          bindNow: cfg.hardened,
+          relro: true,
+          bindNow: true,
           tlsSegment: !android,
         },
         debugInfo: { symtab: true, debugSections: cfg.debugInfo !== "none", compressed: true },

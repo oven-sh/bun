@@ -3002,8 +3002,11 @@ pub struct RuntimeHooks {
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
-    pub load_preloads:
-        unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// `marks_load` goes to `JSModuleLoader::import_ptr` with each of them.
+    pub load_preloads: unsafe fn(
+        vm: *mut VirtualMachine,
+        marks_load: bool,
+    ) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -3796,7 +3799,7 @@ impl VirtualMachine {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     // SAFETY: hook contract.
-                    let p = unsafe { (hooks.load_preloads)(self) }?;
+                    let p = unsafe { (hooks.load_preloads)(self, false) }?;
                     if !p.is_null() {
                         self.set_pending_internal_promise(Some(p));
                         return Ok(p);
@@ -3901,7 +3904,7 @@ impl VirtualMachine {
         } else {
             let main = (self.main()).expect("a file entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str, false)
                 .map(NonNull::as_ptr)
                 .ok_or(crate::CrateError::JSError)?
         };
@@ -6207,7 +6210,7 @@ impl VirtualMachine {
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract.
-                let p = unsafe { (hooks.load_preloads)(self) }?;
+                let p = unsafe { (hooks.load_preloads)(self, true) }?;
                 if !p.is_null() {
                     self.set_pending_internal_promise(Some(p));
                     return Ok(p);
@@ -6223,7 +6226,7 @@ impl VirtualMachine {
         let main = (self.main()).expect("set to the test file above");
         let main_str = bun_core::StringView::from_bytes(main);
         let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
-            global, &main_str,
+            global, &main_str, true,
         ) {
             Some(promise) => promise.as_ptr(),
             // Not resolving is this file's failure, like not loading.

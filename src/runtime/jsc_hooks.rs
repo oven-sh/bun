@@ -767,7 +767,10 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+unsafe fn load_preloads(
+    vm: *mut VirtualMachine,
+    marks_load: bool,
+) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
     // Note: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
@@ -900,8 +903,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`
         // (UB to write through under Stacked Borrows).
-        let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
-        {
+        let imported = JSModuleLoader::import_ptr(global, &module_name, marks_load);
+        let promise: *mut JSInternalPromise = match imported {
             Ok(p) => p.as_ptr(),
             // Report a preload that fails to resolve the same way as one that fails to load.
             Err(err) => {

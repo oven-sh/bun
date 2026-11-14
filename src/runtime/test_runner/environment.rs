@@ -186,7 +186,7 @@ impl Environment {
             let _ = vm.ensure_debugger(true);
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: `vm` is the live per-thread VM.
-            let rejected_preload = unsafe { (hooks.load_preloads)(vm) }?;
+            let rejected_preload = unsafe { (hooks.load_preloads)(vm, true) }?;
             if let Some(project) = project {
                 teardown(vm, &project);
             }

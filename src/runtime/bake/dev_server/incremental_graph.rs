@@ -311,8 +311,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
     /// Client side: the files of the chunk that are new to the graph, and the html files.
     pub(crate) first_bundled_files: Vec<FileIndex<SIDE>>,
-    /// Client side: `(importer, imported)` of each import that is new in this bundle. Empty if no file left the chunk.
-    pub(crate) new_imports: Vec<(FileIndex<SIDE>, FileIndex<SIDE>)>,
+    /// Client side: the edges that are new in this bundle. Empty if no file left the chunk.
+    pub(crate) new_edges: Vec<EdgeIndex>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -487,7 +487,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.current_chunk_parts.clear();
         self.unchanged_files.clear();
         self.first_bundled_files.clear();
-        self.new_imports.clear();
+        self.new_edges.clear();
     }
 
     /// Once every chunk is in, an unchanged module that imports no changed module of the chunk, at any depth, leaves it.
@@ -540,46 +540,111 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// Once the edges are up to date. A page whose file has a new import may never have loaded that module,
-    /// nor what the module imports, so they go back into the chunk. The imports of a file that is new to the
-    /// graph do not count by themselves: an open page has that file only through a new import of another file.
+    /// Once the edges are up to date. A page whose file has a new import may not have the imported module, nor what
+    /// that module imports. What such a page did not reach before goes back into the chunk. The imports of a file that
+    /// is new to the graph do not count by themselves: an open page has that file only through a new import of another file.
     pub(crate) fn restore_newly_imported_files(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
     ) -> Result<(), bun_alloc::AllocError> {
         debug_assert!(matches!(SIDE, Side::Client));
-        if self.new_imports.is_empty() {
+        if self.new_edges.is_empty() {
             return Ok(());
         }
-        let mut first_bundled = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
+        let files_len = self.bundled_files.count();
+        let mut first_bundled = DynamicBitSetUnmanaged::init_empty(files_len)?;
         for file in &self.first_bundled_files {
             first_bundled.set(file.get() as usize);
         }
-        let mut reached = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
-        let mut queue: Vec<FileIndex<SIDE>> = Vec::new();
-        for (importer, imported) in self.new_imports.drain(..) {
-            if !first_bundled.is_set(importer.get() as usize) {
-                queue.push(imported);
-            }
+        let mut is_new_edge = DynamicBitSetUnmanaged::init_empty(self.edges.len())?;
+        for edge_index in &self.new_edges {
+            is_new_edge.set(edge_index.get() as usize);
         }
-        while let Some(file) = queue.pop() {
-            if reached.is_set(file.get() as usize) {
+        let left_out = core::mem::take(&mut self.unchanged_files);
+        let mut restored = DynamicBitSetUnmanaged::init_empty(files_len)?;
+        for edge_index in core::mem::take(&mut self.new_edges) {
+            let edge = self.edges[edge_index.get() as usize];
+            if first_bundled.is_set(edge.dependency.get() as usize) {
                 continue;
             }
-            reached.set(file.get() as usize);
-            let mut it = self.edge_lists[file.get() as usize].first_import;
-            while let Some(edge_index) = it {
-                let edge = self.edges[edge_index.get() as usize];
-                it = edge.next_import;
-                queue.push(edge.imported);
+            let needed = self.files_imported_by(edge.imported, None)?;
+            for root in self.roots_that_reached(edge.dependency, &is_new_edge)? {
+                let reached = self.files_imported_by(root, Some(&is_new_edge))?;
+                for file in &left_out {
+                    let i = file.get() as usize;
+                    if needed.is_set(i) && !reached.is_set(i) {
+                        restored.set(i);
+                    }
+                }
             }
         }
-        for file in core::mem::take(&mut self.unchanged_files) {
-            if reached.is_set(file.get() as usize) {
+        for file in left_out {
+            if restored.is_set(file.get() as usize) {
                 self.push_chunk_part(ctx, file);
             }
         }
         Ok(())
+    }
+
+    /// `file` and everything it imports, at any depth.
+    fn files_imported_by(
+        &self,
+        file: FileIndex<SIDE>,
+        except: Option<&DynamicBitSetUnmanaged>,
+    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
+        let mut seen = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
+        seen.set(file.get() as usize);
+        let mut queue = vec![file];
+        while let Some(importer) = queue.pop() {
+            let mut it = self.edge_lists[importer.get() as usize].first_import;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_import;
+                let i = edge.imported.get() as usize;
+                if except.is_some_and(|edges| edges.is_set(edge_index.get() as usize))
+                    || seen.is_set(i)
+                {
+                    continue;
+                }
+                seen.set(i);
+                queue.push(edge.imported);
+            }
+        }
+        Ok(seen)
+    }
+
+    /// The html files, client roots and entry points that import `file`, at any depth.
+    fn roots_that_reached(
+        &self,
+        file: FileIndex<SIDE>,
+        except: &DynamicBitSetUnmanaged,
+    ) -> Result<Vec<FileIndex<SIDE>>, bun_alloc::AllocError> {
+        let mut seen = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
+        seen.set(file.get() as usize);
+        let mut queue = vec![file];
+        let mut roots = Vec::new();
+        while let Some(imported) = queue.pop() {
+            let mut has_importer = false;
+            let mut it = self.edge_lists[imported.get() as usize].first_dep;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_dependency;
+                if except.is_set(edge_index.get() as usize) {
+                    continue;
+                }
+                has_importer = true;
+                let i = edge.dependency.get() as usize;
+                if !seen.is_set(i) {
+                    seen.set(i);
+                    queue.push(edge.dependency);
+                }
+            }
+            let info = &self.bundled_files.values()[imported.get() as usize];
+            if !has_importer || info.is_hmr_root || info.is_special_framework_file {
+                roots.push(imported);
+            }
+        }
+        Ok(roots)
     }
 
     fn push_chunk_part(&mut self, ctx: &mut HotUpdateContext<'_>, file_index: FileIndex<SIDE>) {
@@ -1250,7 +1315,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *new_imports = Some(edge);
             self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
             if !self.unchanged_files.is_empty() {
-                self.new_imports.push((file_index, imported_file_index));
+                self.new_edges.push(edge);
             }
 
             self.dev_incremental_result().had_adjusted_edges = true;

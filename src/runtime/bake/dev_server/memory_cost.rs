@@ -81,6 +81,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             ssr_transpiler: _,
             log: _,
             plugin_state: _,
+            plugins: _,
             current_bundle: _,
             next_bundle: _,
             deferred_request_pool: _,

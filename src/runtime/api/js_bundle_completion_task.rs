@@ -40,7 +40,7 @@ use bun_sys::Dir;
 use bun_sys::OpenDirOptions;
 
 use crate::api::js_bundler::js_bundler::{
-    CompileOptions, Config as JSBundlerConfig, Plugin, PluginJscExt,
+    CompileOptions, Config as JSBundlerConfig, OwnedPlugin, Plugin, PluginJscExt,
 };
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
@@ -97,6 +97,8 @@ pub(crate) struct JSBundleCompletionTask {
     /// arena-owned by BundleThread heap
     pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
+    /// `plugins`, unless they belong to the server that `html_build_task` holds a request on.
+    pub(crate) owned_plugins: Option<OwnedPlugin>,
     pub(crate) started_at_ns: u64,
     /// Armed while the build is out on the bundle thread: the context that
     /// called `Bun.build` gives up on the result when it stops.
@@ -123,7 +125,7 @@ pub(crate) struct CallerOfTheBuild {
 
 jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
     // SAFETY: trait contract — `this` is the `caller` field of a live task (armed ⇒ its
-    // completion has not run); the plugin cell is protected by the task.
+    // completion has not run), which keeps the plugin cell rooted.
     unsafe {
         let task = bun_core::from_field_ptr!(JSBundleCompletionTask, caller, this);
         if let Some(plugins) = (*task).plugins {
@@ -158,10 +160,6 @@ impl Drop for JSBundleCompletionTask {
         // released unstarted; see `give_up_on_result`.
         if self.poll_ref.is_active() {
             self.poll_ref.disable();
-        }
-        if let Some(plugin) = self.plugins.take() {
-            // The FFI handle stashed at construction.
-            Plugin::destroy(plugin.as_ptr());
         }
     }
 }
@@ -208,6 +206,7 @@ impl JSBundleCompletionTask {
             next: bun_threading::Link::new(),
             transpiler: ptr::null_mut(),
             plugins,
+            owned_plugins: None,
             started_at_ns: 0,
             declarations: None,
         }
@@ -396,20 +395,8 @@ impl JSBundleCompletionTask {
         Ok(value != JSValue::UNDEFINED)
     }
 
-    /// Mutable borrow of the attached `Plugin`, if any.
-    ///
-    /// Centralises the `Option<NonNull> → Option<&mut T>` deref so callers
-    /// (`to_js_error` / `on_complete_anytask`) stay safe. The plugin is a C++
-    /// `JSBundlerPlugin` opaque created by [`PluginJscExt::create`] and
-    /// `protect()`-ed for the task's lifetime; it is freed only via
-    /// `Plugin::destroy` in `deinit` *after* `take()` clears `self.plugins`.
-    /// While the field is `Some` the pointee is therefore live, pinned, and
-    /// disjoint from `*self` (separate C++-heap allocation).
-    #[inline]
     fn plugins_mut(&mut self) -> Option<&mut Plugin> {
-        // SAFETY: see fn doc — C++-heap opaque, live while `self.plugins` is
-        // `Some`, disjoint from `*self`. Single JS-mutator thread.
-        self.plugins.map(|p| unsafe { &mut *p.as_ptr() })
+        self.plugins.map(|p| Plugin::opaque_mut(p.as_ptr()))
     }
 
     fn to_js_error(
@@ -752,7 +739,7 @@ impl JSBundleCompletionTask {
     /// `this` is live (its completion has not run); JS thread.
     unsafe fn give_up_on_result(this: *mut Self) {
         use core::sync::atomic::Ordering;
-        // SAFETY: fn contract; the plugin cell is protected by this task; the
+        // SAFETY: fn contract, which keeps the plugin cell rooted; the
         // loop pointer is a thread's uws loop, valid for that thread's
         // lifetime, and wakeup is thread-safe.
         unsafe {
@@ -769,9 +756,7 @@ impl JSBundleCompletionTask {
                 (*this).poll_ref.disable();
                 (*this).caller.handle.leave();
                 (*this).abandon_html_route();
-                if let Some(plugin) = (*this).plugins.take() {
-                    Plugin::destroy(plugin.as_ptr());
-                }
+                (*this).owned_plugins = None;
                 (*this).promise = jsc::JSPromiseStrong::default();
                 (*this).bundle_ticket = None;
                 // Publish only now: from here the bundle thread may free `this`.
@@ -791,12 +776,9 @@ impl JSBundleCompletionTask {
         }
     }
 
-    /// For an HTML route's build that will not deliver its result: the plugins are the route's
-    /// server's (not this build's to destroy), and the route releases the request it holds on
-    /// that server.
+    /// An HTML route's build will not deliver: releases the request it holds on its server.
     fn abandon_html_route(&mut self) {
         if let Some(route) = self.html_build_task.take() {
-            self.plugins = None;
             route.on_build_abandoned();
         }
     }
@@ -811,7 +793,6 @@ impl JSBundleCompletionTask {
         }
 
         if let Some(html_build_task) = this.html_build_task.take() {
-            this.plugins = None;
             html_build_task.on_complete(this);
             return Ok(());
         }
@@ -1502,8 +1483,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 impl bun_event_loop::Taskable for JSBundleCompletionTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
     /// A Bun.build the bundle thread handed back during teardown (cancelled in
-    /// the stop phase): its completion releases the keep-alive, plugin cell
-    /// and promise against the live heap.
+    /// the stop phase): its completion releases what it holds.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
         unsafe {

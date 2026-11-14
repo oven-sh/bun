@@ -12,6 +12,8 @@ export function getStylizeWithColor(inspect: $BunModules["internal/util/inspect"
   };
 }
 
+// Same name as util.inspect's stylizeNoColor
+$overriddenName = "stylizeNoColor";
 export function stylizeWithNoColor(str: string) {
   return str;
 }

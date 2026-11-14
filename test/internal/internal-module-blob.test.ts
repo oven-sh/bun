@@ -3,10 +3,13 @@
 // function sources sit at offset 0, internal module sources follow at generated
 // offsets. A wrong offset or length here surfaces as a SyntaxError when JSC
 // parses a module or a @-intrinsic builtin function from the blob.
-import { expect, test } from "bun:test";
+// The last block guards the names bundle-functions.ts gives the builtin functions.
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, closeSync, cpSync, fstatSync, openSync, readSync, writeSync } from "node:fs";
+import Module from "node:module";
 import { join } from "node:path";
+import { inspect } from "node:util";
 
 test("internal JS builtin function and module sources parse from the linked blob", async () => {
   await using proc = Bun.spawn({
@@ -108,3 +111,118 @@ console.log(JSON.stringify({ eol: os.EOL, fromBytecode: internalModulesLoadedFro
     exitCode: 0,
   });
 }, 60_000);
+
+// bundle-functions.ts also names each builtin function. JSC takes `fn.name`,
+// Function.prototype.toString() and the stack frame name of a builtin from the
+// name its executable is created with, not from the property that holds it. So
+// the rows below cover each way the C++ side attaches a builtin.
+describe("functions implemented in src/js/builtins", () => {
+  test("are named after the export", () => {
+    expect({
+      // A HashTableValue row of type BuiltinGeneratorType (JSBuffer.cpp)
+      "Buffer.prototype.toJSON": Buffer.prototype.toJSON.name,
+      // JSBuiltin rows of a .lut.h table (JSBuffer.cpp)
+      "Buffer.from": Buffer.from.name,
+      "Buffer.isBuffer": Buffer.isBuffer.name,
+      // `builtin: true` in a .bind.ts class (Glob.bind.ts)
+      "Glob.prototype.scan": Bun.Glob.prototype.scan.name,
+      "Glob.prototype.scanSync": Bun.Glob.prototype.scanSync.name,
+      // JSFunction::create(vm, global, <name>CodeGenerator(vm), ...) (BunObject.cpp, BunProcess.cpp)
+      "Bun.peek": Bun.peek.name,
+      "process.loadEnvFile": process.loadEnvFile.name,
+      // putDirectBuiltinFunction (ZigGlobalObject.cpp)
+      "console.write": console.write.name,
+    }).toEqual({
+      "Buffer.prototype.toJSON": "toJSON",
+      "Buffer.from": "from",
+      "Buffer.isBuffer": "isBuffer",
+      "Glob.prototype.scan": "scan",
+      "Glob.prototype.scanSync": "scanSync",
+      "Bun.peek": "peek",
+      "process.loadEnvFile": "loadEnvFile",
+      "console.write": "write",
+    });
+  });
+
+  test("use $overriddenName in place of the export's name", () => {
+    // UtilInspect.ts stylizeWithNoColor is the `stylize` Bun.inspect hands to inspect.custom.
+    let stylizeName: string | undefined;
+    Bun.inspect({
+      [inspect.custom](_depth: number, options: { stylize: Function }) {
+        stylizeName = options.stylize.name;
+        return "";
+      },
+    });
+
+    expect({
+      "Bun.inspect stylize": stylizeName,
+      // Peek.ts peekStatus
+      "Bun.peek.status": Bun.peek.status.name,
+      // ProcessObjectInternals.ts rawDebug
+      "process._rawDebug": process._rawDebug.name,
+      // NodeModuleObject.ts _initPaths sets "": no name, like the anonymous function node assigns
+      "Module._initPaths": Module._initPaths.name,
+      // CommonJS.ts overridableRequire
+      "Module.prototype.require": Module.prototype.require.name,
+      // CommonJS.ts requireResolve. `require.resolve` itself is a bound function that
+      // JSCommonJSModule.cpp names "resolve", so its name is "bound resolve" either way.
+      "Object.getPrototypeOf(require).resolve": Object.getPrototypeOf(require).resolve.name,
+      // ConsoleObject.ts asyncIterator
+      "console[Symbol.asyncIterator]": console[Symbol.asyncIterator].name,
+      // JSBufferPrototype.ts offset, a $getter
+      "get Buffer.prototype.offset": Object.getOwnPropertyDescriptor(Buffer.prototype, "offset")!.get!.name,
+    }).toEqual({
+      "Bun.inspect stylize": "stylizeNoColor",
+      "Bun.peek.status": "status",
+      "process._rawDebug": "_rawDebug",
+      "Module._initPaths": "",
+      "Module.prototype.require": "require",
+      "Object.getPrototypeOf(require).resolve": "resolve",
+      "console[Symbol.asyncIterator]": "[Symbol.asyncIterator]",
+      "get Buffer.prototype.offset": "get offset",
+    });
+  });
+
+  test("carry the name into the descriptor, toString(), inspect, bind and stack frames", () => {
+    const { scanSync } = Bun.Glob.prototype;
+    // The native half rejects the options under the builtin's frame.
+    let error: Error | undefined;
+    try {
+      new Bun.Glob("*").scanSync({ cwd: 1 as unknown as string });
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect({
+      descriptor: Object.getOwnPropertyDescriptor(scanSync, "name"),
+      toString: scanSync.toString(),
+      inspect: Bun.inspect(scanSync),
+      bound: scanSync.bind(null).name,
+    }).toEqual({
+      descriptor: { value: "scanSync", writable: false, enumerable: false, configurable: true },
+      toString: "function scanSync() { [native code] }",
+      inspect: "[Function: scanSync]",
+      bound: "bound scanSync",
+    });
+    // `native:` is the frame of a JS builtin. A host function prints `(unknown)`.
+    expect(error!.stack).toMatch(/^\s+at scanSync \(native:\d+:\d+\)$/m);
+  });
+
+  // A builtin gets its name when its executable is first created, once per VM.
+  test("are named in the VM of a Worker", async () => {
+    const url = URL.createObjectURL(
+      new Blob([`postMessage([Buffer.isBuffer.name, Bun.peek.name, Bun.peek.status.name, console.write.name]);`]),
+    );
+    const worker = new Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = reject;
+      worker.addEventListener("close", event => reject(new Error(`worker closed (${event.code}) without a message`)));
+      expect(await promise).toEqual(["isBuffer", "peek", "status", "write"]);
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+});

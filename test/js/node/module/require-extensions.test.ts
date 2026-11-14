@@ -1,6 +1,7 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import Module from "node:module";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -201,6 +202,265 @@ test.concurrent("default loader throws when module._compile was replaced with a 
   });
   expect(exitCode).toBe(0);
 });
+// Every assignment in these tests is executed more than once from the same
+// statement (a loop body or a helper function). The assignment used to reach
+// the loader only the first time a statement ran; afterwards a property inline
+// cache stored straight into the object. With a literal key (`[".js"] =`) the
+// interpreter caches the second execution already; with a variable key (the
+// `extensions[ext] =` loop in pirates, @babel/register and ts-node) the cache
+// appears once the helper is JIT compiled. The last two tests run their helpers
+// as DFG code. There the compiler can also store straight into the object with
+// no cache at all, once a read in the same helper tells it the object's structure.
+describe("assigning require.extensions repeatedly from one statement", () => {
+  test("a builtin extension can be overridden again after it was restored", () => {
+    using dir = tempDir("require-extensions-reoverride", {
+      "a.js": `module.exports = "a";`,
+      "b.js": `module.exports = "b";`,
+      "c.js": `module.exports = "c";`,
+    });
+    const original = require.extensions[".js"]!;
+    const rounds: { file: string; invoked: boolean; exports: unknown }[] = [];
+    try {
+      for (const file of ["a.js", "b.js", "c.js"]) {
+        let invoked = false;
+        require.extensions[".js"] = function (module, filename) {
+          invoked = true;
+          original(module, filename);
+        };
+        const exports = require(path.join(String(dir), file));
+        rounds.push({ file, invoked, exports });
+        require.extensions[".js"] = original;
+      }
+    } finally {
+      require.extensions[".js"] = original;
+    }
+    expect(rounds).toEqual([
+      { file: "a.js", invoked: true, exports: "a" },
+      { file: "b.js", invoked: true, exports: "b" },
+      { file: "c.js", invoked: true, exports: "c" },
+    ]);
+  });
+
+  test("an override that throws is invoked again by the next require of the same file", () => {
+    using dir = tempDir("require-extensions-throwing-override", {
+      "mod.js": `exports.foo = 1;`,
+    });
+    const file = path.join(String(dir), "mod.js");
+    const original = require.extensions[".js"]!;
+    const rounds: { invoked: boolean; outcome: string; cached: boolean }[] = [];
+    try {
+      for (let i = 0; i < 3; i++) {
+        let invoked = false;
+        require.extensions[".js"] = function () {
+          invoked = true;
+          throw new Error("rejected by override");
+        };
+        let outcome: string;
+        try {
+          require(file);
+          outcome = "loaded";
+        } catch (e) {
+          outcome = (e as Error).message;
+        }
+        rounds.push({ invoked, outcome, cached: file in require.cache });
+        require.extensions[".js"] = original;
+      }
+    } finally {
+      require.extensions[".js"] = original;
+      delete require.cache[file];
+    }
+    const expected = { invoked: true, outcome: "rejected by override", cached: false };
+    expect(rounds).toEqual([expected, expected, expected]);
+  });
+
+  test("restoring the builtin loader through a helper unregisters the current override", () => {
+    using dir = tempDir("require-extensions-restore-helper", {
+      "a.js": `module.exports = "a";`,
+    });
+    const original = require.extensions[".js"]!;
+    const calls: string[] = [];
+    function restore() {
+      require.extensions[".js"] = original;
+    }
+    try {
+      require.extensions[".js"] = function (module, filename) {
+        calls.push("first");
+        original(module, filename);
+      };
+      restore();
+      require.extensions[".js"] = function (module, filename) {
+        calls.push("second");
+        original(module, filename);
+      };
+      restore();
+
+      expect(require.extensions[".js"]).toBe(original);
+      expect(require(path.join(String(dir), "a.js"))).toBe("a");
+      expect(calls).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("re-registering a custom extension through a helper dispatches to the latest handler", () => {
+    using dir = tempDir("require-extensions-reregister", {
+      "one.reregistered": "",
+      "two.reregistered": "",
+      "three.reregistered": "",
+    });
+    function register(tag: string) {
+      Module._extensions[".reregistered"] = function (module) {
+        module.exports = tag;
+      };
+    }
+    const loaded: string[] = [];
+    try {
+      for (const tag of ["one", "two", "three"]) {
+        register(tag);
+        loaded.push(require(path.join(String(dir), `${tag}.reregistered`)));
+      }
+    } finally {
+      delete Module._extensions[".reregistered"];
+    }
+    expect(loaded).toEqual(["one", "two", "three"]);
+  });
+
+  test("variable-key install/restore helpers keep working after they are JIT compiled", async () => {
+    const files: Record<string, string> = {
+      "index.js": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const { numberOfDFGCompiles, noInline } = require("bun:jsc");
+        const originalJs = Module._extensions[".js"];
+        const dispatched = [];
+
+        function install(extension, tag) {
+          Module._extensions[extension] = function (module) {
+            dispatched.push(tag);
+            module.exports = tag;
+          };
+        }
+        function restore(extension, previous) {
+          Module._extensions[extension] = previous;
+        }
+        noInline(install);
+        noInline(restore);
+
+        // No require() in here: this only gets both helpers compiled by every JIT tier.
+        for (let i = 0; i < 200; i++) {
+          install(".js", "warm-js-" + i);
+          restore(".js", originalJs);
+          install(".hooked", "warm-hooked-" + i);
+        }
+        const compiles = { install: numberOfDFGCompiles(install), restore: numberOfDFGCompiles(restore) };
+
+        const rounds = [];
+        for (let i = 0; i < 3; i++) {
+          install(".js", "js-" + i);
+          const jsExports = require(path.join(__dirname, "js-" + i + ".js"));
+          restore(".js", originalJs);
+          const afterRestore = require(path.join(__dirname, "restored-" + i + ".js"));
+          install(".hooked", "hooked-" + i);
+          const hookedExports = require(path.join(__dirname, "file-" + i + ".hooked"));
+          rounds.push({ jsExports, afterRestore, hookedExports });
+        }
+
+        console.log(JSON.stringify({ compiles, rounds, dispatched, restored: Module._extensions[".js"] === originalJs }));
+      `,
+    };
+    for (let i = 0; i < 3; i++) {
+      files[`js-${i}.js`] = `module.exports = "builtin js-${i}";`;
+      files[`restored-${i}.js`] = `module.exports = "builtin restored-${i}";`;
+      files[`file-${i}.hooked`] = "only loadable through the .hooked handler";
+    }
+    using dir = tempDir("require-extensions-jit", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      // Compile on the main thread with a fast, deterministic tier-up policy, so
+      // after the warm-up loop the helpers run as DFG code when the rounds start.
+      // numberOfDFGCompiles() in the fixture proves that they do.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.05" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { compiles, ...result } = JSON.parse(stdout);
+    expect(compiles.install).toBeGreaterThanOrEqual(1);
+    expect(compiles.restore).toBeGreaterThanOrEqual(1);
+    expect(result).toEqual({
+      rounds: [
+        { jsExports: "js-0", afterRestore: "builtin restored-0", hookedExports: "hooked-0" },
+        { jsExports: "js-1", afterRestore: "builtin restored-1", hookedExports: "hooked-1" },
+        { jsExports: "js-2", afterRestore: "builtin restored-2", hookedExports: "hooked-2" },
+      ],
+      dispatched: ["js-0", "hooked-0", "js-1", "hooked-1", "js-2", "hooked-2"],
+      restored: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a helper that reads the current handler before it stores a new one keeps working after it is DFG compiled", async () => {
+    const files: Record<string, string> = {
+      "index.js": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const { numberOfDFGCompiles, noInline } = require("bun:jsc");
+        const dispatched = [];
+
+        function wrap(tag) {
+          const previous = Module._extensions[".wrapped"];
+          Module._extensions[".wrapped"] = function (module) {
+            dispatched.push(tag);
+            module.exports = tag;
+          };
+          return previous;
+        }
+        noInline(wrap);
+
+        // No require() in here: this only gets the helper compiled by every JIT tier.
+        for (let i = 0; i < 300; i++) wrap("warm-" + i);
+        const compiles = numberOfDFGCompiles(wrap);
+
+        const rounds = [];
+        for (let i = 0; i < 3; i++) {
+          wrap("round-" + i);
+          rounds.push(require(path.join(__dirname, "file-" + i + ".wrapped")));
+        }
+
+        console.log(JSON.stringify({ compiles, rounds, dispatched }));
+      `,
+    };
+    for (let i = 0; i < 3; i++) {
+      files[`file-${i}.wrapped`] = "only loadable through the .wrapped handler";
+    }
+    using dir = tempDir("require-extensions-read-then-store", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      // The default tier-up policy, on purpose. The baseline tier must run the helper
+      // long enough to cache the read. The DFG takes the structure of the object from
+      // that cached read, and that is what lets it compile the store as a direct write.
+      // With BUN_JSC_jitPolicyScale the DFG compiles the helper before the read is cached.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { compiles, ...result } = JSON.parse(stdout);
+    expect(compiles).toBeGreaterThanOrEqual(1);
+    expect(result).toEqual({
+      rounds: ["round-0", "round-1", "round-2"],
+      dispatched: ["round-0", "round-1", "round-2"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

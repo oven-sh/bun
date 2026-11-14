@@ -36,7 +36,21 @@ impl<'a, 's> NeverRun<'a, 's> {
         self.left(statement) == Left::InPlace
     }
 
+    /// Where the filter of the parser stops in a statement behind a jump: at the first one that stays, a `var` with its names alone.
+    pub fn find_first_that_stays(&self, statement: StmtId) -> Option<StmtId> {
+        let mut first = None;
+        self.left_noting(statement, &mut |stays| {
+            first.get_or_insert(stays);
+        });
+        first
+    }
+
+    #[inline]
     fn left(&self, statement: StmtId) -> Left {
+        self.left_noting(statement, &mut |_| {})
+    }
+
+    fn left_noting(&self, statement: StmtId, note: &mut impl FnMut(StmtId)) -> Left {
         let hir = self.hir;
         let Some(node) = hir.stmts.get(statement.idx()) else {
             return Left::Nothing;
@@ -44,7 +58,7 @@ impl<'a, 's> NeverRun<'a, 's> {
         if hir.is_erased_statement(statement) {
             return Left::Nothing;
         }
-        match node.kind {
+        let left = match node.kind {
             StmtKind::Empty
             | StmtKind::Debugger
             | StmtKind::Directive { .. }
@@ -77,11 +91,11 @@ impl<'a, 's> NeverRun<'a, 's> {
                 true => Left::Nothing,
                 false => Left::InPlace,
             },
-            StmtKind::Block(list) => self.most_left(hir.ids(list)),
-            StmtKind::If { yes, no, .. } => self.most_left([yes, no].into_iter()),
+            StmtKind::Block(list) => self.most_left(hir.ids(list), note),
+            StmtKind::If { yes, no, .. } => self.most_left([yes, no].into_iter(), note),
             StmtKind::While { body, .. }
             | StmtKind::DoWhile { body, .. }
-            | StmtKind::Labeled { body, .. } => self.left(body),
+            | StmtKind::Labeled { body, .. } => self.left_noting(body, note),
             StmtKind::For {
                 init: head, body, ..
             }
@@ -90,13 +104,13 @@ impl<'a, 's> NeverRun<'a, 's> {
             }
             | StmtKind::ForOf {
                 left: head, body, ..
-            } => self.most_left([head, body].into_iter()),
+            } => self.most_left([head, body].into_iter(), note),
             StmtKind::Try {
                 block,
                 handler,
                 finalizer,
                 ..
-            } => self.most_left([block, handler, finalizer].into_iter()),
+            } => self.most_left([block, handler, finalizer].into_iter(), note),
             StmtKind::Switch { .. } | StmtKind::With { .. } => Left::InPlace,
             // No file that `bun run` loads holds one of these below an `if`.
             StmtKind::Module(_)
@@ -107,13 +121,21 @@ impl<'a, 's> NeverRun<'a, 's> {
             | StmtKind::ExportDefault(_)
             | StmtKind::ExportAssign(_)
             | StmtKind::ExportAsNamespace(_) => Left::InPlace,
+        };
+        if left == Left::InPlace {
+            note(statement);
         }
+        left
     }
 
-    fn most_left(&self, statements: impl Iterator<Item = StmtId>) -> Left {
+    fn most_left(
+        &self,
+        statements: impl Iterator<Item = StmtId>,
+        note: &mut impl FnMut(StmtId),
+    ) -> Left {
         let mut most = Left::Nothing;
         for statement in statements {
-            most = most.max(self.left(statement));
+            most = most.max(self.left_noting(statement, note));
             if most == Left::InPlace {
                 break;
             }

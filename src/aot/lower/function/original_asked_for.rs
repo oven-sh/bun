@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::Decl;
+use bun_sema::bind::{Decl, Parent};
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
 use bun_sema::fold::{Constant, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
@@ -509,6 +509,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// The printer writes the `var` statements that follow one another in a block as one, so the filter reaches them together.
+    fn note_vars_written_as_one(&self, first: StmtId, names_alone: &mut FxHashSet<StmtId>) {
+        let hir = self.hir;
+        let is_var = |statement: StmtId| matches!(hir[statement].kind, StmtKind::Var(declarations) if declarations.iter().all(|it| hir[it].kind == VarKind::Var));
+        names_alone.insert(first);
+        if let Parent::Stmt(above) = self.bound.parent_of_stmt(first)
+            && let StmtKind::Block(list) = hir[above].kind
+            && is_var(first)
+        {
+            let behind = hir.ids(list).skip_while(|&it| it != first).skip(1);
+            names_alone.extend(behind.take_while(|&it| is_var(it)));
+        }
+    }
+
     /// `append_if_body_preserving_scope`: the statements of a block that declares nothing for itself stand in the place of the `if`.
     fn note_what_stands_for_if(&self, branch: StmtId, behind_a_jump: &mut FxHashSet<StmtId>) {
         let hir = self.hir;
@@ -602,6 +616,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut printed_as_written: FxHashSet<ExprId> = FxHashSet::default();
         let mut in_dead_flow: FxHashSet<StmtId> = FxHashSet::default();
         let mut behind_a_jump: FxHashSet<StmtId> = FxHashSet::default();
+        let mut names_alone: FxHashSet<StmtId> = FxHashSet::default();
         let never_run = self.never_run();
         let mut never_run_branches: FxHashSet<StmtId> = FxHashSet::default();
         let mut floor_of_never_run_branch: Option<usize> = None;
@@ -635,12 +650,17 @@ impl FileLowering<'_, '_, '_, '_> {
                         if is_branch && floor_of_never_run_branch.is_none() {
                             floor_of_never_run_branch = Some(stack.len());
                         }
+                        // Behind a jump the filter stops at the first statement that stays, so it does not reach every `var`.
+                        if is_behind_a_jump
+                            && let Some(first) = never_run.find_first_that_stays(statement)
+                        {
+                            self.note_vars_written_as_one(first, &mut names_alone);
+                        }
                         if let StmtKind::Var(declarations) = hir[statement].kind
                             && !self.removes_no_code()
                         {
-                            // Behind a jump the filter stops at the first statement that stays, so it may not reach a `var` below one.
-                            let is_reached =
-                                floor_of_never_run_branch.is_some() || is_behind_a_jump;
+                            let is_reached = floor_of_never_run_branch.is_some()
+                                || names_alone.contains(&statement);
                             for declaration in declarations.iter().map(|it| hir[it]) {
                                 let value = declaration.init;
                                 if value.is_some() {
@@ -655,18 +675,16 @@ impl FileLowering<'_, '_, '_, '_> {
                             }
                             continue;
                         }
-                        if let StmtKind::Block(list) = hir[statement].kind {
-                            self.note_consts_in_front_of_all_else(list, true, consts);
-                        }
-                    } else {
-                        if let StmtKind::Block(list) = hir[statement].kind {
-                            self.note_statements_behind_a_jump(
-                                list,
-                                &mut in_dead_flow,
-                                &mut behind_a_jump,
-                            );
-                            self.note_consts_in_front_of_all_else(list, true, consts);
-                        }
+                    }
+                    if let StmtKind::Block(list) = hir[statement].kind {
+                        self.note_statements_behind_a_jump(
+                            list,
+                            &mut in_dead_flow,
+                            &mut behind_a_jump,
+                        );
+                        self.note_consts_in_front_of_all_else(list, true, consts);
+                    }
+                    if !is_in_dead_flow {
                         if let StmtKind::Expr(alone) = hir[statement].kind
                             && (self.find_value_that_printer_prints(alone, consts)).is_some()
                         {

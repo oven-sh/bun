@@ -38,11 +38,13 @@ pub(crate) enum Expanded {
     Error(Vec<u8>),
 }
 
-/// How well a file's language is supported, judging by its name.
+/// How well a file's language is supported, judging by its name and its `parser` option.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Language {
     /// The formatter supports it. See [`Kind`].
     Supported,
+    /// A plugin that the configuration lists adds it to Prettier. The project's own Prettier formats it.
+    Plugin,
     /// Prettier formats it, but this formatter doesn't.
     Other,
     /// Prettier has no parser for it either.

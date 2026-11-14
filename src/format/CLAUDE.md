@@ -397,7 +397,7 @@ Each order is a table of the known keys with what to do with the value of each (
 
 ## Languages that only a plugin of Prettier reads
 
-`.astro`, `.php` and the like: languages that Bun can't parse. In Prettier's flavor, a file whose language comes from a plugin in the config is handed to the project's Prettier. A file that Bun can parse never is, and that includes `.svelte` and `package.json`.
+`.astro`, `.php` and the like: languages that Bun can't parse. In Prettier's flavor, a file whose language comes from a plugin in the config is handed to the project's Prettier: its resolved `parser` is the plugin's, or its name ends like the plugin's files (`LANGUAGE_PLUGINS` in `src/lint/driver/fmt/config.rs`). The ending wins over a name Prettier knows, as in Prettier's `inferParser`: `a.go.html` goes to `prettier-plugin-go-template`, not to the HTML formatter. A file whose parser is Bun's never is handed over, and that includes `.svelte` and `package.json`, whose plugins are built in.
 
 - **Where**: `src/lint/driver/fmt/prettier.rs`, which talks to the host of the JS plugins of `bun lint`: `src/lint/js_plugin/prettier.rs` and `worker/prettier.js`.
 - **When**: `prettier` and every package that the configuration names as a plugin are installed. Prettier loads all of them, also those that are built in here. Else the files are named and left as they are.

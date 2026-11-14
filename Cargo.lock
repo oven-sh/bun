@@ -874,7 +874,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_which",
@@ -2105,13 +2104,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_transpiler"
-version = "0.0.0"
-dependencies = [
- "bun_bundler",
 ]
 
 [[package]]

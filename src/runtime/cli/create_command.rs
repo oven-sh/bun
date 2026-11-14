@@ -27,9 +27,6 @@ use crate::cli::run_command::RunCommand;
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub(crate) mod SourceFileProjectGenerator;
 
-// Single-thread CLI scratch buffer, used by the git lookup and by `--open`.
-static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-
 #[cfg(not(windows))]
 const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
 // `.git` as a file points a worktree or submodule at its repository.
@@ -148,8 +145,6 @@ impl CreateOptions {
 }
 
 const BUN_CREATE_DIR: &[u8] = b".bun-create";
-// Single-thread CLI scratch buffer.
-static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 /// `name`, joined onto a template dir by the `Loose` join (`/` and `\` fold), stays inside it.
 fn names_path_inside_dir(name: &[u8]) -> bool {
@@ -1161,9 +1156,8 @@ impl CreateCommand {
         Output::flush();
 
         if create_options.open {
-            // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-            if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
+            let mut bun_path_buf = bun_paths::path_buffer_pool::get();
+            if let Some(bin) = which(&mut bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 crate::cli::open::open_url(bun_core::zstr!("http://localhost:3000/"));
 
@@ -1205,8 +1199,7 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        let home_dir_buf = &mut *bun_paths::path_buffer_pool::get();
         // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
         let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
             bun_paths::resolve_path::join_abs_string_buf_z_checked::<
@@ -1272,7 +1265,7 @@ impl CreateCommand {
                         .unwrap_or(false)
                 {
                     example_tag = ExampleTag::LocalFolder;
-                    break 'brk &home_dir_buf[..len];
+                    break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
                 }
             }
 
@@ -1303,7 +1296,7 @@ impl CreateCommand {
 
 pub(crate) struct ExtractedInfo {
     pub example_tag: ExampleTag,
-    // A positional or a static buffer, both process-lifetime.
+    // A positional or a copy in the CLI arena, both process-lifetime.
     pub template: &'static [u8],
 }
 
@@ -1494,11 +1487,6 @@ impl ExampleTag {
     }
 }
 
-// Single-threaded CLI scratch state.
-static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
-    bun_core::RacyCell::new([0u8; 1024]);
-static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
-
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
 
@@ -1538,8 +1526,7 @@ impl Example {
             progress.end();
         }
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        let home_dir_buf = &mut *bun_paths::path_buffer_pool::get();
         let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
@@ -1615,8 +1602,7 @@ impl Example {
             }
         }
 
-        // SAFETY: single-threaded CLI access to static buffer
-        let url_buf = unsafe { &mut *GITHUB_REPOSITORY_URL_BUF.get() };
+        let mut url_buf = [0u8; 1024];
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
             let cap = cursor.len();
@@ -1727,8 +1713,7 @@ impl Example {
         refresher.root().set_name(b"Fetching package.json");
         refresher.refresh();
 
-        // SAFETY: single-threaded CLI access to static buffer.
-        let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
+        let mut url_buf = [0u8; 1024];
         let mut mutable = MutableString::default();
 
         let api_url = URL::parse({
@@ -2027,13 +2012,12 @@ impl GitHandler {
         let git_start = bun_core::time::nano_timestamp();
 
         // The git CLI: libgit2 took three times as long for this.
-        // SAFETY: single-threaded CLI access to module-level static path buffer
-        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+        let mut bun_path_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None),
         );
-        if let Some(git) = which(bun_path_buf, path, destination, b"git") {
+        if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
             if verbose {

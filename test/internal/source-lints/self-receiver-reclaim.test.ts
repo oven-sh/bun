@@ -29,10 +29,11 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     src/sql_jsc/postgres/PostgresSQLConnection.rs).
 //
 // Scope: the single-expression spellings below, with `self` as the receiver.
-// A self-derived pointer stashed in a local and freed later, a helper that
-// takes the pointer and frees it (`Self::destroy(ptr::from_mut(self))`), and
-// reference *parameters* (`fn f(this: &mut T)` freeing `this`) are outside this
-// lint; they are the same bug, convert them on sight.
+// A self-derived pointer stashed in a local and freed later, a helper by another
+// name that takes the pointer and frees it, `Self::deinit(self)` (which may only
+// forward the reference), and reference *parameters* (`fn f(this: &mut T)`
+// freeing `this`) are outside this lint; they are the same bug, convert them on
+// sight.
 //
 // Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
 // unsound-erased-box.test.ts.
@@ -71,16 +72,14 @@ const SELF_AS_POINTER = [
   String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
 ].join("|");
 
-const BANNED = new RegExp(`${RECLAIM}(?:${SELF_AS_POINTER})`, "g");
+// A helper that takes the pointer and frees it.
+const HELPER = String.raw`Self::(?:(?:destroy|finalize)\s*\(\s*|deinit\s*\(\s*(?!self\s*,?\s*\)))`;
+
+const BANNED = new RegExp(`(?:${RECLAIM}|${HELPER})(?:${SELF_AS_POINTER})`, "g");
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape. Prefer converting over adding an entry here.
-const ALLOW: Record<string, number> = {
-  // `Blob::deinit(&mut self)` frees heap-allocated blobs through its receiver.
-  // It is being converted separately (#37672); delete this entry when that
-  // lands.
-  "src/jsc/webcore_types.rs": 1,
-};
+const ALLOW: Record<string, number> = {};
 
 const counts: Record<string, number> = {};
 const offenders: string[] = [];
@@ -133,6 +132,10 @@ test("the pattern recognizes the spellings it claims to", () => {
     "drop(unsafe { Box::from_raw(&mut *self) });",
     "unsafe { heap::destroy(core::ptr::addr_of_mut!(*self)) }",
     "unsafe { Box::from_non_null(NonNull::from(self)) }",
+    "unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };",
+    "Self::finalize(core::ptr::from_mut(self));",
+    "unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };",
+    "unsafe { Self::destroy(self) };",
     // rustfmt-wrapped calls.
     "unsafe {\n    bun_core::heap::take(\n        std::ptr::from_mut::<Blob>(self),\n    )\n}",
     "unsafe {\n    bun_core::heap::destroy(\n        self,\n    )\n}",
@@ -153,7 +156,7 @@ test("the pattern recognizes the spellings it claims to", () => {
     "unsafe { heap::take(ptr::from_mut(other)) }",
     // Producing a pointer from `self` without reclaiming it is fine.
     "let this = std::ptr::from_ref::<Blob>(self).cast_mut();",
-    "Self::finalize(core::ptr::from_mut(self));",
+    "Self::deinit(self)",
   ];
   expect(banned.filter(s => !matches(s))).toEqual([]);
   expect(allowed.filter(matches)).toEqual([]);

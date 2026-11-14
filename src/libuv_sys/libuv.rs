@@ -1945,7 +1945,6 @@ pub struct fs_t {
     file: fs_file,
     fs: fs_fs,
 }
-pub type uv_fs_t = fs_t;
 
 impl fs_t {
     #[cfg(debug_assertions)]

@@ -121,9 +121,13 @@ public:
         struct WaitingModuleMock {
             JSC::Strong<JSC::JSObject> mock;
             JSC::Strong<JSC::JSObject> turn;
-            // The module at the top of the load that asked for the mock, and the mock's place in that load. 0 until the load has fetched all it can.
-            String load;
-            unsigned rank { 0 };
+            // The module at the top of a load that asks for the mock, and the mock's place in that load.
+            struct Place {
+                String load;
+                unsigned rank;
+            };
+            // One for each load that asks for the mock and has fetched all it can. The mock takes its turn in the first load that can give it.
+            Vector<Place, 1> places;
         };
         Vector<WaitingModuleMock> waitingModuleMocks = {};
         struct ModuleMockWithTurn {
@@ -131,6 +135,9 @@ public:
             String load;
         };
         Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
+        // A mock has a place in some load, and in each of its loads another factory has the turn. If another load comes to import its module,
+        // moduleLoaderResolve() ranks again.
+        bool hasModuleMockBehindTurn = false;
         // The reactions that rankWaitingModuleMocks() leaves behind carry the number it had then, and do nothing if it has moved on.
         unsigned timesRanked = 0;
         // How many loads it found that were still being fetched. The end of each ranks again.
@@ -197,6 +204,7 @@ public:
             runningModuleMocks.clear();
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();
+            hasModuleMockBehindTurn = false;
             modulesGivenTimeToRequestImports.clear();
             loadRoots.clear();
             loadRootsDuringFactories.clear();
@@ -372,6 +380,8 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
+// An import has been resolved to `key` while hasModuleMockBehindTurn.
+void didResolveImportWhileModuleMockIsHeldBack(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.

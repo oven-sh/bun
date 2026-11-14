@@ -4270,6 +4270,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);
         RETURN_IF_EXCEPTION(scope, {});
+        if (globalObject->onLoadPlugins.hasModuleMockBehindTurn) [[unlikely]]
+            Bun::didResolveImportWhileModuleMockIsHeldBack(globalObject, resolved);
     }
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {

@@ -29,16 +29,25 @@ const noTitleReply = process.argv.includes("--no-title-reply");
 // navigating.
 const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?.slice("--navigate-error=".length);
 
-// `--cdp-error-on=<method>`: that method's reply is a CDP protocol error
-// ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
-// Page.navigate for a URL it cannot parse.
-const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+// `--detach-after-load`: after the first load, Chrome reports that page gone
+// (a renderer crash, a tab the user closed) with a browser-level
+// Target.detachedFromTarget that names the session. Later loads are normal.
+const detachAfterLoad = process.argv.includes("--detach-after-load");
+
+// `--cdp-error-on=<method>[:<times>]`: that method's reply is a CDP protocol
+// error ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
+// Page.navigate for a URL it cannot parse. With `:<times>`, only the first
+// that many calls fail and later ones are answered normally.
+const cdpErrorSpec = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+const [cdpErrorOn, cdpErrorTimesText] = cdpErrorSpec?.split(":") ?? [];
+let cdpErrorsLeft = cdpErrorTimesText ? Number(cdpErrorTimesText) : Infinity;
 
 // `--malformed=<kind>` omits or corrupts a field that real Chrome always sends. One kind per run:
 //   attach-no-session-id   Target.attachToTarget replies with {}
 //   attach-bad-utf8        ... replies with a sessionId that isn't valid UTF-8
 //   attach-non-ascii       ... replies with a sessionId that's valid UTF-8 but not ASCII
 //   click-no-value         the click(selector) check replies without result.value
+//   context-no-id          Target.createBrowserContext replies with {}
 //   click-huge-value       ... replies with a position too large for a double (1e999)
 //   detach-no-session-id   Target.detachedFromTarget arrives with params {}
 //   event-bad-utf8         a page event arrives with an invalid UTF-8 sessionId
@@ -51,7 +60,18 @@ const BAD_UTF8 = "not-utf8";
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+
+// Every Target.createBrowserContext, Target.createTarget, Target.closeTarget
+// and Target.disposeBrowserContext seen so far, in order, for __fake_targets().
+const targetLog: { method: string; params: any }[] = [];
+
 Object.assign(globalThis, {
+  // What the runtime asked of the Target domain: which contexts it created
+  // (and with what params), which context each tab went into, which tabs it
+  // closed, which contexts it disposed.
+  __fake_targets() {
+    return targetLog;
+  },
   __fake_exit(code: number): never {
     process.exit(code);
   },
@@ -97,6 +117,7 @@ function sendWithInvalidUtf8(message: unknown) {
 }
 
 let targets = 0;
+let contexts = 0;
 let loads = 0;
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
@@ -104,12 +125,26 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
-  if (method === cdpErrorOn) {
+  if (
+    method === "Target.createBrowserContext" ||
+    method === "Target.createTarget" ||
+    method === "Target.closeTarget" ||
+    method === "Target.disposeBrowserContext"
+  ) {
+    targetLog.push({ method, params });
+  }
+
+  if (method === cdpErrorOn && cdpErrorsLeft-- > 0) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
   }
 
   switch (method) {
+    case "Target.createBrowserContext":
+      if (malformed === "context-no-id") return reply({});
+      return reply({ browserContextId: "C" + ++contexts });
+    case "Target.disposeBrowserContext":
+      return reply({});
     case "Target.createTarget":
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
@@ -126,6 +161,9 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
       event("Page.loadEventFired", { timestamp: loads });
+      if (detachAfterLoad && loads === 1) {
+        send({ method: "Target.detachedFromTarget", params: { sessionId, targetId: "T" + sessionId!.slice(1) } });
+      }
       // Send one stray event per load, with a missing or unusable sessionId.
       if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
       if (malformed === "event-bad-utf8") {

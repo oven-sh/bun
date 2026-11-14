@@ -97,12 +97,17 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Chrome: a browser context of the view's own (cookies, storage, proxy); the flag is in the byte cluster below.
+    WTF::String m_browserContextId;
+    WTF::String m_proxyServer;
+    WTF::String m_proxyBypass; // comma-separated, CDP's proxyBypassList shape
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.
     uint8_t m_selButton = 0;
     uint8_t m_selModifiers = 0;
     uint8_t m_selClickCount = 1;
+    bool m_ownBrowserContext = false;
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.
     int8_t m_chromeHistoryDelta = 0;

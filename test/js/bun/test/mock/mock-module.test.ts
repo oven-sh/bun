@@ -3851,6 +3851,23 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           "node_modules/cjs-only/index.cjs": `module.exports = { which: "real cjs" };`,
           "name-first.test.js": file("byName", "byPath", ["by name", "by path"], ["by name", "real cjs"]),
           "path-first.test.js": file("byPath", "byName", ["by name", "by name"], ["real esm", "real cjs"]),
+          // An import has loaded the CommonJS file of "dual/sub" before its two mocks. The mock of the path patches
+          // what that import got, though the mock of the name answers for the path when it is laid. No other file
+          // here loads a file of "dual/sub".
+          "the-file-imported-first.test.js": `
+            import { expect, jest, mock, test } from "bun:test";
+            import * as imported from "./node_modules/dual/sub.cjs";
+            test("the later mock of the path patches the CommonJS file that an import has loaded, and jest.unmock() of the path ends that mock", async () => {
+              mock.module("dual/sub", () => ({ which: "by name" }));
+              mock.module(require.resolve("dual/sub"), () => ({ which: "by path" }));
+              expect([(await import("dual/sub")).which, require("dual/sub").which, imported.which]).toEqual(["by name", "by path", "by path"]);
+              // A load of the path that starts now gets that mock too.
+              delete require.cache[require.resolve("dual/sub")];
+              expect(require(require.resolve("dual/sub")).which).toBe("by path");
+              jest.unmock(require.resolve("dual/sub"));
+              expect([(await import("dual/sub")).which, require("dual/sub").which, imported.which]).toEqual(["by name", "real cjs", "real cjs"]);
+            });
+          `,
           "esm-only.test.js": `
             import { expect, mock, test } from "bun:test";
             test("require() of a name that only an import resolves fails as before", async () => {
@@ -3870,7 +3887,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             });
           `,
         },
-        4,
+        5,
         args,
       );
     },

@@ -2680,26 +2680,17 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     fn require_or_import_meta_for_source(
         &self,
         source_index: crate::IndexInt,
-        was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
         let flags = self.graph.meta.items_flags()[source_index as usize];
         let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
         js_printer::RequireOrImportMeta {
-            exports_ref: if flags.wrap == WrapKind::Esm
-                || (was_unwrapped_require
-                    && self.graph.ast.items_flags()[source_index as usize]
-                        .contains(AstFlags::FORCE_CJS_TO_ESM))
-            {
+            exports_ref: if flags.wrap == WrapKind::Esm {
                 self.graph.ast.items_exports_ref()[source_index as usize]
             } else {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
             wrapper_ref,
-
-            was_unwrapped_require: was_unwrapped_require
-                && self.graph.ast.items_flags()[source_index as usize]
-                    .contains(AstFlags::FORCE_CJS_TO_ESM),
         }
     }
 }
@@ -4336,9 +4327,6 @@ impl<'a> LinkerContext<'a> {
             // A named import that holds a namespace (`export * as`) prints as
             // an import identifier.
             bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
-            bun_ast::ExprData::ERequireString(require) => {
-                return require.unwrapped_id.get().is_some();
-            }
             _ => return false,
         };
         // A require() lifted into an import binds an ordinary local, so user

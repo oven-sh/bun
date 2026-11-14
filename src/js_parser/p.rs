@@ -460,6 +460,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
     /// statement it is visiting.
     pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
+    /// That function reads the namespace of an unwrapped `require()`, a symbol that no scope declares: its body stays.
+    pub(crate) react_compiler_must_keep_body: bool,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -1285,9 +1287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             expr = e.no;
         }
         match expr.data {
-            js_ast::ExprData::ERequireString(req)
-                if self.options.bundle && req.unwrapped_id.get().is_none() =>
-            {
+            js_ast::ExprData::ERequireString(req) if self.options.bundle => {
                 out.push(req.import_record_index);
                 Some(())
             }
@@ -1415,7 +1415,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `try_track_dynamic_import_destructure` / `maybe_rewrite_property_access`
     /// can record aliases against it.
     pub(crate) fn require_namespace_ref(&mut self, req: E::RequireString) -> Option<Ref> {
-        if !self.options.bundle || req.unwrapped_id.get().is_some() {
+        if !self.options.bundle {
             return None;
         }
         let ns = self.new_symbol(js_ast::symbol::Kind::Other, b"require_ns");
@@ -9798,6 +9798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
             react_compiler_outlined_from_nested: Vec::new(),
+            react_compiler_must_keep_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),

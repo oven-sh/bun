@@ -864,6 +864,8 @@ describe("MatcherContext", () => {
                     matcherHint(".toHaveClass", "element", printExpected("a b")),
                     printReceived(new Error("a" + RECEIVED_COLOR("b") + "c")),
                     printExpected(Symbol("a" + EXPECTED_COLOR("b") + "c")),
+                    EXPECTED_COLOR("a\\ud800b"),
+                    INVERTED_COLOR(EXPECTED_COLOR("\\ud83d")),
                     RECEIVED_COLOR("a\\n  b"),
                     diff("a", "b"),
                   ]),
@@ -927,6 +929,9 @@ describe("MatcherContext", () => {
         `${dim}expect(${weightOff}${red}element${colorOff}${dim}).toHaveClass(${weightOff}${green}${green}"a b"${colorOff}${green}${colorOff}${dim})${weightOff}`,
         `${red}[Error: a${red}b${colorOff}${red}c]${colorOff}`,
         `${green}Symbol(a${green}b${colorOff}${green}c)${colorOff}`,
+        // Half of a surrogate pair stays what it is.
+        `${green}a\ud800b${colorOff}`,
+        `${inverted}${green}\ud83d${colorOff}${invertedOff}`,
         // Unlike chalk, a line break does not end the style.
         `${red}a\n  b${colorOff}`,
         // The lines of a diff come from the printer of the built-in matchers, which ends a color with a reset.

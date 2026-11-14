@@ -29,6 +29,7 @@ import {
   ESLINT_RULES,
   eslintConfig,
   eslintSmall,
+  eslintVirtual,
   type Files,
   rc,
   small,
@@ -103,6 +104,8 @@ export type Expected = {
     fixtures: Record<string, string[]>;
     /** The complete messages. */
     small: ReturnType<typeof byEslintFile>;
+    /** The same for the callers of `useWindowVirtualizer`, which the plugin's compiler doesn't know. */
+    virtual: ReturnType<typeof byEslintFile>;
   };
 };
 
@@ -226,10 +229,12 @@ if (compare === undefined) {
       cases: briefly(eslint(modules, withEslint(cases))),
       fixtures: briefly(eslint(modules, withEslint(fixtures))),
       small: eslint(modules, eslintSmall),
+      virtual: eslint(modules, eslintVirtual),
     };
     console.log(`ESLint, cases: ${total(expected.eslint.cases)} messages`);
     console.log(`ESLint, fixtures: ${total(expected.eslint.fixtures)} messages`);
     console.log(`ESLint, small: ${total(briefly(expected.eslint.small))} messages`);
+    console.log(`ESLint, virtual: ${total(briefly(expected.eslint.virtual))} messages`);
   }
   const { oxlint, reports, eslint: eslintReports } = expected as Expected;
   writeFileSync(
@@ -256,6 +261,7 @@ if (compare === undefined) {
   each("ESLint, cases", expected.eslint.cases, briefly(likeEslint(withEslint(cases))));
   each("ESLint, fixtures", expected.eslint.fixtures, briefly(likeEslint(withEslint(fixtures))));
   each("ESLint, small", expected.eslint.small, likeEslint(eslintSmall));
+  each("ESLint, virtual", expected.eslint.virtual, likeEslint(eslintVirtual));
   console.log(`${different} files differ`);
   process.exitCode = different === 0 ? 0 : 1;
 }

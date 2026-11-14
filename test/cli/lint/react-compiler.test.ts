@@ -12,6 +12,7 @@ import {
   byFile,
   eslintConfig,
   eslintSmall,
+  eslintVirtual,
   type Files,
   long,
   rc,
@@ -192,6 +193,25 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     ]);
     expect(locationsOf(diagnostics["captured-target.jsx"])).toEqual([["react(invariant)", 12, 9]]);
     expect(files).toBe(expected.reports.fork.files);
+    expect(exit).toBe(1);
+  });
+
+  // Each call is reported as the hook that it is, whatever its name in the file: the third one is `useVirtualizer`.
+  // It is the only report for its function, also where a ref is read on the line before it.
+  test("a call of `useWindowVirtualizer` is reported under any name, and nothing else in its function", async () => {
+    const { diagnostics, exit } = await report(small.virtual);
+    expect(diagnostics).toEqual(expected.reports.virtual.diagnostics);
+    const hooks = (diagnostics["virtual-callers.jsx"] as { labels: { label: string; span: { line: number } }[] }[])
+      .map(it => [it.labels[0].span.line, /`(\w+)\(\)`/.exec(it.labels[0].label)?.[1]] as const)
+      .sort(([a], [b]) => a - b);
+    expect(hooks).toEqual([
+      [6, "useWindowVirtualizer"],
+      [11, "useWindowVirtualizer"],
+      [16, "useVirtualizer"],
+      [22, "useWindowVirtualizer"],
+      [29, "useWindowVirtualizer"],
+      [37, "useWindowVirtualizer"],
+    ]);
     expect(exit).toBe(1);
   });
 
@@ -548,6 +568,53 @@ describe.concurrent(
       }).toEqual({
         propsFirst: [true],
         contextFirst: [true],
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    // The plugin's compiler is older than facebook/react#36912. To it `useWindowVirtualizer` is a custom hook: nothing
+    // in virtual.jsx. In the other file it reports `useVirtualizer` by another name, and in the callers of the custom
+    // hook what else is wrong: a read of a ref after the call, a write to what the hook was given, and a read of a
+    // ref before the call.
+    test("a call of `useWindowVirtualizer` is a call of a custom hook", async () => {
+      const { files, exitCode } = await messages(eslintVirtual);
+      expect(files).toEqual(expected.eslint.virtual);
+      expect(briefly(files)).toEqual({
+        "virtual-callers.jsx": [
+          "react-hooks/incompatible-library 16:23-16:43 Compilation Skipped: Use of incompatible library",
+          "react-hooks/refs 23:17-23:28 Error: Cannot access refs during render",
+          "react-hooks/immutability 30:3-30:10 Error: This value cannot be modified",
+          "react-hooks/refs 36:17-36:28 Error: Cannot access refs during render",
+        ],
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun build --react-compiler` leaves a function that calls `useWindowVirtualizer` as it is written, without a
+    // word. With no config of ESLint there is no plugin to match, so each call is reported. As for `useVirtualizer`,
+    // that is then the only report of the compiler for the function: none of the three that the plugin makes for the
+    // same two files.
+    test("without a config file, a call of `useWindowVirtualizer` is reported", async () => {
+      const rules = ["react-hooks/incompatible-library", "react-hooks/refs", "react-hooks/immutability"];
+      const { raw, exitCode, directories } = await lint(
+        {
+          "bunfig.toml": `[lint.rules]\n"no-unused-vars" = "off"\n${rules.map(rule => `"${rule}" = "error"\n`).join("")}`,
+          ...eslintVirtual,
+        },
+        ["-f", "json"],
+      );
+      const skipped = (position: string) =>
+        `react-hooks/incompatible-library ${position} Compilation Skipped: Use of incompatible library`;
+      expect(briefly(byEslintFile(JSON.parse(raw), directories))).toEqual({
+        "virtual-callers.jsx": [
+          "6:23-6:30",
+          "11:23-11:30",
+          "16:23-16:43",
+          "22:23-22:30",
+          "29:23-29:30",
+          "37:23-37:30",
+        ].map(skipped),
+        "virtual.jsx": [skipped("4:23-4:43")],
       });
       expect(exitCode).toBe(1);
     });

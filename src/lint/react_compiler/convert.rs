@@ -306,22 +306,12 @@ impl<'a> Converter<'a, '_> {
             }),
             Some(Declaration::ImportSpec(spec)) => {
                 let module = StoreStr::new(spec.import().spec().bytes());
-                let imported: &[u8] = match spec.imported().bytes() {
-                    // oxc's compiler knows that this one is just as incompatible as `useVirtualizer`.
-                    b"useWindowVirtualizer"
-                        if self.flavor == Flavor::Oxlint
-                            && spec.import().spec().is("@tanstack/react-virtual") =>
-                    {
-                        b"useVirtualizer"
-                    }
-                    imported => imported,
-                };
                 Some(match spec.imported().name().is("default") {
                     true => VariableBinding::ImportDefault { name, module },
                     false => VariableBinding::ImportSpecifier {
                         name,
                         module,
-                        imported: StoreStr::new(imported),
+                        imported: StoreStr::new(spec.imported().bytes()),
                     },
                 })
             }

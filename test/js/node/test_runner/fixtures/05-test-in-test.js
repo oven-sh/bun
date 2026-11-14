@@ -26,6 +26,7 @@ test("t.test() runs subtests inline and returns a promise", async t => {
   });
 
   t.after(() => {
+    console.log("subtest order: " + order.join(", "));
     // The unawaited subtest must have completed before the parent finished.
     assert.deepStrictEqual(order, ["awaited", "unawaited", "inner"]);
   });

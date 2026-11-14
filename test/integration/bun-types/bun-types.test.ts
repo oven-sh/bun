@@ -649,7 +649,7 @@ describe("@types/bun integration test", () => {
       // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
       "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
       // An S3File is a Blob with more members, which C++ adds and no schema describes.
-      "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
+      "S3Client.bind.ts: new S3Client().file() has no bucket, presign",
       "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",
       "S3Client.bind.ts: new S3Client().file().lastModified is not published",
       // bun.d.ts and s3.d.ts do not declare these.
@@ -666,8 +666,6 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new FileSink().start(options?: { highWaterMark?: number | undefined; } | undefined): void: options takes FileSinkStartOptions | null | undefined, not { highWaterMark?: number | undefined; } | undefined",
       "Sink.bind.ts: new FileSink()._getFd is not published",
       "Sink.bind.ts: new FileSink().sinkId is not published",
-      // Published, and no sink has ever had it.
-      "Sink.bind.ts: new NetworkSink() has no stat",
       "Sink.bind.ts: new NetworkSink().close is not published",
       "Sink.bind.ts: new NetworkSink()._getFd is not published",
       "Sink.bind.ts: new NetworkSink().sinkId is not published",

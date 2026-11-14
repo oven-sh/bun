@@ -1403,6 +1403,502 @@ it("destroying the connection while an asynchronous SNICallback is pending does 
   expect(true).toBe(true);
 });
 
+// A TLS 1.3 client can send early data directly behind its ClientHello. BoringSSL skips it when the server takes none,
+// up to 16384 bytes. The two "net.Socket" doors are connections handed in with server.emit("connection"): the server
+// adopts the fd, and the second one also hands over what the socket had read before.
+describe.each(["listen", "net.Socket", "net.Socket that has read the ClientHello"] as const)(
+  "what the peer sends before the SNICallback answered, %s",
+  door => {
+    const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+    const agent2 = { key: fixture("agent2-key.pem"), cert: fixture("agent2-cert.pem") };
+
+    type Suspended = {
+      events: string[];
+      raw: net.Socket;
+      // The server's end of `raw`, when a front accepted it.
+      accepted(): net.Socket | undefined;
+      asked: Promise<void>;
+      // The handshake is over, either way.
+      ended: Promise<void>;
+      // The server has read all that `raw` wrote, or has dropped the connection.
+      taken(): Promise<void>;
+      answer(error?: Error): void;
+    };
+    type Hooks = {
+      // The SNICallback answers in its own call.
+      atOnce?: boolean;
+      // Runs in the SNICallback. A listening server hands out the socket before the handshake ("connection").
+      asking?(socket: TLSSocket): void;
+      // Runs in the ALPNCallback, which BoringSSL calls after the answer, in the call that resumes the handshake.
+      negotiating?(): void;
+    };
+
+    // Runs `peer` against a server whose SNICallback waits for answer(). Resolves with what the server reported.
+    async function againstSuspendedServer(peer: (suspended: Suspended) => Promise<void>, hooks: Hooks = {}) {
+      const events: string[] = [];
+      const asked = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<void>();
+      let over = false;
+      let connection: TLSSocket | undefined;
+      let callback: ((err: Error | null, ctx?: tls.SecureContext) => void) | undefined;
+      const server = createServer({
+        ...agent2,
+        SNICallback(name, cb) {
+          events.push(`SNICallback ${name}`);
+          hooks.asking?.(connection!);
+          callback = cb;
+          asked.resolve();
+          if (hooks.atOnce) cb(null, undefined);
+        },
+        ALPNCallback: hooks.negotiating && (({ protocols }) => (hooks.negotiating!(), protocols[0])),
+      });
+      server.on("connection", socket => (connection = socket as TLSSocket));
+      server.on("secureConnection", socket => {
+        events.push("secureConnection");
+        socket.on("error", () => {});
+        over = true;
+        ended.resolve();
+      });
+      server.on("tlsClientError", err => {
+        events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code ?? err.message}`);
+        over = true;
+        ended.resolve();
+      });
+      let accepted: net.Socket | undefined;
+      const front =
+        door === "listen"
+          ? server
+          : net.createServer(socket => {
+              accepted = socket;
+              socket.on("error", () => {});
+              if (door === "net.Socket") server.emit("connection", socket);
+              else socket.once("readable", () => server.emit("connection", socket));
+            });
+      front.listen(0, "127.0.0.1");
+      await once(front, "listening");
+      const raw = net.connect((front.address() as AddressInfo).port, "127.0.0.1");
+      raw.on("error", () => {});
+      try {
+        await once(raw, "connect");
+        await peer({
+          events,
+          raw,
+          accepted: () => accepted,
+          asked: asked.promise,
+          ended: ended.promise,
+          // The raw socket of an adopted fd counts the bytes in the call that hands them to the engine. A listening
+          // server counts nothing while it is suspended: there the wait ends at the drop, or after one second in a
+          // test that is about to fail.
+          async taken() {
+            const deadline = performance.now() + 1000;
+            while (!over && (accepted ? accepted.bytesRead < raw.bytesWritten : performance.now() < deadline)) {
+              await new Promise<void>(resolve => setImmediate(resolve));
+            }
+          },
+          answer(error) {
+            events.push("answer");
+            callback!(error ?? null, undefined);
+          },
+        });
+        return events;
+      } finally {
+        raw.destroy();
+        front.close();
+      }
+    }
+
+    // A client that offers no early data. Its ClientHello and `behind` go out in one write, so the server reads both at once.
+    function clientWith(raw: net.Socket, behind: Buffer, options: tls.ConnectionOptions = {}) {
+      let first = true;
+      const transport = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          raw.write(first ? Buffer.concat([chunk, behind]) : chunk);
+          first = false;
+          callback();
+        },
+      });
+      raw.on("data", chunk => transport.push(chunk));
+      raw.on("close", () => transport.destroy());
+      const client = connect({ socket: transport, servername: "pending.test", rejectUnauthorized: false, ...options });
+      client.on("error", () => {});
+      return client;
+    }
+
+    // One TLS record of `length` bytes that no key opens.
+    function record(length: number) {
+      const bytes = Buffer.alloc(5 + length, 0);
+      bytes.set([0x17, 0x03, 0x03, length >> 8, length & 0xff]);
+      return bytes;
+    }
+
+    // A TLS 1.3 server ignores this record during the handshake.
+    const changeCipherSpec = Buffer.from([0x14, 0x03, 0x03, 0x00, 0x01, 0x01]);
+    // The alert that ends a connection.
+    const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+    // What the server keeps at most: a ChangeCipherSpec and the 16384 bytes of early data that BoringSSL skips.
+    const limit = changeCipherSpec.length + 16384;
+    const refusedByBoringSSL = "tlsClientError ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC";
+
+    // Only the raw socket of an adopted fd tells when the server has read.
+    it.skipIf(door === "listen")("is put together again when it arrives in two reads", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        let counted: number[] = [];
+        const events = await againstSuspendedServer(async ({ raw, accepted, asked, ended, taken, answer }) => {
+          client = clientWith(raw, changeCipherSpec.subarray(0, 3));
+          await asked;
+          raw.write(changeCipherSpec.subarray(3));
+          await taken();
+          answer();
+          await ended;
+          counted = [accepted()!.bytesRead, raw.bytesWritten];
+        });
+        expect(events).toEqual(["SNICallback pending.test", "answer", "secureConnection"]);
+        // The raw socket has counted what the server kept once.
+        expect(counted[0]).toBe(counted[1]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    it("is put together again when the rest of a record arrives after the answer", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        const events = await againstSuspendedServer(async ({ raw, asked, ended, answer }) => {
+          client = clientWith(raw, changeCipherSpec.subarray(0, 5));
+          await asked;
+          answer();
+          raw.write(changeCipherSpec.subarray(5));
+          await ended;
+        });
+        expect(events).toEqual(["SNICallback pending.test", "answer", "secureConnection"]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    it("is kept for the handshake when it is no more than a ChangeCipherSpec and 16384 bytes", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        const events = await againstSuspendedServer(async ({ raw, asked, ended, answer }) => {
+          client = clientWith(raw, record(limit - 5));
+          await asked;
+          answer();
+          await ended;
+        });
+        // This record is no early data of a session, so BoringSSL fails the handshake on it after the answer.
+        expect(events).toEqual(["SNICallback pending.test", "answer", refusedByBoringSSL]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    it("drops the connection when it is one byte more", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        const events = await againstSuspendedServer(async ({ raw, asked, ended, taken, answer }) => {
+          client = clientWith(raw, record(limit + 1 - 5));
+          await asked;
+          await taken();
+          answer();
+          await ended;
+        });
+        expect(events).toEqual(["SNICallback pending.test", "tlsClientError ECONNRESET", "answer"]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    it("counts what arrives in a later read", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        const events = await againstSuspendedServer(async ({ events, raw, asked, ended, taken, answer }) => {
+          client = clientWith(raw, record(8192 - 5));
+          await asked;
+          events.push("the rest and one byte more");
+          raw.write(record(limit + 1 - 8192 - 5));
+          await taken();
+          answer();
+          await ended;
+        });
+        expect(events).toEqual([
+          "SNICallback pending.test",
+          "the rest and one byte more",
+          "tlsClientError ECONNRESET",
+          "answer",
+        ]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    it("goes with the connection when the SNICallback refuses", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        const events = await againstSuspendedServer(async ({ raw, asked, ended, answer }) => {
+          client = clientWith(raw, changeCipherSpec);
+          await asked;
+          answer(new Error("no such tenant"));
+          await ended;
+        });
+        expect(events).toEqual(["SNICallback pending.test", "answer", "tlsClientError no such tenant"]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    it("goes with the connection when the peer leaves before the answer", async () => {
+      let client: TLSSocket | undefined;
+      try {
+        const events = await againstSuspendedServer(async ({ raw, asked, ended, answer }) => {
+          client = clientWith(raw, changeCipherSpec);
+          await asked;
+          raw.destroy();
+          await ended;
+          answer();
+        });
+        expect(events).toEqual(["SNICallback pending.test", "tlsClientError ECONNRESET", "answer"]);
+      } finally {
+        client?.destroy();
+      }
+    });
+
+    // The engine reads what it kept like bytes that arrive after the answer.
+    it.each([
+      ["a ChangeCipherSpec", changeCipherSpec, {}, "secureConnection"],
+      ["a record that no key opens", record(1024), {}, refusedByBoringSSL],
+      [
+        "a close_notify behind a TLS 1.2 ClientHello",
+        closeNotify,
+        { maxVersion: "TLSv1.2" },
+        "tlsClientError ECONNRESET",
+      ],
+    ] as const)(
+      "%s ends the handshake as it does when the SNICallback answers at once",
+      async (_, behind, options, end) => {
+        const clients: TLSSocket[] = [];
+        try {
+          const later = await againstSuspendedServer(async ({ raw, asked, ended, answer }) => {
+            clients.push(clientWith(raw, behind, options));
+            await asked;
+            answer();
+            await ended;
+          });
+          const atOnce = await againstSuspendedServer(
+            async ({ raw, ended }) => {
+              clients.push(clientWith(raw, behind, options));
+              await ended;
+            },
+            { atOnce: true },
+          );
+          expect({ later, atOnce }).toEqual({
+            later: ["SNICallback pending.test", "answer", end],
+            atOnce: ["SNICallback pending.test", end],
+          });
+        } finally {
+          for (const client of clients) client.destroy();
+        }
+      },
+    );
+
+    it.skipIf(door !== "listen")(
+      "leaves what the server wrote before the answer for the end of the handshake",
+      async () => {
+        let client: TLSSocket | undefined;
+        try {
+          const received = Promise.withResolvers<string>();
+          const events = await againstSuspendedServer(
+            async ({ raw, asked, ended, answer }) => {
+              client = clientWith(raw, changeCipherSpec);
+              client.on("data", chunk => received.resolve(String(chunk)));
+              client.on("close", () => received.resolve("nothing"));
+              await asked;
+              answer();
+              await ended;
+              await received.promise;
+            },
+            { asking: socket => void socket.write("written in the SNICallback") },
+          );
+          expect({ events, received: await received.promise }).toEqual({
+            events: ["SNICallback pending.test", "answer", "secureConnection"],
+            received: "written in the SNICallback",
+          });
+        } finally {
+          client?.destroy();
+        }
+      },
+    );
+
+    // BoringSSL calls the ALPNCallback of the second connection inside the call that resumes its handshake.
+    it.each([
+      [
+        "the first one keeps a record that no key opens",
+        record(1024),
+        changeCipherSpec,
+        refusedByBoringSSL,
+        "secureConnection",
+      ],
+      [
+        "the second one keeps a record that no key opens",
+        changeCipherSpec,
+        record(1024),
+        "secureConnection",
+        refusedByBoringSSL,
+      ],
+    ] as const)(
+      "is read by its own connection when that one resumes inside the resume of another: %s",
+      async (_, behindFirst, behindSecond, endOfFirst, endOfSecond) => {
+        const clients: TLSSocket[] = [];
+        try {
+          const order: string[] = [];
+          let second: string[] = [];
+          const first = await againstSuspendedServer(async one => {
+            clients.push(clientWith(one.raw, behindFirst));
+            await one.asked;
+            second = await againstSuspendedServer(
+              async other => {
+                clients.push(clientWith(other.raw, behindSecond, { ALPNProtocols: ["a"] }));
+                await other.asked;
+                other.answer();
+                order.push("the second answer returned");
+                await Promise.all([one.ended, other.ended]);
+              },
+              {
+                negotiating() {
+                  order.push("the first answer");
+                  one.answer();
+                },
+              },
+            );
+          });
+          expect({ order, first, second }).toEqual({
+            order: ["the first answer", "the second answer returned"],
+            first: ["SNICallback pending.test", "answer", endOfFirst],
+            second: ["SNICallback pending.test", "answer", endOfSecond],
+          });
+        } finally {
+          for (const client of clients) client.destroy();
+        }
+      },
+    );
+
+    // The read that asks the SNICallback still holds the record behind the ClientHello while the callback runs.
+    it("is still there when the SNICallback resumes another connection", async () => {
+      const clients: TLSSocket[] = [];
+      try {
+        let second: string[] = [];
+        const first = await againstSuspendedServer(async one => {
+          clients.push(clientWith(one.raw, changeCipherSpec));
+          await one.asked;
+          second = await againstSuspendedServer(
+            async other => {
+              clients.push(clientWith(other.raw, record(1024)));
+              await other.asked;
+              other.answer();
+              await Promise.all([one.ended, other.ended]);
+            },
+            { asking: () => one.answer() },
+          );
+        });
+        expect({ first, second }).toEqual({
+          first: ["SNICallback pending.test", "answer", "secureConnection"],
+          second: ["SNICallback pending.test", "answer", refusedByBoringSSL],
+        });
+      } finally {
+        for (const client of clients) client.destroy();
+      }
+    });
+
+    it("is still there when the SNICallback asks over another TLS socket and answers from its 'data' listener", async () => {
+      const clients: TLSSocket[] = [];
+      const store = createServer(agent2, socket => {
+        socket.on("error", () => {});
+        socket.on("data", chunk => socket.write(chunk));
+      });
+      try {
+        await once(store.listen(0, "127.0.0.1"), "listening");
+        const lookup = connect({
+          port: (store.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+        });
+        clients.push(lookup);
+        await once(lookup, "secureConnect");
+        const events = await againstSuspendedServer(
+          async ({ raw, ended, answer }) => {
+            lookup.once("data", () => answer());
+            clients.push(clientWith(raw, record(1024)));
+            await ended;
+          },
+          { asking: () => void lookup.write("which certificate?") },
+        );
+        expect(events).toEqual(["SNICallback pending.test", "answer", refusedByBoringSSL]);
+      } finally {
+        for (const client of clients) client.destroy();
+        store.close();
+      }
+    });
+
+    // What `openssl s_client -tls1_3 -servername tenant.test -sess_in <ticket> -early_data <file>` (OpenSSL 3.5.7)
+    // sends first, with the ticket of another server: a ClientHello that offers early data (287 bytes), a
+    // ChangeCipherSpec, and one record of early data. Neither bun nor node sends early data.
+    const earlyDataFlight = Buffer.from(
+      "FgMBARoBAAEWAwMp/weGICAnVv6gna1l+hYJJDOR/uveVHfyZMyACByW+SDukwa2UAhxzUMX/p4+BpXCVKPwDpOLt3RL0hiC" +
+        "VjNvfgACEwEBAADLAAAAEAAOAAALdGVuYW50LnRlc3QACwAEAwABAgAKAAQAAgAdACMAAAAWAAAAFwAAAA0ABAACCAQAKwAD" +
+        "AgMEAC0AAgEBADMAJgAkAB0AIG764hLgXSrMocOZIRBBSk9FIlSy0FEMKRF8e1CcLPR7ABsABQQAAQADACoAAAApAEsAJgAg" +
+        "rv5EtHqOrOlVIMYna7UDgQ+pTU5eLNBffIHaxG8v5bJA3WbjACEgAN9iwNXMohPDEizBBbsalVq2bV786wKfvZM5Dqa0nc8U" +
+        "AwMAAQEXAwMAFquXcyETB0c8UhVSieBFIYMrt1pVWyA=",
+      "base64",
+    );
+    const earlyDataHello = earlyDataFlight.subarray(0, 287 + changeCipherSpec.length);
+    const earlyData = earlyDataFlight.length - earlyDataHello.length;
+
+    // BoringSSL counts the early data that the server kept, once: the handshake is open at 16384 skipped bytes
+    // and over at 16385.
+    it.each([
+      [
+        "is skipped with the early data that follows the answer, up to 16384 bytes",
+        earlyDataFlight,
+        record(16384 - earlyData - 5),
+        "tlsClientError ECONNRESET",
+      ],
+      [
+        "ends the handshake when the early data that follows the answer is one byte more",
+        earlyDataFlight,
+        record(16385 - earlyData - 5),
+        "tlsClientError ERR_SSL_TOO_MUCH_SKIPPED_EARLY_DATA",
+      ],
+      [
+        "is skipped when it is a ChangeCipherSpec and 16384 bytes of early data",
+        Buffer.concat([earlyDataHello, record(16384 - 5)]),
+        Buffer.alloc(0),
+        "tlsClientError ECONNRESET",
+      ],
+    ] as const)("%s, behind a ClientHello that offered early data", async (_, flight, afterServerHello, end) => {
+      const events = await againstSuspendedServer(async ({ events, raw, asked, ended, answer }) => {
+        // The first record that the server sends, or "none" when it closes without one.
+        const answered = Promise.withResolvers<string>();
+        let received = Buffer.alloc(0);
+        raw.on("data", (chunk: Buffer) => {
+          received = Buffer.concat([received, chunk]);
+          if (received.length < 6) return;
+          answered.resolve(received[0] === 0x16 && received[5] === 0x02 ? "ServerHello" : `record ${received[0]}`);
+        });
+        raw.on("close", () => answered.resolve("none"));
+        raw.write(flight);
+        await asked;
+        answer();
+        events.push(await answered.promise);
+        // The handshake is still open. The end of the peer's stream is the end of it, unless BoringSSL ends it first.
+        raw.end(afterServerHello);
+        await ended;
+      });
+      expect(events).toEqual(["SNICallback tenant.test", "answer", "ServerHello", end]);
+    });
+  },
+);
+
 it("SNICallback accepts a raw native context (Node's context.context || context)", async () => {
   // cb(null, secureContext.context) - passing the unwrapped native context -
   // must select it, same as passing the wrapper.
@@ -4561,6 +5057,51 @@ describe("a server-side handshake failure reported under a JS call emits 'close'
       },
     );
     expect(events).toEqual(["error", "close:true"]);
+  });
+
+  // What a client sends behind its ClientHello is kept for the answer, and BoringSSL judges it afterwards.
+  it("when a wrap that adopted the fd kept a record that no key opens for its asynchronous SNICallback", async () => {
+    const reported: string[] = [];
+    const events = await failHandshake(
+      conn => {
+        conn.write("220 banner\r\n");
+        const wrapped = new TLSSocket(
+          conn,
+          serverOptions({
+            SNICallback(servername, cb) {
+              reported.push(`SNICallback ${servername}`);
+              setImmediate(() => {
+                reported.push("answer");
+                cb(null, undefined);
+              });
+            },
+          }),
+        );
+        wrapped.on("error", err => reported.push(`error ${(err as NodeJS.ErrnoException).code}`));
+        return wrapped;
+      },
+      client => {
+        // The ClientHello and the record go out in one write, so the wrap reads both at once.
+        let first = true;
+        const transport = new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            client.write(
+              first ? Buffer.concat([chunk, Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32)]) : chunk,
+            );
+            first = false;
+            callback();
+          },
+        });
+        client.on("data", chunk => transport.push(chunk));
+        client.on("close", () => transport.destroy());
+        connect({ socket: transport, servername: "pending.test", rejectUnauthorized: false }).on("error", () => {});
+      },
+    );
+    expect({ events, reported }).toEqual({
+      events: ["error", "close:true"],
+      reported: ["SNICallback pending.test", "answer", "error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC"],
+    });
   });
 
   it("when an asynchronous SNICallback of a tls.Server rejects", async () => {

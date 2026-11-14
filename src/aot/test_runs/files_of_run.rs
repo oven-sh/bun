@@ -86,10 +86,7 @@ struct Manifests {
 }
 
 impl Manifests {
-    /// A way is a file, under the path that the build gives it. A text that is the path of a compiled file is taken as
-    /// it stands. Any other is kept as it stands too, and beside it the file that a `require` of its path finds. A
-    /// manifest that names nothing names `index.js`. The one in the folder where the run is started names the index
-    /// files that `bun compile` takes for the entry point there: a `bun compile` without an entry point reads no other.
+    /// A way is a file, under the path that the build gives it: a text as it stands, and the file that a `require` of it finds.
     fn read(&mut self, folder: &[u8], text: &[u8], input: &RunInput<'_, '_>) {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -146,6 +143,7 @@ impl Manifests {
         }
         ways.retain(|way| !way.is_empty());
         if ways.is_empty() {
+            // A `bun compile` without an entry point reads only the manifest of the folder where it is started.
             let names: &[&[u8]] = match input.options.code.working_directory == folder {
                 true => &INDEX_FILES,
                 false => &[b"index.js"],

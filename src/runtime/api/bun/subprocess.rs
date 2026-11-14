@@ -11,8 +11,6 @@ use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
-#[cfg(not(windows))]
-use bun_sys::FdExt as _;
 use bun_sys::{self, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
@@ -742,8 +740,8 @@ impl Subprocess<'_> {
             #[cfg(not(windows))]
             {
                 match item {
-                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
-                        array.push(global, JSValue::js_number(fd.native() as f64))?;
+                    ExtraPipe::OwnedFd(_) | ExtraPipe::UnownedFd(_) => {
+                        array.push(global, JSValue::js_number(item.fd().native() as f64))?;
                     }
                     ExtraPipe::Unavailable => {
                         array.push(global, JSValue::NULL)?;
@@ -755,13 +753,8 @@ impl Subprocess<'_> {
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
         #[cfg(not(windows))]
-        self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
-                if let ExtraPipe::OwnedFd(fd) = *slot {
-                    *slot = ExtraPipe::UnownedFd(fd);
-                }
-            }
-        });
+        self.stdio_pipes
+            .with_mut(|pipes| pipes.iter_mut().for_each(ExtraPipe::release_to_caller));
         Ok(array)
     }
 
@@ -1086,16 +1079,7 @@ impl Subprocess<'_> {
             }
         }
         #[cfg(not(windows))]
-        {
-            for item in self.stdio_pipes.get().iter() {
-                match item {
-                    ExtraPipe::OwnedFd(fd) => fd.close(),
-                    ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
-                }
-            }
-            self.stdio_pipes.with_mut(|v| v.clear());
-        }
-        self.stdio_pipes.with_mut(|v| v.shrink_to_fit());
+        self.stdio_pipes.set(Vec::new());
     }
 
     fn clear_abort_signal(&self) {

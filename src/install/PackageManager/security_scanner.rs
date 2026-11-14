@@ -923,7 +923,6 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
             .map_err(|e| e.to_zig_err())?;
-        // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
 
@@ -931,9 +930,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
         self.ipc_reader.flags.remove(PosixFlags::SOCKET);
 
-        let json_fd = spawned.extra_pipes[1].fd();
+        let json_pipe = spawned.extra_pipes.swap_remove(1);
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
-            subprocess::stdio_result_from_fd(json_fd)
+            subprocess::stdio_result_from_fd(json_pipe.into_raw())
         })
     }
 

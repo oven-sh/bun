@@ -216,9 +216,9 @@ impl Worker {
                     .start(fd, true)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
-            if !extra_pipes.is_empty() {
+            if let Some(pipe) = extra_pipes.into_iter().next() {
                 // adopt() mutates the loop's socket context via interior mutability on the C side.
-                if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
+                if !Channel::adopt(&raw mut this.ipc, coord.vm, pipe.into_raw()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {

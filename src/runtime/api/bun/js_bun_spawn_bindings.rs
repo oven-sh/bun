@@ -1512,9 +1512,10 @@ fn spawn_maybe_sync(
                     ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
                 }
             }
-            // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
+            // uws owns the fd now (owns_fd=1).
             subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                let slot = &mut v[usize::try_from(ipc_channel).expect("int cast")];
+                core::mem::replace(slot, ExtraPipe::Unavailable).into_raw();
             });
         }
         #[cfg(not(unix))]
@@ -1676,11 +1677,8 @@ fn spawn_maybe_sync(
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
-                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
-                    let ExtraPipe::OwnedFd(fd) = *slot else {
-                        unreachable!()
-                    };
-                    *slot = ExtraPipe::UnownedFd(fd);
+                if let Some(slot) = pipes.get_mut(*j) {
+                    slot.release_to_caller();
                 }
             }
         });

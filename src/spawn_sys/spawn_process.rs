@@ -12,9 +12,7 @@ use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-#[cfg(unix)]
-use bun_sys::FdExt as _;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, File};
 
 #[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
@@ -417,7 +415,7 @@ pub enum PosixStdio {
     Ignore,
     Buffer,
     /// Like `Buffer` at indices >= 3 (creates a socketpair) but the parent
-    /// end is returned as `ExtraPipe::UnownedFd`: the caller owns and closes
+    /// end is returned as `ExtraPipe::OwnedFd`: the caller owns and closes
     /// it. Only valid in `extra_fds`.
     SocketFd,
     Ipc,
@@ -461,10 +459,8 @@ pub struct PosixSpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
-    /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
-    /// then owns the raw number and is responsible for closing it).
-    OwnedFd(Fd),
+    /// We created this fd (e.g. socketpair for `"pipe"`).
+    OwnedFd(File),
     /// The caller supplied this fd in the stdio array; expose it via
     /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
     UnownedFd(Fd),
@@ -476,9 +472,25 @@ pub enum ExtraPipe {
 impl ExtraPipe {
     pub fn fd(&self) -> Fd {
         match self {
-            ExtraPipe::OwnedFd(f) | ExtraPipe::UnownedFd(f) => *f,
+            ExtraPipe::OwnedFd(file) => file.fd(),
+            ExtraPipe::UnownedFd(fd) => *fd,
             ExtraPipe::Unavailable => Fd::INVALID,
         }
+    }
+
+    pub fn into_raw(self) -> Fd {
+        match self {
+            ExtraPipe::OwnedFd(file) => file.into_raw(),
+            other => other.fd(),
+        }
+    }
+
+    /// Whoever is told the number closes the descriptor from now on.
+    pub fn release_to_caller(&mut self) {
+        *self = match core::mem::replace(self, ExtraPipe::Unavailable) {
+            ExtraPipe::OwnedFd(file) => ExtraPipe::UnownedFd(file.into_raw()),
+            other => other,
+        };
     }
 }
 
@@ -560,25 +572,13 @@ const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
 const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// RAII fd cleanup for `spawn_process_posix`. On *every* exit it sets
-/// CLOEXEC on `to_set_cloexec`, then closes `to_close_at_end`; on error
-/// returns it additionally closes `to_close_on_error`. `on_error` is
-/// disarmed on the success path.
-///
-/// This exists so that bare `?` on `actions.*` propagates without leaking
-/// the parent-side socketpair ends pushed earlier in the loop.
-///
-/// The guard initializes `on_error = true` and is only disarmed after
-/// `spawn_z` succeeds, so socketpair/set_nonblocking/spawn_z value-error
-/// returns (`return Ok(Err(..))`) are covered as well as `?` failures. The
-/// fds in `to_close_on_error` are parent-side ends never handed back to the
-/// caller on any error path, so closing them is the correct behavior.
+/// The descriptors that `spawn_process_posix` opens.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
-    to_close_at_end: Vec<Fd>,
-    to_close_on_error: Vec<Fd>,
-    on_error: bool,
+    /// The parent's ends of stdin, stdout and stderr, until the result takes them.
+    to_close_on_error: Vec<File>,
+    to_close_at_end: Vec<File>,
 }
 
 #[cfg(unix)]
@@ -589,7 +589,7 @@ impl PosixSpawnFdGuard {
             return Ok(src);
         }
         let moved = bun_sys::dup_at_least(src, max_slot + 1)?;
-        self.to_close_at_end.push(moved);
+        self.to_close_at_end.push(File::from_fd(moved));
         Ok(moved)
     }
 }
@@ -597,16 +597,8 @@ impl PosixSpawnFdGuard {
 #[cfg(unix)]
 impl Drop for PosixSpawnFdGuard {
     fn drop(&mut self) {
-        if self.on_error {
-            for fd in self.to_close_on_error.iter() {
-                fd.close();
-            }
-        }
         for fd in self.to_set_cloexec.iter() {
             let _ = bun_sys::set_close_on_exec(*fd);
-        }
-        for fd in self.to_close_at_end.iter() {
-            fd.close();
         }
     }
 }
@@ -702,13 +694,10 @@ pub unsafe fn spawn_process_posix(
     }
     let mut spawned = PosixSpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
-    // Cleanup is owned by an RAII guard so every `?`
-    // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
-        to_close_at_end: Vec::new(),
         to_close_on_error: Vec::new(),
-        on_error: true,
+        to_close_at_end: Vec::new(),
     };
 
     let _ = attr.set(flags as _);
@@ -811,7 +800,7 @@ pub unsafe fn spawn_process_posix(
                                 Err(_) => break 'use_memfd,
                             };
 
-                        cleanup.to_close_on_error.push(fd);
+                        cleanup.to_close_on_error.push(File::from_fd(fd));
                         cleanup.to_set_cloexec.push(fd);
                         let src = match cleanup.source_above_slots(max_slot, fd) {
                             Ok(src) => src,
@@ -889,8 +878,8 @@ pub unsafe fn spawn_process_posix(
                     }
                 }
 
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
+                cleanup.to_close_at_end.push(File::from_fd(fds[1]));
+                cleanup.to_close_on_error.push(File::from_fd(fds[0]));
 
                 if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
@@ -964,8 +953,8 @@ pub unsafe fn spawn_process_posix(
                         Err(e) => return Ok(Err(e)),
                     };
 
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
+                cleanup.to_close_at_end.push(File::from_fd(fds[1]));
+                extra_fds.push(ExtraPipe::OwnedFd(File::from_fd(fds[0])));
 
                 if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
@@ -981,14 +970,6 @@ pub unsafe fn spawn_process_posix(
                 if src == fds[1] {
                     actions.close(fds[1])?;
                 }
-                // SocketFd: push as OwnedFd here so every error path between
-                // spawn and returning the JS Subprocess (to_close_on_error
-                // above, and the Writable::init error arm's finalize_streams
-                // in js_bun_spawn_bindings.rs) still closes it. The caller's
-                // "I own this fd" contract only begins once they can read
-                // .stdio[i]; the OwnedFd -> UnownedFd downgrade happens in
-                // js_bun_spawn_bindings.rs after all fallible init succeeds.
-                extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {
                 let src = match cleanup.source_above_slots(max_slot, *fd) {
@@ -998,7 +979,7 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(src, fileno)?;
                 // The fd was supplied by the caller (a number in the stdio array) and is
                 // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
-                // mark it unowned so finalizeStreams leaves it open.
+                // mark it unowned so it stays open.
                 extra_fds.push(ExtraPipe::UnownedFd(*fd));
             }
         }
@@ -1043,9 +1024,9 @@ pub unsafe fn spawn_process_posix(
                 }
             }
 
-            // Disarm `errdefer`; the unconditional `defer` (cloexec +
-            // close_at_end) runs from `cleanup`'s Drop on the way out.
-            cleanup.on_error = false;
+            for file in core::mem::take(&mut cleanup.to_close_on_error) {
+                file.into_raw();
+            }
             return Ok(Ok(spawned));
         }
     }

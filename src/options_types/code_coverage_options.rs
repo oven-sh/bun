@@ -27,6 +27,8 @@ impl Default for Fraction {
 pub struct CodeCoverageOptions {
     pub skip_test_files: bool,
     pub reporters: Reporters,
+    /// Set by `--coverage-reporter`, which wins over bunfig's `coverageReporter`.
+    pub reporters_from_cli: bool,
     /// Defaults to `"coverage"`; owned `Box` so bunfig parsing can write a
     /// heap value without leaking.
     pub reports_directory: Box<[u8]>,
@@ -44,8 +46,9 @@ impl Default for CodeCoverageOptions {
             skip_test_files: !bun_core::env::ALLOW_ASSERT,
             reporters: Reporters {
                 text: true,
-                lcov: false,
+                ..Reporters::NONE
             },
+            reporters_from_cli: false,
             reports_directory: Box::from(b"coverage" as &[u8]),
             fractions: Fraction::default(),
             ignore_sourcemap: false,
@@ -60,4 +63,14 @@ impl Default for CodeCoverageOptions {
 pub struct Reporters {
     pub text: bool,
     pub lcov: bool,
+    /// Istanbul `coverage-summary.json`.
+    pub json_summary: bool,
+}
+
+impl Reporters {
+    pub const NONE: Self = Self {
+        text: false,
+        lcov: false,
+        json_summary: false,
+    };
 }

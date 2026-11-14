@@ -30,7 +30,7 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
-use bun_sys::{self as sys, Fd, FdExt, File};
+use bun_sys::{self as sys, Fd, File};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -56,11 +56,12 @@ pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
-    /// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
-    master_fd: Cell<Fd>,
+    #[cfg(unix)]
+    master: JsCell<Option<File>>,
 
-    /// The slave side of the PTY (used by child processes). Unused on Windows.
-    slave_fd: Cell<Fd>,
+    /// The slave side of the PTY (used by child processes).
+    #[cfg(unix)]
+    slave: JsCell<Option<File>>,
 
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
@@ -356,8 +357,10 @@ impl Terminal {
         // The intrusive ref_count starts at 1: the JS wrapper's ref.
         let terminal = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
-            master_fd: Cell::new(pty_result.master),
-            slave_fd: Cell::new(pty_result.slave),
+            #[cfg(unix)]
+            master: JsCell::new(Some(pty_result.master)),
+            #[cfg(unix)]
+            slave: JsCell::new(Some(pty_result.slave)),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -552,7 +555,12 @@ impl Terminal {
     /// Get the slave fd for subprocess to use
     #[cfg(unix)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
-        self.slave_fd.get()
+        self.slave.get().as_ref().map_or(Fd::INVALID, File::fd)
+    }
+
+    #[cfg(unix)]
+    fn master_fd(&self) -> Fd {
+        self.master.get().as_ref().map_or(Fd::INVALID, File::fd)
     }
 
     /// `flags.closed` — read by `Bun.spawn` arg validation.
@@ -599,11 +607,8 @@ impl Terminal {
     /// slave fd is gone the master reader observes EOF.
     pub(crate) fn close_slave_fd(&self) {
         self.mark_inline_spawned();
-        let fd = self.slave_fd.get();
-        if fd != Fd::INVALID {
-            fd.close();
-            self.slave_fd.set(Fd::INVALID);
-        }
+        #[cfg(unix)]
+        self.slave.set(None);
     }
 
     /// Drain buffered pty output, close our slave_fd, then drive the reader to
@@ -722,12 +727,14 @@ impl Terminal {
 }
 
 pub(crate) struct PtyResult {
-    pub(crate) master: Fd,
+    #[cfg(unix)]
+    pub(crate) master: File,
     /// Duplicated master fd (POSIX) / overlapped read pipe end (Windows)
     pub(crate) read: File,
     /// Duplicated master fd (POSIX) / overlapped write pipe end (Windows)
     pub(crate) write: File,
-    pub(crate) slave: Fd,
+    #[cfg(unix)]
+    pub(crate) slave: File,
     #[cfg(windows)]
     pub(crate) hpcon: windows::HPCON,
 }
@@ -990,10 +997,10 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write.fd());
 
     Ok(PtyResult {
-        master: master.into_raw(),
+        master,
         read,
         write,
-        slave: slave.into_raw(),
+        slave,
     })
 }
 
@@ -1219,10 +1226,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     let result_hpcon = hpcon.take().unwrap();
 
     Ok(PtyResult {
-        master: Fd::INVALID,
         read,
         write,
-        slave: Fd::INVALID,
         hpcon: result_hpcon,
     })
 }
@@ -1257,10 +1262,10 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
                 return bindgen::to_js::f64(heap, 0.0);
             }
-            let Some(termios_data) = get_termios(self.master_fd.get()) else {
+            let Some(termios_data) = get_termios(self.master_fd()) else {
                 return bindgen::to_js::f64(heap, 0.0);
             };
             let raw: u64 = match FIELD {
@@ -1285,11 +1290,11 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
                 return Ok(());
             }
             let num = value.to_js().coerce_f64(cx.global())?;
-            let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
+            let Some(mut termios_data) = get_termios(self.master_fd()) else {
                 return Ok(());
             };
             let max_val: f64 = libc::tcflag_t::MAX as f64;
@@ -1303,7 +1308,7 @@ impl Terminal {
                 TermiosField::Lflag => termios_data.c_lflag = bits,
                 TermiosField::Cflag => termios_data.c_cflag = bits,
             }
-            let _ = set_termios(self.master_fd.get(), &termios_data);
+            let _ = set_termios(self.master_fd(), &termios_data);
             Ok(())
         }
     }
@@ -1469,7 +1474,7 @@ impl Terminal {
             // takes a *const winsize.
             let ioctl_result = unsafe {
                 libc::ioctl(
-                    self.master_fd.get().native(),
+                    self.master_fd().native(),
                     libc::TIOCSWINSZ as _,
                     &raw const winsize,
                 )
@@ -1531,7 +1536,7 @@ impl Terminal {
             // Use the existing TTY mode function
             let mut state = self.tty_state.get();
             let tty_result = state.set_mode(
-                self.master_fd.get().native(),
+                self.master_fd().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
                 } else {
@@ -1633,18 +1638,10 @@ impl Terminal {
             self.reader.with_mut(|r| r.close());
         }
 
-        // Close master fd
-        let master = self.master_fd.get();
-        if master != Fd::INVALID {
-            master.close();
-            self.master_fd.set(Fd::INVALID);
-        }
-
-        // Close slave fd
-        let slave = self.slave_fd.get();
-        if slave != Fd::INVALID {
-            slave.close();
-            self.slave_fd.set(Fd::INVALID);
+        #[cfg(unix)]
+        {
+            self.master.set(None);
+            self.slave.set(None);
         }
     }
 

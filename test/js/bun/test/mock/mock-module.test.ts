@@ -2441,6 +2441,100 @@ test.concurrent("a factory that import() called doesn't hold up another load tha
   );
 });
 
+describe.concurrent("a mock doesn't wait for the pending factory of another load that imports it too", () => {
+  const mocks = (events: string) => `
+    const started = Promise.withResolvers(), gate = Promise.withResolvers();
+    mock.module("./first.js", async () => {
+      ${events}.push("first starts");
+      started.resolve();
+      await gate.promise;
+      ${events}.push("first ends");
+      return { x: "mock first" };
+    });
+    mock.module("./second.js", () => (${events}.push("second"), { x: "mock second" }));
+  `;
+  const files = {
+    "first.js": `export const x = "real";`,
+    "second.js": `export const x = "real";`,
+    "both.js": `import { x as first } from "./first.js"; import { x as second } from "./second.js"; export const seen = [first, second];`,
+    "user.js": `import { x } from "./second.js"; export const seen = x;`,
+    "helper.js": `export const load = specifier => import(specifier);`,
+    "preload.js": `
+      import { mock } from "bun:test";
+      globalThis.events = [];
+      ${mocks("globalThis.events")}
+      Object.assign(globalThis, { started, gate });
+    `,
+  };
+  const imports = `import { expect, mock, test } from "bun:test"; import { load } from "./helper.js";`;
+  const expectBoth = (events: string) =>
+    `expect([(await both).seen, ${events}]).toEqual([["mock first", "mock second"], ["first starts", "second", "first ends"]]);`;
+
+  test.each([
+    ["a module that imports it", `(await import("./user.js")).seen`],
+    ["the mock itself", `(await import("./second.js")).x`],
+    ["a module that imports it, by a module that is not the test file", `(await load("./user.js")).seen`],
+    ["the mock itself, by a module that is not the test file", `(await load("./second.js")).x`],
+  ])("import() of %s", async (_, second) => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "turn.test.js": `${imports}
+          test("the second load gets the mock of a preload", async () => {
+            const both = import("./both.js");
+            await globalThis.started.promise;
+            expect(${second}).toBe("mock second");
+            globalThis.gate.resolve();
+            ${expectBoth("globalThis.events")}
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./turn.test.js"],
+    );
+  });
+
+  test("import() by a module that is not the file of the factories", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "turn.test.js": `${imports}
+          test("the second load gets the mock of the test file", async () => {
+            const events = [];
+            ${mocks("events")}
+            const both = load("./both.js");
+            await started.promise;
+            expect((await load("./user.js")).seen).toBe("mock second");
+            gate.resolve();
+            ${expectBoth("events")}
+          });
+        `,
+      },
+      1,
+      ["./turn.test.js"],
+    );
+  });
+
+  test("the imports of a test file, while the factory of a preload's load never returns", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "preload.js": `${files["preload.js"]}
+          void import("./both.js");
+          await started.promise;
+        `,
+        "static.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./user.js";
+          test("the test file gets the mock", () => expect([seen, globalThis.events]).toEqual(["mock second", ["first starts", "second"]]));
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./static.test.js"],
+    );
+  });
+});
+
 test.concurrent("a factory that another factory's import calls also waits for what that import fetches", async () => {
   await expectFixturesToPass(
     {
@@ -6394,6 +6488,34 @@ describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrel
         `,
       },
       2,
+    );
+  });
+
+  test("it is called for a load that the callback of its own load starts", async () => {
+    await expectFixturesToPass(
+      {
+        "logger.js": `export const log = () => "real";`,
+        "compile.js": `import { log } from "./logger.js"; export const compile = text => (log(), "export default " + JSON.stringify(text.trim()) + ";");`,
+        "query.sql": `select 1`,
+        "users.js": `import { log } from "./logger.js"; import sql from "./query.sql"; export const users = () => [log(), sql];`,
+        "lazy.test.js": `
+          import { expect, mock, test } from "bun:test";
+          Bun.plugin({
+            name: "sql",
+            setup(build) {
+              build.onLoad({ filter: /\\.sql$/ }, async ({ path }) => {
+                // The helper is loaded when the first file needs it. It imports the mocked module too.
+                const { compile } = await import("./compile.js");
+                return { contents: compile(await Bun.file(path).text()), loader: "js" };
+              });
+            },
+          });
+          mock.module("./logger.js", () => ({ log: () => "mock" }));
+          const { users } = await import("./users.js");
+          test("the helper gets the mock, and the callback answers", () => expect(users()).toEqual(["mock", "select 1"]));
+        `,
+      },
+      1,
     );
   });
 

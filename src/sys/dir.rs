@@ -145,6 +145,7 @@ impl Dir {
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
+            let dir = top.iter.dir();
             while let Some(entry) = top.iter.next()? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 // Set on EPERM, returned on ENOTDIR: the entry is a file that cannot be deleted.
@@ -152,7 +153,7 @@ impl Dir {
                 'handle_entry: loop {
                     if treat_as_dir {
                         let new_dir = match openat_a(
-                            top.iter.dir(),
+                            dir,
                             entry.name.slice_u8(),
                             O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
                             0,
@@ -171,16 +172,16 @@ impl Dir {
                                 _ => return Err(e),
                             },
                         };
-                        let parent = top.iter.dir();
+                        let name = entry.name.slice_u8().to_vec();
                         // The `Vec` grows as needed, so no fixed-depth limit.
                         stack.push(StackItem {
-                            name: entry.name.slice_u8().to_vec(),
-                            parent_dir: parent,
+                            name,
+                            parent_dir: dir,
                             iter: dir_iterator::iterate(new_dir),
                         });
                         continue 'process_stack;
                     } else {
-                        match unlinkat_a(top.iter.dir(), entry.name.slice_u8(), 0) {
+                        match unlinkat_a(dir, entry.name.slice_u8(), 0) {
                             Ok(()) => break 'handle_entry,
                             Err(e) => match e.get_errno() {
                                 E::ENOENT => break 'handle_entry,

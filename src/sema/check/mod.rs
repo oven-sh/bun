@@ -3339,8 +3339,7 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .position(|q| members.contains(q))
             .unwrap_or(from);
-        // In-progress state that isn't a query closes its cycle from `stack[0]`, and a question of Lower asks with
-        // nothing on the stack. Then there's no query to enter again.
+        // A question of Lower asks with nothing on the stack, and then there's no query to enter again.
         let mut named = self.stack.iter().take(entry + 1).rev();
         let Some(&entry) = named.find(|q| q.file_that_names_it().is_some()) else {
             return;

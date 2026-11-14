@@ -1583,6 +1583,33 @@ describe("expect.addEqualityTesters", () => {
       expect([registering(late, 0), "the next element"]).toContainEqual(expected);
     });
 
+    // Only Bun waits for an async matcher in an expected value.
+    test("a matcher that waits for a promise asks the registered testers before and after it waits", async () => {
+      expect.extend({
+        async toSettleLater() {
+          await 1;
+          return pass;
+        },
+      });
+      const settlesLater = () => (expect as any).toSettleLater();
+      const [registeredA, registeredB] = registeredPair();
+      const [listedA, listedB] = listedPair();
+      const waiting = expect({ before: registeredA, at: 0, after: registeredA }).toEqual({
+        before: registeredB,
+        at: settlesLater(),
+        after: registeredB,
+      });
+      expect(waiting).toBeInstanceOf(Promise);
+      await waiting;
+      const failing = expect({ at: 0, after: listedA }).toEqual({ at: settlesLater(), after: listedB });
+      expect(
+        await (failing as any).then(
+          () => "passes",
+          () => "fails",
+        ),
+      ).toBe("fails");
+    });
+
     test.each([
       ["toEqual()", (a: unknown, b: unknown) => expect(a).toEqual(b)],
       ["toStrictEqual()", (a: unknown, b: unknown) => expect(a).toStrictEqual(b)],

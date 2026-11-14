@@ -250,6 +250,30 @@ describe("jest-extended", () => {
       `);
     });
 
+    test("expect.resolvesTo.toSatisfy() and expect.rejectsTo.toSatisfy() print the promise", () => {
+      const isOdd = value => value % 2 === 1;
+      const messageOf = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return Bun.stripANSI(e.message);
+        }
+      };
+
+      expect(inspect(expect.resolvesTo.toSatisfy(isOdd))).toBe("promise resolved to toSatisfy<[Function isOdd]>");
+      expect(inspect(expect.rejectsTo.not.toSatisfy(isOdd, "is odd"))).toBe(
+        'promise rejected to not.toSatisfy<[Function isOdd], "is odd">',
+      );
+      expect(messageOf(() => expect({ a: 2 }).toEqual({ a: expect.resolvesTo.toSatisfy(isOdd) }))).toContain(
+        '-   "a": promise resolved to toSatisfy<[Function isOdd]>,\n+   "a": 2,\n',
+      );
+      expect({ a: expect.rejectsTo.toSatisfy(isOdd) }).toMatchInlineSnapshot(`
+        {
+          "a": promise rejected to toSatisfy<[Function isOdd]>,
+        }
+      `);
+    });
+
     test("expect.toSatisfy() needs a function", () => {
       for (const make of [() => expect.toSatisfy(), () => expect.toSatisfy(5), () => expect.not.toSatisfy("isOdd")]) {
         expect(make).toThrow("Expected a function");

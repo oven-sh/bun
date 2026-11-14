@@ -451,3 +451,42 @@ describe("names", () => {
     },
   );
 });
+
+describe("a matcher as a string and as JSON", () => {
+  expect.extend({ toBeFoo: () => ({ pass: true, message: () => "" }) });
+  const isOdd = n => n % 2 === 1;
+  const matchers = () => [
+    [expect.any(Number)],
+    [expect.anything()],
+    [expect.objectContaining({ a: 1 })],
+    [expect.not.objectContaining({ b: 2 })],
+    [expect.arrayContaining([1, "a"])],
+    [expect.not.arrayContaining([1])],
+    [expect.stringContaining("it's")],
+    [expect.not.stringContaining("x")],
+    [expect.stringMatching(/r.e/g)],
+    [expect.stringMatching("r")],
+    [expect.not.stringMatching("r")],
+    [expect.closeTo(1.5, 3)],
+    [expect.closeTo(1)],
+    [expect.not.closeTo(1.5, 3)],
+    [expect.toSatisfy(isOdd)],
+    [expect.not.toSatisfy(isOdd, "is odd")],
+    [expect.toBeFoo(1, "two")],
+    [expect.not.toBeFoo()],
+  ];
+  each("s of a matcher %s", ...matchers());
+  each("j of a matcher %j", ...matchers());
+});
+
+describe("a matcher at the depth where a value that is longer than 40 is cut", () => {
+  each(
+    "%o",
+    [[[expect.objectContaining({ long: repeat("x", 60) })]]],
+    [{ a: { b: expect.not.objectContaining({ long: repeat("x", 60) }) } }],
+    [new Map([["k", expect.arrayContaining([repeat("x", 60)])]])],
+    [new Set([expect.not.arrayContaining([repeat("x", 60)])])],
+    [element("a", { p: expect.objectContaining({ long: repeat("x", 60) }) })],
+    [{ toJSON: () => expect.arrayContaining([repeat("x", 60)]) }],
+  );
+});

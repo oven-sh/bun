@@ -492,6 +492,18 @@ exports[`values custom asymmetric matcher 1`] = `
 ]
 `;
 
+exports[`values custom asymmetric matcher with matchers as its arguments 1`] = `
+[
+  toBeBetween<Any, Anything>,
+  toBeBetween<ObjectContaining, ObjectNotContaining>,
+  toBeBetween<ArrayContaining, ArrayNotContaining>,
+  toBeBetween<StringContaining, StringNotContaining>,
+  toBeBetween<StringMatching, StringNotMatching>,
+  toBeBetween<NumberCloseTo, NumberNotCloseTo>,
+  not.toBeBetween<toBeBetween, not.toBeBetween>,
+]
+`;
+
 exports[`values deep 1`] = `
 {
   "o": {

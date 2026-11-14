@@ -94,6 +94,10 @@ pub(crate) struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
+    /// How many more tests of the active group start in its first window: the first to start, up to the concurrency limit.
+    first_window_left: usize,
+    /// Attempts of the active group between their start and the step that handles their end, hooks included.
+    mid_attempt: u32,
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
@@ -424,6 +428,8 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
+            first_window_left: 0,
+            mid_attempt: 0,
             on_stack: core::cell::Cell::new(None),
         }
     }
@@ -508,7 +514,8 @@ impl Execution {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 let group_ptr = NonNull::from(group);
-                Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
+                let ended_attempt = Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
+                this.mid_attempt -= u32::from(ended_attempt);
 
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
@@ -631,12 +638,14 @@ impl Execution {
     }
 
     /// `group_ptr` is a `NonNull` because the callers carry it across `run_test_callback`, which re-enters.
+    /// Returns whether this ended an attempt that had started, for the caller to take out of `mid_attempt`.
     #[optimize(size)]
+    #[must_use]
     fn advance_sequence(
         buntest: NonNull<BunTest>,
         sequence: &mut ExecutionSequence,
         group_ptr: NonNull<ConcurrentGroup>,
-    ) {
+    ) -> bool {
         let _g = group_begin!();
 
         debug_assert!(sequence.executing);
@@ -685,6 +694,7 @@ impl Execution {
             sequence.active_entry = sequence.take_deferred();
         }
 
+        let ended_attempt = sequence.active_entry.is_none() && !sequence.started_at.eql(&Timespec::EPOCH);
         if sequence.active_entry.is_none() {
             // just completed the sequence
             sequence.flip_fails();
@@ -696,7 +706,7 @@ impl Execution {
                 sequence.remaining_retry_count -= 1;
                 Execution::save_attempt_failure(buntest, sequence);
                 Execution::reset_sequence(sequence);
-                return;
+                return ended_attempt;
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
@@ -706,7 +716,7 @@ impl Execution {
                 sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
                 sequence.earlier_failures.clear();
                 Execution::reset_sequence(sequence);
-                return;
+                return ended_attempt;
             }
 
             // Only report the final result after all retries/repeats are done
@@ -718,10 +728,11 @@ impl Execution {
             let group = unsafe { &mut *group_ptr.as_ptr() };
             if group.remaining_incomplete_entries == 0 {
                 debug_assert!(false); // remaining_incomplete_entries should never go below 0
-                return;
+                return ended_attempt;
             }
             group.remaining_incomplete_entries -= 1;
         }
+        ended_attempt
     }
 
     fn on_group_started(global_this: &JSGlobalObject) {
@@ -736,7 +747,7 @@ impl Execution {
         }
     }
 
-    fn on_sequence_started(global_this: &JSGlobalObject, sequence: &mut ExecutionSequence) {
+    fn on_sequence_started(global_this: &JSGlobalObject, sequence: &mut ExecutionSequence, resets: bool) {
         if let Some(entry) = sequence.test_entry {
             // SAFETY: arena-owned entry
             if unsafe { entry.as_ref() }.callback.is_none() {
@@ -755,7 +766,7 @@ impl Execution {
                 // `BStr`'s `Debug` impl quotes and escapes for display.
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
-            super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest());
+            super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest(), resets);
 
             if entry.base.test_id_for_debugger != 0 {
                 if let Some(debugger) = VirtualMachine::get().debugger.get() {
@@ -1002,12 +1013,18 @@ fn step_group(
         let Some(group) = this.active_group() else {
             return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
-        if !group.executing {
-            Execution::on_group_started(global_this);
-            group.executing = true;
-        }
+        let is_starting = !group.executing;
+        group.executing = true;
         // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
         let group_ptr = NonNull::from(group);
+        if is_starting {
+            Execution::on_group_started(global_this);
+            this.mid_attempt = 0;
+            this.first_window_left = match concurrent_limit(buntest.reporter) {
+                0 => usize::MAX,
+                limit => limit,
+            };
+        }
 
         // loop over items in the group and advance their execution
 
@@ -1036,6 +1053,7 @@ fn step_group(
             ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
         group.executing = false;
+        debug_assert_eq!(this.mid_attempt, 0);
         Execution::on_group_completed(global_this);
 
         // if there is one sequence and it failed, skip to the next group
@@ -1067,6 +1085,17 @@ enum AdvanceStatus {
     Execute { timeout: Timespec },
 }
 
+/// How many tests of a group run at once. 0 is no limit.
+fn concurrent_limit(reporter: Option<NonNull<test_command::CommandLineReporter>>) -> usize {
+    let Some(reporter) = reporter else {
+        debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
+        return 20;
+    };
+    // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+    let runner = &unsafe { reporter.as_ref() }.jest;
+    runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
+}
+
 #[optimize(size)]
 fn step_group_one(
     buntest_strong: &BunTestPtr,
@@ -1076,14 +1105,7 @@ fn step_group_one(
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
-        // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-        let runner = &unsafe { reporter.as_ref() }.jest;
-        runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
-    } else {
-        debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
-        20
-    };
+    let concurrent_limit = concurrent_limit(buntest.reporter);
     let mut active_count: usize = 0;
     let len = {
         // SAFETY: group points into buntest.execution.groups; read-only here.
@@ -1201,7 +1223,7 @@ fn step_sequence_one(
                 active_entry,
                 &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
             )?;
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            this.mid_attempt -= u32::from(Execution::advance_sequence(buntest_ptr, sequence, group));
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -1222,7 +1244,14 @@ fn step_sequence_one(
     sequence.executing = true;
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
     if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
-        Execution::on_sequence_started(global_this, sequence);
+        let in_first_window = sequence.attempt == 0 && this.first_window_left > 0;
+        // The resets take the whole global. As in Vitest, only the first window is spared them beside a running test.
+        Execution::on_sequence_started(global_this, sequence, !(in_first_window && this.mid_attempt > 0));
+        // A test without a callback doesn't start.
+        if !sequence.started_at.eql(&Timespec::EPOCH) {
+            this.mid_attempt += 1;
+            this.first_window_left -= usize::from(in_first_window);
+        }
     }
     Execution::on_entry_started(next_item);
     if next_item.added_in_phase == AddedInPhase::Preload {
@@ -1297,7 +1326,7 @@ fn step_sequence_one(
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
                     buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
-                    Execution::advance_sequence(buntest_ptr, sequence, group);
+                    this.mid_attempt -= u32::from(Execution::advance_sequence(buntest_ptr, sequence, group));
                     return Ok(None); // run again
                 }
             }
@@ -1358,7 +1387,9 @@ fn step_sequence_one(
             }
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            let ended_attempt = Execution::advance_sequence(buntest_ptr, sequence, group);
+            // Not through `this`, which is from before the callback.
+            buntest_strong.get().execution.mid_attempt -= u32::from(ended_attempt);
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1393,7 +1424,7 @@ fn step_sequence_one(
                 debug_assert!(sequence.test_entry.is_none());
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence, group);
+        this.mid_attempt -= u32::from(Execution::advance_sequence(buntest_ptr, sequence, group));
         return Ok(None); // run again
     }
 }

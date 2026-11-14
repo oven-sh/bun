@@ -3,7 +3,7 @@ import { isParavirtual } from "./driver";
 
 // With ASAN the process ends in exit(), which runs the destructors of a driver whose threads may be at work.
 // The GPU of a macOS virtual machine hangs, for all processes, if one ends with work under way.
-export const bunEnv = isASAN || isParavirtual ? { ...defaultEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" } : defaultEnv;
+export const bunEnv = isASAN || (isParavirtual && process.env.PROBE_TEARDOWN !== "memory") ? { ...defaultEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" } : defaultEnv;
 // The timer and the finalizers would wake an event loop that has missed something.
 export const withoutGCTimer = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
 export const withoutGC = { ...withoutGCTimer, BUN_JSC_useGC: "0" };

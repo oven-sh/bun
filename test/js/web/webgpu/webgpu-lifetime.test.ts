@@ -417,6 +417,7 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     ...withoutAsanQuarantine(env),
     // Or glibc raises it, and keeps what is below.
     MALLOC_MMAP_THRESHOLD_: "1048576",
+    ...(isMacOS && { BUN_DESTRUCT_VM_ON_EXIT: "1" }),
   });
 
   test.each([

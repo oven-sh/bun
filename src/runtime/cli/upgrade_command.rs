@@ -1326,7 +1326,7 @@ pub(crate) mod upgrade_js_bindings {
     // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
     // effectively single-threaded.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::File>> = bun_core::RacyCell::new(None);
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
@@ -1393,7 +1393,7 @@ pub(crate) mod upgrade_js_bindings {
                     // System-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
                     unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
+                        TEMPDIR_FD.write(Some(sys::File::from_fd(sys::Fd::from_system(fd))));
                     }
                 }
                 _ => {}
@@ -1404,13 +1404,8 @@ pub(crate) mod upgrade_js_bindings {
     pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
-            use bun_sys::FdExt as _;
             // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
-            // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
-                fd.close();
-            }
+            unsafe { TEMPDIR_FD.write(None) };
         }
     }
 }

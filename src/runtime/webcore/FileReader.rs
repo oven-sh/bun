@@ -2,8 +2,6 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
 use bun_collections::VecExt;
-#[cfg(unix)]
-use bun_io as aio;
 #[cfg(not(windows))]
 use bun_io::FileType;
 use bun_io::{BufferedReader, Chunk, ReadState};
@@ -188,6 +186,7 @@ impl Lazy {
                 }
             }
         };
+        let opened = sys::File::from_fd(fd);
 
         #[cfg(unix)]
         {
@@ -199,17 +198,10 @@ impl Lazy {
                 file.is_atty = Some(true);
             }
 
-            let stat: sys::Stat = match sys::fstat(fd) {
-                Ok(result) => result,
-                Err(err) => {
-                    fd.close();
-                    return Err(err);
-                }
-            };
+            let stat = sys::fstat(fd)?;
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                aio::Closer::close(fd, ());
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
@@ -244,7 +236,7 @@ impl Lazy {
             }
         }
 
-        this.fd = fd;
+        this.fd = opened.into_raw();
 
         Ok(this)
     }

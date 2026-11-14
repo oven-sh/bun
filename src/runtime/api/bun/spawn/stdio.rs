@@ -3,8 +3,6 @@ use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::FdExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
@@ -193,30 +191,7 @@ impl Stdio {
         }
     }
 
-    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
-    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
-    /// via `heap::take`) or free it with `close_and_destroy`.
     pub(crate) fn as_spawn_option(&mut self, i: i32) -> Result {
-        // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
-        // WindowsStdio; only three variant *constructors* differ in arity
-        // between targets, so spell those per-cfg and share the rest.
-        #[cfg(not(windows))]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer
-        }
-        #[cfg(windows)]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer(create_zeroed_pipe())
-        }
-        #[cfg(not(windows))]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc
-        }
-        #[cfg(windows)]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc(create_zeroed_pipe())
-        }
-
         let result = match self {
             Self::Blob(blob) => 'brk: {
                 let fd = FdStdio::from_int(i).map(FdStdio::fd);
@@ -264,20 +239,20 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                buffer()
+                SpawnOptionsStdio::Buffer
             }
             Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => SpawnOptionsStdio::Buffer,
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
             // to transfer), so `socket-fd` behaves identically to `pipe` there.
             #[cfg(windows)]
-            Self::SocketFd => buffer(),
-            Self::Ipc => ipc(),
+            Self::SocketFd => SpawnOptionsStdio::Buffer,
+            Self::Ipc => SpawnOptionsStdio::Ipc,
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
@@ -296,11 +271,6 @@ impl Stdio {
             Self::Ipc => cfg!(windows),
             _ => false,
         }
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn borrows_caller_fd(&self) -> bool {
-        matches!(self, Self::Fd(_))
     }
 
     fn extract_body_value(
@@ -668,16 +638,4 @@ impl Drop for Stdio {
             _ => {}
         }
     }
-}
-
-/// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
-/// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
-/// whether `uv_close` is needed.
-#[cfg(windows)]
-fn create_zeroed_pipe() -> *mut uv::Pipe {
-    // `bun.new` → heap::alloc(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
-    // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
-    // can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    // `heap::take` without aliasing a live `Box` (which would double-free).
-    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }

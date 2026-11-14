@@ -23,8 +23,6 @@ use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(windows)]
-// `ref_`/`unref`/`close` are `UvHandle` default trait methods; bring it into
-// scope so method resolution finds them on `Timer`.
 use bun_sys::windows::libuv::UvHandle as _;
 use bun_uws as uws;
 
@@ -104,7 +102,7 @@ pub struct SpawnSyncEventLoop {
     uws_loop: NonNull<uws::Loop>,
 
     #[cfg(windows)]
-    uv_timer: Cell<Option<NonNull<libuv::Timer>>>,
+    uv_timer: core::cell::OnceCell<libuv::Owned<libuv::Timer>>,
     did_timeout: Cell<bool>,
 }
 
@@ -152,7 +150,7 @@ impl SpawnSyncEventLoop {
         let this = Box::new(Self {
             uws_loop,
             #[cfg(windows)]
-            uv_timer: Cell::new(None),
+            uv_timer: Default::default(),
             did_timeout: Cell::new(false),
             event_loop,
             vm: Cell::new(vm),
@@ -193,34 +191,16 @@ impl SpawnSyncEventLoop {
     #[inline]
     fn with_uv_timer(&self, f: impl FnOnce(&mut libuv::Timer)) {
         if let Some(timer) = self.uv_timer.get() {
-            // SAFETY: allocated in `prepare_timer_on_windows`, freed only by the close callback that
-            // `Drop` schedules. libuv touches the handle inside `uv_run` alone, and `f` cannot get back here.
+            // SAFETY: libuv touches the handle inside `uv_run` alone, and `f` cannot get back here.
             f(unsafe { &mut *timer.as_ptr() });
         }
     }
 }
 
-#[cfg(windows)]
-extern "C" fn on_close_uv_timer(timer: *mut libuv::Timer) {
-    // SAFETY: `timer` was allocated via `heap::alloc` in `prepare_timer_on_windows`.
-    drop(unsafe { bun_core::heap::take(timer) });
-}
-
 impl Drop for SpawnSyncEventLoop {
     fn drop(&mut self) {
         #[cfg(windows)]
-        {
-            if let Some(timer) = self.uv_timer.take() {
-                // SAFETY: timer is a live libuv handle owned by this struct.
-                unsafe {
-                    (*timer.as_ptr()).stop();
-                    (*timer.as_ptr()).unref();
-                    // `UvHandle::close` already does the `*mut Timer` →
-                    // `*mut uv_handle_t` cb cast internally.
-                    (*timer.as_ptr()).close(on_close_uv_timer);
-                }
-            }
-        }
+        drop(self.uv_timer.take());
 
         // Destroy the event loop before the uws loop.
         __bun_spawn_sync_destroy_event_loop(self.event_loop);
@@ -319,23 +299,15 @@ pub enum TickState {
 impl PreparedSpawnSyncEventLoop<'_> {
     #[cfg(windows)]
     fn prepare_timer_on_windows(&self, ts: &Timespec) {
-        if self.uv_timer.get().is_none() {
-            let uv_timer: Box<libuv::Timer> = Box::new(bun_core::ffi::zeroed());
-            // Leak to raw *before* `uv_timer_init` so libuv's stored handle
-            // pointer derives from the post-`into_raw` provenance (not a
-            // `Box`-`noalias` reborrow that `into_raw` would later pop).
-            self.uv_timer
-                .set(Some(bun_core::heap::into_raw_nn(uv_timer)));
-            let uv_loop = self.uws_loop().uv_loop();
+        self.uv_timer.get_or_init(|| {
+            let mut timer = libuv::Owned::<libuv::Timer>::zeroed();
+            timer.init(self.uws_loop().uv_loop());
             // The loop is boxed by `init` and outlives its timer.
-            let data = core::ptr::from_ref::<SpawnSyncEventLoop>(self.inner)
+            timer.data = core::ptr::from_ref::<SpawnSyncEventLoop>(self.inner)
                 .cast_mut()
                 .cast();
-            self.with_uv_timer(|timer| {
-                timer.init(uv_loop);
-                timer.data = data;
-            });
-        }
+            timer
+        });
 
         // Refresh the loop's cached clock: this loop only runs while a spawnSync call is in
         // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be

@@ -30,12 +30,14 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
-use bun_sys::{self as sys, Fd, FdExt, File};
+use bun_sys::{self as sys, Fd, File};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, IntoRawHandle as _, OwnedHandle};
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -56,11 +58,12 @@ pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
-    /// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
-    master_fd: Cell<Fd>,
+    #[cfg(unix)]
+    master: JsCell<Option<File>>,
 
-    /// The slave side of the PTY (used by child processes). Unused on Windows.
-    slave_fd: Cell<Fd>,
+    /// The slave side of the PTY (used by child processes).
+    #[cfg(unix)]
+    slave: JsCell<Option<File>>,
 
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
@@ -356,8 +359,10 @@ impl Terminal {
         // The intrusive ref_count starts at 1: the JS wrapper's ref.
         let terminal = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
-            master_fd: Cell::new(pty_result.master),
-            slave_fd: Cell::new(pty_result.slave),
+            #[cfg(unix)]
+            master: JsCell::new(Some(pty_result.master)),
+            #[cfg(unix)]
+            slave: JsCell::new(Some(pty_result.slave)),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -552,7 +557,12 @@ impl Terminal {
     /// Get the slave fd for subprocess to use
     #[cfg(unix)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
-        self.slave_fd.get()
+        self.slave.get().as_ref().map_or(Fd::INVALID, File::fd)
+    }
+
+    #[cfg(unix)]
+    fn master_fd(&self) -> Fd {
+        self.master.get().as_ref().map_or(Fd::INVALID, File::fd)
     }
 
     /// `flags.closed` — read by `Bun.spawn` arg validation.
@@ -599,11 +609,8 @@ impl Terminal {
     /// slave fd is gone the master reader observes EOF.
     pub(crate) fn close_slave_fd(&self) {
         self.mark_inline_spawned();
-        let fd = self.slave_fd.get();
-        if fd != Fd::INVALID {
-            fd.close();
-            self.slave_fd.set(Fd::INVALID);
-        }
+        #[cfg(unix)]
+        self.slave.set(None);
     }
 
     /// Drain buffered pty output, close our slave_fd, then drive the reader to
@@ -722,12 +729,14 @@ impl Terminal {
 }
 
 pub(crate) struct PtyResult {
-    pub(crate) master: Fd,
+    #[cfg(unix)]
+    pub(crate) master: File,
     /// Duplicated master fd (POSIX) / overlapped read pipe end (Windows)
     pub(crate) read: File,
     /// Duplicated master fd (POSIX) / overlapped write pipe end (Windows)
     pub(crate) write: File,
-    pub(crate) slave: Fd,
+    #[cfg(unix)]
+    pub(crate) slave: File,
     #[cfg(windows)]
     pub(crate) hpcon: windows::HPCON,
 }
@@ -990,17 +999,18 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write.fd());
 
     Ok(PtyResult {
-        master: master.into_raw(),
+        master,
         read,
         write,
-        slave: slave.into_raw(),
+        slave,
     })
 }
 
 #[cfg(windows)]
 struct PipePair {
-    pub server: windows::HANDLE,
-    pub client: windows::HANDLE,
+    /// Has a libuv fd, for `uv_pipe_open`.
+    pub server: File,
+    pub client: OwnedHandle,
 }
 
 /// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
@@ -1015,8 +1025,7 @@ struct PseudoConsole {
 }
 
 /// Create one end of a pipe pair as an overlapped named pipe (server) and the
-/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
-/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
+/// other as a synchronous client. The "server" end is suitable for libuv (uv_pipe_open) and
 /// the "client" end is suitable for ConPTY (which uses synchronous I/O).
 #[cfg(windows)]
 fn create_overlapped_pipe_pair(
@@ -1024,6 +1033,7 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
 ) -> Result<PipePair, CreatePtyError> {
+    use sys::FdExt as _;
     use windows::kernel32 as k32;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
@@ -1055,7 +1065,7 @@ fn create_overlapped_pipe_pair(
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let server = unsafe {
-        k32::CreateNamedPipeW(
+        HandleOrInvalid::from_raw_handle(k32::CreateNamedPipeW(
             name_w.as_ptr(),
             server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
             windows::PIPE_TYPE_BYTE | windows::PIPE_READMODE_BYTE | windows::PIPE_WAIT,
@@ -1064,15 +1074,9 @@ fn create_overlapped_pipe_pair(
             65536,
             0,
             core::ptr::null_mut(),
-        )
+        ))
     };
-    if server == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-    let server_guard = scopeguard::guard(server, |h| unsafe {
-        // SAFETY: h is a valid open HANDLE on the error path.
-        let _ = windows::CloseHandle(h);
-    });
+    let server = OwnedHandle::try_from(server).map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
         windows::GENERIC_WRITE
@@ -1082,7 +1086,7 @@ fn create_overlapped_pipe_pair(
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let client = unsafe {
-        k32::CreateFileW(
+        HandleOrInvalid::from_raw_handle(k32::CreateFileW(
             name_w.as_ptr(),
             client_access,
             0,
@@ -1090,13 +1094,14 @@ fn create_overlapped_pipe_pair(
             windows::OPEN_EXISTING,
             0,
             core::ptr::null_mut(),
-        )
+        ))
     };
-    if client == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
+    let client = OwnedHandle::try_from(client).map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
-    let server = scopeguard::ScopeGuard::into_inner(server_guard);
+    let server = Fd::from_system(server.into_raw_handle())
+        .make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
+        .map(File::from_fd)
+        .map_err(|_| CreatePtyError::DupFailed)?;
     Ok(PipePair { server, client })
 }
 
@@ -1105,125 +1110,26 @@ static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    // Track ownership explicitly: handles are nulled out as they are closed or
-    // transferred so the errdefer cleanup never double-closes.
-    let mut out_server: Option<windows::HANDLE> = None;
-    let mut out_client: Option<windows::HANDLE> = None;
-    let mut in_server: Option<windows::HANDLE> = None;
-    let mut in_client: Option<windows::HANDLE> = None;
-    let mut hpcon: Option<windows::HPCON> = None;
-
-    // errdefer block: scopeguard captures &mut to all of the above.
-    // Cleanup is inlined at each early-return point (a single drop-time
-    // closure reading the Option cells would require interior mutability);
-    // it must run on every `return Err`.
-    macro_rules! cleanup {
-        () => {
-            // SAFETY: every Some(h) is a valid open Win32 handle still owned by
-            // this fn (not yet transferred); ClosePseudoConsole/CloseHandle are
-            // safe on those values.
-            unsafe {
-                if let Some(h) = hpcon {
-                    windows::ClosePseudoConsole(h);
-                }
-                if let Some(h) = out_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = out_client {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_client {
-                    let _ = windows::CloseHandle(h);
-                }
-            }
-        };
-    }
-
     // Output pipe: ConPTY writes (client), we read (overlapped server).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        out_server = Some(pair.server);
-        out_client = Some(pair.client);
-    }
-
+    let output = create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND)?;
     // Input pipe: we write (overlapped server), ConPTY reads (client).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        in_server = Some(pair.server);
-        in_client = Some(pair.client);
-    }
+    let input = create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND)?;
 
     let size = windows::COORD {
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    {
-        let mut pc: windows::HPCON = core::ptr::null_mut();
-        // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
-            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
-        } < 0
-        {
-            cleanup!();
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        hpcon = Some(pc);
+    let (read_from, write_to) = (input.client.as_raw_handle(), output.client.as_raw_handle());
+    let mut hpcon: windows::HPCON = core::ptr::null_mut();
+    // SAFETY: both are open HANDLEs, which ConPTY duplicates; `hpcon` is a valid out-ptr.
+    if unsafe { windows::CreatePseudoConsole(size, read_from, write_to, 0, &raw mut hpcon) } < 0 {
+        return Err(CreatePtyError::OpenPtyFailed);
     }
-
-    // ConPTY duplicated the client handles internally; close our copies.
-    // SAFETY: in_client/out_client are valid open HANDLEs.
-    unsafe {
-        let _ = windows::CloseHandle(in_client.take().unwrap());
-        let _ = windows::CloseHandle(out_client.take().unwrap());
-    }
-
-    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
-    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
-    // fallible call succeeds.
-    let read = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            out_server = None;
-            File::from_fd(fd)
-        }
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
-
-    let write = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => File::from_fd(fd),
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
-
-    let result_hpcon = hpcon.take().unwrap();
 
     Ok(PtyResult {
-        master: Fd::INVALID,
-        read,
-        write,
-        slave: Fd::INVALID,
-        hpcon: result_hpcon,
+        read: output.server,
+        write: input.server,
+        hpcon,
     })
 }
 
@@ -1257,10 +1163,10 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
                 return bindgen::to_js::f64(heap, 0.0);
             }
-            let Some(termios_data) = get_termios(self.master_fd.get()) else {
+            let Some(termios_data) = get_termios(self.master_fd()) else {
                 return bindgen::to_js::f64(heap, 0.0);
             };
             let raw: u64 = match FIELD {
@@ -1285,11 +1191,11 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
                 return Ok(());
             }
             let num = value.to_js().coerce_f64(cx.global())?;
-            let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
+            let Some(mut termios_data) = get_termios(self.master_fd()) else {
                 return Ok(());
             };
             let max_val: f64 = libc::tcflag_t::MAX as f64;
@@ -1303,7 +1209,7 @@ impl Terminal {
                 TermiosField::Lflag => termios_data.c_lflag = bits,
                 TermiosField::Cflag => termios_data.c_cflag = bits,
             }
-            let _ = set_termios(self.master_fd.get(), &termios_data);
+            let _ = set_termios(self.master_fd(), &termios_data);
             Ok(())
         }
     }
@@ -1469,7 +1375,7 @@ impl Terminal {
             // takes a *const winsize.
             let ioctl_result = unsafe {
                 libc::ioctl(
-                    self.master_fd.get().native(),
+                    self.master_fd().native(),
                     libc::TIOCSWINSZ as _,
                     &raw const winsize,
                 )
@@ -1531,7 +1437,7 @@ impl Terminal {
             // Use the existing TTY mode function
             let mut state = self.tty_state.get();
             let tty_result = state.set_mode(
-                self.master_fd.get().native(),
+                self.master_fd().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
                 } else {
@@ -1633,18 +1539,10 @@ impl Terminal {
             self.reader.with_mut(|r| r.close());
         }
 
-        // Close master fd
-        let master = self.master_fd.get();
-        if master != Fd::INVALID {
-            master.close();
-            self.master_fd.set(Fd::INVALID);
-        }
-
-        // Close slave fd
-        let slave = self.slave_fd.get();
-        if slave != Fd::INVALID {
-            slave.close();
-            self.slave_fd.set(Fd::INVALID);
+        #[cfg(unix)]
+        {
+            self.master.set(None);
+            self.slave.set(None);
         }
     }
 

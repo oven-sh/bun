@@ -840,7 +840,6 @@ mod windows_impl {
                 aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
             }
             self.poll_ref.disable();
-            self.io_request.deinit();
         }
     }
 }

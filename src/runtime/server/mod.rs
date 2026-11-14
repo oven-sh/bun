@@ -2574,7 +2574,7 @@ impl Drop for RequestPools {
             slot: &mut RequestPoolSlot<SSL, DEBUG, MUX>,
         ) {
             let Some(pool) = slot.take() else { return };
-            if pool.hive.used.find_first_set().is_some() {
+            if pool.hive.used.iter_set().next().is_some() {
                 // The JSC VM is gone, so a context that was never released can't be dropped now.
                 bun_core::asan::ignore_object(bun_core::heap::into_raw(pool).cast());
             }

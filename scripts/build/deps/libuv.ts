@@ -79,9 +79,10 @@ export const libuv: Dependency = {
   // end a line read in progress. The patch also makes
   // uv_process_tty_read_line_req take that mark before read_cb: JS runs inside
   // read_cb and can queue and cancel the next line read there
-  // (libuv/libuv#5312). Upstream libuv has the same stop and no issue for it,
-  // so Node loses the same line on Windows (nodejs/node#38663 and
-  // nodejs/node#49588 report the symptoms).
+  // (libuv/libuv#5312). It takes the mark from a read that failed too. No test
+  // makes a line read fail, so none covers that case. Upstream libuv has the
+  // same stop and no issue for it, so Node loses the same line on Windows
+  // (nodejs/node#38663 and nodejs/node#49588 report the symptoms).
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",

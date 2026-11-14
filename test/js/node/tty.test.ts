@@ -115,28 +115,39 @@ describe("ReadStream.prototype.setRawMode", () => {
       },
     });
 
-    await drive({
-      // Resolves without the marker when the child is gone. The report is then missing, and the error below shows
-      // what the child did print.
-      until(marker) {
-        const seen = Promise.withResolvers<void>();
-        check = () => {
-          if (typeof marker === "string" ? printed().includes(marker) : marker.test(printed())) seen.resolve();
-        };
-        check();
-        return Promise.race([seen.promise, eof.promise]);
-      },
-      // The write fails when the child is gone. The missing report then fails the test.
-      type(text) {
-        try {
-          proc.terminal!.write(text);
-        } catch {}
-      },
-    });
+    // Ends a child that waits for input that never comes, so that the error below can show what it did print.
+    const watchdog = setTimeout(() => {
+      proc.kill();
+      proc.terminal?.close();
+      eof.resolve();
+    }, 20_000);
+    let exitCode: number;
+    try {
+      await drive({
+        // Resolves without the marker when the child is gone. The report is then missing, and the error below shows
+        // what the child did print.
+        until(marker) {
+          const seen = Promise.withResolvers<void>();
+          check = () => {
+            if (typeof marker === "string" ? printed().includes(marker) : marker.test(printed())) seen.resolve();
+          };
+          check();
+          return Promise.race([seen.promise, eof.promise]);
+        },
+        // The write fails when the child is gone. The missing report then fails the test.
+        type(text) {
+          try {
+            proc.terminal!.write(text);
+          } catch {}
+        },
+      });
 
-    // The terminal reports its end after it has delivered all of the child's output.
-    const exitCode = await proc.exited;
-    await eof.promise;
+      // The terminal reports its end after it has delivered all of the child's output.
+      exitCode = await proc.exited;
+      await eof.promise;
+    } finally {
+      clearTimeout(watchdog);
+    }
     proc.terminal?.close();
     output += decoder.decode();
 

@@ -44,6 +44,8 @@ It creates:
 - an entry point, which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
 
+If a `package.json` already exists and `bun init` can parse it, `bun init` does not set `type` or `private` in it.
+
 AI Agent rules (disable with `$BUN_AGENT_RULE_DISABLED=1`):
 
 - a `CLAUDE.md` file when `bun init` detects Claude CLI (disable with `CLAUDE_CODE_AGENT_RULE_DISABLED` env var)

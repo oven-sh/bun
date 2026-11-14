@@ -19,7 +19,7 @@ describe("bun.connect", () => {
       },
     });
     await defer.promise;
-    const x509: import("node:crypto").X509Certificate = socket.getPeerX509Certificate();
+    const x509: import("node:crypto").X509Certificate = socket.getPeerX509Certificate()!;
     expect(x509.checkHost("example.com")).toBe("example.com");
   });
 
@@ -55,7 +55,7 @@ describe("bun.connect", () => {
     void client;
     const socket = await defer.promise;
     expect(socket.authorized).toBe(false);
-    const peerX509: import("node:crypto").X509Certificate = socket.getPeerX509Certificate();
+    const peerX509: import("node:crypto").X509Certificate = socket.getPeerX509Certificate()!;
     expect(peerX509.checkHost("localhost")).toBe("localhost");
   });
 
@@ -95,7 +95,7 @@ describe("bun.connect", () => {
     using client = await defer2.promise;
     function check() {
       const x509: import("node:crypto").X509Certificate = server.getX509Certificate()!;
-      const peerX509: import("node:crypto").X509Certificate = client.getPeerX509Certificate();
+      const peerX509: import("node:crypto").X509Certificate = client.getPeerX509Certificate()!;
       expect(x509.checkHost("localhost")).toBe("localhost");
       expect(peerX509.checkHost("localhost")).toBe("localhost");
     }

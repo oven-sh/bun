@@ -853,7 +853,7 @@ describe("ServerWebSocket", () => {
   }));
   test("remoteAddress", done => ({
     open(ws) {
-      expect(isIP(ws.remoteAddress)).toBeGreaterThan(0);
+      expect(isIP(ws.remoteAddress ?? "")).toBeGreaterThan(0);
       done();
     },
   }));

@@ -691,8 +691,6 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
       // As for `match` of FileSystemRouter.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
-      // `undefined` once the socket is closed.
-      "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
       "valkey.bind.ts: new RedisClient().pubsub is not published",

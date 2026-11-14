@@ -1040,7 +1040,6 @@ fn write_persist_job_locked(
                 return Err(());
             }
         };
-    let _close = sys::CloseOnDrop::new(tmpfile.fd);
 
     let tmp_display = if logging {
         format!(
@@ -1066,8 +1065,7 @@ fn write_persist_job_locked(
     header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
     header_bytes[12..12 + HASH_SIZE].copy_from_slice(&job.code_hash);
     header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
-    // ManuallyDrop: the fd is owned by `_close` above.
-    let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
+    let file = sys::File::borrow(&tmpfile.fd);
     let write_all = || -> sys::Maybe<()> {
         file.pwrite_all(&header_bytes, 0)?;
         file.pwrite_all(&job.code, HEADER_SIZE as i64)?;

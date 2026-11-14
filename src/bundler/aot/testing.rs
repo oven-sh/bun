@@ -50,7 +50,7 @@ pub fn with_front_end_inputs<R>(
 ) -> Option<R> {
     // A build fills the loader it is handed, so each has its own, as in `Bun.build`.
     let mut environment = Loader::init();
-    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(inputs.working_directory)),
@@ -93,7 +93,7 @@ pub fn with_front_end_inputs<R>(
         .opts
         .root_dir
         .clone_from(&transpiler.options.root_dir);
-    let event_loop = Some(NonNull::from(&mut event_loop));
+    let event_loop = Some(NonNull::from(&event_loop));
     let started = BundleV2::init_without_starting_threads(
         transpiler, None, &arena, event_loop, false, None, &arena,
     );

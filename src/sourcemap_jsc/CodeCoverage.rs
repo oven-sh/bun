@@ -894,8 +894,7 @@ impl ByteRangeMapping {
         let source_url = self.source_url.slice();
         let saved_source_map = || {
             bun_jsc::VirtualMachine::VirtualMachine::get()
-                .as_mut()
-                .source_mappings()
+                .source_mappings
                 .get(source_url)
         };
         let source_map: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
@@ -1168,8 +1167,7 @@ impl ByteRangeMapping {
                 .for_each_object_brace(|brace| self.set_executable(brace.original));
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
-            .as_mut()
-            .source_mappings()
+            .source_mappings
             .get(self.source_url.slice())
         {
             source_map.for_each_object_brace(|brace| self.set_executable(brace.generated));
@@ -1209,7 +1207,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
             .into_iter()
             .collect(),
     );
-    let mut chunk = None;
+    let chunk = core::cell::Cell::new(None);
     // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
     bun_js_printer::print_ast::<_, true, true>(
         &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
@@ -1219,12 +1217,12 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
         &source,
         bun_js_printer::Options {
             code_coverage: true,
-            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
+            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&chunk)),
             ..Default::default()
         },
     )
     .ok()?;
-    Some(chunk?.buffer)
+    Some(chunk.into_inner()?.buffer)
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
@@ -1395,8 +1393,8 @@ fn find_or_insert(
     new_value.source_ids.extend(source_id);
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     if bun_jsc::VirtualMachine::VirtualMachine::get()
-        .as_mut()
         .transpiler
+        .get()
         .options
         .code_coverage
     {

@@ -5,12 +5,12 @@ use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _};
 
 pub(crate) fn gc_aggression_level(level: Option<f64>) -> i32 {
-    let vm = VirtualMachine::get().as_mut();
-    let previous = vm.aggressive_garbage_collection as i32;
+    let vm = VirtualMachine::get();
+    let previous = vm.aggressive_garbage_collection.get() as i32;
     match level.map(|level| level as i32) {
-        Some(1) => vm.aggressive_garbage_collection = GCLevel::Mild,
-        Some(2) => vm.aggressive_garbage_collection = GCLevel::Aggressive,
-        Some(0) => vm.aggressive_garbage_collection = GCLevel::None,
+        Some(1) => vm.aggressive_garbage_collection.set(GCLevel::Mild),
+        Some(2) => vm.aggressive_garbage_collection.set(GCLevel::Aggressive),
+        Some(0) => vm.aggressive_garbage_collection.set(GCLevel::None),
         _ => {}
     }
     previous

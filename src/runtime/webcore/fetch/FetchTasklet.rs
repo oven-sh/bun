@@ -156,8 +156,7 @@ pub struct FetchTasklet {
     pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
-    /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -916,8 +915,7 @@ impl FetchTasklet {
                 // it again — cancel the sink so the JS side releases the reader;
                 // the pump-promise settlement drops the `startRequestStream` ref.
                 this.cancel_request_body_sink(JSValue::UNDEFINED);
-                this.poll_ref
-                    .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+                this.poll_ref.unref(bun_io::js_vm_ctx());
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
@@ -946,10 +944,7 @@ impl FetchTasklet {
             // right below anyway.
             //
             // Drain ONLY the JSC microtask queue, NOT Bun's `EventLoop::drain_microtasks`:
-            // `on_progress_update` is itself running inside `tick_queue_with_count`,
-            // which already holds `&mut EventLoop`. Re-entering via
-            // `(*vm.event_loop()).drain_microtasks()` was an aliased `&mut EventLoop`
-            // (UB) and additionally ran `release_weak_refs` + `deferred_tasks.run()`,
+            // that additionally runs `release_weak_refs` + `deferred_tasks.run()`,
             // which is observable in `fetch-leak-test-fixture-5.js`'s post-batch
             // `heapStats().Promise` count for the streaming-body cases when a fast
             // loopback coalesces `can_stream` and `metadata` into one callback —
@@ -1144,10 +1139,7 @@ impl FetchTasklet {
             success,
             context: self.context,
         });
-        // SAFETY: `vm.event_loop()` is the live JS-thread loop.
-        unsafe {
-            (*vm.event_loop()).enqueue_task(Task::from_boxed(holder));
-        }
+        vm.event_loop().enqueue_task(Task::from_boxed(holder));
 
         dispatch_cleanup(self);
         cleanup(self);
@@ -1680,8 +1672,7 @@ impl FetchTasklet {
         // A body consumer is attaching; keep the process alive until the
         // body finishes (undone in `on_progress_update` when `is_done`), or
         // until the stream parks unread (`park_body_stream`).
-        this.poll_ref
-            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
 
         this.mutex.lock();
         let size_hint = this.get_size_hint() as usize;
@@ -1769,23 +1760,20 @@ impl FetchTasklet {
     fn park_body_stream(&self) {
         if self.response_stream.park() {
             bun_output::scoped_log!(FetchTasklet, "parkBodyStream");
-            self.poll_ref
-                .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
     }
 
     fn unpark_body_stream(&self) {
         if self.response_stream.unpark() {
             bun_output::scoped_log!(FetchTasklet, "unparkBodyStream");
-            self.poll_ref
-                .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         }
     }
 
     fn on_start_buffering_callback(ctx: NonNull<c_void>) {
         let this = Self::from_ctx(ctx);
-        this.poll_ref
-            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
         if this.signal_store.receive_all() {
             this.schedule_receive_resume();
         }
@@ -1897,8 +1885,7 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "abandonResponseBody");
         self.signal_store.abandon();
         self.abort_transport();
-        self.poll_ref
-            .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         self.clear_stream_handlers();
         self.response.clear();
         self.native_response.set(None);
@@ -1912,8 +1899,7 @@ impl FetchTasklet {
         // consumer hooks (`on_start_streaming_http_response_body_callback`,
         // `on_start_buffering_callback`) re-ref if the caller reads the body.
         if self.is_waiting_body {
-            self.poll_ref
-                .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
         let global_this = self.global_this;
         let response_js = Response::to_js(response.clone(), &global_this);
@@ -1962,7 +1948,7 @@ impl FetchTasklet {
             request_body_mismatched: false,
             promise,
             concurrent_task: ConcurrentTask::default(),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
@@ -1981,9 +1967,7 @@ impl FetchTasklet {
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
-            // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
-            // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(cx.vm().as_mut()),
+            tracker: AsyncTaskTracker::init(cx.vm()),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
@@ -1998,7 +1982,7 @@ impl FetchTasklet {
         // `clear_data() → request_body.detach()` releases it.
 
         let url = fetch_options.url;
-        let env = cx.vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().transpiler.get().env_mut();
         // Capture the proxy env so the HTTP thread can re-resolve per redirect
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
@@ -2459,9 +2443,7 @@ impl FetchTasklet {
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
-        node_ref
-            .poll_ref
-            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+        node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();

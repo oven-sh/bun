@@ -324,19 +324,6 @@ impl DevServer {
         self.vm().global()
     }
 
-    /// Recover `&mut VirtualMachine` via the global singleton — `self.vm` is
-    /// `*const`. The VM is process-unique on the JS thread, so
-    /// `VirtualMachine::get()` returns the same instance with write provenance.
-    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
-    #[inline]
-    pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(
-            self.vm.as_const_ptr(),
-            VirtualMachine::get()
-        ));
-        VirtualMachine::get_mut()
-    }
-
     #[inline]
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.

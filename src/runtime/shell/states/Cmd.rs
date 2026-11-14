@@ -645,12 +645,12 @@ impl Cmd {
 
         if did_exit_immediately {
             // `watch()` failed → process already gone.
-            let process = subproc.proc();
-            if process.has_exited() {
-                let status = process.status.clone();
-                process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
+            let process = subproc.proc().this_ptr();
+            if let Some(status) = process.status() {
+                let rusage = crate::api::bun::process::rusage_zeroed();
+                bun_spawn::Process::on_exit(process, status.clone(), &rusage);
             } else {
-                process.wait(false);
+                bun_spawn::Process::wait(process, false);
             }
         }
 
@@ -811,7 +811,7 @@ impl Cmd {
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let shell = interp.as_cmd(this).base.shell();
-                let cwd_fd = shell.cwd_fd;
+                let cwd_fd = shell.cwd_fd.fd();
                 let refused = refuse_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
                 let opened = refused.and_then(|()| {
                     crate::shell::interpreter::shell_openat(cwd_fd, path, flags.to_flags(), 0o666)
@@ -936,8 +936,6 @@ impl Cmd {
             Exec::Subproc(_) => {}
         }
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
-        // `base.shell` is borrowed (or, when parent is Pipeline, freed by
-        // `Pipeline::child_done` before this runs) — never freed here.
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────

@@ -47,10 +47,10 @@ fn css_order_or_log<'a>(
 }
 
 /// The key of the CSS chunk that has this import order, or else a free key.
-fn css_chunk_key(
-    css_chunks: &ArrayHashMap<u64, Chunk>,
+fn css_chunk_key<'a>(
+    css_chunks: &ArrayHashMap<u64, Chunk<'a>>,
     mut key: u64,
-    order: &[chunk::CssImportOrder],
+    order: &[chunk::CssImportOrder<'a>],
 ) -> u64 {
     while let Some(existing) = css_chunks.get(&key) {
         if let chunk::Content::Css(css) = &existing.content
@@ -442,11 +442,11 @@ pub(crate) fn compute_chunks<'a>(
 
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
         // then by key for determinism among the rest.
-        struct ChunkSortContext<'a> {
-            chunks: &'a ArrayHashMap<&'a [u8], Chunk<'a>>,
+        struct ChunkSortContext<'r, 'a> {
+            chunks: &'r ArrayHashMap<&'r [u8], Chunk<'a>>,
         }
 
-        impl<'a> ChunkSortContext<'a> {
+        impl ChunkSortContext<'_, '_> {
             fn less_than(&self, a_key: &[u8], b_key: &[u8]) -> bool {
                 let Some(a_chunk) = self.chunks.get(&a_key) else {
                     return true;

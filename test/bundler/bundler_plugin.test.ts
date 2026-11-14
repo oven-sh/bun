@@ -3030,6 +3030,41 @@ describe("bundler", () => {
     },
   );
 
+  test.concurrent(
+    "plugin/HTML entry point that onLoad turns into a script and a server file imports does not crash",
+    async () => {
+      using dir = tempDir("plugin-html-entry-imported", {
+        "server.js": `import page from "./app.html"; console.log(typeof page);`,
+        "app.html": `<!doctype html><p>x</p>`,
+      });
+      const serverIsParsed = Promise.withResolvers<void>();
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "server.js"), join(String(dir), "app.html")],
+        target: "bun",
+        throw: false,
+        plugins: [
+          {
+            name: "script",
+            setup(build) {
+              build.onLoad({ filter: /app\.html$/ }, async () => {
+                await serverIsParsed.promise;
+                return { contents: `console.log("script")`, loader: "ts" };
+              });
+              build.onLoad({ filter: /server\.js$/ }, () => {
+                setImmediate(() => setImmediate(serverIsParsed.resolve));
+                return undefined;
+              });
+            },
+          },
+        ],
+      });
+      // The import is of the page or of the script, whichever the build met first. The script has no default export.
+      for (const log of result.logs) {
+        expect(String(log)).toContain("No matching export in");
+      }
+    },
+  );
+
   // A module of the bundle can have the path that an external import is written with.
   test.concurrent(
     "plugin/external import that onResolve declines stays external beside a module of that path",

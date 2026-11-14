@@ -3367,6 +3367,14 @@ pub mod bv2_impl {
             }
             let source_index = task.source_index.get();
             let path = self.graph.input_files.items_source()[source_index as usize].path;
+            // A server file imports the page: its manifest needs the page in the browser graph.
+            if self
+                .path_to_source_index_map(main_target)
+                .get_path(&path)
+                .is_some()
+            {
+                return;
+            }
             self.path_to_source_index_map(Target::Browser)
                 .remove_path(&path);
             self.path_to_source_index_map(main_target)
@@ -5034,10 +5042,9 @@ pub mod bv2_impl {
                                     .enqueue_unmatched_entry_point(&resolve.import_record.specifier)
                                 {
                                     Ok(EntryPointModule::New) => {
-                                        let source_index = this.graph.entry_points.pop().expect(
-                                            "enqueue_entry_item adds the entry point it returns",
-                                        );
-                                        this.set_entry_point(slot, source_index);
+                                        if let Some(source_index) = this.graph.entry_points.pop() {
+                                            this.set_entry_point(slot, source_index);
+                                        }
                                     }
                                     // An import made the module first. It is an entry point too.
                                     Ok(EntryPointModule::Existing(index))
@@ -7574,9 +7581,11 @@ pub mod bv2_impl {
                 return false;
             }
 
-            let (_, manifest_ast) = self
-                .html_import_manifest_ast(&path, manifest_index, target)
-                .expect("unreachable");
+            let Ok((_, manifest_ast)) =
+                self.html_import_manifest_ast(&path, manifest_index, target)
+            else {
+                return true;
+            };
             let row = manifest_index as usize;
             self.graph.ast.set(row, manifest_ast);
             self.graph.input_files.items_side_effects_mut()[row] =
@@ -7939,10 +7948,9 @@ pub mod bv2_impl {
                             this.graph.input_files.items_loader()[result_source_index];
                         let source_module_type: options::ModuleType =
                             this.graph.ast.items_module_type()[result_source_index];
-                        let tsconfig_options = *result
-                            .client_copy_options
-                            .take()
-                            .expect("set for a \"use client\" file");
+                        let tsconfig_options =
+                            result.client_copy_options.take().unwrap_or_default();
+                        let tsconfig_options = *tsconfig_options;
 
                         let (reference_source_index, ssr_index) = if separate_ssr_graph {
                             // Enqueue two files, one in server graph, one in ssr graph.

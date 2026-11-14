@@ -27,8 +27,8 @@ describe("bundler", async () => {
         ["tsx", "ts"],
         ["js", "ts"],
       ]) {
-        itBundled(`bun/loader-script-type-on-${extension}-as-${type}-is-one-module`, {
-          target: "bun",
+        itBundled(`${target}/loader-script-type-on-${extension}-as-${type}-is-one-module`, {
+          target,
           files: {
             "/entry.js": /* js */ `
           import { id } from "./state.${extension}";

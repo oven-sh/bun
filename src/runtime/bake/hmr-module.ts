@@ -152,6 +152,8 @@ export class HMRModule {
   loading: Promise<HMRModule> | null = null;
   /** The imports that the current evaluation waits for. See `waitsFor`. */
   waits: HMRModule[] | null = null;
+  /** `replacedWhilePending` when `waitsFor` found that a wait for this module ends. */
+  waitEnds = -1;
   /** `import.meta.hot.data`. Kept across evaluations. */
   data: any = {};
   /** The keys of `data` that only a dispose callback wrote. */
@@ -383,6 +385,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
+      // The update that takes the top-level await away finds this importer through the edge.
+      if (mod && importer) addImporter(mod, importer);
       throw new AsyncImportError(id);
     }
     // After the refusal above, so that the module stays Stale for the async loader.
@@ -573,6 +577,7 @@ function beginEvaluation(mod: HMRModule) {
   mod.imports = null;
   mod.updateImport = null;
   mod.asked = null;
+  mod.waitEnds = -1;
 }
 
 function addImporter(mod: HMRModule, importer: HMRModule) {
@@ -613,6 +618,9 @@ function loadReplacement(mod: HMRModule) {
   return loadModuleAsync(mod.id, false, null);
 }
 
+/** Counts the updates of modules that others wait for. What `waitsFor` found out before such an update can be wrong. */
+let replacedWhilePending = 0;
+
 /** Whether a wait for `mod` could never end: `mod` waits, through other modules too, for a module whose load is on the stack. */
 function waitsFor(mod: HMRModule) {
   // Any body that is not done can be the one that awaits an `import()` or a `route.page()`. The entry point loads the pages.
@@ -621,12 +629,14 @@ function waitsFor(mod: HMRModule) {
   const stack = [mod];
   while (stack.length > 0) {
     const m = stack.pop()!;
-    if (seen.has(m)) continue;
+    if (seen.has(m) || m.waitEnds === replacedWhilePending) continue;
     seen.add(m);
     // A module in its synchronous part is on the stack: the importer, or a module above it.
     if (m.loading === null) return true;
     if (m.waits) stack.push(...m.waits);
   }
+  // What a module waits for is fixed once it waits, so the walks of one load do not go over it again.
+  for (const m of seen) m.waitEnds = replacedWhilePending;
   return false;
 }
 
@@ -832,7 +842,9 @@ type HMREvent =
 export function dropHeldModules(modules: Record<Id, UnloadedModule>, bundledAgain: readonly Id[]) {
   for (const id of bundledAgain) {
     const held = unloadedModuleRegistry[id];
-    if (held && modules[id] && codeOf(held) === codeOf(modules[id])) delete modules[id];
+    // A module whose body threw gets another try with the update.
+    if (!held || !modules[id] || registry.get(id)?.state === State.Error) continue;
+    if (codeOf(held) === codeOf(modules[id])) delete modules[id];
   }
 }
 
@@ -1048,6 +1060,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   // Stale only now: a dispose callback that loads a reached module gets the old copy, a load during the wait the new code.
   for (const mod of reached.keys()) {
+    if (mod.state === State.Pending) replacedWhilePending++;
     mod.state = State.Stale;
     // Its body was disposed of. The body that follows makes its own.
     mod.depAccepts = null;

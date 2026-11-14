@@ -937,6 +937,57 @@ for (const side of ["client", "server"] as const) {
   });
 }
 
+test("server: a module whose require() was refused for a top-level await runs again when the await is gone", async () => {
+  const { log, take, define, load, save } = await loader("server");
+  const x = (waits: boolean) =>
+    esm([], waits ? async hmr => void (hmr.exports = { x: 1 }) : hmr => void (hmr.exports = { x: 1 }), waits);
+  const lib = (version: string) => esm([], hmr => void (hmr.exports = { lib: version + hmr.require("x").x }));
+  define({
+    route: esm(["lib"], (hmr, [lib]) => void (hmr.exports = { route: lib.lib })),
+    lib: lib("v1 "),
+    x: x(false),
+  });
+  const request = async () => {
+    try {
+      log("route " + (await load("route")).route);
+    } catch (e: any) {
+      log("route failed");
+    }
+  };
+  await request();
+  await save({ lib: lib("v2 "), x: x(true) });
+  await request();
+  await save({ x: x(false) });
+  await request();
+  expect(take().filter(line => line.startsWith("route"))).toEqual(["route v1 1", "route failed", "route v2 1"]);
+});
+
+test("client: a save below many modules with top-level await walks the waits of each module once", async () => {
+  const { define, load, save } = await loader("client");
+  const count = 400;
+  let reads = 0;
+  const modules: Record<string, unknown> = {};
+  for (let i = 0; i < count; i++) {
+    const deps = i === 0 ? ["leaf"] : [1, 2, 3, 4, 5].map(back => "m" + Math.max(0, i - back));
+    modules["m" + i] = esm([...new Set(deps)], () => {});
+  }
+  const awaits = () => esm([], async hmr => void (hmr.exports = {}), true);
+  define({ ...modules, leaf: awaits(), app: esm(["m" + (count - 1)], hmr => hmr.accept()) });
+  await load("app");
+  const { push } = Array.prototype;
+  // `waitsFor` is the only place that spreads the waits of a module onto a stack.
+  Array.prototype.push = function (...items: unknown[]) {
+    reads += items.length;
+    return push.apply(this, items);
+  };
+  try {
+    await save({ leaf: awaits() });
+  } finally {
+    Array.prototype.push = push;
+  }
+  expect(reads).toBeLessThan(count * 60);
+});
+
 describe("a module that an update holds only because it was bundled again with its importer", () => {
   const shared = (log: (line: string) => void, value: string) =>
     esm([], hmr => {
@@ -973,6 +1024,34 @@ describe("a module that an update holds only because it was bundled again with i
     await save({ a: entry(log, "a2"), shared: first }, ["shared"]);
     await save({ a: entry(log, "a3"), shared: second }, ["shared"]);
     expect(take()).toEqual(["a2 ran s1", "a3 ran s2"]);
+  });
+
+  test("runs again when its body threw", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    let isReady = false;
+    const held = esm([], hmr => {
+      if (!isReady) throw new Error("not ready");
+      hmr.exports = { shared: "s1" };
+    });
+    const a = (setsUp: boolean) =>
+      esm(
+        [],
+        async hmr => {
+          hmr.accept();
+          isReady = setsUp;
+          await hmr.dynamicImport("shared").then(
+            (shared: any) => log("a got " + shared.shared),
+            (e: Error) => log("a caught " + e.message),
+          );
+        },
+        true,
+      );
+    const main = esm([], async hmr => void (await hmr.dynamicImport("a").catch(() => {})), true);
+    define({ main, a: a(false), shared: held });
+    await load("main").catch(() => {});
+    take();
+    await save({ a: a(true), shared: copyOf(held) }, ["shared"]);
+    expect(take()).toEqual(["a got s1"]);
   });
 
   test("runs again when it was saved, also with the same code", async () => {

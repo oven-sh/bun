@@ -320,9 +320,11 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
 
 /// The string literal that a module of a chunk is printed with as its key.
 fn printed_module_id(code: &[u8]) -> Option<&[u8]> {
-    let start = strings::index_of_char_usize(code, b'"')?;
+    // The printer takes single quotes when the key has a double quote.
+    let start = strings::index_of_any(code, b"\"'")?;
+    let quote = code[start];
     let mut end = start + 1;
-    while *code.get(end)? != b'"' {
+    while *code.get(end)? != quote {
         end += 1 + usize::from(code[end] == b'\\');
     }
     Some(&code[start..=end])

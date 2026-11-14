@@ -710,7 +710,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // `scope_order_to_visit` may safely alias the same arena allocation.
     pub(crate) scopes_in_order_for_enum: ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
 
-    // If this is true, then all top-level statements are wrapped in a try/catch
+    // A prediction made before the visit pass: a top-level "using" will be lowered, so all
+    // top-level statements will be wrapped in a try/catch. The visit pass can remove every such
+    // "using" (minify_syntax folds a null initializer). Then nothing is wrapped and this stays
+    // true, so it may only gate a rewrite that is also valid without the wrap.
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
     /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
@@ -9948,6 +9951,27 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
+    /// `var <name> = <value>`: a binding that is visible outside of the try block.
+    fn var_decl<'a, const T: bool, const S_: bool>(
+        p: &mut P<'a, T, S_>,
+        name: LocRef,
+        value: Expr,
+        loc: bun_ast::Loc,
+    ) -> Stmt {
+        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+        p.s(
+            S::Local {
+                kind: js_ast::s::Kind::KVar,
+                decls: G::DeclList::init_one(G::Decl {
+                    binding,
+                    value: Some(value),
+                }),
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
     pub(crate) fn finalize<'a, const T: bool, const S_: bool>(
         &mut self,
         p: &mut P<'a, T, S_>,
@@ -9958,7 +9982,7 @@ impl LowerUsingDeclarationsContext {
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
-            let stmt = stmts[i];
+            let mut stmt = stmts[i];
             match stmt.data {
                 js_ast::StmtData::SDirective(_)
                 | js_ast::StmtData::SImport(_)
@@ -9992,24 +10016,38 @@ impl LowerUsingDeclarationsContext {
                         });
                         let class = core::mem::take(&mut c.class);
                         let value = p.new_expr(class, stmt.loc);
-                        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
-                        stmts[end as usize] = p.s(
-                            S::Local {
-                                kind: js_ast::s::Kind::KVar,
-                                decls: G::DeclList::init_one(G::Decl {
-                                    binding,
-                                    value: Some(value),
-                                }),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        );
+                        stmts[end as usize] = Self::var_decl(p, name, value, stmt.loc);
                         end += 1;
                         continue;
                     }
                 }
-                js_ast::StmtData::SExportDefault(_) => {
-                    continue; // this prevents re-exporting default since we already have it as an .s_export_clause
+                // esbuild splits `export default` in the visitor, on the pre-visit prediction
+                // of this wrap. The visit can remove every `using`, so the split lives here.
+                js_ast::StmtData::SExportDefault(mut data) => {
+                    if matches!(
+                        data.value,
+                        js_ast::StmtOrExpr::Stmt(Stmt {
+                            data: js_ast::StmtData::SFunction(_),
+                            ..
+                        })
+                    ) {
+                        result.push(stmt);
+                        continue;
+                    }
+                    let name = data.default_name;
+                    exports.push(js_ast::ClauseItem {
+                        name,
+                        alias: js_ast::StoreStr::new(js_ast::ClauseItem::DEFAULT_ALIAS),
+                        alias_loc: name.loc,
+                        ..Default::default()
+                    });
+                    let value = core::mem::take(&mut data.value).to_expr();
+                    if matches!(value.data, js_ast::ExprData::EIdentifier(id) if id.ref_ == name.ref_)
+                    {
+                        // React Fast Refresh already declared this binding: `App = _s(...)`.
+                        continue;
+                    }
+                    stmt = Self::var_decl(p, name, value, stmt.loc);
                 }
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.

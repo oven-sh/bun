@@ -5413,6 +5413,269 @@ console.log("boop");
       export var q = r;
     `);
   });
+
+  // A lowered top-level `using` moves the module body into a try block, and `export default`
+  // cannot stay inside a block. A function declaration stays in front of the try block. A
+  // class or an expression becomes a `var` at its position, plus `export { name as default }`.
+  describe("using top level with a default export", () => {
+    const lowered = new Bun.Transpiler({ loader: "js", target: "node" });
+    const minified = new Bun.Transpiler({ loader: "js", target: "node", minify: { syntax: true } });
+
+    // The lowered module without what every lowered module has: the helper import, the
+    // stack declaration, and the catch and finally blocks.
+    const lower = (code, transpiler_ = lowered) =>
+      prepareForSnapshot(transpiler_.transformSync(code))
+        .replace(/^import .*\n/, "")
+        .replace(/^let __bun_temp_ref_\d+\$ = \[\];\n/m, "")
+        .replace(/^\} catch [^]*?^\}\n/m, "}\n")
+        .replace(/__bun_temp_ref_\d+\$/g, "_stack")
+        .replace(/\n+/g, "\n");
+
+    it("keeps an expression at its position inside the try block", () => {
+      expect(lower(`using a = b;\nexport default [a, c];\nusing c = d;`)).toBe(`try {
+  var a = __using(_stack, b, 0);
+  var input_default = [a, c];
+  var c = __using(_stack, d, 0);
+}
+export {
+  input_default as default
+};
+`);
+      expect(lower(`export default [a];\nusing a = b;`)).toBe(`try {
+  var input_default = [a];
+  var a = __using(_stack, b, 0);
+}
+export {
+  input_default as default
+};
+`);
+      expect(lower(`using a = b;\nexport default (class Named { static a = a; });`)).toBe(`try {
+  var a = __using(_stack, b, 0);
+  var input_default = class Named {
+    static a = a;
+  };
+}
+export {
+  input_default as default
+};
+`);
+      expect(lower(`await using a = b;\nexport default a;`)).toBe(`try {
+  var a = __using(_stack, b, 1);
+  var input_default = a;
+}
+export {
+  input_default as default
+};
+`);
+      expect(lower(`using x = null;\nusing y = foo();\nexport default 2;`, minified)).toBe(`try {
+  var x = null;
+  var y = __using(_stack, foo(), 0);
+  var input_default = 2;
+}
+export {
+  input_default as default
+};
+`);
+    });
+
+    it("keeps a function declaration in front of the try block", () => {
+      expect(lower(`using a = b;\nexport default function foo() { return [a, c, foo]; }\nusing c = d;`))
+        .toBe(`export default function foo() {
+  return [a, c, foo];
+}
+try {
+  var a = __using(_stack, b, 0);
+  var c = __using(_stack, d, 0);
+}
+`);
+      expect(lower(`using a = b;\nexport default function () { return a; }`))
+        .toBe(`export default function input_default() {
+  return a;
+}
+try {
+  var a = __using(_stack, b, 0);
+}
+`);
+      expect(lower(`await using a = b;\nexport default async function* () { yield a; }`))
+        .toBe(`export default async function* input_default() {
+  yield a;
+}
+try {
+  var a = __using(_stack, b, 1);
+}
+`);
+    });
+
+    it("turns a class declaration into a var at its position inside the try block", () => {
+      expect(lower(`using a = b;\nexport default class Foo { ac = [a, c, Foo]; }\nusing c = d;`)).toBe(`try {
+  var a = __using(_stack, b, 0);
+  var Foo = class Foo {
+    ac = [a, c, Foo];
+  };
+  var c = __using(_stack, d, 0);
+}
+export {
+  Foo as default
+};
+`);
+      expect(lower(`using a = b;\nexport default class { ac = [a]; }`)).toBe(`try {
+  var a = __using(_stack, b, 0);
+  var input_default = class {
+    ac = [a];
+  };
+}
+export {
+  input_default as default
+};
+`);
+    });
+
+    // Target bun keeps `using` as written, so its export names are the reference: to lower
+    // a `using`, or to fold it away, must not add, drop or duplicate an export.
+    it("exports the same names as the module with a native using", () => {
+      const exportsOrError = (transpiler_, code) => {
+        try {
+          return transpiler_.scan(code).exports.sort();
+        } catch (e) {
+          return (e instanceof AggregateError ? e.errors[0] : e).message;
+        }
+      };
+      const native = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const forms = [
+        `export default 1;`,
+        `export default a;`,
+        `export default () => a;`,
+        `export default (class Named {});`,
+        `export default function foo() {}`,
+        `export default function () {}`,
+        `export default async function foo() {}`,
+        `export default function* foo() {}`,
+        `export default class Foo {}`,
+        `export default class {}`,
+        `export default class Foo { static { a; } }`,
+        `export default 1;\nexport { a as default };`,
+        `export default function foo() {}\nexport { a as default };`,
+        `export default class Foo {}\nexport { a as default };`,
+      ];
+      const differences = [];
+      for (const target of ["node", "browser"]) {
+        for (const syntax of [false, true]) {
+          const transpiler_ = new Bun.Transpiler({ loader: "js", target, minify: { syntax } });
+          for (const prefix of [`using a = b;`, `await using a = b;`, `using a = null;`]) {
+            for (const form of forms) {
+              for (const code of [`${prefix}\n${form}`, `${form}\n${prefix}`]) {
+                const expected = exportsOrError(native, code);
+                const actual = exportsOrError(transpiler_, code);
+                if (!Bun.deepEquals(actual, expected)) differences.push({ target, syntax, code, actual, expected });
+              }
+            }
+          }
+        }
+      }
+      expect(differences).toEqual([]);
+    });
+
+    // `minify.syntax` turns a `using` with a null or undefined value into a plain variable.
+    // With no `using` left there is no try block, and the default export stays as written.
+    it("keeps the default export as written when every using is folded away", () => {
+      for (const transpiler_ of [minified, transpilerMinifySyntax]) {
+        for (const [code, expected] of [
+          [`using x = null;\nexport default 2;`, `export default 2;`],
+          [`using x = undefined;\nexport default { a: 1 };`, `export default { a: 1 };`],
+          [`using x = void 0;\nexport default () => 1;`, `export default () => 1;`],
+          [`export default 2;\nusing x = null;`, `export default 2;`],
+        ]) {
+          const out = transpiler_.transformSync(code);
+          expect(out).not.toContain("__using");
+          expect(out.split("\n").filter(line => line.includes("default"))).toEqual([expected]);
+        }
+      }
+    });
+
+    it("exports.replace replaces the default export", () => {
+      const exports = { replace: { default: 42 } };
+      const replace = new Bun.Transpiler({ loader: "js", target: "node", exports });
+      for (const [code, binding] of [
+        [`using a = b;\nexport default a.value;`, "input_default"],
+        [`using a = b;\nexport default function foo() { return a; }`, "foo"],
+        [`using a = b;\nexport default function () { return a; }`, "input_default"],
+      ]) {
+        const out = replace.transformSync(code);
+        expect(out).toContain(`var ${binding} = 42;`);
+        expect(out).toContain(`${binding} as default`);
+        expect(out).not.toContain("return a");
+        expect(out).not.toContain("a.value");
+      }
+      const replaceMinified = new Bun.Transpiler({ loader: "js", target: "node", minify: { syntax: true }, exports });
+      expect(replaceMinified.transformSync(`using x = null;\nexport default a.value;`)).toEndWith(
+        "export default 42;\n",
+      );
+    });
+
+    it("exports.eliminate removes the default export", () => {
+      for (const deadCodeElimination of [true, false]) {
+        const eliminate = new Bun.Transpiler({
+          loader: "js",
+          target: "node",
+          deadCodeElimination,
+          exports: { eliminate: ["default"] },
+        });
+        for (const code of [
+          `using a = b;\nexport default foo;`,
+          `using a = b;\nexport default function foo() {}`,
+          `using a = b;\nexport default class Foo {}`,
+        ]) {
+          const out = eliminate.transformSync(code);
+          expect(out).toContain("__using");
+          expect(out).not.toContain("export");
+          expect(out).not.toMatch(/foo/i);
+          expect(eliminate.scan(code).exports).toEqual([]);
+        }
+      }
+    });
+
+    it("the transformed modules export their default and dispose", async () => {
+      using dir = tempDir("using-export-default", {
+        "fn.mjs": lowered.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose fn"); } };
+          export default function fn() { return "fn"; }
+        `),
+        "klass.mjs": lowered.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose klass"); }, tag: "klass" };
+          export default class Klass {
+            static tag = a.tag;
+            static describe() { return Klass.tag; }
+          }
+        `),
+        "anonymous.mjs": lowered.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose anonymous"); } };
+          export default class { static tag = "anonymous"; }
+        `),
+        "folded.mjs": minified.transformSync(`
+          using x = null;
+          export default "folded";
+        `),
+        "main.mjs": `
+          import fn from "./fn.mjs";
+          import Klass from "./klass.mjs";
+          import Anonymous from "./anonymous.mjs";
+          import folded from "./folded.mjs";
+          console.log(fn(), Klass.describe(), Anonymous.tag, folded);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("dispose fn\ndispose klass\ndispose anonymous\nfn klass anonymous folded\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

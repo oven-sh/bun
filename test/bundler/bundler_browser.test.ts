@@ -659,4 +659,264 @@ describe("bundler", () => {
       stdout: "Before!\nThe dispose function was called\n",
     },
   });
+
+  // A lowered top-level `using` moves the module body into a try block. A default
+  // function declaration stays in front of it. A default class becomes a `var`
+  // inside it, at its source position, plus an export clause.
+  itBundled("browser/UsingExportDefaultDeclaration", {
+    files: {
+      "/entry.ts": `
+        import namedFn from "./named-fn.ts";
+        import anonymousFn from "./anonymous-fn.ts";
+        import NamedClass from "./named-class.ts";
+        import AnonymousClass from "./anonymous-class.ts";
+        console.log(namedFn(), anonymousFn(), NamedClass.describe(), AnonymousClass.tag);
+      `,
+      "/named-fn.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose named-fn"); } };
+        export default function namedFn() { return "named-fn"; }
+      `,
+      "/anonymous-fn.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose anonymous-fn"); } };
+        export default function () { return "anonymous-fn"; }
+      `,
+      "/named-class.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose named-class"); }, tag: "named-class" };
+        export default class NamedClass {
+          static tag = a.tag;
+          static describe() { return NamedClass.tag; }
+        }
+      `,
+      "/anonymous-class.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose anonymous-class"); } };
+        export default class { static tag = "anonymous-class"; }
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "dispose named-fn",
+        "dispose anonymous-fn",
+        "dispose named-class",
+        "dispose anonymous-class",
+        "named-fn anonymous-fn named-class anonymous-class",
+      ].join("\n"),
+    },
+  });
+
+  itBundled("browser/UsingExportDefaultDecoratedClass", {
+    files: {
+      "/entry.ts": `
+        import Named from "./named.ts";
+        import Anonymous from "./anonymous.ts";
+        console.log(Named.decorated, Anonymous.decorated);
+      `,
+      "/decorate.ts": `
+        export function decorate(target: any, context: ClassDecoratorContext) {
+          console.log("decorate", context.kind, typeof target);
+          target.decorated = true;
+        }
+      `,
+      "/named.ts": `
+        import { decorate } from "./decorate.ts";
+        using a = { [Symbol.dispose]() { console.log("dispose named"); } };
+        @decorate
+        export default class Named {}
+      `,
+      "/anonymous.ts": `
+        import { decorate } from "./decorate.ts";
+        using a = { [Symbol.dispose]() { console.log("dispose anonymous"); } };
+        @decorate
+        export default class {}
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "decorate class function",
+        "dispose named",
+        "decorate class function",
+        "dispose anonymous",
+        "true true",
+      ].join("\n"),
+    },
+  });
+
+  // The dev server format builds each module's export object from the same statements.
+  itBundled("browser/UsingExportDefaultBakeDev", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": `
+        import fn from "./fn.ts";
+        import Klass from "./klass.ts";
+        console.log(fn(), Klass.tag);
+      `,
+      "/fn.ts": `
+        using a = { [Symbol.dispose]() {} };
+        export default function fn() { return "fn"; }
+      `,
+      "/klass.ts": `
+        using a = { [Symbol.dispose]() {} };
+        export default class Klass { static tag = "klass"; }
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toMatch(/hmr\.exports = \{\s*default: function fn\(\) \{/);
+      expect(output).toMatch(/\bvar Klass = class Klass \{/);
+      expect(output).toMatch(/hmr\.exports = \{\s*default: Klass\s*\}/);
+    },
+  });
+
+  // React Fast Refresh binds a default component that calls a hook itself:
+  // `WithHooks = _s(function WithHooks() {}, "...")`. That binding is the default export.
+  itBundled("browser/UsingExportDefaultReactFastRefresh", {
+    skipOnEsbuild: true,
+    reactFastRefresh: true,
+    files: {
+      "/entry.tsx": `
+        import "./refresh-runtime.ts";
+        import WithHooks from "./with-hooks.tsx";
+        import WithoutHooks from "./without-hooks.tsx";
+        import NoUsing from "./no-using.tsx";
+        console.log(WithHooks(), WithoutHooks(), NoUsing(), JSON.stringify(globalThis.registered));
+      `,
+      "/refresh-runtime.ts": `
+        globalThis.registered = [];
+        globalThis.$RefreshSig$ = () => (component: any) => component;
+        globalThis.$RefreshReg$ = (component: any, id: string) => {
+          globalThis.registered.push(component.name + " as " + id.slice(id.lastIndexOf(":") + 1));
+        };
+      `,
+      "/react.ts": `
+        export function useState(initial: any) { return [initial, () => {}]; }
+      `,
+      "/with-hooks.tsx": `
+        import { useState } from "./react.ts";
+        using a = { [Symbol.dispose]() { console.log("dispose with-hooks"); } };
+        export default function WithHooks() {
+          const [value] = useState("with-hooks");
+          return value;
+        }
+      `,
+      "/without-hooks.tsx": `
+        using a = { [Symbol.dispose]() { console.log("dispose without-hooks"); } };
+        export default function WithoutHooks() { return "without-hooks"; }
+      `,
+      "/no-using.tsx": `
+        import { useState } from "./react.ts";
+        export default function NoUsing() {
+          const [value] = useState("no-using");
+          return value;
+        }
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "dispose with-hooks",
+        "dispose without-hooks",
+        'with-hooks without-hooks no-using ["WithHooks as default","WithoutHooks as default","NoUsing as default"]',
+      ].join("\n"),
+    },
+  });
+
+  // `--minify-syntax` turns a `using` with a null or undefined value into a plain
+  // variable. When no other top-level `using` is left, the module body is not moved
+  // into a try block, and its default export must still be exported exactly once.
+  const usingFoldedAwayFiles = {
+    "/entry.ts": `
+      import fromNull from "./null.ts";
+      import fromUndefined from "./undefined.ts";
+      import fromVoid from "./void.ts";
+      import fromInlinedConst from "./inlined-const.ts";
+      import exportFirst from "./export-first.ts";
+      import evaluatedOnce from "./evaluated-once.ts";
+      console.log(fromNull, fromUndefined.a, fromVoid, fromInlinedConst, exportFirst, evaluatedOnce, globalThis.evaluations);
+    `,
+    "/null.ts": `
+      using x = null;
+      export default 2;
+    `,
+    "/undefined.ts": `
+      using x = undefined;
+      export default { a: 1 };
+    `,
+    "/void.ts": `
+      using x = void 0;
+      export default 3;
+    `,
+    "/inlined-const.ts": `
+      const r = null;
+      using x = r;
+      export default 4;
+    `,
+    "/export-first.ts": `
+      export default 5;
+      using x = null;
+    `,
+    "/evaluated-once.ts": `
+      using x = null;
+      export default (globalThis.evaluations = (globalThis.evaluations | 0) + 1);
+    `,
+  };
+  itBundled("browser/UsingFoldedAwayExportDefault", {
+    files: usingFoldedAwayFiles,
+    target: "browser",
+    minifySyntax: true,
+    run: {
+      stdout: "2 1 3 4 5 1 1",
+    },
+  });
+  itBundled("browser/UsingFoldedAwayExportDefaultNodeCJS", {
+    files: usingFoldedAwayFiles,
+    target: "node",
+    format: "cjs",
+    minifySyntax: true,
+    run: {
+      stdout: "2 1 3 4 5 1 1",
+    },
+  });
+
+  // A resource that only exists in development folds to `null` in a production build.
+  itBundled("browser/UsingDevOnlyResourceExportDefault", {
+    files: {
+      "/entry.ts": `
+        import handler from "./handler.ts";
+        console.log(handler());
+      `,
+      "/handler.ts": `
+        using devtools = process.env.NODE_ENV !== "production" ? { [Symbol.dispose]() { console.log("closed"); } } : null;
+        export default () => "handled";
+      `,
+    },
+    target: "browser",
+    production: true,
+    run: {
+      stdout: "handled",
+    },
+  });
+
+  // With no minify flag, the bundler turns the `require()` of an unwrapped CommonJS
+  // package into an import and drops the `using` declaration with it. That loses the
+  // disposal, which is a defect of the unwrap. This only checks that such a module,
+  // with no `using` left to lower, still builds and exports its default once.
+  itBundled("browser/UsingRequireUnwrappedExportDefault", {
+    files: {
+      "/entry.ts": `
+        import value from "./module.js";
+        console.log(value);
+      `,
+      "/module.js": `
+        using r = require("react");
+        export default 2;
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "0.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `module.exports = { [Symbol.dispose]() {} };`,
+    },
+    target: "browser",
+    run: {
+      stdout: "2",
+    },
+  });
 });

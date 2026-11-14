@@ -579,45 +579,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *expr = p.wrap_value_for_server_component_reference(*expr, b"default");
                 }
 
-                // If there are lowered "using" declarations, change this into a "var"
-                if p.current_scope().parent.is_none() && p.will_wrap_module_in_try_catch_for_using {
-                    stmts.reserve(2);
-
-                    let mut decls = G::DeclList::init_capacity(1);
-                    VecExt::append(
-                        &mut decls,
-                        G::Decl {
-                            binding: p.b(
-                                B::Identifier {
-                                    r#ref: data.default_name.ref_,
-                                },
-                                data.default_name.loc,
-                            ),
-                            value: Some(*expr),
-                        },
-                    );
-                    stmts.push(p.s(
-                        S::Local {
-                            decls,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ));
-                    let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
-                        alias: js_ast::StoreStr::new(b"default"),
-                        alias_loc: data.default_name.loc,
-                        name: data.default_name,
-                        ..Default::default()
-                    }));
-                    stmts.push(p.s(
-                        S::ExportClause {
-                            items: bun_ast::StoreSlice::new_mut(items),
-                            is_single_line: false,
-                        },
-                        stmt.loc,
-                    ));
-                }
-
                 if mark_for_replace {
                     let entry = p
                         .options
@@ -772,7 +733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                                     stmts.push(Stmt::alloc(
                                         S::Local {
-                                            kind: S::Kind::KConst,
+                                            kind: p.select_local_kind(S::Kind::KConst),
                                             decls: G::DeclList::from_slice(&[G::Decl {
                                                 binding: Binding::alloc(
                                                     p.arena,

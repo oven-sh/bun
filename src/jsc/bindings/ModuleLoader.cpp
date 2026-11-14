@@ -28,6 +28,7 @@
 #include "EventEmitter.h"
 #include "JSEventEmitter.h"
 
+#include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
@@ -823,13 +824,48 @@ static JSValue requireFromIsolatedModuleCache(Zig::GlobalObject* globalObject, J
     return jsNumber(-1);
 }
 
+bool runnerLoadHadNoModuleOfDataFile(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const WTF::String& key)
+{
+    auto* runnerLoad = globalObject->m_runnerLoad.get();
+    if (!runnerLoad || runnerLoad->loader() != loader || !runnerLoad->hadNoModuleOfDataFile(key)) [[likely]]
+        return false;
+    if (!runnerLoad->hasSynchronousLoads())
+        return true;
+    // A require() in a run had the loader load a module and what it imports, as it would where the import runs as soon as it is fetched: the loader has had those modules since that run. The earlier runs are counted first, so a record is reached once.
+    auto& vm = JSC::getVM(globalObject);
+    WTF::UncheckedKeyHashSet<JSC::AbstractModuleRecord*> reached;
+    WTF::Vector<JSC::AbstractModuleRecord*, 16> toReach;
+    runnerLoad->settleSynchronousLoads([&](const RunnerLoadFetcher::SynchronousLoad& load) {
+        auto* loadedEntry = loader->registryEntry(JSC::Identifier::fromString(vm, load.key));
+        auto* root = loadedEntry ? loadedEntry->record() : nullptr;
+        if (!root)
+            return true;
+        // The load is going on, and a body that it runs asks: it counts once it has come to link what it loaded.
+        if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(root); cyclic && cyclic->status() < JSC::CyclicModuleRecord::Status::Linking)
+            return false;
+        toReach.append(root);
+        while (!toReach.isEmpty()) {
+            auto* record = toReach.takeLast();
+            if (!reached.add(record).isNewEntry)
+                continue;
+            runnerLoad->noteModuleOfSynchronousLoad(record->moduleKey().string(), load.source);
+            for (auto& loaded : record->loadedModules().values()) {
+                if (auto* imported = loaded.m_module.get())
+                    toReach.append(imported);
+            }
+        }
+        return true;
+    });
+    return runnerLoad->hadNoModuleOfDataFile(key);
+}
+
 static bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const String& specifier)
 {
     auto* entry = loader->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), specifier));
     if (!entry || entry->status() < JSC::ModuleRegistryEntry::Status::Fetched)
         return false;
     // `bun test` runs a CommonJS import of a test file or preload once the whole load is fetched, when the loader has a module of every data file of the load. require() in such an import goes by whether it had one when the import would have run otherwise (RunnerLoadFetcher.h).
-    if (auto* runnerLoad = globalObject->m_runnerLoad.get(); runnerLoad && runnerLoad->loader() == loader && runnerLoad->hadNoModuleOfDataFile(specifier)) [[unlikely]]
+    if (runnerLoadHadNoModuleOfDataFile(globalObject, loader, specifier)) [[unlikely]]
         return false;
     // `bun test` registers a CommonJS import of a test file or preload before its body has run (JSCommonJSModule.cpp, generateDeferredCommonJSModule). Until that record has its exports, require() runs the file itself, as it does while the file is being fetched.
     auto* record = entry->record();
@@ -1248,11 +1284,11 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject* globalObject, uint32
     return deferredExportsSource;
 }
 
-// `bun test`: a file of which require() answers the value that it parses itself until the loader has a module of it. A load that the runner started notes when that is (RunnerLoadFetcher.h).
-static ALWAYS_INLINE void noteDataFileOfRunnerLoad(Zig::GlobalObject* globalObject, Bun::JSModuleGraph* graph, const BunString* specifier)
+// `bun test`: a file of which require() answers the value that it parses itself until the loader has a module of it. A load that the runner started notes when that is (RunnerLoadFetcher.h). `isValue`: the source is a value, of which the loader makes the module at once.
+static ALWAYS_INLINE void noteDataFileOfRunnerLoad(Zig::GlobalObject* globalObject, Bun::JSModuleGraph* graph, const BunString* specifier, bool isValue = true)
 {
     if (auto* runnerLoad = liveRunnerLoad(globalObject, graph)) [[unlikely]]
-        runnerLoad->noteDataFile(specifier->toWTFString(BunString::ZeroCopy));
+        runnerLoad->noteDataFile(specifier->toWTFString(BunString::ZeroCopy), isValue);
 }
 
 template<bool allowPromise>
@@ -1527,6 +1563,10 @@ static JSValue fetchESMSourceCode(
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
+
+    // The loader keeps a module per key and type. require() names no type: of a file imported under one (`with { type: "text" }`) it answers what the name of the file says, which it parses itself until the loader has a module of the file.
+    if (typeAttribute)
+        noteDataFileOfRunnerLoad(globalObject, graph, specifier, false);
 
     if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);

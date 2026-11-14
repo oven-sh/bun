@@ -215,6 +215,12 @@ private:
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // `bun test`: the body of a CommonJS import that its load held back goes by when its source was made, whether its generator runs it or a require() in another body (RunnerLoadFetcher.h).
+    RunnerLoadFetcher* runnerLoad = liveRunnerLoad(globalObject, moduleObject->moduleGraph());
+    String runnerLoadKey;
+    if (runnerLoad && filename.isString()) [[unlikely]]
+        runnerLoadKey = asString(filename)->tryGetValue().data;
+    RunnerLoadCommonJSRun run(runnerLoad, runnerLoadKey);
     SourceCode code = WTF::move(moduleObject->sourceCode);
     // JSC's code cache has the unlinked code of a source it has seen. Optimized JIT code belongs to a linked
     // CodeBlock, and evaluating the source again links another wrapper. So a graph calls the wrapper that
@@ -1609,6 +1615,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
             ? nullptr
             : &typeAttributeStr);
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
+    // -1: the loader loads the module and what it imports next (CommonJS.ts, requireESM). In a CommonJS import that `bun test` held back, the load of the runner counts that for its data files (RunnerLoadFetcher.h).
+    if (fetchResult.isNumber()) {
+        if (auto* runnerLoad = liveRunnerLoad(globalObject, child->moduleGraph())) [[unlikely]]
+            runnerLoad->noteSynchronousLoad(specifier);
+    }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
 }
 #undef REQUIRE_CJS_RETURN_IF_EXCEPTION
@@ -1765,9 +1776,13 @@ static ALWAYS_INLINE JSC::SourceCode commonJSModuleSourceCodeForLoad(Zig::Global
     if (isDeferred) [[unlikely]] {
         // A load that did not hold the module back would run it as soon as the loader has this source, two of its microtasks from now: what require() in it answers for a data file of the load goes by the modules that the loader has by now.
         JSC::JSModuleLoader* loader = graph ? graph->loader() : globalObject->moduleLoader();
-        runnerLoad->noteCommonJSSource(key->tryGetValue().data, [&](const WTF::String& dataFile) {
-            auto* fetched = loader->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), dataFile));
-            return fetched && fetched->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
+        // A plugin or a mock may answer a fetch late, or load a module while it answers one: the loader then makes the modules of the data files in another order than it fetched them.
+        auto& plugins = globalObject->onLoadPlugins;
+        runnerLoad->noteCommonJSSource(key->tryGetValue().data, plugins.isEmpty() && !plugins.hasVirtualModules(), [&](const WTF::String& dataFile) {
+            auto* entry = loader->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), dataFile));
+            if (!entry)
+                return RunnerLoadFetcher::ModuleOfDataFile::None;
+            return entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched ? RunnerLoadFetcher::ModuleOfDataFile::Made : RunnerLoadFetcher::ModuleOfDataFile::BeingFetched;
         });
         return deferredCommonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, moduleObject);
     }
@@ -1994,7 +2009,7 @@ static JSC::SourceCode deferredCommonJSModuleSyntheticSourceCode(const SourceOri
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) mutable -> void {
-                // What require() answers in this run for a data file of the load goes by when the source of the module was made (RunnerLoadFetcher.h).
+                // What require() answers in this run for a data file of the load goes by when the source of the module was made (RunnerLoadFetcher.h). The body begins a run of its own (evaluateCommonJSModuleOnce): this one also holds for the ticks that are drained behind it.
                 RunnerLoadCommonJSRun run(liveRunnerLoad(uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject), graph.get()), moduleKey.string());
                 generateDeferredCommonJSModule(lexicalGlobalObject, graph.get(), made.get(), WTF::move(source), ignoreESModuleAnnotation, eager.get(), moduleKey, exportNames, exportValues);
                 // Not before: a run that the module's body starts inside the first one answers from `made`.

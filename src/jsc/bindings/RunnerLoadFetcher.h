@@ -9,8 +9,10 @@
 #include <JavaScriptCore/ScriptFetcher.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
+#include <algorithm>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/Vector.h>
 
 namespace Bun {
 
@@ -39,47 +41,110 @@ public:
     bool holdsCommonJS(const WTF::String& key) const { return m_commonJSKeys.contains(key); }
     const WTF::UncheckedKeyHashSet<WTF::String>& keys() const { return m_keys; }
 
-    // A data file of the load (JSON, TOML, ...). Until the loader has a module of such a file, require() answers what it parses of the file itself.
-    void noteDataFile(const WTF::String& key)
+    // A data file of the load (JSON, TOML, ...), or a file that it imports under a type alone. Until the loader has a module of such a file, require() answers what it parses of the file itself. The fetch that makes the source of the file notes it, before it returns. `isMadeInFetchOrder`: the loader makes the module from that source at once, as it does of a value. Of another source it may take its time (WebAssembly).
+    void noteDataFile(const WTF::String& key, bool isMadeInFetchOrder)
     {
         if (key.isNull())
             return;
         // The key as noteFetch() took it: the caller's may not own its characters.
         auto noted = m_keys.find(key);
-        if (noted != m_keys.end())
-            m_dataFiles.add(*noted, 0u);
+        if (noted != m_keys.end() && m_dataFiles.add(*noted, 0u).isNewEntry)
+            m_dataFilesWithoutNumber.append(DataFileWithoutNumber { *noted, isMadeInFetchOrder });
     }
 
-    // The source of the CommonJS import `key` is made. A load that did not hold the import back would run it right behind that, so its require() goes by what the loader has now. `hasModule(key)`: the loader has a module of that data file.
+    // What the loader has of a data file: no entry, an entry that it is fetching, or the module.
+    enum class ModuleOfDataFile : uint8_t {
+        None,
+        BeingFetched,
+        Made,
+    };
+
+    // The source of the CommonJS import `key` is made. A load that did not hold the import back would run it right behind that, so its require() goes by what the loader has now. `moduleOf(key)`: what the loader has of that data file. `inFetchOrder`: no plugin and no mock serves a module, so the loader makes the modules in the order it fetched the files, and nothing that was noted behind a data file being fetched has its module.
     template<typename Functor>
-    void noteCommonJSSource(const WTF::String& key, const Functor& hasModule)
+    void noteCommonJSSource(const WTF::String& key, bool inFetchOrder, const Functor& moduleOf)
     {
         unsigned madeAt = ++m_commonJSSourcesMade;
-        for (auto& dataFile : m_dataFiles) {
-            if (!dataFile.value && hasModule(dataFile.key))
-                dataFile.value = madeAt;
+        auto& waiting = m_dataFilesWithoutNumber;
+        size_t kept = 0;
+        size_t index = 0;
+        for (; index < waiting.size(); ++index) {
+            auto module = moduleOf(waiting[index].key);
+            if (module == ModuleOfDataFile::Made) {
+                auto dataFile = m_dataFiles.find(waiting[index].key);
+                // A synchronous load in a run may have given it a number.
+                if (dataFile != m_dataFiles.end() && !dataFile->value)
+                    dataFile->value = madeAt;
+                continue;
+            }
+            if (module == ModuleOfDataFile::BeingFetched && waiting[index].isMadeInFetchOrder && inFetchOrder && m_makesModulesInFetchOrder)
+                break;
+            if (kept != index)
+                waiting[kept] = WTF::move(waiting[index]);
+            ++kept;
         }
+        if (kept != index)
+            waiting.removeAt(kept, index - kept);
         m_commonJSSources.set(key, madeAt);
     }
 
-    // While the generator of the CommonJS import `key` runs, hadNoModuleOfDataFile() goes by when the source of `key` was made: by the earlier source, in a run inside another. endCommonJSRun() takes what this returns.
+    // While the body of the CommonJS import `key` runs, in its generator or in a require() of another body, hadNoModuleOfDataFile() goes by when the source of `key` was made: by the earlier source, in a run inside another. A module that is no such import goes by the run around it. endCommonJSRun() takes what this returns.
     unsigned beginCommonJSRun(const WTF::String& key)
     {
         unsigned outer = m_runningCommonJSSource;
-        unsigned madeAt = m_commonJSSources.get(key);
+        unsigned madeAt = key.isNull() ? 0 : m_commonJSSources.get(key);
         if (madeAt && (!outer || madeAt < outer))
             m_runningCommonJSSource = madeAt;
         return outer;
     }
     void endCommonJSRun(unsigned outer) { m_runningCommonJSSource = outer; }
 
-    // True in such a run for a data file of the load that the loader had no module of when that source was made: require() reads the file itself then, as where the import runs as soon as it is fetched.
+    // True in such a run for a data file of the load that the loader had no module of when that source was made: require() reads the file itself then, as where the import runs as soon as it is fetched. Ask runnerLoadHadNoModuleOfDataFile(), which counts the synchronous loads of the runs first.
     bool hadNoModuleOfDataFile(const WTF::String& key) const
     {
         if (!m_runningCommonJSSource || key.isNull())
             return false;
         auto dataFile = m_dataFiles.find(key);
         return dataFile != m_dataFiles.end() && (!dataFile->value || dataFile->value > m_runningCommonJSSource);
+    }
+
+    // A module that require() had the loader load in a run, with the number that the run went by.
+    struct SynchronousLoad {
+        WTF::String key;
+        unsigned source;
+    };
+
+    // require() has the loader load `key` and what that module imports. In the running CommonJS import: where the import runs as soon as it is fetched, the loader has those modules from then on. Outside the runs, this load may still be fetching: the loader may then make a module of a file ahead of those that it fetched before.
+    void noteSynchronousLoad(const WTF::String& key)
+    {
+        if (!m_runningCommonJSSource) {
+            m_makesModulesInFetchOrder = false;
+            return;
+        }
+        if (!m_dataFiles.isEmpty() && !key.isNull())
+            m_synchronousLoads.append(SynchronousLoad { key, m_runningCommonJSSource });
+    }
+    bool hasSynchronousLoads() const { return !m_synchronousLoads.isEmpty(); }
+
+    // `settle(load)`, asked for the earlier runs first: false while that load has yet to link what it loaded. Otherwise it has handed each module of the load to noteModuleOfSynchronousLoad().
+    template<typename Functor>
+    void settleSynchronousLoads(const Functor& settle)
+    {
+        std::sort(m_synchronousLoads.begin(), m_synchronousLoads.end(), [](const SynchronousLoad& a, const SynchronousLoad& b) {
+            return a.source < b.source;
+        });
+        m_synchronousLoads.removeAllMatching([&](SynchronousLoad& load) {
+            return settle(load);
+        });
+    }
+
+    // The loader has had a module of `key` since the run that went by `source`.
+    void noteModuleOfSynchronousLoad(const WTF::String& key, unsigned source)
+    {
+        if (key.isNull())
+            return;
+        auto dataFile = m_dataFiles.find(key);
+        if (dataFile != m_dataFiles.end() && (!dataFile->value || dataFile->value > source))
+            dataFile->value = source;
     }
 
     // Null before endRunnerLoadWhenSettled() and once the load is dropped.
@@ -94,7 +159,9 @@ public:
         m_keys.clear();
         m_commonJSKeys.clear();
         m_dataFiles.clear();
+        m_dataFilesWithoutNumber.clear();
         m_commonJSSources.clear();
+        m_synchronousLoads.clear();
         m_runningCommonJSSource = 0;
         m_promise.clear();
     }
@@ -110,18 +177,28 @@ private:
     WTF::String m_rootKey;
     WTF::UncheckedKeyHashSet<WTF::String> m_keys;
     WTF::UncheckedKeyHashSet<WTF::String> m_commonJSKeys;
-    // Each data file with the number of the first CommonJS source that was made when the loader had its module: 0 until there is one.
+    // Each data file with the number of the first CommonJS source that was made when the loader had its module, or of the run whose synchronous load gave the loader that module, if that is less: 0 until there is one.
     WTF::UncheckedKeyHashMap<WTF::String, unsigned> m_dataFiles;
+    struct DataFileWithoutNumber {
+        WTF::String key;
+        bool isMadeInFetchOrder;
+    };
+    // The data files that no CommonJS source has numbered, in the order they were noted: what noteCommonJSSource() asks the loader for.
+    WTF::Vector<DataFileWithoutNumber> m_dataFilesWithoutNumber;
+    // False once a require() outside the runs had the loader load a module while this load was in flight.
+    bool m_makesModulesInFetchOrder { true };
     // Each CommonJS import whose source was made, numbered from 1 in the order of making.
     WTF::UncheckedKeyHashMap<WTF::String, unsigned> m_commonJSSources;
     unsigned m_commonJSSourcesMade { 0 };
-    // The number of the source that the running generator goes by: 0 when none runs.
+    // The synchronous loads of the runs whose modules settleSynchronousLoads() has yet to count.
+    WTF::Vector<SynchronousLoad> m_synchronousLoads;
+    // The number of the source that the running body goes by: 0 when none runs.
     unsigned m_runningCommonJSSource { 0 };
     // Weak, so a load that never settles doesn't keep its global object alive.
     JSC::Weak<JSC::JSPromise> m_promise;
 };
 
-// Lives while the generator of the CommonJS import `key` runs: see RunnerLoadFetcher::beginCommonJSRun(). `load` may be null.
+// Lives while the body of the CommonJS module `key` runs, and in its generator: see RunnerLoadFetcher::beginCommonJSRun(). `load` may be null.
 class RunnerLoadCommonJSRun {
     WTF_MAKE_NONCOPYABLE(RunnerLoadCommonJSRun);
 
@@ -151,6 +228,9 @@ ALWAYS_INLINE RunnerLoadFetcher* liveRunnerLoad(Zig::GlobalObject* globalObject,
         return nullptr;
     return live->loader() == (graph ? graph->loader() : globalObject->moduleLoader()) ? live : nullptr;
 }
+
+// Whether the registry of `loader` is not to answer for `key`: RunnerLoadFetcher::hadNoModuleOfDataFile() of the load in flight of that loader, once the synchronous loads of its runs are counted. What reads the registry on behalf of require() asks this first.
+bool runnerLoadHadNoModuleOfDataFile(Zig::GlobalObject*, JSC::JSModuleLoader*, const WTF::String& key);
 
 // Takes the place of a mark whose load has not settled. Null when the program is compiled ahead of time.
 RefPtr<RunnerLoadFetcher> beginRunnerLoad(Zig::GlobalObject*, JSModuleGraph*, const WTF::String& rootKey);

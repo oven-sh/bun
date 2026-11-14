@@ -3613,7 +3613,6 @@ struct Parsed {
     text: Option<Box<[u8]>>,
     /// The pattern has a group that isn't a [`Choice`].
     has_group: bool,
-    has_choice: bool,
     /// See [`Segment`].
     is_one_segment: bool,
     /// The loop has matched the pattern often enough to make up for the cost of a [`Cache`].
@@ -3670,7 +3669,6 @@ impl Parsed {
             is_plain_text: false,
             text: None,
             has_group: false,
-            has_choice: false,
             is_one_segment: false,
             is_matched_often: false,
             wildcards: 0,
@@ -3891,7 +3889,6 @@ impl Parsed {
         self.is_regular = is_regular && depth == 0 && !has_separator_class;
         self.has_group = has_group || has_choice && !self.is_regular;
         self.is_one_segment = is_one_segment;
-        self.has_choice = has_choice;
         self.wildcards = wildcards.min(2) as u8;
         let first = strings::index_of_any(glob, b"*?[");
         self.is_decided_at_once = !has_group

@@ -3029,8 +3029,7 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, format!("{formatter}").as_bytes())
     }
 
-    /// Modelled on `isLineDiffable` in jest-matcher-utils, for two values that aren't both strings.
-    /// Like `diff`, it has no line diff for a matcher as `expected`. jest-diff has one for a matcher that expects an object.
+    /// Modelled on `isLineDiffable` in jest-matcher-utils, for two values that aren't both strings. As in `diff`, a matcher as `expected` has no line diff either.
     #[optimize(size)]
     fn is_line_diffable(expected: JSValue, received: JSValue) -> bool {
         let expected_type = Self::type_name(expected);
@@ -3041,9 +3040,7 @@ impl ExpectMatcherUtils {
             && !Expect::is_asymmetric_matcher(received)
     }
 
-    /// Modelled on `printDiffOrStringify` of jest-matcher-utils, for the call of either runner. A string as the third argument
-    /// is Jest's `(expected, received, expectedLabel, receivedLabel, expand)`. Anything else is Vitest's `(received, expected, options)`.
-    /// The call has one reading in every test: Jest's function throws for Vitest's call, and Vitest's for Jest's.
+    /// Modelled on `printDiffOrStringify` of jest-matcher-utils, for Jest's call and for Vitest's `(received, expected, options)`.
     #[optimize(size)]
     pub(crate) fn print_diff_or_stringify(cx: &mut JsScope<'_>, arguments: &[JsLocal<'_>]) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -3055,7 +3052,7 @@ impl ExpectMatcherUtils {
         };
 
         let (expected, received, expected_label, received_label, expand);
-        // A `String` object is a label too, as in Jest.
+        // A label here, also as a `String` object, is Jest's call. The test's runner doesn't decide: each runner's function throws for the other's call.
         if argument(2).is_string() {
             (expected, received) = (argument(0), argument(1));
             expected_label = label(argument(2), "Expected")?;

@@ -1684,10 +1684,22 @@ describe("spyOn", () => {
       test("mockRestore() keeps properties added to the sandbox while the spy was installed", () => {
         if (!isBun) return;
         const { sandbox, global } = makeContext(contextify);
-        const spies = [spyOn(global, "missing"), spyOn(global, "parseInt")];
-        Object.assign(sandbox, { missing: "added", parseInt: "added" });
+        const spies = [spyOn(global, "missing"), spyOn(global, "parseInt"), spyOn(global, 0)];
+        Object.assign(sandbox, { missing: "added", parseInt: "added", 0: "added" });
         for (const fn of spies) fn.mockRestore();
-        expect(sandbox).toMatchObject({ missing: "added", parseInt: "added" });
+        expect(sandbox).toMatchObject({ missing: "added", parseInt: "added", 0: "added" });
+      });
+
+      test("a spy on an index that the sandbox lacks is on the global, like a spy on a name", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = makeContext(contextify);
+        const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+        const fn = spyOn(global, 0).mockReturnValue("spied");
+        expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        expect([global[0], vm.runInContext("this[0]", context)]).toEqual(["spied", "spied"]);
+        expect(fn).toHaveBeenCalledTimes(2);
+        fn.mockRestore();
+        expect(vm.runInContext("0 in globalThis", context)).toBe(false);
       });
 
       test("a spy on a key that the sandbox inherits is on the sandbox, where an assignment replaces it", () => {
@@ -1744,6 +1756,127 @@ describe("spyOn", () => {
       expect(vm.runInContext("parseInt('7')", context)).toBe(7);
       expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
     });
+
+    test.each([0, "key"])("made of a Proxy: a spy on %p that the sandbox lacks calls no trap that writes", key => {
+      if (!isBun) return;
+      const traps = {
+        defineProperty: jest.fn(Reflect.defineProperty),
+        deleteProperty: jest.fn(Reflect.deleteProperty),
+        set: jest.fn(Reflect.set),
+        getOwnPropertyDescriptor: jest.fn(Reflect.getOwnPropertyDescriptor),
+      };
+      const context = vm.createContext(new Proxy({}, traps));
+      const global = vm.runInContext("this", context);
+
+      spyOn(global, key).mockRestore();
+      expect(key in global).toBe(false);
+
+      vm.runInContext(`Object.prototype[${JSON.stringify(key)}] = function () { return "inherited"; }`, context);
+      const fn = spyOn(global, key);
+      expect(global[key]()).toBe("inherited");
+      expect(fn).toHaveBeenCalledTimes(1);
+      fn.mockRestore();
+      expect([global[key](), Object.hasOwn(global, key)]).toEqual(["inherited", false]);
+
+      // spyOn looks the key up on the sandbox, which may call getOwnPropertyDescriptor. It stores and deletes the spy on the global.
+      for (const trap of [traps.defineProperty, traps.deleteProperty, traps.set]) expect(trap).not.toHaveBeenCalled();
+    });
+
+    // Such a sandbox refuses the definition of an index, and a typed array converts what is stored in it to a number.
+    test.each([
+      ["a frozen object", () => Object.freeze({})],
+      ["an empty typed array", () => new Uint8Array(0)],
+    ])("made of %s: a spy on an index is on the global, and nothing converts the spy", (_, makeSandbox) => {
+      if (!isBun) return;
+      const context = vm.createContext(makeSandbox());
+      const global = vm.runInContext("this", context);
+      vm.runInContext("Object.prototype[0] = function () { return 'inherited'; }", context);
+
+      const { valueOf } = Function.prototype;
+      let conversions = 0;
+      Function.prototype.valueOf = function () {
+        conversions++;
+        return valueOf.call(this);
+      };
+      let calls;
+      try {
+        const fn = spyOn(global, 0);
+        calls = [global[0](), fn.mock.calls.length];
+        fn.mockRestore();
+      } finally {
+        Function.prototype.valueOf = valueOf;
+      }
+      expect({ calls, conversions }).toEqual({ calls: ["inherited", 1], conversions: 0 });
+      expect([global[0](), Object.hasOwn(global, 0)]).toEqual(["inherited", false]);
+    });
+
+    test.each([
+      ["the getter spy", 0, 1],
+      ["the setter spy", 1, 0],
+    ])("getter and setter spies on an index that the global inherits, restored from %s", (_, first, second) => {
+      if (!isBun) return;
+      const { sandbox, context, global } = makeContext();
+      const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+      vm.runInContext(
+        "Object.defineProperty(Object.prototype, 0, { get() { return 'got'; }, set(value) {}, configurable: true })",
+        context,
+      );
+
+      const spies = [spyOn(global, 0, "get"), spyOn(global, 0, "set")];
+      expect(Object.getOwnPropertyDescriptor(global, 0)).toEqual({
+        get: spies[0],
+        set: spies[1],
+        enumerable: false,
+        configurable: true,
+      });
+      expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+      expect(global[0]).toBe("got");
+      expect(spies[0]).toHaveBeenCalledTimes(1);
+
+      spies[first].mockRestore();
+      spies[second].mockRestore();
+      expect([Object.hasOwn(global, 0), global[0]]).toEqual([false, "got"]);
+    });
+
+    test("a getter spy over a spy on an index that the global inherits", () => {
+      if (!isBun) return;
+      const { context, global } = makeContext();
+      vm.runInContext("Object.prototype[0] = function () { return 'inherited'; }", context);
+
+      const fn = spyOn(global, 0);
+      const getter = spyOn(global, 0, "get");
+      expect(global[0]).toBe(fn);
+      expect(getter).toHaveBeenCalledTimes(1);
+      getter.mockRestore();
+      expect(global[0]).toBe(fn);
+      fn.mockRestore();
+      expect([Object.hasOwn(global, 0), global[0]()]).toEqual([false, "inherited"]);
+    });
+
+    test.each([0, "key"])(
+      "made of the globalThis of another context: a spy on %p that the inner global inherits is on the inner global",
+      key => {
+        if (!isBun) return;
+        const traps = {
+          defineProperty: jest.fn(Reflect.defineProperty),
+          deleteProperty: jest.fn(Reflect.deleteProperty),
+        };
+        const innerContext = vm.createContext(new Proxy({}, traps));
+        const inner = vm.runInContext("this", innerContext);
+        vm.runInContext(`Object.prototype[${JSON.stringify(key)}] = function () { return "inherited"; }`, innerContext);
+        const outer = vm.runInContext("this", vm.createContext(inner));
+
+        const fn = spyOn(outer, key);
+        expect(outer[key]).toBe(fn);
+        expect(inner[key]).toBe(fn);
+        expect(outer[key]()).toBe("inherited");
+        expect(fn).toHaveBeenCalledTimes(1);
+        fn.mockRestore();
+        expect([outer[key] === fn, outer[key](), Object.hasOwn(inner, key)]).toEqual([false, "inherited", false]);
+
+        for (const trap of Object.values(traps)) expect(trap).not.toHaveBeenCalled();
+      },
+    );
 
     test("made with vm.constants.DONT_CONTEXTIFY", () => {
       const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);

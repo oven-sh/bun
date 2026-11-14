@@ -3158,6 +3158,61 @@ describe.concurrent("a mocked module's exports are read from the object the fact
       5,
     );
   });
+
+  test("spyOn() on the namespace object of a mock that is globalThis spies on the global object", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "global.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+
+          test("globalThis", async () => {
+            mock.module("./dep", () => globalThis);
+            const ns = await import("./dep");
+            const { structuredClone } = globalThis;
+
+            const spy = spyOn(ns, "structuredClone");
+            expect(globalThis.structuredClone).toBe(spy);
+            expect(ns.structuredClone(1)).toBe(1);
+            expect(spy).toHaveBeenCalledTimes(1);
+            spy.mockRestore();
+            expect(globalThis.structuredClone).toBe(structuredClone);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("spyOn() on the namespace object of a mock that is a WebAssembly GC object throws", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "wasm.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+
+          test("a WebAssembly GC object", async () => {
+            // (type $s (struct (field (mut i32)))) (type $a (array (mut i32)))
+            // (func (export "s") (result (ref null $s)) struct.new_default $s)
+            // (func (export "a") (result (ref null $a)) i32.const 2 array.new_default $a)
+            // prettier-ignore
+            const bytes = new Uint8Array([
+              0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+              1, 18, 4, 0x5f, 1, 0x7f, 1, 0x5e, 0x7f, 1, 0x60, 0, 1, 0x63, 0, 0x60, 0, 1, 0x63, 1,
+              3, 3, 2, 2, 3,
+              7, 9, 2, 1, 0x73, 0, 0, 1, 0x61, 0, 1,
+              10, 15, 2, 5, 0, 0xfb, 1, 0, 0x0b, 7, 0, 0x41, 2, 0xfb, 7, 1, 0x0b,
+            ]);
+            const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.s();
+            mock.module("./dep", () => struct);
+            const ns = await import("./dep");
+            expect(() => spyOn(ns, "x")).toThrow("spyOn(target, prop) does not support WebAssembly GC objects");
+          });
+        `,
+      },
+      1,
+    );
+  });
 });
 
 describe.concurrent("a factory that returns a module namespace object", () => {

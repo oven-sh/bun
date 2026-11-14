@@ -2395,8 +2395,6 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         args,
       );
     });
-  });
-
 
     test.each(isolationFlags)(
       "a factory with only some of the names, or only default, leaves the library without the rest %j",
@@ -2458,6 +2456,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         );
       },
     );
+  });
+
   test.each(isolationFlags)("a file of the name that ran before its mock %j", async args => {
     const patches = (mock: string) => `
       import { expect, jest, mock, test } from "bun:test";

@@ -71,11 +71,16 @@ impl<'a> ReactCompiler<'a> {
     }
 
     pub(crate) fn applies_to(&self, path: &[u8], loader: Loader) -> bool {
-        let is_wanted = match self.filter {
-            Some(PathFilter(is_compiled)) => loader.is_javascript_like() && is_compiled(path),
-            None => loader.is_jsx(),
-        };
-        self.mode.is_enabled() && is_wanted && !is_in_node_modules(path)
+        self.mode
+            .for_module(
+                loader,
+                || is_in_node_modules(path),
+                || {
+                    self.filter
+                        .is_none_or(|PathFilter(is_compiled)| is_compiled(path))
+                },
+            )
+            .is_enabled()
     }
 
     pub(crate) fn transform<'s>(

@@ -10,7 +10,7 @@
 
 use bun_collections::StringArrayHashMap;
 
-use crate::{Expr, Ref};
+use crate::{Expr, Loader, Ref};
 
 // ───────────────────────────── Runtime ─────────────────────────────
 
@@ -104,6 +104,21 @@ impl ReactCompilerMode {
     #[inline]
     pub fn is_ssr(self) -> bool {
         matches!(self, Self::Ssr)
+    }
+
+    /// Every JavaScript-like loader outside `node_modules`, narrowed by the caller's path filter.
+    #[inline]
+    pub fn for_module(
+        self,
+        loader: Loader,
+        is_node_module: impl FnOnce() -> bool,
+        is_compiled: impl FnOnce() -> bool,
+    ) -> Self {
+        if self.is_enabled() && loader.is_javascript_like() && !is_node_module() && is_compiled() {
+            self
+        } else {
+            Self::Disabled
+        }
     }
 }
 

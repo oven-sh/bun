@@ -14,6 +14,7 @@ use crate::diagnostics::{Diagnostics, LoadMessages};
 use crate::load::react_compiler::names_bound_again::find_name_bound_elsewhere;
 use crate::load::react_compiler::{ReactCompiler, may_hold_component_or_hook};
 use crate::load::source_provider::WithoutServices;
+use crate::options::PathFilter;
 
 struct NodeShapes {
     expressions: Vec<(ExprTag, u32, u32)>,
@@ -96,22 +97,76 @@ fn write_messages(messages: &LoadMessages) -> (Log, bool) {
 }
 
 #[test]
-fn applies_to_jsx_loaders_outside_node_modules() {
+fn applies_to_javascript_like_loaders_outside_node_modules() {
     use ReactCompilerMode::{Client, Disabled, Ssr};
     let messages = LoadMessages::default();
     for (mode, path, loader, expected) in [
         (Client, "/project/a.tsx", Loader::Tsx, true),
         (Client, "/project/a.js", Loader::Jsx, true),
         (Ssr, "/project/a.tsx", Loader::Tsx, true),
-        (Client, "/project/a.ts", Loader::Ts, false),
-        (Client, "/project/a.mjs", Loader::Js, false),
+        (Client, "/project/a.ts", Loader::Ts, true),
+        (Client, "/project/a.mjs", Loader::Js, true),
+        (Ssr, "/project/a.ts", Loader::Ts, true),
         (Client, "/project/a.json", Loader::Json, false),
         (Client, "/project/node_modules/p/a.tsx", Loader::Tsx, false),
+        (Client, "/project/node_modules/p/a.ts", Loader::Ts, false),
         (Disabled, "/project/a.tsx", Loader::Tsx, false),
     ] {
         let compiler = ReactCompiler::new(mode, &WithoutServices, &messages);
         let applies = compiler.applies_to(path.as_bytes(), loader);
         assert_eq!(applies, expected, "{mode:?} {path}");
+    }
+}
+
+#[test]
+fn for_module_compiles_every_javascript_like_loader_outside_node_modules() {
+    use ReactCompilerMode::{Client, Disabled, Ssr};
+    for (mode, loader, is_node_module, is_compiled, expected) in [
+        (Client, Loader::Tsx, false, true, Client),
+        (Client, Loader::Jsx, false, true, Client),
+        (Client, Loader::Ts, false, true, Client),
+        (Client, Loader::Js, false, true, Client),
+        (Ssr, Loader::Ts, false, true, Ssr),
+        (Client, Loader::Json, false, true, Disabled),
+        (Client, Loader::Css, false, true, Disabled),
+        (Client, Loader::Tsx, true, true, Disabled),
+        (Client, Loader::Ts, false, false, Disabled),
+        (Disabled, Loader::Tsx, false, true, Disabled),
+    ] {
+        let got = mode.for_module(loader, || is_node_module, || is_compiled);
+        assert_eq!(
+            got, expected,
+            "{mode:?} {loader:?} node_module={is_node_module} compiled={is_compiled}"
+        );
+    }
+}
+
+#[test]
+fn for_module_does_not_scan_the_path_when_the_compiler_is_off() {
+    let mode = ReactCompilerMode::Disabled.for_module(
+        Loader::Tsx,
+        || panic!("is_node_module ran with the compiler off"),
+        || panic!("is_compiled ran with the compiler off"),
+    );
+    assert_eq!(mode, ReactCompilerMode::Disabled);
+}
+
+#[test]
+fn applies_to_narrows_by_the_path_filter() {
+    fn not_a_test_file(path: &[u8]) -> bool {
+        !path.ends_with(b".test.ts")
+    }
+    let messages = LoadMessages::default();
+    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages)
+        .with_filter(Some(PathFilter(&not_a_test_file)));
+    for (path, loader, expected) in [
+        ("/project/useTotal.ts", Loader::Ts, true),
+        ("/project/useTotal.test.ts", Loader::Ts, false),
+        ("/project/node_modules/p/useTotal.ts", Loader::Ts, false),
+        ("/project/data.json", Loader::Json, false),
+    ] {
+        let applies = compiler.applies_to(path.as_bytes(), loader);
+        assert_eq!(applies, expected, "{path}");
     }
 }
 
@@ -181,7 +236,7 @@ fn node_modules_file_is_not_compiled() {
 }
 
 #[test]
-fn ts_loader_without_jsx_is_not_compiled() {
+fn ts_loader_without_jsx_is_compiled() {
     let text = "export function useDouble(value: number) {\n\
                 useState(value);\n\
                 return [value * 2];\n\
@@ -190,7 +245,7 @@ fn ts_loader_without_jsx_is_not_compiled() {
         let mode = ReactCompilerMode::Client;
         with_tree(name, text, mode, |tree| tree.has_compiled_components())
     };
-    assert!(!is_compiled("main.ts"));
+    assert!(is_compiled("main.ts"));
     assert!(is_compiled("main.tsx"));
 }
 

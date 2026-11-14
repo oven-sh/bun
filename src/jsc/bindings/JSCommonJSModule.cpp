@@ -1907,23 +1907,37 @@ class DeferredCommonJSModuleOwner final : public JSC::WeakHandleOwner {
     }
 };
 
-// `made`: the module that the provider was made for, on the first run. `eager` evaluates what the require cache has and reads its exports.
-static void generateDeferredCommonJSModule(JSC::JSGlobalObject* lexicalGlobalObject, JSModuleGraph* graph, JSCommonJSModule* made, JSC::SyntheticSourceProvider& eager, const JSC::Identifier& moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
+// `made`: the module that the provider was made for. `source`: what it was to run, which only the first run is given. `eager` evaluates what the require cache has and reads its exports.
+static void generateDeferredCommonJSModule(JSC::JSGlobalObject* lexicalGlobalObject, JSModuleGraph* graph, JSCommonJSModule* made, JSC::SourceCode source, bool ignoreESModuleAnnotation, JSC::SyntheticSourceProvider& eager, const JSC::Identifier& moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // A module that has not run goes back where a delete from require.cache, or a require() that then waits for this record, took its place.
-    if (made && !made->hasEvaluated && !made->sourceCode.isNull() && !(graph && graph->disposed())) {
+    JSCommonJSModule* ran = nullptr;
+    if (made && !(graph && graph->disposed())) {
         JSMap* requireMap = requireMapOf(globalObject, graph);
         JSValue keyValue = identifierToJSValue(vm, moduleKey);
         JSValue entry = requireMap->get(globalObject, keyValue);
         RETURN_IF_EXCEPTION(scope, );
-        auto* waiting = dynamicDowncast<JSCommonJSModule>(entry);
-        if (entry.isUndefined() || (waiting && waiting != made && !waiting->hasEvaluated && waiting->sourceCode.isNull())) {
-            requireMap->set(globalObject, keyValue, made);
-            RETURN_IF_EXCEPTION(scope, );
+        // `eager` answers from the module that the require cache has. A delete from it, or a value stored there that is no module, leaves none.
+        if (!dynamicDowncast<JSCommonJSModule>(entry)) {
+            if (!made->hasEvaluated && !made->sourceCode.isNull()) {
+                requireMap->set(globalObject, keyValue, made);
+                RETURN_IF_EXCEPTION(scope, );
+            } else if (!source.isNull()) {
+                // It ran and has left the require cache since: the file runs again in a new module, as it does when its fetch ends after that.
+                auto* again = JSCommonJSModule::create(globalObject, asString(keyValue), JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), false, JSValue());
+                RETURN_IF_EXCEPTION(scope, );
+                again->setModuleGraph(vm, graph);
+                again->sourceCode = WTF::move(source);
+                again->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+                requireMap->set(globalObject, keyValue, again);
+                RETURN_IF_EXCEPTION(scope, );
+            } else if (made->hasEvaluated) {
+                // Nothing is left to run: the record gets the exports of the module that did, and the require cache stays as it is.
+                ran = made;
+            }
         }
     }
 
@@ -1936,7 +1950,12 @@ static void generateDeferredCommonJSModule(JSC::JSGlobalObject* lexicalGlobalObj
 
     {
         SetForScope isRunning(globalObject->isRunningDeferredCommonJSModule, true);
-        eager.generate(lexicalGlobalObject, moduleKey, exportNames, exportValues);
+        if (ran) {
+            ModuleGraphContextScope graphContext(globalObject, graph);
+            ran->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+        } else {
+            eager.generate(lexicalGlobalObject, moduleKey, exportNames, exportValues);
+        }
     }
     // The record keeps what its generator threw for every later link, so the loader forgets it and the next import fetches the file again.
     if (auto* exception = scope.exception(); exception && record && !vm.isTerminationException(exception)) [[unlikely]] {
@@ -1956,13 +1975,13 @@ static JSC::SourceCode deferredCommonJSModuleSyntheticSourceCode(const SourceOri
     Ref eager = *static_cast<JSC::SyntheticSourceProvider*>(commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph).provider());
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::createDeferred(
-            [graph = JSC::Weak<JSModuleGraph>(graph), made = JSC::Weak<JSCommonJSModule>(moduleObject, &owner.get(), loaderOwner), eager = WTF::move(eager)](JSC::JSGlobalObject* lexicalGlobalObject,
+            [graph = JSC::Weak<JSModuleGraph>(graph), made = JSC::Weak<JSCommonJSModule>(moduleObject, &owner.get(), loaderOwner), source = moduleObject->sourceCode, ignoreESModuleAnnotation = moduleObject->ignoreESModuleAnnotation, eager = WTF::move(eager)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) mutable -> void {
-                JSCommonJSModule* madeForFirstRun = made.get();
+                generateDeferredCommonJSModule(lexicalGlobalObject, graph.get(), made.get(), WTF::move(source), ignoreESModuleAnnotation, eager.get(), moduleKey, exportNames, exportValues);
+                // Not before: a run that the module's body starts inside the first one answers from `made`.
                 made.clear();
-                generateDeferredCommonJSModule(lexicalGlobalObject, graph.get(), madeForFirstRun, eager.get(), moduleKey, exportNames, exportValues);
             },
             sourceOrigin,
             sourceURL));

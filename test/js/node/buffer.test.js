@@ -5736,6 +5736,50 @@ describe("read*/write* after JIT tier-up", () => {
   });
 });
 
+// Each row is what Node.js v26.3.0 stores. lib/internal/buffer.js drops the fraction before it splits
+// a value of 1 to 4 bytes. For 5 and 6 bytes it takes the high bytes from Math.floor(value * 2 ** -32),
+// which still sees the fraction.
+it("variable-width writers store a value that has a fraction the way Node.js does", () => {
+  // [value, byteLength, bytes of writeIntLE, bytes of writeIntBE]
+  const rows = [
+    [-0.5, 3, "000000", "000000"],
+    [-0.001, 3, "000000", "000000"],
+    [-65536.5, 3, "0000ff", "ff0000"],
+    [-131072.25, 3, "0000fe", "fe0000"],
+    [-1.5, 3, "ffffff", "ffffff"],
+    [-65537.5, 3, "fffffe", "feffff"],
+    [-8388607.5, 3, "010080", "800001"],
+    [0.5, 3, "000000", "000000"],
+    [65536.5, 3, "000001", "010000"],
+    [8388606.5, 3, "feff7f", "7ffffe"],
+    [-0.5, 1, "00", "00"],
+    [-0.5, 2, "0000", "0000"],
+    [-256.5, 2, "00ff", "ff00"],
+    [-0.5, 4, "00000000", "00000000"],
+    [-65536.5, 4, "0000ffff", "ffff0000"],
+    [-0.5, 5, "00000000ff", "ff00000000"],
+    [-0.5, 6, "00000000ffff", "ffff00000000"],
+    [4294967296.5, 6, "000000000100", "000100000000"],
+  ];
+  const scratch = Buffer.alloc(6);
+  const stored = (method, value, byteLength) => {
+    scratch.fill(0xaa);
+    scratch[method](value, 0, byteLength);
+    return scratch.toString("hex", 0, byteLength);
+  };
+  const write = (le, be, table) =>
+    table.map(([value, byteLength]) => [
+      value,
+      byteLength,
+      stored(le, value, byteLength),
+      stored(be, value, byteLength),
+    ]);
+  expect(write("writeIntLE", "writeIntBE", rows)).toEqual(rows);
+  // A value that is not negative stores the same bytes through the unsigned writers.
+  const unsigned = rows.filter(([value]) => value >= 0);
+  expect(write("writeUIntLE", "writeUIntBE", unsigned)).toEqual(unsigned);
+});
+
 // The length pass doesn't count a UTF-16 unit for a 0x80 byte. If the byte is 0x61 by the conversion pass, that pass
 // writes one more unit than was allocated.
 it("UTF-8 decoders don't write out of bounds while another thread writes to the SharedArrayBuffer input", async () => {

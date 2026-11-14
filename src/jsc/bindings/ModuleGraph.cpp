@@ -11,6 +11,7 @@
 #include "NodeAsyncHooks.h"
 #include "NodeValidator.h"
 #include "PathInlines.h"
+#include "RunnerLoadFetcher.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
@@ -670,7 +671,7 @@ void JSModuleGraph::keepModuleExecutable(VM& vm, ModuleProgramExecutable* execut
 
 // Like dynamic import(), every failure past the receiver check is a rejection of the
 // returned promise (the caller turns a throw into one), never a synchronous throw.
-__attribute__((minsize)) JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specifierValue, bool mayBecomeMain)
+__attribute__((minsize)) JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specifierValue, bool mayBecomeMain, bool marksLoad)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -697,15 +698,21 @@ __attribute__((minsize)) JSPromise* JSModuleGraph::import(Zig::GlobalObject* glo
     bool becomesMain = mayBecomeMain && !m_mainPath && !Bun::isBuiltinModule(key.string());
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
+    RefPtr<RunnerLoadFetcher> mark = marksLoad ? beginRunnerLoad(globalObject, this, key.string()) : nullptr;
     // JSModuleLoader::requestImportModule() after its resolve, which would ask about the key.
-    JSPromise* loaded = loader->loadModule(globalObject, key, nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic });
+    JSPromise* loaded = loader->loadModule(globalObject, key, nullptr, mark, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic });
     if (scope.exception()) [[unlikely]] {
+        if (mark)
+            endRunnerLoadWhenSettled(globalObject, *mark, nullptr);
         if (becomesMain)
             m_mainPath.clear();
         return nullptr;
     }
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
     loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, result, jsUndefined());
+    // Not `result`: a reaction would mark it as handled, and the caller decides that.
+    if (mark)
+        endRunnerLoadWhenSettled(globalObject, *mark, loaded);
     return result;
 }
 

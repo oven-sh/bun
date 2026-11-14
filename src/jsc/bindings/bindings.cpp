@@ -189,6 +189,7 @@
 
 #include "AsyncContextFrame.h"
 #include "ModuleGraph.h"
+#include "RunnerLoadFetcher.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
@@ -4007,12 +4008,25 @@ JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject*
 // JSC::JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
 //     arg2->depen
 // }
-extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
+extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr, bool marksLoad)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* graph = Bun::testFileModuleGraph(defaultGlobalObject(globalObject));
-    auto* promise = graph ? graph->import(defaultGlobalObject(globalObject), jsString(vm, moduleNameStr->toWTFString()), false) : JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
+    if (marksLoad && !graph && !vm.hasCompiledCode()) {
+        // JSC::importModule() in its two steps: the mark takes the key of the root before anything is fetched.
+        auto* loader = globalObject->moduleLoader();
+        auto key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, /* useImportMap */ true);
+        if (scope.exception()) [[unlikely]]
+            return nullptr;
+        RefPtr<Bun::RunnerLoadFetcher> mark = Bun::beginRunnerLoad(defaultGlobalObject(globalObject), nullptr, key.string());
+        auto* promise = loader->requestImportModuleForKey(globalObject, key, JSC::Identifier(), nullptr, mark);
+        EXCEPTION_ASSERT(!!scope.exception() == !promise);
+        if (mark)
+            Bun::endRunnerLoadWhenSettled(defaultGlobalObject(globalObject), *mark, promise);
+        return promise;
+    }
+    auto* promise = graph ? graph->import(defaultGlobalObject(globalObject), jsString(vm, moduleNameStr->toWTFString()), false, marksLoad) : JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;

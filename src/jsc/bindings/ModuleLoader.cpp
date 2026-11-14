@@ -41,6 +41,7 @@
 #include "InternalModuleRegistryConstants.h"
 #include "IsolatedModuleCache.h"
 #include "ModuleGraph.h"
+#include "RunnerLoadFetcher.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -1090,12 +1091,12 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
-extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier, bool marksLoad)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (auto* graph = Bun::testFileModuleGraph(defaultGlobalObject(globalObject))) {
-        auto* promise = graph->import(defaultGlobalObject(globalObject), jsString(vm, specifier->toWTFString()));
+        auto* promise = graph->import(defaultGlobalObject(globalObject), jsString(vm, specifier->toWTFString()), true, marksLoad);
         EXCEPTION_ASSERT(!!promise == !scope.exception());
         // The caller reports a failed load, so keep the rejection tracker from reporting it too.
         if (promise)
@@ -1106,8 +1107,12 @@ extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
     if (scope.exception()) [[unlikely]]
         return nullptr;
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    // JSC::loadAndEvaluateModule() resolves `key` once more, and moduleLoaderResolve() hands a top-level key back: `key` is the root of the load.
+    RefPtr<Bun::RunnerLoadFetcher> mark = marksLoad ? Bun::beginRunnerLoad(defaultGlobalObject(globalObject), nullptr, key.string()) : nullptr;
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, mark);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
+    if (mark)
+        Bun::endRunnerLoadWhenSettled(defaultGlobalObject(globalObject), *mark, promise);
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (!scope.tryClearException())
             return nullptr;

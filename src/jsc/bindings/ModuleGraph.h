@@ -69,7 +69,8 @@ public:
     // Keeps an ES module's executable alive, along with the key JSC looks it up by. A finished record doesn't hold it.
     void keepModuleExecutable(JSC::VM&, JSC::ModuleProgramExecutable*, WTF::UniquedStringImpl* key);
 
-    JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier, bool mayBecomeMain = true);
+    // `marksLoad`: `bun test` loads a test file or a preload into the graph (RunnerLoadFetcher.h).
+    JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier, bool mayBecomeMain = true, bool marksLoad = false);
     void dispose(Zig::GlobalObject*);
 
 private:

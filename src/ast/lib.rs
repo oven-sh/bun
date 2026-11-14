@@ -9,6 +9,7 @@
 //! A [`Source`] borrows for `'a`. A diagnostic owns its bytes, so a [`Log`] may outlive the `Source`.
 
 use core::fmt;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use std::borrow::Cow;
 
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
@@ -649,25 +650,6 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None)
-    }
-
-    /// `init_or_null`, but computing the line/column through a
-    /// [`LineColumnTracker`] so repeated diagnostics against the same source
-    /// don't rescan it from the start for every message.
-    fn init_or_null_tracked(
-        _source: Option<&Source>,
-        r: Range,
-        tracker: &mut LineColumnTracker,
-    ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker))
-    }
-
-    fn init_or_null_impl(
-        _source: Option<&Source>,
-        r: Range,
-        tracker: Option<&mut LineColumnTracker>,
-    ) -> Option<Location> {
         if let Some(source) = _source {
             let file = Box::from(source.path.text);
             let namespace = Box::from(source.path.namespace);
@@ -682,10 +664,7 @@ impl Location {
                     offset: 0,
                 });
             }
-            let data = match tracker {
-                Some(tracker) => tracker.error_position(source, r.loc),
-                None => source.init_error_position(r.loc),
-            };
+            let data = source.init_error_position(r.loc);
             let mut full_line = &source.contents[data.line_start..data.line_end];
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets; the gate keeps the original shape (no left trim for
@@ -1188,14 +1167,6 @@ pub struct Log {
     pub errors: u32,
     pub msgs: Vec<Msg>,
     pub level: Level,
-
-    /// Incremental line/column scanner for the messages this log creates, so
-    /// a flood of diagnostics against one source doesn't rescan it from byte
-    /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
-    /// lazily by the first located diagnostic: most logs never report
-    /// anything, and `Log` is embedded by value in types that are sensitive
-    /// to its size (e.g. `TaskError` in the isolated installer).
-    pub line_column_tracker: Option<Box<LineColumnTracker>>,
 }
 
 impl Default for Log {
@@ -1209,7 +1180,6 @@ impl Default for Log {
             } else {
                 Level::Warn
             },
-            line_column_tracker: None,
         }
     }
 }
@@ -1255,30 +1225,6 @@ bun_core::comptime_string_map! {
 pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
 
 impl Log {
-    /// [`range_data`], but with the line/column computed through this log's
-    /// [`LineColumnTracker`] so successive diagnostics against the same
-    /// source resume the previous scan instead of restarting from byte 0.
-    fn tracked_range_data(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: impl IntoText,
-    ) -> Data {
-        let location = if source.is_some() {
-            Location::init_or_null_tracked(
-                source,
-                r,
-                self.line_column_tracker.get_or_insert_default(),
-            )
-        } else {
-            Location::init_or_null(source, r)
-        };
-        Data {
-            text: text.into_text(),
-            location,
-        }
-    }
-
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         for msg in &self.msgs {
@@ -1296,10 +1242,6 @@ impl Log {
         self.msgs.clear();
         self.warnings = 0;
         self.errors = 0;
-        // Drop the per-source scan cache with the messages it was built for;
-        // its identity check is pointer-based, so don't let it outlive the
-        // logical reuse boundary.
-        self.line_column_tracker = None;
     }
 
     pub fn has_any(&self) -> bool {
@@ -1347,8 +1289,6 @@ impl Log {
         other.msgs.append(&mut self.msgs);
         other.warnings += core::mem::take(&mut self.warnings);
         other.errors += core::mem::take(&mut self.errors);
-        // See `reset` — the scan cache goes with the messages.
-        self.line_column_tracker = None;
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
@@ -1357,8 +1297,6 @@ impl Log {
         self.msgs.shrink_to_fit();
         // self.warnings = 0;
         // self.errors = 0;
-        // See `reset` — the scan cache goes with the messages.
-        self.line_column_tracker = None;
     }
 }
 
@@ -1387,7 +1325,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let data = self.tracked_range_data(source, r, text);
+        let data = range_data(source, r, text);
         self.add_msg(Msg {
             kind,
             data,
@@ -1414,7 +1352,7 @@ impl Log {
         let specifier = BabyString::r#in(&text, specifier_arg);
         self.errors += 1;
 
-        let data = self.tracked_range_data(source, r, text);
+        let data = range_data(source, r, text);
 
         let msg = Msg {
             kind: Kind::Err,
@@ -1452,7 +1390,7 @@ impl Log {
     #[cold]
     pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
         self.errors += 1;
-        let data = self.tracked_range_data(source, r, text);
+        let data = range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1540,7 +1478,7 @@ impl Log {
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(None, Range::NONE, err_name.as_bytes());
+        let data = range_data(None, Range::NONE, err_name.as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1555,7 +1493,7 @@ impl Log {
             return;
         }
         self.warnings += 1;
-        let data = self.tracked_range_data(source, r, text);
+        let data = range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -1674,10 +1612,9 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> =
-            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(source, r, alloc_print(args));
+        let data = range_data(source, r, alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -1712,10 +1649,9 @@ impl Log {
         }
         self.errors += 1;
 
-        let notes: Box<[Data]> =
-            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(source, r, alloc_print(args));
+        let data = range_data(source, r, alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1730,7 +1666,7 @@ impl Log {
             return;
         }
         self.warnings += 1;
-        let data = self.tracked_range_data(
+        let data = range_data(
             source,
             Range {
                 loc: l,
@@ -1758,7 +1694,7 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
+        let notes: Box<[Data]> = Box::new([range_data(
             source,
             Range {
                 loc: l,
@@ -1767,7 +1703,7 @@ impl Log {
             alloc_print(note_args),
         )]);
 
-        let data = self.tracked_range_data(None, Range::NONE, warn);
+        let data = range_data(None, Range::NONE, warn);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -1781,7 +1717,7 @@ impl Log {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
-        let data = self.tracked_range_data(source, r, text);
+        let data = range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Debug,
             data,
@@ -1809,7 +1745,7 @@ impl Log {
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
-        let data = self.tracked_range_data(source, r, text);
+        let data = range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -1832,7 +1768,7 @@ impl Log {
     #[cold]
     fn add_error_text(&mut self, _source: Option<&Source>, loc: Loc, text: Cow<'static, [u8]>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
+        let data = range_data(
             _source,
             Range {
                 loc,
@@ -1851,7 +1787,7 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: &'static [u8], opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
+        let data = range_data(
             opts.source,
             Range {
                 loc: opts.loc,
@@ -1878,7 +1814,7 @@ impl Log {
             "\"{}\" was originally declared here",
             bstr::BStr::new(name)
         ));
-        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
+        let notes: Box<[Data]> = Box::new([range_data(
             Some(source),
             source.range_of_identifier(old_loc),
             note_text,
@@ -2083,6 +2019,9 @@ pub struct Source<'a> {
     pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
+
+    /// Where the scans for the positions of this source's diagnostics stopped.
+    pub position_index: PositionIndexSlot,
 }
 
 impl Default for Source<'_> {
@@ -2093,6 +2032,7 @@ impl Default for Source<'_> {
             contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
+            position_index: PositionIndexSlot::default(),
         }
     }
 }
@@ -2100,13 +2040,14 @@ impl Default for Source<'_> {
 #[derive(Copy, Clone, Debug)]
 struct ErrorPosition {
     pub(crate) line_start: usize,
+    /// Where the line ends, or where the excerpt of a longer line does: see [`excerpt_line_end`].
     pub(crate) line_end: usize,
     pub(crate) column_count: usize,
     pub(crate) line_count: usize,
 }
 
 /// Scanner state shared by [`Source::init_error_position`] and
-/// [`LineColumnTracker`] — the loop locals of the error-position scan,
+/// [`PositionIndex`] — the loop locals of the error-position scan,
 /// captured after consuming every codepoint before some byte offset.
 #[derive(Clone, Copy)]
 struct ErrorPositionState {
@@ -2173,6 +2114,8 @@ impl ErrorPositionState {
             self.prev_code_point = iter.c;
         }
 
+        #[cfg(test)]
+        count_scanned(to - from);
         crossed_line_break
     }
 
@@ -2199,12 +2142,72 @@ fn scan_line_end(contents: &[u8], offset: usize) -> usize {
 
     while iter_.next(&mut iter) {
         match iter.c {
-            0x0D | 0x0A | 0x2028 | 0x2029 => return offset + iter.i as usize,
+            0x0D | 0x0A | 0x2028 | 0x2029 => {
+                #[cfg(test)]
+                count_scanned(iter.i as usize);
+                return offset + iter.i as usize;
+            }
             _ => {}
         }
     }
 
+    #[cfg(test)]
+    count_scanned(contents.len() - offset);
     contents.len()
+}
+
+/// Where the character at `to` ends if a scan from `from` is inside it there, else `to`. A scan can resume from this place.
+fn character_boundary(contents: &[u8], from: usize, to: usize) -> usize {
+    use bun_core::strings::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(&contents[from..]);
+    let mut iter = Cursor::default();
+    let mut boundary = from;
+
+    while boundary < to && iter_.next(&mut iter) {
+        boundary = from + iter.i as usize + iter.width as usize;
+    }
+
+    #[cfg(test)]
+    count_scanned(boundary - from);
+    boundary
+}
+
+/// [`scan_line_end`] for an excerpt: the line break if one starts in the 81 bytes from `offset`, else where the excerpt is cut.
+fn excerpt_line_end(contents: &[u8], offset: usize) -> usize {
+    let window = &contents[offset..contents.len().min(offset + 81)];
+    let mut at = 0;
+    while let Some(found) = bun_core::strings::index_of_any(&window[at..], b"\r\n\xE2") {
+        at += found;
+        // U+2028 and U+2029 are E2 80 A8 and E2 80 A9 in UTF-8.
+        if matches!(
+            contents[offset + at..],
+            [b'\r' | b'\n', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]
+        ) {
+            #[cfg(test)]
+            count_scanned(at);
+            return offset + at;
+        }
+        at += 1;
+    }
+
+    let mut end = offset + window.len();
+    while end < contents.len() && !bun_core::strings::is_utf8_char_boundary(contents[end]) {
+        end += 1;
+    }
+    #[cfg(test)]
+    count_scanned(end - offset);
+    end
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Source bytes that position lookups read on this thread.
+    static BYTES_SCANNED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_scanned(bytes: usize) {
+    BYTES_SCANNED.set(BYTES_SCANNED.get() + bytes);
 }
 
 /// Clamp a diagnostic `Loc` into `contents` the way `init_error_position`
@@ -2214,25 +2217,17 @@ fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
     (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1)
 }
 
-/// Incremental line/column scanner for diagnostics (the esbuild
-/// `LineColumnTracker` approach). [`Source::init_error_position`] walks the
-/// source from byte 0 on every call, so a parse that reports many diagnostics
-/// against one file pays O(diagnostics × file size) just computing their
-/// positions — a few hundred KB of malformed JSONC that errors on nearly
-/// every token used to take minutes. The [`Log`] owns one of these:
-/// diagnostics for the same source at non-decreasing offsets resume the
-/// previous scan, so N diagnostics cost O(file size + N) in total. Results
-/// are identical to `Source::init_error_position`.
+/// The scans that [`Source::init_error_position`] resumes: N positions of well-formed UTF-8 in any order cost O(file size + N × `CHECKPOINT_INTERVAL`).
 #[derive(Default)]
-pub struct LineColumnTracker {
-    /// Identity of the tracked source (`contents` and `path.text` pointers +
-    /// lengths, stored as `usize` so the tracker stays `Send`). A diagnostic
-    /// for a different source resets the scan.
+struct PositionIndex {
+    /// The `contents` that were scanned: address and length. Other contents reset the index.
     contents_ptr: usize,
     contents_len: usize,
-    path_ptr: usize,
-    path_len: usize,
     cursors: [ScanCursor; 4],
+    /// `checkpoints[i]` is the scan from byte 0 at the first character that starts at or after byte `(i + 1) * CHECKPOINT_INTERVAL`.
+    checkpoints: Vec<(usize, ErrorPositionState)>,
+    /// An offset that no cursor could resume to came before. The first one does not start `checkpoints`.
+    missed: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -2242,41 +2237,29 @@ struct ScanCursor {
     line_end: Option<usize>,
 }
 
-impl LineColumnTracker {
-    fn matches(&self, source: &Source) -> bool {
-        self.contents_ptr == source.contents.as_ptr() as usize
-            && self.contents_len == source.contents.len()
-            && self.path_ptr == source.path.text.as_ptr() as usize
-            && self.path_len == source.path.text.len()
-    }
+/// Source bytes between two of the `checkpoints` of a [`PositionIndex`].
+const CHECKPOINT_INTERVAL: usize = if cfg!(test) { 8 } else { 1024 };
 
-    fn reset_for(&mut self, source: &Source) {
-        *self = LineColumnTracker {
-            contents_ptr: source.contents.as_ptr() as usize,
-            contents_len: source.contents.len(),
-            path_ptr: source.path.text.as_ptr() as usize,
-            path_len: source.path.text.len(),
-            ..Default::default()
-        };
-    }
-
+impl PositionIndex {
     /// [`Source::init_error_position`], resuming from the previous call's
     /// offset when possible instead of rescanning from the start.
-    pub(crate) fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
-        debug_assert!(!offset_loc.is_empty());
-        let contents: &[u8] = &source.contents;
+    fn error_position(&mut self, contents: &[u8], offset_loc: Loc) -> ErrorPosition {
         let offset = clamp_error_offset(contents, offset_loc);
 
-        if !self.matches(source) {
-            self.reset_for(source);
+        if (self.contents_ptr, self.contents_len) != (contents.as_ptr() as usize, contents.len()) {
+            *self = PositionIndex {
+                contents_ptr: contents.as_ptr() as usize,
+                contents_len: contents.len(),
+                ..Default::default()
+            };
         }
 
         if offset < contents.len() && contents[offset] & 0xC0 == 0x80 {
-            return source.init_error_position(offset_loc);
+            return self.position_from_checkpoints(contents, offset_loc);
         }
 
         let Some(index) = self.cursors.iter().position(|c| c.offset <= offset) else {
-            return source.init_error_position(offset_loc);
+            return self.position_from_checkpoints(contents, offset_loc);
         };
         let cursor = &mut self.cursors[index];
 
@@ -2295,6 +2278,86 @@ impl LineColumnTracker {
         };
 
         cursor.state.to_error_position(line_end)
+    }
+
+    /// [`Self::error_position`] of an offset that no cursor can resume to: one inside a character, or one behind all four.
+    fn position_from_checkpoints(&mut self, contents: &[u8], offset_loc: Loc) -> ErrorPosition {
+        if !core::mem::replace(&mut self.missed, true) {
+            return Source::scan_error_position(contents, offset_loc);
+        }
+        let offset = clamp_error_offset(contents, offset_loc);
+
+        while (self.checkpoints.len() + 1) * CHECKPOINT_INTERVAL <= offset {
+            let (from, mut state) = self.checkpoints.last().copied().unwrap_or_default();
+            let multiple = (self.checkpoints.len() + 1) * CHECKPOINT_INTERVAL;
+            let to = character_boundary(contents, from, multiple);
+            state.advance(contents, from, to);
+            self.checkpoints.push((to, state));
+        }
+
+        // A checkpoint is up to 3 bytes past its multiple of the interval, so the last of these can be past `offset`.
+        let below = &self.checkpoints[..offset / CHECKPOINT_INTERVAL];
+        let (from, mut state) = below
+            .iter()
+            .rev()
+            .find(|checkpoint| checkpoint.0 <= offset)
+            .copied()
+            .unwrap_or_default();
+        state.advance(contents, from, offset);
+        state.to_error_position(excerpt_line_end(contents, offset))
+    }
+}
+
+/// Where a [`Source`] keeps its [`PositionIndex`]. A lookup takes the box out and puts it back, so no two threads share one.
+#[derive(Default)]
+pub struct PositionIndexSlot(AtomicPtr<PositionIndex>);
+
+const fn assert_send<T: Send>() {}
+
+const _: () = assert_send::<PositionIndex>();
+
+impl PositionIndexSlot {
+    fn swap(&self, index: Option<Box<PositionIndex>>) -> Option<Box<PositionIndex>> {
+        let new = index.map_or(core::ptr::null_mut(), bun_core::heap::into_raw);
+        let old = self.0.swap(new, Ordering::SeqCst);
+        // SAFETY: the slot holds null or a pointer that `heap::into_raw` returned, and the swap left `old` as the only copy of it.
+        (!old.is_null()).then(|| unsafe { bun_core::heap::take(old) })
+    }
+
+    /// Frees the index. Dropping the `Source` does this. A `Source` that nothing drops (one in an arena) needs the call.
+    pub fn release(&self) {
+        if !self.0.load(Ordering::SeqCst).is_null() {
+            self.release_index();
+        }
+    }
+
+    #[cold]
+    fn release_index(&self) {
+        self.swap(None);
+    }
+}
+
+impl Clone for PositionIndexSlot {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl Drop for PositionIndexSlot {
+    fn drop(&mut self) {
+        if !self.0.get_mut().is_null() {
+            self.release_index();
+        }
+    }
+}
+
+/// Calls [`PositionIndexSlot::release`] when it goes out of scope.
+#[must_use = "the index is released on drop; bind to a named local"]
+pub struct ReleasePositionIndex<'a>(pub &'a PositionIndexSlot);
+
+impl Drop for ReleasePositionIndex<'_> {
+    fn drop(&mut self) {
+        self.0.release();
     }
 }
 
@@ -2458,7 +2521,14 @@ impl<'a> Source<'a> {
 
     pub(crate) fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
         debug_assert!(!offset_loc.is_empty());
-        let contents: &[u8] = &self.contents;
+        let mut index = self.position_index.swap(None).unwrap_or_default();
+        let position = index.error_position(&self.contents, offset_loc);
+        self.position_index.swap(Some(index));
+        position
+    }
+
+    /// [`Self::init_error_position`] by a walk from byte 0 that keeps nothing.
+    fn scan_error_position(contents: &[u8], offset_loc: Loc) -> ErrorPosition {
         let offset = clamp_error_offset(contents, offset_loc);
 
         let mut state = ErrorPositionState::default();
@@ -3101,7 +3171,7 @@ mod location_tests {
 }
 
 #[cfg(test)]
-mod line_column_tracker_tests {
+mod position_index_tests {
     use super::*;
 
     fn check_corpus_entry(contents: &[u8]) {
@@ -3110,11 +3180,10 @@ mod line_column_tracker_tests {
 
         // Non-decreasing offsets (the parser/lexer pattern): every result must
         // match a from-scratch scan.
-        let mut tracker = LineColumnTracker::default();
         for offset in 0..len.max(1) {
             let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(&source, loc);
+            let expected = Source::scan_error_position(contents, loc);
+            let got = source.init_error_position(loc);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3132,15 +3201,15 @@ mod line_column_tracker_tests {
             );
         }
 
-        // Repeated, backwards, and strided offsets against a reused tracker.
-        let mut tracker = LineColumnTracker::default();
+        // Repeated, backwards, and strided offsets against an index that starts empty.
+        let source = source.clone();
         let mut offsets: Vec<usize> = (0..len.max(1)).step_by(3).collect();
         offsets.extend((0..len.max(1)).rev().step_by(7));
         offsets.extend([0, len.max(1) - 1, 0, len / 2, len / 2]);
         for offset in offsets {
             let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(&source, loc);
+            let expected = Source::scan_error_position(contents, loc);
+            let got = source.init_error_position(loc);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3160,7 +3229,7 @@ mod line_column_tracker_tests {
     }
 
     #[test]
-    fn line_column_tracker_matches_full_scan() {
+    fn position_index_matches_full_scan() {
         let corpus: &[&[u8]] = &[
             b"",
             b"x",
@@ -3180,7 +3249,7 @@ mod line_column_tracker_tests {
     }
 
     #[test]
-    fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
+    fn position_index_interleaved_diagnostic_streams_match_full_scan() {
         let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
         // Every lookup below re-scans from an earlier line, so cost grows with
         // the square of the statement count; under Miri 4 statements still
@@ -3203,11 +3272,10 @@ mod line_column_tracker_tests {
             }
         }
 
-        let mut tracker = LineColumnTracker::default();
         for offset in offsets {
             let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(&source, loc);
+            let expected = Source::scan_error_position(&contents, loc);
+            let got = source.init_error_position(loc);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3227,25 +3295,16 @@ mod line_column_tracker_tests {
     }
 
     #[test]
-    fn line_column_tracker_resets_for_a_different_source() {
-        let a = Source::init_path_string(b"a.js" as &[u8], b"first\nsource\nhere" as &[u8]);
-        let b = Source::init_path_string(
-            b"b.js" as &[u8],
-            b"a totally different\r\nsecond source\r\nwith more lines\r\n" as &[u8],
-        );
+    fn position_index_resets_for_other_contents_in_its_source() {
+        let a: &[u8] = b"first\nsource\nhere";
+        let b: &[u8] = b"a totally different\r\nsecond source\r\nwith more lines\r\n";
+        let mut source = Source::init_path_string(b"a.js" as &[u8], a);
 
-        let mut tracker = LineColumnTracker::default();
-        for (source, offset) in [
-            (&a, 8usize),
-            (&b, 30),
-            (&a, 10),
-            (&b, 40),
-            (&b, 45),
-            (&a, 2),
-        ] {
+        for (contents, offset) in [(a, 8usize), (b, 30), (a, 10), (b, 40), (b, 45), (a, 2)] {
+            source.contents = Cow::Borrowed(contents);
             let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(source, loc);
+            let expected = Source::scan_error_position(contents, loc);
+            let got = source.init_error_position(loc);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3262,6 +3321,345 @@ mod line_column_tracker_tests {
                 "diverged at offset {offset} of {:?}",
                 bstr::BStr::new(source.contents())
             );
+        }
+    }
+
+    fn locate(source: &Source, offset: usize) -> (i32, i32, Box<[u8]>) {
+        let r = Range {
+            loc: usize2loc(offset),
+            len: 0,
+        };
+        let location = Location::init_or_null(Some(source), r).unwrap();
+        (location.line, location.column, location.line_text.unwrap())
+    }
+
+    /// A clone has an empty index, so it walks from byte 0.
+    #[track_caller]
+    fn assert_located_as_by_a_walk_from_byte_0(source: &Source, offset: usize) {
+        assert_eq!(
+            locate(source, offset),
+            locate(&source.clone(), offset),
+            "offset {offset} of {:?}",
+            bstr::BStr::new(source.contents())
+        );
+    }
+
+    fn checkpoints_of(source: &Source) -> usize {
+        let index = source.position_index.swap(None).unwrap_or_default();
+        let checkpoints = index.checkpoints.len();
+        source.position_index.swap(Some(index));
+        checkpoints
+    }
+
+    #[test]
+    fn position_index_answers_in_any_order() {
+        let digits = b"0123456789".repeat(13);
+        let corpus: [Vec<u8>; 4] = [
+            // Lines of 130 bytes: an excerpt is cut after its offset, before it, or both.
+            [
+                &digits[..],
+                b"\n",
+                &digits,
+                b"\r\n",
+                &digits,
+                b"\r",
+                &digits,
+            ]
+            .concat(),
+            // A character across each multiple of the interval, then line breaks of three bytes with 79 to 82 bytes after them.
+            [
+                "\u{00E9}\u{4E2D}\u{1F600}".repeat(8).as_bytes(),
+                &digits[..79],
+                "\u{2028}\u{2029}".as_bytes(),
+                &digits[..81],
+                "\u{2028}".as_bytes(),
+                &digits,
+            ]
+            .concat(),
+            // `\r` as the last byte before a checkpoint and `\n` as the first byte after it.
+            [
+                &digits[..7],
+                b"\r\n",
+                &digits[..14],
+                b"\r\n",
+                &digits[..6],
+                b"\r",
+            ]
+            .concat(),
+            // Ill-formed: continuation bytes where an excerpt is cut, cut-off and overlong sequences, a line break inside a sequence.
+            [
+                &digits[..50],
+                &b"\x80".repeat(90)[..],
+                b"\xE2\x80",
+                &digits[..77],
+                b"\xF0\x9F\r\xE2\x80\xA8\xFF\xF0\x82\x80\xA8\xC0\x8A\xE2\n\x80\xA8\xF8",
+            ]
+            .concat(),
+        ];
+        for contents in &corpus {
+            let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+            let len = contents.len();
+            let stride = len / 8;
+
+            // From the end, the fifth offset and each one after it is behind all four cursors.
+            for offset in (0..len + 2).rev().step_by(stride) {
+                assert_located_as_by_a_walk_from_byte_0(&source, offset);
+            }
+            assert!(checkpoints_of(&source) > 0);
+
+            // Back and forth fills the checkpoints a piece at a time.
+            let source = source.clone();
+            for i in (0..len).step_by(stride) {
+                assert_located_as_by_a_walk_from_byte_0(&source, i * 89 % len);
+            }
+        }
+    }
+
+    #[test]
+    fn a_position_behind_every_cursor_reads_a_bounded_part_of_the_source() {
+        for line in [&b"0123456789"[..], b"012345678\n"] {
+            let contents = line.repeat(60);
+            for sites in [&[150, 200, 250][..], &[150, 200, 250, 300, 350, 400]] {
+                let source =
+                    Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+                // A note at one of `sites` in turn, then an error further on than the last one.
+                for i in 0..36 {
+                    for offset in [sites[i % sites.len()], 450 + i * 4] {
+                        BYTES_SCANNED.set(0);
+                        source.init_error_position(usize2loc(offset));
+                        // By the fifth round of six sites each cursor has stopped for good and the checkpoints reach the last site below them.
+                        assert!(
+                            i < 24 || BYTES_SCANNED.get() <= CHECKPOINT_INTERVAL + 3 + 81,
+                            "read {} bytes for offset {offset}",
+                            BYTES_SCANNED.get()
+                        );
+                    }
+                }
+                // Three sites and the errors are four streams, one for each cursor. Of six sites, three are behind every cursor.
+                let expected = if sites.len() == 3 {
+                    0
+                } else {
+                    250 / CHECKPOINT_INTERVAL
+                };
+                assert_eq!(checkpoints_of(&source), expected);
+            }
+        }
+    }
+
+    /// A source whose cursors are past every offset, so that each lookup starts at a checkpoint.
+    fn answering_from_checkpoints(contents: &[u8]) -> Source<'_> {
+        let source = Source::init_path_string(b"index-test.js" as &[u8], contents);
+        let past_the_end = ScanCursor {
+            offset: usize::MAX,
+            ..Default::default()
+        };
+        source.position_index.swap(Some(Box::new(PositionIndex {
+            contents_ptr: contents.as_ptr() as usize,
+            contents_len: contents.len(),
+            cursors: [past_the_end; 4],
+            missed: true,
+            ..Default::default()
+        })));
+        source
+    }
+
+    #[test]
+    fn a_position_inside_a_character_is_where_a_walk_from_byte_0_of_main_has_it() {
+        let digits = b"0123456789".repeat(10);
+        // (contents, offset, line, column) as main b1305ddc7c reports them. An offset at the end is the last byte.
+        let cases: [(Vec<u8>, usize, usize, usize); 6] = [
+            ("ab\u{1F600}cd".as_bytes().to_vec(), 3, 1, 4),
+            ("ab\u{1F600}cd".as_bytes().to_vec(), 5, 1, 6),
+            ("ab\u{1F600}cd".as_bytes().to_vec(), 6, 1, 5),
+            (b"ab\xF0\x9Fcd".to_vec(), 5, 1, 6),
+            ([&digits[..], "\u{1F600}".as_bytes()].concat(), 104, 1, 104),
+            ([&digits[..], "\u{2028}".as_bytes()].concat(), 103, 1, 103),
+        ];
+        for (contents, offset, line, column) in &cases {
+            let fresh = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+            for source in [&fresh, &answering_from_checkpoints(contents)] {
+                let position = source.init_error_position(usize2loc(*offset));
+                assert_eq!(
+                    (position.line_count, position.column_count),
+                    (*line, *column),
+                    "offset {offset} of {:?}",
+                    bstr::BStr::new(contents)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn one_position_that_no_cursor_can_resume_to_starts_no_checkpoints() {
+        // `Unexpected end of file` is reported on the last byte, here inside a character.
+        let contents = [&b"0123456789".repeat(10)[..], "\u{1F600}".as_bytes()].concat();
+        let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+        let position = source.init_error_position(usize2loc(contents.len()));
+        assert_eq!((position.line_count, position.column_count), (1, 104));
+
+        let index = source.position_index.swap(None).unwrap();
+        assert!(index.missed);
+        assert_eq!(index.checkpoints.capacity(), 0);
+    }
+
+    #[test]
+    fn a_lookup_from_a_checkpoint_cuts_the_excerpt_of_a_scan_to_the_line_end() {
+        let digits = b"0123456789".repeat(9);
+        let line_breaks: [&[u8]; 5] = [
+            b"\n",
+            b"\r",
+            b"\r\n",
+            "\u{2028}".as_bytes(),
+            "\u{2029}".as_bytes(),
+        ];
+        for line_break in line_breaks {
+            // The line break is 79 to 82 bytes after the offset: an excerpt keeps 80.
+            for distance in 79..=82 {
+                // U+2026 starts with the first byte of U+2028 and is no line break.
+                let contents = [
+                    &digits[..50],
+                    &digits[..distance - 3],
+                    "\u{2026}".as_bytes(),
+                    line_break,
+                    &digits[..30],
+                ]
+                .concat();
+                let source = answering_from_checkpoints(&contents);
+                assert_located_as_by_a_walk_from_byte_0(&source, 50);
+            }
+            // No line break in reach, and a character of four bytes across the 80th byte.
+            let contents = [
+                &digits[..50],
+                &digits[..78],
+                "\u{1F600}".as_bytes(),
+                &digits[..30],
+                line_break,
+            ]
+            .concat();
+            let source = answering_from_checkpoints(&contents);
+            assert_located_as_by_a_walk_from_byte_0(&source, 50);
+        }
+    }
+
+    #[test]
+    fn a_lookup_from_a_checkpoint_reads_a_bounded_part_of_the_source() {
+        let digits = b"0123456789".repeat(30);
+        // 90 continuation bytes where the excerpt is cut: an excerpt ends at the start of a character, as on main.
+        let ill_formed = [&digits[..150 + 70], &b"\x80".repeat(90)[..], &digits[..80]].concat();
+        for (contents, run) in [(&digits[..], 0), (&ill_formed[..], 90)] {
+            let source = answering_from_checkpoints(contents);
+            let per_lookup = CHECKPOINT_INTERVAL + 3 + 81 + run;
+            // The first lookup fills the checkpoints as far as its offset. That reads each byte twice.
+            for (offset, fill) in [(152, 2 * (152 + 3)), (150, 0), (40, 0), (149, 0), (7, 0)] {
+                BYTES_SCANNED.set(0);
+                source.init_error_position(usize2loc(offset));
+                assert!(
+                    BYTES_SCANNED.get() <= fill + per_lookup,
+                    "read {} bytes for offset {offset}",
+                    BYTES_SCANNED.get()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_note_built_outside_the_log_resumes_the_scans_of_the_log() {
+        let contents = b"012345678\n".repeat(40);
+        let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+        let mut log = Log::init();
+        BYTES_SCANNED.set(0);
+        // The error stays where it is and each note is further on than the one before.
+        for i in 0..20 {
+            let note_range = Range {
+                loc: usize2loc(200 + i * 10),
+                len: 1,
+            };
+            let note = range_data(Some(&source), note_range, b"note");
+            let r = Range {
+                loc: usize2loc(5),
+                len: 1,
+            };
+            log.add_range_error_with_notes(Some(&source), r, b"error", Box::new([note]));
+        }
+        // One cursor reads the source once for the notes and another one stays at the error.
+        assert!(
+            BYTES_SCANNED.get() <= 2 * contents.len(),
+            "read {} bytes",
+            BYTES_SCANNED.get()
+        );
+        let last = log.msgs[19].notes[0].location.as_ref().unwrap();
+        assert_eq!((last.line, last.column), (40, 1));
+    }
+
+    #[test]
+    fn another_source_at_the_same_address_starts_its_own_scans() {
+        let path: &[u8] = b"package.json";
+        let mut buffer = b"one\ntwo\nthree\nfour".to_vec();
+        let mut log = Log::init();
+        log.add_error(
+            Some(&Source::init_path_string(path, buffer.as_slice())),
+            usize2loc(15),
+            b"in the first file",
+        );
+        // The next file is read into the same buffer. It has one line.
+        buffer.fill(b'x');
+        log.add_error(
+            Some(&Source::init_path_string(path, buffer.as_slice())),
+            usize2loc(16),
+            b"in the second file",
+        );
+        let lines_and_columns: Vec<(i32, i32)> = log
+            .msgs
+            .iter()
+            .map(|msg| msg.data.location.as_ref().unwrap())
+            .map(|location| (location.line, location.column))
+            .collect();
+        assert_eq!(lines_and_columns, [(4, 2), (1, 17)]);
+    }
+
+    #[test]
+    fn the_index_of_a_source_is_freed_with_it_or_by_a_release() {
+        let source = Source::init_path_string(b"a.js" as &[u8], b"one\ntwo\nthree" as &[u8]);
+        source.init_error_position(usize2loc(9));
+        assert!(source.clone().position_index.swap(None).is_none());
+
+        // Nothing drops a source in an arena.
+        let in_arena = core::mem::ManuallyDrop::new(source.clone());
+        {
+            let _release = ReleasePositionIndex(&in_arena.position_index);
+            in_arena.init_error_position(usize2loc(9));
+        }
+        assert!(in_arena.position_index.swap(None).is_none());
+    }
+
+    #[test]
+    fn position_index_is_shared_between_threads() {
+        let contents = b"0123456789\r\n".repeat(2);
+        let source = Source::init_path_string(b"index-test.js" as &[u8], contents.as_slice());
+        let len = contents.len();
+        std::thread::scope(|scope| {
+            for thread in 0..2 {
+                let source = &source;
+                scope.spawn(move || {
+                    for i in 0..len {
+                        assert_located_as_by_a_walk_from_byte_0(source, (i * 89 + thread) % len);
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn position_index_stays_in_bounds_for_other_bytes_at_the_same_address() {
+        let mut source = Source::init_path_string_owned(b"index-test.js" as &[u8], vec![0; 480]);
+        for text in [&b"0123456789\r\n"[..], b"\n", "\u{00E9}".as_bytes()] {
+            for chunk in source.contents.to_mut().chunks_exact_mut(text.len()) {
+                chunk.copy_from_slice(text);
+            }
+            // After the first text the index resumes scans of another text: the excerpt is of these bytes, the line and column are not.
+            for offset in [479, 240, 160, 120, 96, 3, 477, 301] {
+                assert!(locate(&source, offset).2.len() <= 480);
+            }
         }
     }
 

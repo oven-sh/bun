@@ -6464,6 +6464,418 @@ describe("parse error flood", () => {
     expect(stdout).toContain("DONE");
     expect(exitCode).toBe(0);
   }, 90_000);
+
+  // A comment of 16 MB makes one walk over the source cost about 20 ms on a release build.
+  // With 10,000 diagnostics, a walk for each of them takes minutes. One walk for all of them takes a second or two.
+  const FILLER = `"/*" + Buffer.alloc(16 << 20, "x").toString() + "*/"`;
+  const DIAGNOSTICS = 10_000;
+  const NAMES = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const position = `({ message, position: p }) => [message, p.line, p.column]`;
+  const summary = `errors => JSON.stringify({
+    count: errors.length,
+    first: [(${position})(errors[0]), (${position})(errors[0].notes[0])],
+    last: [(${position})(errors.at(-1)), (${position})(errors.at(-1).notes[0])],
+    lineText: errors.at(-1).notes[0].position.lineText,
+    fourthFromLast: [(${position})(errors.at(-4)), (${position})(errors.at(-4).notes[0])],
+    fourthFromLastLineText: errors.at(-4).notes[0].position.lineText,
+  })`;
+
+  async function flood(cmd, options = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+      ...options,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const transformSync = input => `
+    let thrown;
+    try {
+      new Bun.Transpiler({ loader: "js" }).transformSync(${input});
+    } catch (e) {
+      thrown = e;
+    }
+    console.log((${summary})(thrown.errors));
+  `;
+
+  it.concurrent(
+    "finds positions in linear time when the notes are at more places than there are cursors",
+    async () => {
+      // Eight names are declared after the comment. Then each one is declared again, in turn.
+      const declarations = NAMES.map(name => `let ${name};\n`).join("");
+      const rounds = DIAGNOSTICS / NAMES.length + 1;
+      const result = await flood([
+        "-e",
+        transformSync(
+          `${FILLER} + "\\n" + Buffer.alloc(${declarations.length * rounds}, ${JSON.stringify(declarations)}).toString()`,
+        ),
+      ]);
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: 256,
+          first: [
+            ['"a" has already been declared', 10, 5],
+            ['"a" was originally declared here', 2, 5],
+          ],
+          last: [
+            ['"h" has already been declared', 265, 5],
+            ['"h" was originally declared here', 9, 5],
+          ],
+          lineText: "let h;",
+          // No cursor stays at this note.
+          fourthFromLast: [
+            ['"e" has already been declared', 262, 5],
+            ['"e" was originally declared here', 6, 5],
+          ],
+          fourthFromLastLineText: "let e;",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time when the parser builds the note outside the Log",
+    async () => {
+      // The error of each hoisted `var` is at the `let`. Its note is at the `var`, further on than the last one.
+      const result = await flood([
+        "-e",
+        transformSync(`${FILLER} + "\\nlet x;\\n" + Buffer.alloc(${9 * DIAGNOSTICS}, "{var x;}\\n").toString()`),
+      ]);
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: 256,
+          first: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 3, 6],
+          ],
+          last: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 258, 6],
+          ],
+          lineText: "{var x;}",
+          fourthFromLast: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 255, 6],
+          ],
+          fourthFromLastLineText: "{var x;}",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time at the start of one long line",
+    async () => {
+      // The shape of a minified bundle that was cut short: the errors are at the start of a line that goes on for 16 MB.
+      const declarations = NAMES.map(name => `let ${name};`).join("");
+      const rounds = DIAGNOSTICS / NAMES.length + 1;
+      const result = await flood([
+        "-e",
+        transformSync(
+          `Buffer.alloc(${declarations.length * rounds}, ${JSON.stringify(declarations)}).toString() + ${FILLER}`,
+        ),
+      ]);
+      const line = declarations.repeat(4);
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: 256,
+          first: [
+            ['"a" has already been declared', 1, declarations.length + 5],
+            ['"a" was originally declared here', 1, 5],
+          ],
+          last: [
+            ['"h" has already been declared', 1, declarations.length + 255 * 6 + 5],
+            ['"h" was originally declared here', 1, 47],
+          ],
+          // 40 bytes before the note and 80 bytes after it.
+          lineText: line.slice(46 - 40, 46 + 80),
+          // No cursor stays at this note.
+          fourthFromLast: [
+            ['"e" has already been declared', 1, declarations.length + 252 * 6 + 5],
+            ['"e" was originally declared here', 1, 29],
+          ],
+          fourthFromLastLineText: line.slice(0, 28 + 80),
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time for `bun run`",
+    async () => {
+      using dir = tempDir("parse-error-flood-run", {});
+      const path = join(String(dir), "flood.js");
+      await Bun.write(
+        path,
+        "/*" +
+          Buffer.alloc(16 << 20, "x").toString() +
+          "*/\nlet x;\n" +
+          Buffer.alloc(9 * DIAGNOSTICS, "{var x;}\n").toString(),
+      );
+      const { stdout, stderr, exitCode } = await flood(["run", path]);
+      // `bun run` prints the first 256 errors.
+      expect({
+        stdout,
+        errors: stderr.split("error: x has already been declared").length - 1,
+        firstNote: stderr.includes("flood.js:3:6"),
+        lastNote: stderr.includes("flood.js:258:6"),
+        exitCode,
+      }).toEqual({ stdout: "", errors: 256, firstNote: true, lastNote: true, exitCode: 1 });
+    },
+    90_000,
+  );
+
+  const build = options => `
+    const result = await Bun.build({ ...${JSON.stringify(options)}, throw: false });
+    console.log((${summary})(result.logs));
+  `;
+
+  it.concurrent(
+    "finds positions in linear time for `Bun.build`",
+    async () => {
+      using dir = tempDir("parse-error-flood-build", {});
+      await Bun.write(
+        join(String(dir), "flood.js"),
+        "/*" +
+          Buffer.alloc(16 << 20, "x").toString() +
+          "*/\nlet x;\n" +
+          Buffer.alloc(9 * DIAGNOSTICS, "{var x;}\n").toString(),
+      );
+      const result = await flood(["-e", build({ entrypoints: ["./flood.js"] })], { cwd: String(dir) });
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: DIAGNOSTICS,
+          first: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", 3, 6],
+          ],
+          last: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", DIAGNOSTICS + 2, 6],
+          ],
+          lineText: "{var x;}",
+          fourthFromLast: [
+            ["x has already been declared", 2, 5],
+            ["x was originally declared here", DIAGNOSTICS - 1, 6],
+          ],
+          fourthFromLastLineText: "{var x;}",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+
+  it.concurrent(
+    "finds positions in linear time when the note is in another file",
+    async () => {
+      // Each `require()` of a file with a top-level await is an error, with a note at the `await`.
+      using dir = tempDir("parse-error-flood-link", {});
+      const call = "require('./awaits.js');\n";
+      await Bun.write(join(String(dir), "entry.js"), Buffer.alloc(call.length * DIAGNOSTICS, call).toString());
+      await Bun.write(
+        join(String(dir), "awaits.js"),
+        "/*" + Buffer.alloc(16 << 20, "x").toString() + "*/\nawait 0;\nexport {};\n",
+      );
+      const result = await flood(["-e", build({ entrypoints: ["./entry.js"], target: "bun" })], {
+        cwd: String(dir),
+      });
+      const error =
+        'This require call is not allowed because the transitive dependency "awaits.js" contains a top-level await';
+      const note = "The top-level await in awaits.js is here:";
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          count: DIAGNOSTICS,
+          first: [
+            [error, 1, 9],
+            [note, 2, 1],
+          ],
+          last: [
+            [error, DIAGNOSTICS, 9],
+            [note, 2, 1],
+          ],
+          lineText: "await 0;",
+          fourthFromLast: [
+            [error, DIAGNOSTICS - 3, 9],
+            [note, 2, 1],
+          ],
+          fourthFromLastLineText: "await 0;",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90_000,
+  );
+});
+
+describe("parse error notes", () => {
+  // The lines before each note end with a lone CR, U+2028 and CRLF, and an astral character is on the line of the note.
+  const prefix = 'var cr = 1;\r"\u2028";\r\n/* \u{1F600} */ ';
+  const cases = {
+    "duplicate export": {
+      source: "export const dup = 1;\nexport { cr as dup };",
+      error: ['Multiple exports with the same name "dup"', 5, 16, "export { cr as dup };"],
+      note: ['"dup" was originally exported here', 4, 23, "/* \u{1F600} */ export const dup = 1;"],
+    },
+    "hoisted var": {
+      source: "let x;\n{ var x; }",
+      error: ["x has already been declared", 4, 14, "/* \u{1F600} */ let x;"],
+      note: ["x was originally declared here", 5, 7, "{ var x; }"],
+    },
+    "assignment to a constant": {
+      source: "const c = 1;\nc = 2;",
+      error: ['This assignment will throw because "c" is a constant', 5, 1, "c = 2;"],
+      note: ['The symbol "c" was declared a constant here:', 4, 16, "/* \u{1F600} */ const c = 1;"],
+    },
+    "reserved word in strict mode": {
+      source: "export {};\nstatic;",
+      error: ['"static" is a reserved word and cannot be used in strict mode', 5, 1, "static;"],
+      note: [
+        'This file is implicitly in strict mode because of the "export" keyword here',
+        4,
+        10,
+        "/* \u{1F600} */ export {};",
+      ],
+    },
+    "await outside an async function": {
+      source: "function f() {\n  await cr;\n}",
+      error: ['"await" can only be used inside an "async" function', 5, 9, "  await cr;"],
+      note: ['Consider adding the "async" keyword here', 4, 10, "/* \u{1F600} */ function f() {"],
+    },
+  };
+  const located = ({ message, position }) => [message, position.line, position.column, position.lineText];
+
+  // The line, the column and the excerpt of the byte `offset`, counted from the start of `bytes`.
+  function walkFromTheStart(bytes, offset) {
+    const lineBreakAt = i =>
+      bytes[i] === 0x0a ||
+      bytes[i] === 0x0d ||
+      (bytes[i] === 0xe2 && bytes[i + 1] === 0x80 && (bytes[i + 2] === 0xa8 || bytes[i + 2] === 0xa9));
+    let line = 1;
+    let lineStart = 0;
+    for (let i = 0; i < offset;) {
+      if (lineBreakAt(i)) {
+        i += bytes[i] === 0xe2 ? 3 : bytes[i] === 0x0d && bytes[i + 1] === 0x0a ? 2 : 1;
+        line++;
+        lineStart = i;
+      } else {
+        i++;
+      }
+    }
+    let end = offset;
+    while (end < bytes.length && !lineBreakAt(end)) end++;
+    let start = lineStart;
+    // A line that goes on for more than 80 bytes is cut 40 bytes before the offset and 80 after it.
+    if (end - offset > 80) {
+      start = Math.max(start, offset - 40);
+      end = offset + 80;
+      while ((bytes[start] & 0xc0) === 0x80) start--;
+      while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end++;
+    }
+    const column = bytes.subarray(lineStart, offset).toString().length + 1;
+    return [line, column, bytes.subarray(start, end).toString()];
+  }
+
+  it("a note that is found from a checkpoint has the line, column and text of a walk from the start", () => {
+    const chunks = [];
+    let length = 0;
+    const push = text => {
+      chunks.push(Buffer.from(text));
+      length += chunks.at(-1).length;
+    };
+    const fill = (count, byte) => Buffer.alloc(count, byte).toString();
+    // A comment that ends at the byte `end`.
+    const commentUpTo = end => push(`/*${fill(end - length - 4, "p")}*/`);
+    const sites = [];
+    // `let n<k>;` with 51 bytes before the name on its line, and a line break `distance` bytes after the name starts.
+    // U+2026 starts with the first byte of U+2028 and of U+2029.
+    const declare = (lineBreak, distance, at = length + 51) => {
+      push(`/* \u2026 ${fill(at - length - 14, "f")} */let `);
+      sites.push(length);
+      push(`n${sites.length - 1}; /*${fill(distance - 9, "g")}\u2026${lineBreak}*/\n`);
+    };
+
+    declare("\r", 79);
+    // The name is at a checkpoint.
+    declare("\r\n", 80, 1024);
+    declare("\u2028", 81);
+    // A character of four bytes across a checkpoint.
+    commentUpTo(2046 - 2);
+    push("/*\u{1F600}*/\n");
+    declare("\u2029", 79);
+    // CR LF across a checkpoint.
+    commentUpTo(3071);
+    push("\r\n");
+    declare("\n", 80);
+    declare("\r", 81);
+    commentUpTo(5000);
+    push("\n");
+    declare("\u2028", 80);
+    declare("\r\n", 79);
+
+    // Each name again, in turn: a cursor stays at three of the eight notes, and the other five start at a checkpoint.
+    const again = [];
+    for (let round = 0; round < 8; round++) {
+      for (let k = 0; k < sites.length; k++) {
+        push("let ");
+        again.push(length);
+        push(`n${k}; `);
+      }
+      push("\n");
+    }
+    // The end of the file is inside a character.
+    push(`n0(\n//${fill(100, "x")}\u00e9`);
+    const bytes = Buffer.concat(chunks);
+    expect([sites[1], bytes.indexOf("\u{1F600}"), bytes.indexOf("\r\n", 3000)]).toEqual([1024, 2046, 3071]);
+
+    let thrown;
+    try {
+      new Bun.Transpiler({ loader: "js" }).transformSync(bytes);
+    } catch (e) {
+      thrown = e;
+    }
+    const expected = again.map((offset, i) => {
+      const k = i % sites.length;
+      return [
+        [`"n${k}" has already been declared`, ...walkFromTheStart(bytes, offset)],
+        [`"n${k}" was originally declared here`, ...walkFromTheStart(bytes, sites[k])],
+      ];
+    });
+    // The error is on the last byte. The first byte of a character that is cut short counts as one column.
+    const lastLine = walkFromTheStart(bytes, bytes.length - 1);
+    expected.push([["Unexpected end of file", lastLine[0], 2 + 100 + 2, lastLine[2]], undefined]);
+    expect(thrown.errors.map(error => [located(error), error.notes[0] && located(error.notes[0])])).toEqual(expected);
+  });
+
+  for (const [name, { source, error, note }] of Object.entries(cases)) {
+    it(`${name}: the error and its note have their own line, column and text`, () => {
+      let thrown;
+      try {
+        new Bun.Transpiler({ loader: "js" }).transformSync(prefix + source);
+      } catch (e) {
+        thrown = e;
+      }
+      const [first] = thrown.errors ?? [thrown];
+      expect({ error: located(first), note: located(first.notes[0]) }).toEqual({ error, note });
+    });
+  }
 });
 
 describe("multi-line comment scanning", () => {

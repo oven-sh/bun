@@ -7470,6 +7470,1324 @@ test.concurrent("a mock evicts the importers of a required original, also after 
   );
 });
 
+// Without --isolate a test file is linked to the modules that earlier files left loaded. A mock gives it what it gets when it runs alone:
+// every file below passes by itself, and so with --isolate.
+describe.concurrent("a test file that is linked to modules that an earlier test file loaded", () => {
+  const mockFunctions = ["vi.mock", "vi.doMock", "mock.module", "jest.mock", "jest.doMock"];
+  // With --isolate=modules no file gets a module that an earlier one loaded, as with --isolate. It has a test of its own below.
+  const withAndWithoutIsolate = isolationFlags.slice(0, 2);
+
+  // A file that mocks nothing loads the modules before each of `files`, and one gets them as they were after the last. With --isolate no
+  // file gets what another one loaded, so there each of `files` runs as it does alone.
+  async function expectToPassAfterFilesThatMockNothing(
+    modules: Record<string, string>,
+    plain: string,
+    extension: string,
+    files: [name: string, file: string][],
+    args: string[],
+  ) {
+    const all = { ...modules };
+    let count = 0;
+    const add = (name: string, file: string) =>
+      (all[`${String(++count).padStart(2, "0")}-${name}.test.${extension}`] = file);
+    const addPlain = () => args.includes("--isolate") || add("plain", plain);
+    for (const [name, file] of files) {
+      addPlain();
+      add(name, file);
+    }
+    addPlain();
+    await expectFixturesToPass(all, count, args);
+  }
+
+  describe("gets from a mock what it gets when it runs alone", () => {
+    const mocks = (mock: string, ...names: string[]) => `
+      import { jest, mock, vi } from "bun:test";
+      ${names.map(name => `${mock}("${name}", () => ({ send: () => "mock" }));`).join("\n")}
+    `;
+    const modules = {
+      "node_modules/cjs-mail/package.json": `{ "name": "cjs-mail", "main": "index.js" }`,
+      "node_modules/cjs-mail/index.js": `(globalThis.evaluated ??= []).push("cjs-mail"); exports.send = () => "real";`,
+      "node_modules/esm-mail/package.json": `{ "name": "esm-mail", "type": "module", "main": "index.js" }`,
+      "node_modules/esm-mail/index.js": `(globalThis.evaluated ??= []).push("esm-mail"); export const send = () => "real";`,
+      // Vitest gives a package that has "type": "module" the real package, whatever mocks it.
+      "node_modules/uses-esm-mail/package.json": `{ "name": "uses-esm-mail", "type": "module", "main": "index.js" }`,
+      "node_modules/uses-esm-mail/index.js": `import { send } from "esm-mail"; export const sent = () => send();`,
+      "node_modules/requires-cjs-mail/package.json": `{ "name": "requires-cjs-mail", "main": "index.js" }`,
+      "node_modules/requires-cjs-mail/index.js": `exports.sent = () => require("cjs-mail").send();`,
+      "own.ts": `export const send = () => "real";`,
+      "unrelated.ts": `export const x = 1;`,
+      "service.ts": `
+        import { send as cjs } from "cjs-mail";
+        import { send as esm } from "esm-mail";
+        import { send as own } from "./own";
+        (globalThis.evaluated ??= []).push("service");
+        export const sent = () => [cjs(), esm(), own()];
+      `,
+      // Only the files that mock import these two.
+      "uses-service.ts": `
+        import { sent as sentByService } from "./service";
+        (globalThis.evaluated ??= []).push("uses-service");
+        export const sent = () => sentByService();
+      `,
+      "setup.ts": `
+        import "./mocks-vi.mock";
+        (globalThis.evaluated ??= []).push("setup");
+        export * from "./service";
+      `,
+      "at-load.ts": `
+        import { sent } from "./service";
+        export const sentAtLoad = sent();
+      `,
+      // vi.doMock() of a module of the project counts what an earlier file loaded as not loaded, and its importers are loaded again.
+      ...Object.fromEntries(
+        mockFunctions.map(mock => [
+          `mocks-${mock}.ts`,
+          mocks(mock, "cjs-mail", "esm-mail", ...(mock === "vi.doMock" ? [] : ["./own"])),
+        ]),
+      ),
+      "mocks-packages.ts": mocks("vi.mock", "cjs-mail", "esm-mail"),
+      "mocks-packages-swapped.ts": mocks("vi.mock", "esm-mail", "cjs-mail"),
+      "mocks-without-factory.ts": `
+        import { vi } from "bun:test";
+        vi.mock("cjs-mail", { spy: true });
+        vi.mock("esm-mail");
+      `,
+      // The evaluation runs the other imports of the file while this module waits.
+      "mocks-around-await.ts": `
+        import { vi } from "bun:test";
+        vi.doMock("cjs-mail", () => ({ send: () => "mock" }));
+        await null;
+        vi.doMock("esm-mail", () => ({ send: () => "mock" }));
+      `,
+      "mocks-partly.ts": `
+        import { vi } from "bun:test";
+        vi.mock("cjs-mail", async importOriginal => {
+          const original = await importOriginal();
+          return { ...original, send: () => "mock of " + original.send() };
+        });
+        vi.mock("esm-mail", async importOriginal => {
+          const original = await importOriginal();
+          return { ...original, send: () => "mock of " + original.send() };
+        });
+      `,
+      "mocks-partly-with-doMock.ts": `
+        import { vi } from "bun:test";
+        vi.doMock("esm-mail", async importOriginal => {
+          const original = await importOriginal();
+          return { ...original, send: () => "mock of " + original.send() };
+        });
+      `,
+      "setup-partly.ts": `
+        import "./mocks-partly";
+        export * from "./service";
+      `,
+      // The evaluation of the file is at neither of these when the call of import() is made: it comes to the module in a later job.
+      "asks-for-service.ts": `export const asked = import("./service");`,
+      "mocks-and-asks-for-service.ts": `
+        import { vi } from "bun:test";
+        vi.mock("cjs-mail", () => ({ send: () => "mock" }));
+        vi.mock("esm-mail", () => ({ send: () => "mock" }));
+        export const asked = await import("./service");
+      `,
+      // require() gives the object that the module exports under this name, and not its namespace.
+      "exports-module-exports.ts": `
+        import { send as cjs } from "cjs-mail";
+        import { send as esm } from "esm-mail";
+        export const sent = () => [cjs(), esm()];
+        const required = { sent };
+        export { required as "module.exports" };
+      `,
+      "requires-module-exports.ts": `export const sentAtLoad = require("./exports-module-exports").sent();`,
+      "requires-service.ts": `export const sentAtLoad = require("./service").sent();`,
+      "requires-service.cjs": `exports.sentAtLoad = require("./service").sent();`,
+      "requires-service-too.cjs": `exports.sentAtLoad = require("./service").sent();`,
+      "requires-service-too.ts": `export const sentAtLoad = require("./service").sent();`,
+      "requires-setup.ts": `export const setup = require("./setup");`,
+      // The helper has run when the module that mocks does, and waits for the cycle that it is in.
+      "cyclic-setup.ts": `
+        import "./cyclic-helper";
+        import "./mocks-packages";
+        export * from "./service";
+        export const value = 1;
+      `,
+      "cyclic-helper.ts": `
+        import { value } from "./cyclic-setup";
+        export const read = () => value;
+      `,
+      // The module that imports the packages has run when the module that mocks does, and so has the one between them.
+      "cyclic-barrel.ts": `
+        import { vi } from "bun:test";
+        import { render } from "./cyclic-render";
+        export const shared = "shared";
+        export { render };
+        vi.doMock("esm-mail", () => ({ send: () => "mock" }));
+      `,
+      "cyclic-render.ts": `
+        import { shared } from "./cyclic-barrel";
+        import { sent } from "./service";
+        export const render = () => [shared, ...sent()];
+      `,
+      // The evaluation is at the imports of this module, and one of them is its importer.
+      "cyclic-setup-below.ts": `
+        import { value } from "./cyclic-setup-above";
+        import "./mocks-packages";
+        export * from "./service";
+        export const read = () => value;
+      `,
+      "cyclic-setup-above.ts": `
+        export * from "./cyclic-setup-below";
+        export const value = 1;
+      `,
+      // The helper has all of its imports behind it, and waits for the one that awaits and for its cycle.
+      "cyclic-setup-that-waits.ts": `
+        import "./cyclic-helper-that-waits";
+        export * from "./service";
+        import "./mocks-packages";
+        export const value = 1;
+      `,
+      "cyclic-helper-that-waits.ts": `
+        import { value } from "./cyclic-setup-that-waits";
+        import "./awaits";
+        export const read = () => value;
+      `,
+      "awaits.ts": `await null;`,
+      // Alone, this module waits for the import that awaits, and the file's next import runs ahead of it.
+      "mocks-behind-awaits.ts": `
+        import "./awaits";
+        import { vi } from "bun:test";
+        vi.doMock("cjs-mail", () => ({ send: () => "mock" }));
+        vi.doMock("esm-mail", () => ({ send: () => "mock" }));
+      `,
+      "setup-with-deferred.ts": `
+        import "./peer-of-setup-with-deferred";
+        export * from "./service";
+        import defer * as deferred from "./deferred";
+        export const value = 1;
+        export const isReady = () => deferred.isReady;
+      `,
+      "peer-of-setup-with-deferred.ts": `
+        import { value } from "./setup-with-deferred";
+        export const read = () => value;
+      `,
+      "deferred.ts": `
+        import "./awaits-behind-mocks";
+        export const isReady = true;
+      `,
+      "awaits-behind-mocks.ts": `
+        import "./mocks-packages";
+        await null;
+      `,
+      // The module that mocks and the one that imports the packages come ahead of an import back to the module above.
+      "cyclic-setup-that-is-imported-back.ts": `
+        import "./imports-back";
+        export * from "./service";
+        export const value = 1;
+      `,
+      "imports-back.ts": `
+        import "./mocks-packages";
+        import "./service";
+        import { value } from "./cyclic-setup-that-is-imported-back";
+        export const read = () => value;
+      `,
+      "mocks-in-a-cycle.ts": `
+        import { vi } from "bun:test";
+        import { value } from "./setup-in-a-cycle";
+        vi.doMock("cjs-mail", () => ({ send: () => "mock" }));
+        vi.doMock("esm-mail", () => ({ send: () => "mock" }));
+        export const read = () => value;
+      `,
+      "setup-in-a-cycle.ts": `
+        import "./mocks-in-a-cycle";
+        export * from "./service";
+        export const value = 1;
+      `,
+    };
+    const plain = `
+      import { expect, test } from "bun:test";
+      import * as service from "./service";
+      import { sentAtLoad } from "./at-load";
+      import * as library from "uses-esm-mail";
+      import "./unrelated";
+      test("nothing is mocked", async () => {
+        expect([service.sent(), sentAtLoad, library.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"], "real"]);
+        expect(await import("./service")).toBe(service);
+        // A real package is one instance for the whole run.
+        expect(globalThis.evaluated.filter(name => name.endsWith("-mail")).sort()).toEqual(["cjs-mail", "esm-mail"]);
+      });
+    `;
+    const file = (
+      imports: string,
+      name: string,
+      body: string,
+      testApi = `import { beforeAll, expect, jest, mock, test, vi } from "bun:test";`,
+    ) => `
+      ${testApi}
+      ${imports}
+      test(${JSON.stringify(name)}, async () => {
+        ${body}
+      });
+    `;
+    const oneLevelDown = [
+      `import * as setup from "./setup";`,
+      `expect(setup.sent()).toEqual(["mock", "mock", "mock"]);`,
+    ] as const;
+
+    // A child run for every few files: these runs go side by side, and each has the time of one test.
+    describe.each([[mockFunctions.slice(0, 2)], [mockFunctions.slice(2)]])(
+      "from a module that it imports first, with %j",
+      mocks => {
+        test.each(withAndWithoutIsolate)("%j", async args => {
+          const files = mocks.map((mock): [string, string] => [
+            `${mock}-first`,
+            file(
+              `import "./mocks-${mock}"; import * as uses from "./uses-service"; import * as service from "./service";`,
+              `${mock}() reaches what the file imports next`,
+              `expect(uses.sent()).toEqual(["mock", "mock", "${mock === "vi.doMock" ? "real" : "mock"}"]);`,
+            ),
+          ]);
+          // What an earlier file loaded is loaded again at its next import(), and reads the mock while it loads.
+          if (mocks.includes("vi.mock")) {
+            files.push([
+              "the-rest-later",
+              file(
+                `import "./mocks-vi.mock"; import * as service from "./service";`,
+                "a module that the file imports later is evaluated again",
+                `expect([service.sent(), (await import("./at-load")).sentAtLoad]).toEqual([["mock", "mock", "mock"], ["mock", "mock", "mock"]]);`,
+              ),
+            ]);
+          }
+          await expectToPassAfterFilesThatMockNothing(modules, plain, "ts", files, args);
+        });
+      },
+    );
+
+    test.each(withAndWithoutIsolate)("from a module that mocks packages with vi.mock() %j", async args => {
+      const importsPackagesItself = (mocks: string) =>
+        file(
+          `import "./${mocks}"; import * as cjs from "cjs-mail"; import * as esm from "esm-mail"; import * as service from "./service";`,
+          "every call reaches a package that the file imports itself",
+          `expect([cjs.send(), esm.send(), ...service.sent()]).toEqual(["mock", "mock", "mock", "mock", "real"]);`,
+        );
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          ["packages", importsPackagesItself("mocks-packages")],
+          ["packages-swapped", importsPackagesItself("mocks-packages-swapped")],
+          [
+            "without-a-factory",
+            file(
+              `import "./mocks-without-factory"; import * as service from "./service";`,
+              "without a factory",
+              `expect(service.sent()).toEqual(["real", undefined, "real"]);
+               expect(vi.isMockFunction((await import("cjs-mail")).send)).toBe(true);`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    test.each(withAndWithoutIsolate)("from a module that mocks packages, one level down %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          ["one-level-down", file(oneLevelDown[0], "imported one level down", oneLevelDown[1])],
+          [
+            "one-level-down-in-vitest",
+            file(
+              oneLevelDown[0],
+              "imported one level down from a file of vitest",
+              oneLevelDown[1],
+              `import { expect, test } from "vitest";`,
+            ),
+          ],
+          [
+            "import-call",
+            file(
+              ``,
+              "imported first by a module that import() loads",
+              `const setup = await import("./setup");
+               expect(setup.sent()).toEqual(["mock", "mock", "mock"]);`,
+            ),
+          ],
+          // require() evaluates the module that mocks, and what that imports, under the evaluation of the file.
+          [
+            "required",
+            file(
+              `import { setup } from "./requires-setup"; import * as service from "./service";`,
+              "required by a module, ahead of the one that imports the packages",
+              `expect([setup.sent(), service.sent()]).toEqual([["mock", "mock", "mock"], ["mock", "mock", "mock"]]);`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // What has run keeps the real package, and the next import from the project's own code gets the mock. Vitest agrees on the packages of
+    // 'service-first'. It gives the mock in 'around-await': it runs the imports of a file one at a time.
+    test.each(withAndWithoutIsolate)("where a loaded package is left alone %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          [
+            "service-first",
+            file(
+              `import * as service from "./service"; import "./mocks-vi.mock";`,
+              "the module that imports the packages runs before the module that mocks",
+              `expect(service.sent()).toEqual(["real", "real", "mock"]);`,
+            ),
+          ],
+          [
+            "around-await",
+            file(
+              `import "./mocks-around-await"; import * as service from "./service";`,
+              "the module that mocks does so before and after a top-level await",
+              `expect(service.sent()).toEqual(["mock", "real", "real"]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // Vitest rejects the call of 'in-a-test', and agrees on 'not-imported-yet'.
+    test.each(withAndWithoutIsolate)(
+      "where a loaded package is left alone for what the file has imported %j",
+      async args => {
+        await expectToPassAfterFilesThatMockNothing(
+          modules,
+          plain,
+          "ts",
+          [
+            [
+              "in-a-test",
+              file(
+                `import * as service from "./service";`,
+                "the call is made in a test",
+                `vi.mock("esm-mail", () => ({ send: () => "mock" }));
+               expect(service.sent()).toEqual(["real", "real", "real"]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+              ),
+            ],
+            // What the file is not linked to is loaded again, and gets the mock.
+            [
+              "not-imported-yet",
+              file(
+                `import "./mocks-packages";`,
+                "a module that the file imports after the call is evaluated again",
+                `const evaluatedBefore = (globalThis.evaluated ??= []).length;
+               const service = await import("./service");
+               expect(service.sent()).toEqual(["mock", "mock", "real"]);
+               expect(globalThis.evaluated.slice(evaluatedBefore)).toEqual(["service"]);
+               expect(await import("./service")).toBe(service);`,
+              ),
+            ],
+          ],
+          args,
+        );
+      },
+    );
+
+    test.each(withAndWithoutIsolate)("from a test or a hook %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          [
+            "in-a-test",
+            file(
+              `import * as service from "./service";`,
+              "mock.module() in a test",
+              `mock.module("./own", () => ({ send: () => "mock" }));
+               mock.module("esm-mail", () => ({ send: () => "mock" }));
+               expect(service.sent()).toEqual(["real", "mock", "mock"]);`,
+            ),
+          ],
+          [
+            "in-a-hook",
+            file(
+              `import * as service from "./service";
+               beforeAll(() => { jest.mock("cjs-mail", () => ({ send: () => "mock" })); });`,
+              "jest.mock() in a hook",
+              `expect(service.sent()).toEqual(["mock", "real", "real"]);`,
+            ),
+          ],
+          // The end of a mock that updated a package in place evicts what imports the package, also what the file holds. A second mock of the
+          // package ends the first.
+          [
+            "second-mock",
+            `
+              import { expect, test, vi } from "bun:test";
+              import "./mocks-packages";
+              import * as service from "./service";
+              test("a second mock of a package that the first one updated in place", async () => {
+                expect(service.sent()).toEqual(["mock", "mock", "real"]);
+                vi.doMock("esm-mail", () => ({ send: () => "second" }));
+                expect(service.sent()).toEqual(["mock", "real", "real"]);
+                const again = await import("./service");
+                expect(again).not.toBe(service);
+                expect(again.sent()).toEqual(["mock", "second", "real"]);
+              });
+            `,
+          ],
+        ],
+        args,
+      );
+    });
+
+    // A file with a hoisted call, and a file of vitest with two imports, get each import from a call of import(). Nothing is linked to
+    // those modules for the file.
+    test.each(withAndWithoutIsolate)("where its imports are calls of import() %j", async args => {
+      const vitest = `import { expect, test, vi } from "vitest";`;
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          // Its first import has run the module that imports the packages when its second one mocks them.
+          [
+            "vitest-service-first",
+            file(
+              `import * as service from "./service"; import * as setup from "./setup";`,
+              "a file of vitest imports the module before the one that mocks",
+              `expect([service.sent(), setup.sent()]).toEqual([["real", "real", "mock"], ["real", "real", "mock"]]);`,
+              vitest,
+            ),
+          ],
+          [
+            "vitest-setup-first",
+            file(
+              `import * as setup from "./setup"; import { x } from "./unrelated";`,
+              "a file of vitest imports the module that mocks first",
+              `expect([x, ...setup.sent()]).toEqual([1, "mock", "mock", "mock"]);`,
+              vitest,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    test.each(withAndWithoutIsolate)("where a call has given it the modules %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          [
+            "import-call-then-setup",
+            file(
+              ``,
+              "a test imports the module, and the module that mocks after that",
+              `const service = await import("./service");
+               const setup = await import("./setup");
+               expect(setup.sent()).toEqual(["real", "real", "mock"]);`,
+            ),
+          ],
+          // The file's own imports have run the module before the test asks for the module that mocks.
+          [
+            "setup-in-a-test",
+            file(
+              `import * as service from "./service";`,
+              "a test imports the module that mocks, after the file has imported the module",
+              `const setup = await import("./setup");
+               expect([service.sent(), setup.sent()]).toEqual([["real", "real", "mock"], ["real", "real", "mock"]]);`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    test.each(withAndWithoutIsolate)("where a module has called import() or require() %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          // No module is linked to what it requires. Nothing has required the module before.
+          [
+            "required",
+            file(
+              `import { sentAtLoad } from "./requires-service"; import "./mocks-packages"; import * as service from "./service";`,
+              "a module requires the module, and the next one mocks",
+              `expect([sentAtLoad, service.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          // The call of import() is made before the packages are mocked, and its module runs after that.
+          [
+            "import-call-in-flight",
+            file(
+              `import { asked } from "./asks-for-service"; import "./mocks-packages";`,
+              "a module asks import() for the module, and the next one mocks",
+              `const service = await asked;
+               expect(service.sent()).toEqual(["mock", "mock", "real"]);`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // What require() has loaded has run. Nothing says when, or for which file: the files that mock nothing require the module here.
+    const plainThatRequires = `
+      ${plain}
+      import "./requires-service.cjs";
+      import "./requires-service-too.cjs";
+      import "./requires-service-too";
+      import "./requires-module-exports";
+    `;
+    test.each(withAndWithoutIsolate)("where earlier files have required the modules %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plainThatRequires,
+        "ts",
+        [
+          // The first module to require it is its parent, and nothing else says that it required the module.
+          [
+            "required-by-commonjs",
+            file(
+              `import { sentAtLoad } from "./requires-service.cjs"; import "./mocks-packages"; import * as service from "./service";`,
+              "a CommonJS module requires the module, and the next one mocks",
+              `expect([sentAtLoad, service.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          [
+            "required",
+            file(
+              `import { sentAtLoad } from "./requires-service"; import "./mocks-packages"; import * as service from "./service";`,
+              "a module requires the module, and the next one mocks",
+              `expect([sentAtLoad, service.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          // A later module to require it lists it among its children.
+          [
+            "required-by-another",
+            file(
+              `import { sentAtLoad } from "./requires-service-too.cjs"; import "./mocks-packages"; import * as service from "./service";`,
+              "the second CommonJS module to require the module, and the next one mocks",
+              `expect([sentAtLoad, service.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          // An ES module requires through an object that no cache holds.
+          [
+            "required-by-an-es-module",
+            file(
+              `import { sentAtLoad } from "./requires-service-too"; import "./mocks-packages"; import * as service from "./service";`,
+              "an ES module that required the module in an earlier file, and the next one mocks",
+              `expect([sentAtLoad, service.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          // The module object that require() made holds what the module exports as "module.exports", and not its namespace.
+          [
+            "required-what-exports-module-exports",
+            file(
+              `import { sentAtLoad } from "./requires-module-exports"; import "./mocks-packages"; import * as service from "./exports-module-exports";`,
+              "a module required a module that exports what require() returns, and the next one mocks",
+              `expect([sentAtLoad, service.sent()]).toEqual([["real", "real"], ["real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // A module that stays loaded does not ask import() again for a later file. What it asked for in an earlier file has run for a file that
+    // has the module behind it, as when that file runs alone.
+    const plainThatAsks = `
+      ${plain}
+      import "./asks-for-service";
+    `;
+    test.each(withAndWithoutIsolate)(
+      "where a module of an earlier file has asked import() for the module %j",
+      async args => {
+        await expectToPassAfterFilesThatMockNothing(
+          modules,
+          plainThatAsks,
+          "ts",
+          [
+            [
+              "asked-by-what-the-file-imports",
+              file(
+                `import { asked } from "./asks-for-service";`,
+                "a test imports the module that mocks, after a module that the file imports has asked",
+                `await asked;
+               const setup = await import("./setup");
+               expect(setup.sent()).toEqual(["real", "real", "mock"]);`,
+              ),
+            ],
+            [
+              "asked-by-what-the-file-does-not-import",
+              file(
+                `import "./mocks-packages"; import * as service from "./service";`,
+                "the file does not import the module that asked",
+                `expect(service.sent()).toEqual(["mock", "mock", "real"]);`,
+              ),
+            ],
+          ],
+          args,
+        );
+      },
+    );
+
+    // Alone, the module that mocks waits for its import that awaits, and the module that imports the packages runs ahead of it. Here an
+    // earlier file has evaluated the import that awaits, so nothing waits.
+    test.each(withAndWithoutIsolate)("where the module that mocks imports a module that awaits %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        `${plain}
+         import "./awaits";`,
+        "ts",
+        [
+          [
+            "mocks-behind-awaits",
+            file(
+              `import "./mocks-behind-awaits"; import * as service from "./service";`,
+              "an earlier file has evaluated the import that awaits",
+              `expect(service.sent()).toEqual(["real", "real", "real"]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // The module that mocks is evaluated again for each file that imports it, and asks again. What it asked for in an earlier file says
+    // nothing once it has left the registry.
+    test.each(withAndWithoutIsolate)("where the module that mocks asks import() for the module %j", async args => {
+      const mocksAndAsks = (name: string): [string, string] => [
+        name,
+        file(
+          `import "./mocks-and-asks-for-service"; import * as service from "./service";`,
+          "the module that mocks asks import() for the module after that",
+          `expect(service.sent()).toEqual(["mock", "mock", "real"]);`,
+        ),
+      ];
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          mocksAndAsks("mocks-and-asks"),
+          mocksAndAsks("mocks-and-asks-again"),
+          [
+            "another-module-mocks",
+            file(
+              `import "./mocks-packages"; import * as service from "./service";`,
+              "another module mocks after the one that asked has gone",
+              `expect(service.sent()).toEqual(["mock", "mock", "real"]);`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // A module of an import cycle that has run waits for the rest of the cycle. The evaluation is not at its imports.
+    test.each(withAndWithoutIsolate)("in an import cycle %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          [
+            "mocks-behind-a-cycle",
+            file(
+              `import * as setup from "./cyclic-setup";`,
+              "a module imports its importer back, ahead of the module that mocks",
+              `expect(setup.sent()).toEqual(["mock", "mock", "real"]);`,
+            ),
+          ],
+          [
+            "imported-back-later",
+            file(
+              `import * as setup from "./cyclic-setup-that-is-imported-back";`,
+              "a module imports its importer back, behind the module that mocks and the one that imports the packages",
+              `expect(setup.sent()).toEqual(["mock", "mock", "real"]);`,
+            ),
+          ],
+          [
+            "mocks-after-its-cycle",
+            file(
+              `import { render } from "./cyclic-barrel"; import * as service from "./service";`,
+              "the module that mocks does so after the modules of its cycle have run",
+              `expect([render(), service.sent()]).toEqual([["shared", "real", "real", "real"], ["real", "real", "real"]]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          [
+            "importer-among-the-imports",
+            file(
+              `import * as setup from "./cyclic-setup-above";`,
+              "the module that is at its imports lists its importer ahead of the module that mocks",
+              `expect(setup.sent()).toEqual(["mock", "mock", "real"]);`,
+            ),
+          ],
+          [
+            "waits-in-a-cycle",
+            file(
+              `import * as setup from "./cyclic-setup-that-waits";`,
+              "a module of the cycle waits for an import that awaits",
+              `expect(setup.sent()).toEqual(["real", "real", "real"]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          [
+            "mocks-in-a-cycle",
+            file(
+              `import * as setup from "./setup-in-a-cycle";`,
+              "the module that mocks imports its importer back",
+              `expect(setup.sent()).toEqual(["mock", "mock", "real"]);`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // The modules that await below an `import defer` run where the statement stands: here, behind the module that imports the packages.
+    test.each(withAndWithoutIsolate)("with an import that is deferred %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          [
+            "deferred-that-awaits",
+            file(
+              `import * as setup from "./setup-with-deferred";`,
+              "a module that awaits below the deferred import mocks",
+              `expect([setup.isReady(), ...setup.sent()]).toEqual([true, "real", "real", "real"]);
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    test.each(withAndWithoutIsolate)("from a factory that takes the original %j", async args => {
+      const expectPartlyMocked = `expect((await vi.importActual("esm-mail")).send()).toBe("real");`;
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        plain,
+        "ts",
+        [
+          [
+            "first",
+            file(
+              `import "./mocks-partly"; import * as service from "./service";`,
+              "the module that mocks is imported first",
+              `expect(service.sent()).toEqual(["mock of real", "mock of real", "real"]);
+               ${expectPartlyMocked}`,
+            ),
+          ],
+          [
+            "one-level-down",
+            file(
+              `import * as setup from "./setup-partly";`,
+              "the module that mocks is imported one level down",
+              `expect(setup.sent()).toEqual(["mock of real", "mock of real", "real"]);
+               ${expectPartlyMocked}`,
+            ),
+          ],
+          [
+            "with-doMock",
+            file(
+              `import "./mocks-partly-with-doMock"; import * as service from "./service";`,
+              "vi.doMock() in the module that is imported first",
+              `expect(service.sent()).toEqual(["real", "mock of real", "real"]);
+               ${expectPartlyMocked}`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // Vitest gives a package that has "type": "module" the real package. Only the project's own code gets the mock.
+    // Here each file follows another file that mocks. What that one updated in place is as it was again when it ends.
+    test("where each file follows another file that mocks", async () => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "1.test.ts": plain,
+          "2.test.ts": file(
+            `import "./mocks-vi.mock"; import * as service from "./service";`,
+            "the module that mocks is imported first",
+            `expect(service.sent()).toEqual(["mock", "mock", "mock"]);`,
+          ),
+          "3.test.ts": file(oneLevelDown[0], "imported one level down", oneLevelDown[1]),
+          "4.test.ts": file(
+            `import * as service from "./service"; import "./mocks-vi.mock";`,
+            "the module that imports the packages runs before the module that mocks",
+            `expect(service.sent()).toEqual(["real", "real", "mock"]);`,
+          ),
+          "5.test.ts": file(
+            `import * as service from "./service";`,
+            "the call is made in a test",
+            `vi.mock("esm-mail", () => ({ send: () => "mock" }));
+             expect(service.sent()).toEqual(["real", "real", "real"]);
+             expect((await import("esm-mail")).send()).toBe("mock");`,
+          ),
+          "6.test.ts": file(
+            `import * as setup from "./cyclic-setup";`,
+            "a module imports its importer back, ahead of the module that mocks",
+            `expect(setup.sent()).toEqual(["mock", "mock", "real"]);`,
+          ),
+          "7.test.ts": plain,
+        },
+        7,
+      );
+    });
+
+    test.each(withAndWithoutIsolate)("where only a package imports the mocked package %j", async args => {
+      await expectToPassAfterFilesThatMockNothing(
+        modules,
+        `${plain}
+         import "requires-cjs-mail";`,
+        "ts",
+        [
+          [
+            "package",
+            file(
+              `import "./mocks-packages"; import * as library from "uses-esm-mail";`,
+              "a package that the earlier file loaded imports the mocked one",
+              `expect(library.sent()).toBe("real");
+               expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          ],
+          // An update in place would reach this package. Nothing that the evaluation has yet to reach imports the mocked one: the module
+          // that does is not among the imports of this file.
+          [
+            "package-that-requires",
+            file(
+              `import "./mocks-packages"; import library from "requires-cjs-mail"; import "./unrelated";`,
+              "a package requires the mocked one in a call, and no import of the file imports it",
+              `expect(library.sent()).toBe("real");`,
+            ),
+          ],
+        ],
+        args,
+      );
+    });
+
+    // Each run of --rerun-each gets the modules of the run before it, as a later file gets those of an earlier one.
+    test.each([[["--rerun-each=2"]], [["--rerun-each=2", "--isolate"]]])(
+      "in a second run of the same file %j",
+      async args => {
+        await expectFixturesToPass(
+          {
+            ...modules,
+            "in-a-test.test.ts": file(
+              `import * as service from "./service";`,
+              "the call is made in a test",
+              `vi.mock("esm-mail", () => ({ send: () => "mock" }));
+             expect(service.sent()).toEqual(["real", "real", "real"]);
+             expect((await import("esm-mail")).send()).toBe("mock");`,
+            ),
+          },
+          2,
+          args,
+        );
+      },
+    );
+  });
+
+  describe("after a file in which an import failed", () => {
+    const modules = {
+      "node_modules/esm-mail/package.json": `{ "name": "esm-mail", "type": "module", "main": "index.js" }`,
+      "node_modules/esm-mail/index.js": `export const send = () => "real";`,
+      "service.ts": `
+        import { send } from "esm-mail";
+        (globalThis.evaluated ??= []).push("service");
+        export const sent = () => send();
+      `,
+      "mocks.ts": `
+        import { vi } from "bun:test";
+        vi.mock("esm-mail", () => ({ send: () => "mock" }));
+      `,
+      "setup.ts": `
+        import "./mocks";
+        export * from "./service";
+      `,
+      "throws.ts": `throw new Error("throws");`,
+      // The import fails at its first import. The others are linked and never run.
+      "broken.ts": `
+        import "./throws";
+        import "./setup";
+      `,
+      // The module between them is linked and never runs either: nothing has it.
+      "broken-service.ts": `
+        import "./throws";
+        import "./uses-service";
+      `,
+      "uses-service.ts": `export * from "./service";`,
+      "plain.test.ts": `
+        import { expect, test } from "bun:test";
+        import * as service from "./service";
+        test("nothing is mocked", () => expect(service.sent()).toBe("real"));
+      `,
+    };
+
+    // The modules that the failed import left linked run for the next file, whichever file fetched them.
+    test.each(withAndWithoutIsolate)("gets the mock from modules that the failed import left linked %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "1.test.ts": `
+            import { expect, test } from "bun:test";
+            import * as service from "./service";
+            test("an import fails", async () => {
+              await expect(import("./broken")).rejects.toThrow("throws");
+              expect(service.sent()).toBe("real");
+            });
+          `,
+          "2.test.ts": `
+            import { expect, test } from "bun:test";
+            import * as setup from "./setup";
+            test("the module that mocks is imported one level down", async () => {
+              expect(setup.sent()).toBe("mock");
+            });
+          `,
+        },
+        3,
+        args,
+      );
+    });
+
+    // No module of the running test file is above them then: an evaluation is at them, and that is enough.
+    test.each(withAndWithoutIsolate)(
+      "gets the mock from modules that the failed import left linked, from import() too %j",
+      async args => {
+        await expectFixturesToPass(
+          {
+            ...modules,
+            "1.test.ts": `
+            import { expect, test } from "bun:test";
+            import * as service from "./service";
+            test("an import fails", async () => {
+              await expect(import("./broken")).rejects.toThrow("throws");
+              expect(service.sent()).toBe("real");
+            });
+          `,
+            "2.test.ts": `
+            import { expect, test } from "bun:test";
+            test("a test imports the module that mocks", async () => {
+              const setup = await import("./setup");
+              expect(setup.sent()).toBe("mock");
+            });
+          `,
+          },
+          3,
+          args,
+        );
+      },
+    );
+
+    // A module that failed holds nothing: what it was linked to is loaded again, and gets the mock.
+    test.each(withAndWithoutIsolate)("does not keep what its own failed import was linked to %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "1.test.ts": modules["plain.test.ts"],
+          "2.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            test("a mock after an import that failed", async () => {
+              await expect(import("./broken-service")).rejects.toThrow("throws");
+              const evaluated = (globalThis.evaluated ??= []).length;
+              vi.mock("esm-mail", () => ({ send: () => "mock" }));
+              expect((await import("./service")).sent()).toBe("mock");
+              expect(globalThis.evaluated.slice(evaluated)).toEqual(["service"]);
+            });
+          `,
+        },
+        3,
+        args,
+      );
+    });
+
+    // The import ran the module that imports the package before it failed. The module has run for the file, as when the file runs alone.
+    test.each(withAndWithoutIsolate)("counts what its own failed import ran %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "broken-after-service.ts": `
+            import "./service";
+            import "./throws";
+          `,
+          "1.test.ts": modules["plain.test.ts"],
+          "2.test.ts": `
+            import { expect, test } from "bun:test";
+            test("the module that mocks is imported after an import that failed", async () => {
+              await expect(import("./broken-after-service")).rejects.toThrow("throws");
+              const setup = await import("./setup");
+              expect(setup.sent()).toBe("real");
+              expect((await import("esm-mail")).send()).toBe("mock");
+            });
+          `,
+        },
+        3,
+        args,
+      );
+    });
+  });
+
+  describe("after a hook of a preload has loaded the modules", () => {
+    const modules = {
+      "node_modules/esm-mail/package.json": `{ "name": "esm-mail", "type": "module", "main": "index.js" }`,
+      "node_modules/esm-mail/index.js": `export const send = () => "real";`,
+      "service.ts": `
+        import { send } from "esm-mail";
+        export const sent = () => send();
+      `,
+      "1.test.ts": `
+        import { expect, test } from "bun:test";
+        import * as service from "./service";
+        test("nothing is mocked", () => expect(service.sent()).toBe("real"));
+      `,
+    };
+    // The hook runs once for all the files of a run, and for each file where a file has modules of its own. What it imports has run
+    // when the file mocks, as when the file runs alone.
+    const imports = {
+      ...modules,
+      "mocks.ts": `
+        import { vi } from "bun:test";
+        vi.mock("esm-mail", () => ({ send: () => "mock" }));
+      `,
+      "setup.ts": `
+        import "./mocks";
+        export * from "./service";
+      `,
+      "preload.ts": `
+        import { beforeAll } from "bun:test";
+        beforeAll(async () => {
+          await import("./service");
+        });
+      `,
+      "2.test.ts": `
+        import { expect, test } from "bun:test";
+        test("the module that mocks is imported one level down", async () => {
+          const setup = await import("./setup");
+          expect(setup.sent()).toBe("real");
+          expect((await import("esm-mail")).send()).toBe("mock");
+        });
+      `,
+    };
+    test.each([[["--preload=./preload.ts"]], [["--preload=./preload.ts", "--isolate"]]])(
+      "gets the real package from a module that the hook imported %j",
+      async args => {
+        await expectFixturesToPass(imports, 2, args);
+      },
+    );
+
+    // What the preload itself imports is the preload's: nothing updates it for a test file.
+    test.each([[["--preload=./preload.ts"]], [["--preload=./preload.ts", "--isolate"]]])(
+      "leaves the package real for a module that the preload imports %j",
+      async args => {
+        await expectFixturesToPass(
+          {
+            ...modules,
+            "mocks.ts": imports["mocks.ts"],
+            "preload.ts": `import "./service";`,
+            "2.test.ts": `
+              import { expect, test } from "bun:test";
+              import "./mocks";
+              import * as service from "./service";
+              test("the module that mocks is imported first", () => expect(service.sent()).toBe("real"));
+            `,
+          },
+          2,
+          args,
+        );
+      },
+    );
+
+    // A debug build takes more than a second to give a file a module graph of its own, so these don't share the machine with other tests.
+    describe.serial("with --isolate=modules", () => {
+      test("gets the real package from a module that the hook imported", async () => {
+        await expectFixturesToPass(imports, 2, ["--preload=./preload.ts", "--isolate=modules"]);
+      });
+
+      // The hook loads the module for each file. Which file fetched a module by the same name in an earlier graph says nothing.
+      test("keeps what the hook has required", async () => {
+        await expectFixturesToPass(
+          {
+            ...modules,
+            "preload.ts": `
+              import { beforeAll } from "bun:test";
+              beforeAll(() => {
+                globalThis.service = require("./service");
+              });
+            `,
+            "2.test.ts": `
+              import { expect, test, vi } from "bun:test";
+              test("a mock in a test", async () => {
+                vi.doMock("esm-mail", () => ({ send: () => "mock" }));
+                const service = await import("./service");
+                expect(service.sent).toBe(globalThis.service.sent);
+                expect(service.sent()).toBe("real");
+              });
+            `,
+          },
+          2,
+          ["--preload=./preload.ts", "--isolate=modules"],
+        );
+      });
+    });
+  });
+
+  // vi.doMock() of a module of the project counts what an earlier file loaded as not loaded. The file alone gets the mock in the module that it
+  // imports next: here that module is linked already, and nothing updates a module of the project for it.
+  test("vi.doMock() of a module of the project reaches the next import(), not what the file is linked to", async () => {
+    await expectFixturesToPass(
+      {
+        "own.ts": `export const send = () => "real";`,
+        "service.ts": `
+          import { send } from "./own";
+          export const sent = () => send();
+        `,
+        "mocks.ts": `
+          import { vi } from "bun:test";
+          vi.doMock("./own", () => ({ send: () => "mock" }));
+        `,
+        "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as service from "./service";
+          test("nothing is mocked", () => expect(service.sent()).toBe("real"));
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import * as service from "./service";
+          test("the module that mocks is imported first", async () => {
+            expect(service.sent()).toBe("real");
+            expect((await import("./service")).sent()).toBe("mock");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  // No module is linked to what it requires in a call. After a mock the next call loads the module again, also where the file is linked to
+  // the module that makes the call, and an earlier file has made it.
+  test.each(withAndWithoutIsolate)("loads again what an earlier file required in a call %j", async args => {
+    const mocks = `
+      vi.mock("cjs-mail", () => ({ send: () => "mock" }));
+      vi.mock("esm-mail", () => ({ send: () => "mock" }));
+    `;
+    await expectFixturesToPass(
+      {
+        "node_modules/cjs-mail/package.json": `{ "name": "cjs-mail", "main": "index.js" }`,
+        "node_modules/cjs-mail/index.js": `exports.send = () => "real";`,
+        "node_modules/esm-mail/package.json": `{ "name": "esm-mail", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-mail/index.js": `export const send = () => "real";`,
+        "reads-at-load.cjs": `
+          const cjs = require("cjs-mail");
+          const esm = require("esm-mail");
+          exports.sent = () => [cjs.send(), esm.send()];
+        `,
+        "lazy.ts": `export const sent = () => require("./reads-at-load.cjs").sent();`,
+        "lazy.cjs": `exports.sent = () => require("./reads-at-load.cjs").sent();`,
+        "mocks.ts": `import { vi } from "bun:test"; ${mocks}`,
+        "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import { sent } from "./lazy";
+          import lazy from "./lazy.cjs";
+          test("nothing is mocked", () => expect([sent(), lazy.sent()]).toEqual([["real", "real"], ["real", "real"]]));
+        `,
+        "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import { sent } from "./lazy";
+          import lazy from "./lazy.cjs";
+          test("the module that mocks is imported first", () => expect([sent(), lazy.sent()]).toEqual([["mock", "mock"], ["mock", "mock"]]));
+        `,
+        "3.test.ts": `
+          import { expect, test } from "bun:test";
+          import { sent } from "./lazy";
+          import "./mocks";
+          test("the module that mocks is imported second", () => expect(sent()).toEqual(["mock", "mock"]));
+        `,
+        "4.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import lazy from "./lazy.cjs";
+          test("a mock in a test", () => {
+            ${mocks}
+            expect(lazy.sent()).toEqual(["mock", "mock"]);
+          });
+        `,
+        "5.test.ts": `
+          import { expect, test } from "bun:test";
+          import { sent } from "./lazy";
+          test("nothing is mocked", () => expect(sent()).toEqual(["real", "real"]));
+        `,
+      },
+      5,
+      args,
+    );
+  });
+
+  // After an earlier file the factory's object is written over the exports of the loaded module: a name that it omits keeps its value. Alone,
+  // and with --isolate, the mock is a module of its own, and a read of that name throws `No "other" export is defined on the mock`.
+  test.todo("a hoisted mock of a module of the project that an earlier file loaded takes the place of the module");
+
+  // The module is not evaluated again for the file that is linked to it. With --isolate it is.
+  test.each([
+    [[], "real"],
+    [["--isolate"], "mock"],
+  ] as [string[], string][])(
+    "what a module read from a package while an earlier file loaded it stays %j",
+    async (args, atLoad) => {
+      await expectFixturesToPass(
+        {
+          "node_modules/esm-mail/package.json": `{ "name": "esm-mail", "type": "module", "main": "index.js" }`,
+          "node_modules/esm-mail/index.js": `export const send = () => "real";`,
+          "service.ts": `
+          import { send } from "esm-mail";
+          export const sentAtLoad = send();
+          export const sent = () => send();
+        `,
+          "mocks.ts": `
+          import { vi } from "bun:test";
+          vi.mock("esm-mail", () => ({ send: () => "mock" }));
+        `,
+          "1.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as service from "./service";
+          test("nothing is mocked", () => expect([service.sent(), service.sentAtLoad]).toEqual(["real", "real"]));
+        `,
+          "2.test.ts": `
+          import { expect, test } from "bun:test";
+          import "./mocks";
+          import * as service from "./service";
+          test("its functions get the mock", () => expect([service.sent(), service.sentAtLoad]).toEqual(["mock", "${atLoad}"]));
+        `,
+        },
+        2,
+        args,
+      );
+    },
+  );
+});
+
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.
 test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a valid UTF-8 escape", async () => {
   using dir = tempDir("mock-module-percent", {

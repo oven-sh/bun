@@ -820,6 +820,15 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     // Preloads run again for the next file and re-register their plugins and mocks.
     globalObject->onLoadPlugins.clear();
     globalObject->onResolvePlugins.clear();
+    // The next file loads nothing that an earlier one fetched or imported, as with a global object of its own.
+    globalObject->onLoadPlugins.testFileOfModule.clear();
+    globalObject->onLoadPlugins.testFile = 1;
+    globalObject->onLoadPlugins.modulesImportedSinceTestFileStarted.clear();
+    globalObject->onLoadPlugins.importCallsOfOtherModules.clear();
+    globalObject->onLoadPlugins.lastImporterByCall = String();
+    globalObject->onLoadPlugins.modulesEvictedByTestFile.clear();
+    globalObject->onLoadPlugins.requireKeysEvictedByTestFile.clear();
+    globalObject->onLoadPlugins.modulesMockedByTestFile.clear();
     // The runner restores the working directory.
     globalObject->processObject()->clearCachedCwd();
 }

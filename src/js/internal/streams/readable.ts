@@ -906,7 +906,14 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     // flowing again.
     // So, if this is awaiting a drain, then we just call it now.
     // If we don't know, then assume that we are waiting for one.
-    if (ondrain && state.awaitDrainWriters && (!dest._writableState || dest._writableState.needDrain)) ondrain();
+    // nodejs/node#64310 removed the needDrain test. A destroyed source keeps it: Bun's resume() still runs on one.
+    if (
+      ondrain &&
+      state.awaitDrainWriters &&
+      ((state[kState] & kDestroyed) === 0 || !dest._writableState || dest._writableState.needDrain)
+    ) {
+      ondrain();
+    }
   }
 
   function pause() {

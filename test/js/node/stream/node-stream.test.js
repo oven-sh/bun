@@ -1,11 +1,22 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { EventEmitter, once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import {
+  Duplex,
+  duplexPair,
+  finished,
+  PassThrough,
+  pipeline,
+  Readable,
+  Stream,
+  Transform,
+  Writable,
+} from "node:stream";
 import { text } from "node:stream/consumers";
-import { finished as finishedP } from "node:stream/promises";
+import { finished as finishedP, pipeline as pipelineP } from "node:stream/promises";
 import { join } from "path";
 
 describe("Readable", () => {
@@ -2040,4 +2051,645 @@ it("Readable.fromWeb's native source accepts pull(view) without the flags array"
   } finally {
     delete Object.prototype.setFlowing;
   }
+});
+
+// A write that fails in its own call makes write() return false, and no "drain" follows it.
+describe("pipe() goes on for the other consumers once a destination that failed a write is gone (nodejs/node#64310)", () => {
+  // These streams do all of their work in process.nextTick() callbacks and promise jobs, and all of those run
+  // ahead of a setImmediate() callback: this waits for the pipe to come to rest, not for time to pass.
+  const atRest = () => new Promise(resolve => setImmediate(resolve));
+
+  function source(events) {
+    const chunks = ["a", "b", "c"];
+    const readable = new Readable({
+      read() {
+        this.push(chunks.length ? chunks.shift() : null);
+      },
+    });
+    readable.on("end", () => events.push("end"));
+    return readable;
+  }
+
+  function sink(events, name = "good") {
+    const writable = new Writable({
+      write(chunk, encoding, callback) {
+        events.push(`${name} got ${chunk}`);
+        callback();
+      },
+    });
+    writable.on("finish", () => events.push(`${name} finish`));
+    return writable;
+  }
+
+  function failing(events, write = (chunk, encoding, callback) => callback(new Error("fail"))) {
+    const writable = new Writable({ write });
+    writable.on("error", err => events.push(`bad error: ${err.message}`));
+    return writable;
+  }
+
+  const settles = (events, name, promise) =>
+    promise.then(
+      () => events.push(`${name} settled`),
+      err => events.push(`${name} rejected: ${err.message}`),
+    );
+
+  const theRest = ["good got b", "good got c", "end", "good finish"];
+
+  // Each row is what Node v26.12.1 prints. Node v26.3.0 stops where the failing sink leaves, in all but the two controls.
+  it.each([
+    [
+      "the failing sink is piped first",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
+      "the failing sink is piped last",
+      (readable, events) => {
+        readable.pipe(sink(events));
+        readable.pipe(failing(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
+      "the sink destroys itself inside write()",
+      (readable, events) => {
+        readable.pipe(
+          failing(events, function (chunk, encoding, callback) {
+            this.destroy(new Error("fail"));
+            callback();
+          }),
+        );
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
+      "the sink destroys itself inside write() with no error",
+      (readable, events) => {
+        const bad = new Writable({
+          write(chunk, encoding, callback) {
+            this.destroy();
+            callback();
+          },
+        });
+        bad.on("close", () => events.push("bad close"));
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad close", ...theRest],
+    ],
+    [
+      "write() throws",
+      (readable, events) => {
+        readable.pipe(
+          failing(events, () => {
+            throw new Error("fail");
+          }),
+        );
+        readable.pipe(sink(events));
+      },
+      ["good got a", "good got b", "bad error: fail", "good got c", "end", "good finish"],
+    ],
+    [
+      "the second write fails",
+      (readable, events) => {
+        let writes = 0;
+        readable.pipe(
+          failing(events, (chunk, encoding, callback) => callback(++writes === 2 ? new Error("fail") : null)),
+        );
+        readable.pipe(sink(events));
+      },
+      ["good got a", "good got b", "bad error: fail", "good got c", "end", "good finish"],
+    ],
+    [
+      "a sink whose own write() answers false, and that fails a tick later",
+      (readable, events) => {
+        const bad = failing(events);
+        bad.write = () => {
+          process.nextTick(() => bad.destroy(new Error("fail")));
+          return false;
+        };
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
+      "three sinks, the one in the middle fails",
+      (readable, events) => {
+        readable.pipe(sink(events, "first"));
+        readable.pipe(failing(events));
+        readable.pipe(sink(events, "last"));
+      },
+      [
+        "first got a",
+        "last got a",
+        "bad error: fail",
+        "first got b",
+        "last got b",
+        "first got c",
+        "last got c",
+        "end",
+        "first finish",
+        "last finish",
+      ],
+    ],
+    [
+      "a PassThrough is the other sink",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        const copy = readable.pipe(new PassThrough());
+        copy.on("data", chunk => events.push(`copy got ${chunk}`));
+        copy.on("end", () => events.push("copy end"));
+      },
+      ["copy got a", "bad error: fail", "copy got b", "copy got c", "end", "copy end"],
+    ],
+    [
+      "a 'data' listener added ahead of pipe()",
+      (readable, events) => {
+        readable.on("data", chunk => events.push(`data ${chunk}`));
+        readable.pipe(failing(events));
+      },
+      ["data a", "bad error: fail", "data b", "data c", "end"],
+    ],
+    [
+      "a 'data' listener added behind pipe()",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        readable.on("data", chunk => events.push(`data ${chunk}`));
+      },
+      ["data a", "bad error: fail", "data b", "data c", "end"],
+    ],
+    [
+      "events.once(readable, 'end') beside a 'data' listener",
+      (readable, events) => {
+        readable.on("data", chunk => events.push(`data ${chunk}`));
+        readable.pipe(failing(events));
+        settles(events, "once", once(readable, "end"));
+      },
+      ["data a", "bad error: fail", "data b", "data c", "end", "once settled"],
+    ],
+    [
+      "pipeline(readable, sink, callback)",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        pipeline(readable, sink(events), err => events.push(`pipeline called back: ${err?.message ?? "no error"}`));
+      },
+      ["good got a", "bad error: fail", ...theRest, "pipeline called back: no error"],
+    ],
+    [
+      "promises.pipeline(readable, sink)",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        settles(events, "pipeline", pipelineP(readable, sink(events)));
+      },
+      ["good got a", "bad error: fail", ...theRest, "pipeline settled"],
+    ],
+    [
+      "promises.finished(readable)",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        readable.pipe(sink(events));
+        settles(events, "finished", finishedP(readable));
+      },
+      ["good got a", "bad error: fail", ...theRest, "finished settled"],
+    ],
+    [
+      "an 'unpipe' listener that reads a chunk, so that nobody is on record as waited for",
+      (readable, events) => {
+        const bad = failing(events);
+        bad.on("unpipe", () => readable.read());
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "good got b", "bad error: fail", "good got c", "end", "good finish"],
+    ],
+    [
+      "unpipe() in the failing sink's 'error' handler",
+      (readable, events) => {
+        const bad = failing(events);
+        bad.on("error", () => readable.unpipe(bad));
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
+      "unpipe() with no argument in the tick of the failed write, beside a 'data' listener",
+      (readable, events) => {
+        readable.pipe(failing(events));
+        readable.once("data", () => readable.unpipe());
+        readable.on("data", chunk => events.push(`data ${chunk}`));
+      },
+      ["data a", "data b", "data c", "end", "bad error: fail"],
+    ],
+    [
+      "control: resume() in the failing sink's 'error' handler",
+      (readable, events) => {
+        const bad = failing(events);
+        bad.on("error", () => readable.resume());
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+      },
+      ["good got a", "bad error: fail", ...theRest],
+    ],
+    [
+      "control: the failure comes one tick later",
+      (readable, events) => {
+        readable.pipe(failing(events, (chunk, encoding, callback) => process.nextTick(callback, new Error("fail"))));
+        readable.pipe(sink(events));
+      },
+      ["good got a", "good got b", "good got c", "end", "bad error: fail", "good finish"],
+    ],
+  ])("%s", async (name, pipes, expected) => {
+    const events = [];
+    pipes(source(events), events);
+    await atRest();
+    expect(events).toEqual(expected);
+  });
+
+  it("the source still waits for a sink that has not drained", async () => {
+    const events = [];
+    const readable = source(events);
+    let drain;
+    const slow = new Writable({
+      highWaterMark: 1,
+      write(chunk, encoding, callback) {
+        events.push(`slow got ${chunk}`);
+        drain = callback;
+      },
+    });
+    slow.on("finish", () => events.push("slow finish"));
+    readable.pipe(failing(events));
+    readable.pipe(slow);
+
+    await atRest();
+    expect(events.splice(0)).toEqual(["slow got a", "bad error: fail"]);
+    drain();
+    await atRest();
+    expect(events.splice(0)).toEqual(["slow got b"]);
+    drain();
+    await atRest();
+    expect(events.splice(0)).toEqual(["slow got c", "end"]);
+    drain();
+    await atRest();
+    expect(events.splice(0)).toEqual(["slow finish"]);
+  });
+
+  // process.stdout over a pipe answers false while the pipe is full and leaves needDrain clear, as the row of the
+  // sink with its own write() does. When its reader goes away, as `head` does, the write fails later.
+  it("a tee into process.stdout and a sink: the sink gets everything when the reader of stdout goes away", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Readable, Writable } = require("node:stream");
+        let left = 64;
+        const source = new Readable({ read() { this.push(left-- > 0 ? Buffer.alloc(64 * 1024, "x") : null); } });
+        let bytes = 0;
+        const sink = new Writable({ write(chunk, encoding, callback) { bytes += chunk.length; callback(); } });
+        sink.on("finish", () => console.error("sink finish"));
+        process.stdout.on("error", () => {});
+        process.on("exit", () => console.error("sink got " + bytes));
+        source.pipe(process.stdout);
+        source.pipe(sink);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    await reader.cancel();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ sink: stderr.split(/\r?\n/).filter(line => line.startsWith("sink ")), exitCode }).toEqual({
+      sink: ["sink finish", "sink got 4194304"],
+      exitCode: 0,
+    });
+  });
+
+  const drainedOnce = () =>
+    new Writable({
+      highWaterMark: 1,
+      write(chunk, encoding, callback) {
+        process.nextTick(callback);
+      },
+    });
+
+  // With two or more pipes the record of who waits for a drain is a Set, and an empty Set is truthy: the release
+  // also runs for a destination that waits for nothing. These are the outputs of Node v26.12.1, not of v26.3.0.
+  describe("what the release also does, as in Node v26.12.1", () => {
+    it("unpipe() of a destination that waited once resumes a source that the program paused", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const waitedOnce = drainedOnce();
+      readable.pipe(waitedOnce);
+      readable.pipe(sink(events));
+      readable.push("a");
+      await atRest();
+      readable.pause();
+      readable.unpipe(waitedOnce);
+      const paused = readable.isPaused();
+      readable.push("b");
+      await atRest();
+      expect({ paused, events, buffered: readable.readableLength }).toEqual({
+        paused: false,
+        events: ["good got a", "good got b"],
+        buffered: 0,
+      });
+    });
+
+    it("with one pipe the source stays paused", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const waitedOnce = drainedOnce();
+      readable.on("data", chunk => events.push(`data ${chunk}`));
+      readable.pipe(waitedOnce);
+      readable.push("a");
+      await atRest();
+      readable.pause();
+      readable.unpipe(waitedOnce);
+      const paused = readable.isPaused();
+      readable.push("b");
+      await atRest();
+      expect({ paused, events, buffered: readable.readableLength }).toEqual({
+        paused: true,
+        events: ["data a"],
+        buffered: 1,
+      });
+    });
+
+    // The record stays a Set when the second pipe is gone.
+    it("with one pipe that is left of two the source does not stay paused", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const waitedOnce = drainedOnce();
+      readable.on("data", chunk => events.push(`data ${chunk}`));
+      readable.pipe(waitedOnce);
+      readable.push("a");
+      await atRest();
+      const second = sink(events, "second");
+      readable.pipe(second);
+      readable.unpipe(second);
+      readable.pause();
+      readable.unpipe(waitedOnce);
+      const paused = readable.isPaused();
+      readable.push("b");
+      await atRest();
+      expect({ paused, events, buffered: readable.readableLength }).toEqual({
+        paused: false,
+        events: ["data a", "data b"],
+        buffered: 0,
+      });
+    });
+
+    // unpipe() with no argument: the teardown of the first destination resumes the source while the second one
+    // still listens, and then that one goes too. Where nobody else listens, "b" has nobody to read it. With the
+    // first destination in backpressure Node v26.3.0 does the same.
+    it.each([
+      ["waited once", drainedOnce],
+      ["is in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
+    ])("unpipe() of every destination leaves the source flowing when the first one %s", async (name, first) => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      readable.pipe(first());
+      readable.pipe(sink(events));
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      const flowing = readable.readableFlowing;
+      readable.push("b");
+      await atRest();
+      expect({ flowing, events, buffered: readable.readableLength }).toEqual({
+        flowing: true,
+        events: ["good got a"],
+        buffered: 0,
+      });
+    });
+
+    it("unpipe() of every destination leaves the source flowing for a 'data' listener", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      readable.on("data", chunk => events.push(`data ${chunk}`));
+      readable.pipe(drainedOnce());
+      readable.pipe(sink(events));
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      readable.push("b");
+      await atRest();
+      expect({ flowing: readable.readableFlowing, events }).toEqual({
+        flowing: true,
+        events: ["data a", "good got a", "data b"],
+      });
+    });
+  });
+
+  it.each([
+    ["one destination", false],
+    ["two destinations, the first one waited once", true],
+  ])("a resume() in an 'unpipe' listener holds after unpipe() of every destination: %s", async (name, two) => {
+    const events = [];
+    const readable = new Readable({ read() {} });
+    const first = two ? drainedOnce() : sink(events);
+    readable.pipe(first);
+    if (two) readable.pipe(sink(events));
+    first.on("unpipe", source => source.resume());
+    readable.push("a");
+    await atRest();
+    readable.unpipe();
+    readable.push("b");
+    await atRest();
+    expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
+      flowing: true,
+      events: ["good got a"],
+      buffered: 0,
+    });
+  });
+
+  it("unpipe() of every destination in the tick of a failed write does not hold two later destinations", async () => {
+    const events = [];
+    const readable = new Readable({ read() {} });
+    readable.pipe(failing(events));
+    const busy = new Writable({
+      highWaterMark: 1,
+      write(chunk, encoding, callback) {
+        if (String(chunk) !== "first") events.push(`busy got ${chunk}`);
+        this.drained = callback;
+      },
+    });
+    busy.write("first");
+    readable.once("data", () => {
+      readable.unpipe();
+      readable.pipe(sink(events));
+      readable.pipe(busy);
+    });
+    readable.push("a");
+    await atRest();
+    busy.drained();
+    await atRest();
+    readable.push("b");
+    await atRest();
+    expect({ events, buffered: readable.readableLength }).toEqual({
+      events: ["bad error: fail", "good got b", "busy got b"],
+      buffered: 0,
+    });
+  });
+
+  it("a failing sink that an 'unpipe' listener pipes beside a good one and removes does not stop the good one", async () => {
+    const events = [];
+    const readable = new Readable({ read() {} });
+    const first = sink(events, "first");
+    readable.pipe(first);
+    readable.pipe(sink(events, "second"));
+    first.on("unpipe", () => {
+      const bad = failing(events);
+      readable.pipe(bad);
+      readable.pipe(sink(events));
+      readable.push("b");
+      readable.unpipe(bad);
+    });
+    readable.push("a");
+    await atRest();
+    readable.unpipe();
+    readable.push("c");
+    await atRest();
+    expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
+      flowing: true,
+      events: ["first got a", "second got a", "second got b", "good got b", "good got c", "bad error: fail"],
+      buffered: 0,
+    });
+  });
+
+  // One or two destinations of five kinds, unpipe() a turn behind the first chunk or in its tick, and nobody, a 'data'
+  // listener or two later destinations behind the call. The stored lines are the output of `node` v26.12.1.
+  it("180 orders of unpipe() with no argument print what Node v26.12.1 prints", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-stream-unpipe-orders.fixture.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = await Bun.file(join(import.meta.dir, "node-stream-unpipe-orders.expected.txt")).text();
+    expect(stdout.split("\n")).toEqual(expected.split("\n"));
+    expect(exitCode).toBe(0);
+  });
+
+  // Node's resume() does nothing on a destroyed stream. Ours still resumes one, so that a source which only flagged
+  // itself destroyed right before push(null), as fd-slicer does, flushes its tail. So for a source that carries the
+  // flag the release asks the destination, as it did before, and Node's statement is for a live source.
+  describe("a source that carries the destroyed flag", () => {
+    function teeInto(events, first, options) {
+      const readable = new Readable({ read() {}, ...options });
+      readable.pipe(first);
+      readable.pipe(sink(events));
+      return readable;
+    }
+
+    it.each([
+      ["destroy()", {}, false],
+      ["destroy() whose _destroy() has not called back", { destroy() {} }, false],
+      ["destroy() behind push(null)", {}, true],
+    ])("is left alone when a destination that failed a write is removed: %s", async (name, options, ended) => {
+      const events = [];
+      const readable = teeInto(events, failing(events), options);
+      readable.once("data", () => {
+        readable.destroy();
+        readable.on("resume", () => events.push("resume"));
+      });
+      readable.push("a");
+      readable.push("b");
+      if (ended) readable.push(null);
+      await atRest();
+      expect({ events, flowing: readable.readableFlowing, buffered: readable.readableLength }).toEqual({
+        events: ["good got a", "bad error: fail"],
+        flowing: false,
+        buffered: 1,
+      });
+    });
+
+    // Node v26.12.1 stops behind "good got a" in both.
+    it.each([
+      ["a Writable in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
+      ["a destination with no state to ask", () => Object.assign(new EventEmitter(), { write: () => false, end() {} })],
+    ])("still flushes its tail when it only flagged itself and %s is unpiped", async (name, destination) => {
+      const events = [];
+      const stuck = destination();
+      const readable = teeInto(events, stuck);
+      readable.on("end", () => events.push("end"));
+      readable.push("a");
+      await atRest();
+      readable.push("b");
+      readable.destroyed = true;
+      readable.push(null);
+      readable.unpipe(stuck);
+      await atRest();
+      expect(events).toEqual(["good got a", "good got b", "end", "good finish"]);
+    });
+
+    it("process.stdin is not taken back when a destination that failed a write is removed", async () => {
+      // stdin stays open for the child's whole lifetime: it only exits if the pipe did not resume the stdin that
+      // the program destroyed.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Writable } = require("node:stream");
+          const bad = new Writable({ write(chunk, encoding, callback) { callback(new Error("fail")); } });
+          bad.on("error", () => console.log("removed"));
+          const other = new Writable({ write(chunk, encoding, callback) { console.log("other got " + chunk); callback(); } });
+          process.stdin.pipe(bad);
+          process.stdin.pipe(other);
+          process.stdin.once("data", () => process.stdin.destroy());`,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write("a");
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      proc.stdin.end();
+      expect({ stdout, exitCode }).toEqual({ stdout: "other got a\nremoved\n", exitCode: 0 });
+    });
+  });
+
+  // Nothing tears this pipe down: the destination emitted its last event before pipe(). Node holds the source too.
+  it("a destination that was destroyed before pipe() still holds the source", async () => {
+    const events = [];
+    const readable = source(events);
+    const dead = new Writable({ write() {} });
+    dead.destroy();
+    await atRest();
+    readable.pipe(dead);
+    readable.pipe(sink(events));
+    await atRest();
+    expect(events).toEqual(["good got a"]);
+  });
+
+  // This sink has no 'error' listener, so its error is fatal and Node ends there. Bun reports the error and still
+  // runs what is queued (#34661), which is now the rest of the tee.
+  it.failing("a failing sink without an 'error' listener ends the process at its error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Readable, Writable } = require("node:stream");
+        const chunks = ["a", "b", "c"];
+        const source = new Readable({ read() { this.push(chunks.length ? chunks.shift() : null); } });
+        const good = new Writable({ write(chunk, encoding, callback) { console.log("good got " + chunk); callback(); } });
+        source.pipe(new Writable({ write(chunk, encoding, callback) { callback(new Error("fail")); } }));
+        source.pipe(good);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "good got a\n", exitCode: 1 });
+  });
 });

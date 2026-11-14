@@ -102,7 +102,7 @@ pub struct EventLoop {
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
     /// embedded loops, a private one for a spawnSync loop. Set by
     /// `ensure_waker` / `__bun_spawn_sync_create_event_loop`.
-    uws_loop: Cell<Option<NonNull<uws::Loop>>>,
+    uws_loop: Cell<Option<&'static uws::Loop>>,
 
     entered_event_loop_count: Cell<isize>,
     /// How many times `tasks` was drained. One uws loop iteration drains it several times, so a
@@ -440,11 +440,11 @@ impl EventLoop {
             global_object.drain_microtasks_and_next_ticks()?;
         }
 
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop_ref()`:
+        // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
         // `event_loop_handle` (which is the libuv loop).
         if vm.event_loop_handle.get().is_some() {
-            vm.uws_loop_ref().drain_quic_if_necessary();
+            vm.uws_loop().drain_quic_if_necessary();
         }
 
         // Through `self`: `vm` would need one more saved register to outlive the calls above.
@@ -700,13 +700,12 @@ impl EventLoop {
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
     ///
-    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: on Windows
+    /// Targets `self.usockets_loop()`, never `vm.event_loop_handle`: on Windows
     /// `Bun.spawnSync` points the latter at its private loop, and a GC inside it
     /// still refs this loop (FinalizationRegistry, MessagePort).
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
-        let loop_ = unsafe { &*self.native_loop() };
+        let loop_ = self.usockets_loop();
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -738,17 +737,16 @@ impl EventLoop {
     }
 
     /// The uws loop this `EventLoop` runs on.
-    pub fn usockets_loop(&self) -> *mut uws::Loop {
+    pub fn usockets_loop(&self) -> &'static uws::Loop {
         self.uws_loop
             .get()
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
-            .as_ptr()
     }
 
     /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
     /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
     #[inline]
-    pub fn native_loop(&self) -> *mut crate::PlatformEventLoop {
+    pub fn native_loop(&self) -> Async::LoopRef {
         Async::uws_to_native(self.usockets_loop())
     }
 
@@ -1136,8 +1134,9 @@ impl EventLoop {
         if self.uws_loop.get().is_none() {
             // The VM's embedded loops run on the thread's loop, the one
             // `vm.event_loop_handle` names below.
-            debug_assert_eq!(Async::uws_to_native(uws::Loop::get()), Async::Loop::get());
-            self.uws_loop.set(NonNull::new(uws::Loop::get()));
+            #[cfg(windows)]
+            debug_assert_eq!(uws::Loop::get().uv_loop(), Async::Loop::get());
+            self.uws_loop.set(Some(uws::Loop::get()));
         }
         let vm = self.vm_ref();
         if vm.event_loop_handle.get().is_none() {
@@ -1146,16 +1145,8 @@ impl EventLoop {
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
         // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
-        // `EventLoopHandle` already exposes `into_tag_ptr()` — go straight to
-        // the sys-level setter.
         let self_ptr = core::ptr::from_ref(self).cast_mut().cast::<()>();
-        let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
-        // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
-        unsafe {
-            (*uws::Loop::get())
-                .internal_loop_data
-                .set_parent_raw(tag, ptr)
-        };
+        EventLoopHandle::init(self_ptr).set_as_parent_of(uws::Loop::get());
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -1248,8 +1239,7 @@ impl EventLoop {
 
     pub fn wakeup(&self) {
         if let Some(loop_) = self.uws_loop.get() {
-            // SAFETY: uws_loop is a valid live uws::Loop handle
-            unsafe { (*loop_.as_ptr()).wakeup() };
+            loop_.wakeup();
         }
     }
 
@@ -1321,8 +1311,13 @@ impl EventLoop {
     pub unsafe fn tick_while_paused(&self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
-            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
-            unsafe { (*self.native_loop()).tick() };
+            #[cfg(not(windows))]
+            self.usockets_loop().tick();
+            #[cfg(windows)]
+            // SAFETY: `uv_loop()` is live for this loop's lifetime; JS thread.
+            unsafe {
+                (*self.uv_loop()).tick()
+            };
         }
     }
 
@@ -1357,7 +1352,7 @@ impl EventLoop {
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
     /// instead of returning immediately on `num_polls == 0`.
     #[cfg(not(windows))]
-    fn hold_forever_poll(&self, loop_: &uws::Loop) {
+    fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if !self.holds_forever_poll.get() {
             loop_.inc();
             self.holds_forever_poll.set(true);
@@ -1365,7 +1360,7 @@ impl EventLoop {
     }
 
     #[cfg(windows)]
-    fn hold_forever_poll(&self, loop_: &uws::Loop) {
+    fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if self.forever_timer.get().is_none() {
             let this = core::ptr::from_ref(self)
                 .cast_mut()
@@ -1381,8 +1376,7 @@ impl EventLoop {
     }
 
     pub fn tick_possibly_forever(&self) {
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &*self.usockets_loop() };
+        let loop_ = self.usockets_loop();
         let vm = self.vm_ref();
 
         #[cfg(unix)]
@@ -1461,8 +1455,7 @@ pub(crate) fn get_active_tasks(
         i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles.get() })
             .expect("int cast");
     #[cfg(not(windows))]
-    // SAFETY: uws::Loop::get() returns a live process-global loop.
-    let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls.get() };
+    let num_polls: i32 = uws::Loop::get().num_polls.get();
     crate::generated_bindgen::event_loop::ActiveTasks {
         active_tasks: vm_ref.active_tasks.get(),
         tasks: event_loop.queued_task_count(),
@@ -1472,23 +1465,20 @@ pub(crate) fn get_active_tasks(
         event_loop_alive: vm_ref.is_event_loop_alive(),
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls,
-        // SAFETY: usockets_loop() returns the live process-global loop.
-        iteration: unsafe { (*event_loop.usockets_loop()).iteration_number() },
-        // SAFETY: as above.
-        sweep_timer_count: unsafe {
-            (*event_loop.usockets_loop())
-                .internal_loop_data
-                .sweep_timer_count()
-        },
+        iteration: event_loop.usockets_loop().iteration_number(),
+        sweep_timer_count: event_loop
+            .usockets_loop()
+            .internal_loop_data
+            .sweep_timer_count(),
         #[cfg(windows)]
         sweep_deadline: None,
         #[cfg(not(windows))]
-        // SAFETY: as above.
-        sweep_deadline: Some(unsafe {
-            (*event_loop.usockets_loop())
+        sweep_deadline: Some(
+            event_loop
+                .usockets_loop()
                 .internal_loop_data
-                .sweep_next_tick_ns()
-        } as f64),
+                .sweep_next_tick_ns() as f64,
+        ),
     }
 }
 
@@ -1548,7 +1538,7 @@ fn el_ref<'a>(owner: *mut ()) -> &'a EventLoop {
 // JS thread.
 bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
-        iteration_number() => (&*(*this).usockets_loop()).iteration_number()
+        iteration_number() => (*this).usockets_loop().iteration_number()
             + (*this).task_drains.load(Ordering::Relaxed),
         // Return raw to avoid asserting uniqueness — multiple handles may name the
         // same VM.
@@ -1574,7 +1564,6 @@ bun_event_loop::link_impl_JsEventLoop! {
         enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.get().env,
-        top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>
             (*(*this).vm_ref().transpiler.get().env).map.create_null_delimited_env_map(),
     }
@@ -1583,7 +1572,7 @@ bun_event_loop::link_impl_JsEventLoop! {
 // A spawnSync loop differs from its VM's in the loop alone.
 bun_io::link_impl_EventLoopCtx! {
     SpawnSync for EventLoop => |this| {
-        platform_event_loop_ptr() => (*this).usockets_loop(),
+        loop_() => (*this).usockets_loop(),
         file_polls_ptr() => (*this).vm_ref().loop_ctx().file_polls_ptr(),
         // The VM takes what it counts off its own loop, and nothing a spawnSync call makes asks for this.
         increment_pending_unref_counter() => unreachable!(),
@@ -1621,12 +1610,15 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a VirtualMachine {
 
 /// Heap-allocate a fresh `EventLoop` bound to `vm`, running on `uws_loop`.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
+pub(crate) fn __bun_spawn_sync_create_event_loop(
+    vm: *mut (),
+    uws_loop: &'static uws::Loop,
+) -> *mut () {
     let vm = vm_from_ptr(vm);
     let global = vm.global.get();
     let el = Box::new(EventLoop::new(NonNull::from(vm)));
     el.global.set(NonNull::new(global));
-    el.uws_loop.set(NonNull::new(uws_loop));
+    el.uws_loop.set(Some(uws_loop));
     let el = bun_core::heap::into_raw(el);
     // SAFETY: `el` is the stable heap address the poster targets until destroy.
     unsafe { (*el).isolated_poster = Some(crate::vm_handle::IsolatedPosterInner::new(el)) };

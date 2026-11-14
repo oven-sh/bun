@@ -190,7 +190,7 @@ impl TimerObjectInternals {
         self.update_flags(|f| f.set_is_keeping_event_loop_alive(enable));
 
         let timers = timer_all();
-        let uws_loop = vm.uws_loop_ref();
+        let uws_loop = vm.uws_loop();
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // setImmediate has slightly different event loop logic

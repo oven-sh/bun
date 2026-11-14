@@ -3279,7 +3279,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
     /// `this` is the unique owning server pointer `schedule_deinit` queued.
     pub(crate) unsafe fn run(this: *mut Self) {
         let vm = jsc::VirtualMachine::get();
-        if vm.uws_loop_ref().internal_loop_data.is_ticking() {
+        if vm.uws_loop().internal_loop_data.is_ticking() {
             // A listener turned the event loop, and the app's handler that called it goes on afterwards.
             return vm
                 .event_loop()

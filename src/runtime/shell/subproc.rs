@@ -13,7 +13,7 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
@@ -1345,7 +1345,7 @@ impl<'a> SpawnArgs<'a> {
 
             override_env: false,
             env_array: Vec::new(),
-            cwd: event_loop.top_level_dir(),
+            cwd: b"",
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
             redirect_stdout: None,
             redirect_stderr: None,
@@ -2033,15 +2033,8 @@ impl PipeReader {
         // Dropping `guard` is the matching `deref()`; may free `this`.
     }
 
-    pub(crate) fn r#loop(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop.r#loop()
-        }
+    pub(crate) fn r#loop(&self) -> LoopRef {
+        self.event_loop.native_loop()
     }
 
     // Helper accessor used above to paper over Rc<PipeReader> interior mutability.

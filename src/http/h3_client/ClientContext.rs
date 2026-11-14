@@ -74,16 +74,12 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        // SAFETY: HTTP-thread only, where `on_start` has set `uws_loop` to the
-        // thread's live `us_loop_t`.
-        let qctx = unsafe {
-            quic::Context::create_client(
-                crate::http_thread().uws_loop(),
-                0,
-                core::mem::size_of::<*mut ClientSession>() as c_uint,
-                core::mem::size_of::<*mut Stream>() as c_uint,
-            )
-        }?;
+        let qctx = quic::Context::create_client(
+            UwsLoop::get(),
+            0,
+            core::mem::size_of::<*mut ClientSession>() as c_uint,
+            core::mem::size_of::<*mut Stream>() as c_uint,
+        )?;
         let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
 
         // Process-lifetime singleton — published into `INSTANCE` below and

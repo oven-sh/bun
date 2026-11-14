@@ -244,8 +244,8 @@ mod posix {
                     NonNull::<()>::dangling().as_ptr(),
                 ),
             );
-            // SAFETY: `poll` is the fresh hive slot; `loop_()` is the live uws loop.
-            let result = unsafe { (*poll).register(&*ctx.loop_(), Flags::MemoryPressure, false) };
+            // SAFETY: `poll` is the fresh hive slot.
+            let result = unsafe { (*poll).register(ctx.loop_(), Flags::MemoryPressure, false) };
             if result.is_err() {
                 // SAFETY: fresh hive slot never handed out.
                 deinit_poll(unsafe { &mut *poll });

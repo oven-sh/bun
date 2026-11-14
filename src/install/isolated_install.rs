@@ -2662,15 +2662,15 @@ pub(crate) fn install_isolated_packages(
         }
 
         if installer.manager().pending_task_count() > 0 {
-            let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
-            // SAFETY: `mgr` is the same raw `manager_ptr` stored in
-            // `installer.manager`; `sleep_until` + `tick_raw` hold no
-            // `&mut PackageManager` across `Wait::is_done`.
-            unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
+            Output::flush();
+            while !wait.is_done() {
+                let manager = wait.installer.manager();
+                manager.event_loop.tick(core::ptr::null_mut());
+            }
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));

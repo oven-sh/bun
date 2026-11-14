@@ -1446,13 +1446,14 @@ impl CompletionStruct for JSBundleCompletionTask {
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
         // it outlives the BACKREF in `linker.loop`.
-        let mut any_loop = bun_event_loop::AnyEventLoop::default();
-        let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
+        let any_loop = bun_event_loop::AnyEventLoop::default();
+        let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(NonNull::from(&any_loop));
         if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {
             // So a cancelling VM can wake us out of an idle wait for plugins.
-            self.bundle_loop
-                .store(mini.loop_ptr(), core::sync::atomic::Ordering::Release);
+            self.bundle_loop.store(
+                core::ptr::from_ref(mini.loop_).cast_mut(),
+                core::sync::atomic::Ordering::Release,
+            );
         }
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,

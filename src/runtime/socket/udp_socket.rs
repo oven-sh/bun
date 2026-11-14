@@ -511,7 +511,6 @@ pub(crate) struct UDPSocket {
     pub(crate) config: JsCell<UDPSocketConfig>,
 
     pub(crate) socket: Cell<Option<*mut uws::udp::Socket>>,
-    pub(crate) loop_: *mut uws::Loop,
 
     // Read-only back-reference to the owning JS global; the VM/global strictly
     // outlives every socket it creates.
@@ -577,7 +576,6 @@ impl UDPSocket {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(cx.global()),
-            loop_: uws::Loop::get(),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             closed: Cell::new(false),
@@ -658,9 +656,10 @@ impl UDPSocket {
             None => None,
         };
 
+        let loop_ = uws::Loop::get();
         let created = if let Some(fd) = config.fd {
             uws::udp::Socket::create_from_fd(
-                this.loop_,
+                loop_,
                 on_data,
                 on_drain,
                 on_close,
@@ -672,7 +671,7 @@ impl UDPSocket {
             )
         } else {
             uws::udp::Socket::create(
-                this.loop_,
+                loop_,
                 on_data,
                 on_drain,
                 on_close,

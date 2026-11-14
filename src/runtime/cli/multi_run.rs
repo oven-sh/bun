@@ -73,7 +73,7 @@ impl<'a> PipeReader<'a> {
         }
     }
 
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop {
+    fn event_loop(&self) -> &'static MiniEventLoop {
         // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
         // outlives all handles (lives on `run`'s stack frame for the whole event loop).
         unsafe { (*(*self.handle).state).event_loop }
@@ -104,8 +104,8 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
-    event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
+    loop_           = |this| bun_io::uws_to_native((*this).event_loop().loop_);
+    event_loop      = |this| (*(*(*this).handle).state).event_loop.as_event_loop_ctx();
 }
 
 struct ProcessSlot {
@@ -343,10 +343,9 @@ const RESET: &[u8] = ansi::RESET.as_bytes();
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
     /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
@@ -899,7 +898,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),
-        None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
@@ -1120,7 +1118,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let mut state = State {
         handles: Box::default(),
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         max_label_len,
         shell_bin,
@@ -1230,8 +1227,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
+        event_loop.tick_once((&raw const state).cast_mut().cast::<c_void>());
     }
 
     let status = state.finalize();

@@ -98,7 +98,7 @@ impl CondExpr {
                 // back on the main thread via `on_stat_task_done`.
                 let (cwd_fd, mut path) = {
                     let me = interp.as_condexpr(this);
-                    let cwd_fd = me.base.shell().cwd_fd;
+                    let cwd_fd = me.base.shell().cwd_fd.fd();
                     (cwd_fd, me.args[0].clone())
                 };
                 if path.last() != Some(&0) {

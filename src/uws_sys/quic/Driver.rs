@@ -28,7 +28,7 @@ pub enum PassPoint {
 pub type Pass = unsafe extern "C" fn(driver: *mut Driver, point: PassPoint) -> c_int;
 
 unsafe extern "C" {
-    fn us_quic_driver_create(loop_: *mut Loop, pass: Pass, owner: *mut c_void) -> *mut Driver;
+    fn us_quic_driver_create(loop_: &Loop, pass: Pass, owner: *mut c_void) -> *mut Driver;
     safe fn us_quic_driver_close(driver: &Driver);
     fn us_quic_driver_free(driver: *mut Driver);
     safe fn us_quic_driver_owner(driver: &Driver) -> *mut c_void;
@@ -65,7 +65,7 @@ unsafe extern "C" {
 
 impl Driver {
     /// `pass` runs before and after each poll of `loop_` (this thread's), and after a microtask drain while the driver is pending. `owner` must outlive the driver.
-    pub unsafe fn create(loop_: *mut Loop, pass: Pass, owner: *mut c_void) -> *mut Driver {
+    pub unsafe fn create(loop_: &'static Loop, pass: Pass, owner: *mut c_void) -> *mut Driver {
         // SAFETY: caller contract.
         unsafe { us_quic_driver_create(loop_, pass, owner) }
     }

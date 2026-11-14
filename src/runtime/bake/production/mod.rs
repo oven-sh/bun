@@ -581,7 +581,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop_ptr());
+        let any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop_ptr());
 
         // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -597,7 +597,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 plugins: options.bundler_options.plugin,
             },
             &options.arena,
-            Some(NonNull::from(&mut any_loop)),
+            Some(NonNull::from(&any_loop)),
         )?
     };
     if bundled_outputs_list.is_empty() {

@@ -298,11 +298,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(
-            handle.platform_event_loop(),
-            crate::file_poll::Flags::Process,
-            true,
-        ) {
+        match unsafe { &mut *poll }.register(handle.loop_(), crate::file_poll::Flags::Process, true)
+        {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no

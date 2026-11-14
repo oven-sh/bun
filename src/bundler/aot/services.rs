@@ -193,7 +193,7 @@ pub(crate) fn with_test_context<R>(
     static OUTPUT: std::sync::Once = std::sync::Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
     let mut log = Log::init();
-    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(&b"/project"[..])),
@@ -209,7 +209,7 @@ pub(crate) fn with_test_context<R>(
         transpiler,
         None,
         &arena,
-        Some(NonNull::from(&mut event_loop)),
+        Some(NonNull::from(&event_loop)),
         false,
         None,
         &arena,

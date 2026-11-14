@@ -21,11 +21,6 @@ use bun_spawn::{
 };
 #[cfg(unix)]
 use bun_sys::Fd;
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
-// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
-// `BufferedReaderParent::loop_` expects.
 
 bun_output::declare_scope!(Script, visible);
 
@@ -733,7 +728,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 #[cfg(windows)]
                 windows: bun_spawn::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
+                    loop_: bun_event_loop::EventLoopHandle::from_any(&(*manager).event_loop),
                     ..Default::default()
                 },
 
@@ -850,7 +845,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
             }
 
-            let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
+            let event_loop = bun_event_loop::EventLoopHandle::from_any(&(*manager).event_loop);
             debug_assert!((*this).process.is_none(), "forgot to call `reset_polls`");
             let process: *mut Process = (*this)
                 .process
@@ -1306,7 +1301,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
-        &mut (*(*this).manager.as_ptr()).event_loop,
+        &(*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();
 }
 

@@ -715,7 +715,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
             if connected {
                 return -bun_sys::UV_E::INVAL;
             }
-            if VirtualMachine::get().uws_loop_ref().listens_on(fd) {
+            if VirtualMachine::get().uws_loop().listens_on(fd) {
                 return -bun_sys::UV_E::EXIST;
             }
         }

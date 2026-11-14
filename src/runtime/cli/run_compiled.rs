@@ -984,7 +984,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
         stdin: sync::SyncStdio::Inherit,
         windows: crate::api::bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

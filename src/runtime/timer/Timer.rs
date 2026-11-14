@@ -481,7 +481,7 @@ impl DateHeaderTimer {
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             // updateDate() is an expensive function.
-            vm.uws_loop_ref().update_date();
+            vm.uws_loop().update_date();
 
             self.event_loop_timer.next.set(now.add_ms(1000));
         }

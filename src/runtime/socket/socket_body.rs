@@ -4010,8 +4010,7 @@ pub(crate) mod testing_apis {
 
     /// `sweepSocketTimers` of `bun:internal-for-testing`.
     pub(crate) fn sweep_socket_timers(cx: &mut JsScope<'_>, count: u16) -> JsResult<()> {
-        // SAFETY: `uws::Loop::get()` returns this thread's live loop.
-        let loop_ = unsafe { &*uws::Loop::get() };
+        let loop_ = uws::Loop::get();
         if loop_.internal_loop_data.is_iterating() {
             return Err(cx.global().throw(format_args!(
                 "sweepSocketTimers() cannot be called from a socket timeout handler"

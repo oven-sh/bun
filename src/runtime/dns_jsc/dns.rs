@@ -2742,7 +2742,7 @@ pub(crate) mod internal {
     }
 
     pub(crate) fn getaddrinfo(
-        loop_: *mut Loop,
+        loop_: *const Loop,
         host: Option<&[u8]>,
         port: u16,
         is_cache_hit: Option<&mut bool>,
@@ -2882,10 +2882,11 @@ pub(crate) mod internal {
     }
 
     pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
-        prefetch(VirtualMachine::get().uws_loop(), Some(hostname), port);
+        let loop_: &Loop = VirtualMachine::get().uws_loop();
+        prefetch(loop_, Some(hostname), port);
     }
 
-    pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&[u8]>, port: u16) {
+    pub(crate) fn prefetch(loop_: *const Loop, hostname: Option<&[u8]>, port: u16) {
         let _ = getaddrinfo(loop_, hostname, port, None);
     }
 
@@ -2893,7 +2894,7 @@ pub(crate) mod internal {
     /// lower-tier `bun_dns` crate so `bun_install` can prefetch registry
     /// hostnames without a crate cycle. Link-time resolved.
     #[unsafe(no_mangle)]
-    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: &[u8], port: u16) {
+    fn __bun_dns_prefetch(loop_: *const c_void, hostname: &[u8], port: u16) {
         let host = (!hostname.is_empty()).then_some(hostname);
         prefetch(loop_.cast::<Loop>(), host, port);
     }
@@ -3764,7 +3765,7 @@ impl Resolver {
     // ───────────── timer / pending bookkeeping ─────────────
 
     pub(crate) fn check_timeouts(&self, now: &bun::timespec, vm: &VirtualMachine) {
-        let uws_loop = vm.uws_loop_ref();
+        let uws_loop = vm.uws_loop();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
@@ -3852,7 +3853,7 @@ impl Resolver {
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
         let next = now_ts.add_ms(1000);
         self.event_loop_timer.next.set(next);
-        let uws_loop = self.vm().uws_loop_ref();
+        let uws_loop = self.vm().uws_loop();
         let timers = crate::jsc_hooks::timer_all();
         timers.increment_timer_ref(1, uws_loop);
         timers.insert(&raw const self.event_loop_timer);
@@ -3867,7 +3868,7 @@ impl Resolver {
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
-            crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop_ref());
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop());
             // SAFETY: `this` is the heap allocation from `init`. This releases
             // the ref taken by `add_timer`. Every caller holds at least one
             // other ref for the duration of this call (a `RefPtr` or the
@@ -4496,14 +4497,9 @@ impl Resolver {
                 // Publish into the map first so the `GetOrPutResult` borrow can
                 // end (NLL) before we may need to `swap_remove` on init failure.
                 *poll_entry.value_ptr = new_poll;
-                // SAFETY: `Loop::get()` is the live per-thread uws loop;
-                // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
+                // SAFETY: `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket(
-                        (*Loop::get()).uv_loop(),
-                        &mut (*new_poll).poll,
-                        fd as _,
-                    )
+                    uv::uv_poll_init_socket(Loop::get().uv_loop(), &mut (*new_poll).poll, fd as _)
                 } < 0
                 {
                     UvDnsPoll::destroy(new_poll);
@@ -4551,7 +4547,7 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            let loop_ = self.vm().uws_loop_ref();
+            let loop_ = self.vm().uws_loop();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };

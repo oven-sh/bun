@@ -2154,34 +2154,43 @@ fn share_modules_among_types<'r>(
     if !files.iter().any(has_shared_type) {
         return;
     }
-    let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
     let mut seen = vec![false; files.len()];
-    let mut later = entry_points;
-    // What one load reaches by statements runs before the calls in it do.
-    while let Some(root) = later.pop_front() {
-        let mut level = VecDeque::from([root]);
-        let mut loaded_together = Vec::new();
-        while let Some(index) = level.pop_front() {
-            if std::mem::replace(&mut seen[index as usize], true) {
-                continue;
-            }
-            loaded_together.push(index);
-            for next in 0..files[index as usize].code_targets().len() {
-                let target = files[index as usize].code_targets()[next];
-                if target.has_shared_type {
-                    share_form(host, files, &mut first_forms, index, next);
+    // Another entry point of an executable is the file of a Worker, which has modules of its own.
+    let graphs: Vec<VecDeque<u32>> = match builds_executable {
+        true => entry_points
+            .into_iter()
+            .map(|it| VecDeque::from([it]))
+            .collect(),
+        false => vec![entry_points],
+    };
+    for mut later in graphs {
+        let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
+        // What one load reaches by statements runs before the calls in it do.
+        while let Some(root) = later.pop_front() {
+            let mut level = VecDeque::from([root]);
+            let mut loaded_together = Vec::new();
+            while let Some(index) = level.pop_front() {
+                if std::mem::replace(&mut seen[index as usize], true) {
+                    continue;
                 }
-                let reached = files[index as usize].targets[next];
-                match target.is_loaded_with_importer {
-                    true => level.push_back(reached),
-                    false => later.push_back(reached),
+                loaded_together.push(index);
+                for next in 0..files[index as usize].code_targets().len() {
+                    let target = files[index as usize].code_targets()[next];
+                    if target.has_shared_type {
+                        share_form(host, files, &mut first_forms, index, next);
+                    }
+                    let reached = files[index as usize].targets[next];
+                    match target.is_loaded_with_importer {
+                        true => level.push_back(reached),
+                        false => later.push_back(reached),
+                    }
                 }
             }
-        }
-        for index in loaded_together {
-            for next in 0..files[index as usize].code_targets().len() {
-                if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
-                    share_form(host, files, &mut first_forms, index, next);
+            for index in loaded_together {
+                for next in 0..files[index as usize].code_targets().len() {
+                    if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
+                        share_form(host, files, &mut first_forms, index, next);
+                    }
                 }
             }
         }

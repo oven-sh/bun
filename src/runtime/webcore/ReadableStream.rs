@@ -9,7 +9,6 @@ use crate::webcore::jsc::{
 };
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_collections::VecExt;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -786,7 +785,7 @@ pub trait SourceContext: Sized {
     fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 
     fn on_start(&self) -> streams::Start;
-    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result;
+    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result<'_>;
     fn on_cancel(&self);
     /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
     /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
@@ -1262,7 +1261,7 @@ impl<C: SourceContext> NewSource<C> {
         this_jsvalue: JSValue,
         cx: &bun_jsc::JsThread<'_>,
         flags: JSValue,
-        mut result: streams::Result,
+        result: streams::Result<'_>,
     ) -> JsResult<JSValue> {
         match &result {
             streams::Result::Err(err) => {
@@ -1301,14 +1300,10 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let mut list = self.context.drain_internal_buffer();
+        let list = self.context.drain_internal_buffer();
         if list.len() > 0 {
-            // Ownership of the buffer transfers to JSC: `to_js` installs
-            // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
-            // `Vec::Drop` so the same allocation isn't freed twice (once
-            // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
-            let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
-            let _ = core::mem::ManuallyDrop::new(list);
+            // JSC's `MarkedArrayBuffer_deallocator` frees the buffer.
+            let ab = jsc::ArrayBuffer::from_bytes(list.leak(), jsc::JSType::Uint8Array);
             return ab.to_js(cx.global());
         }
         Ok(JSValue::UNDEFINED)

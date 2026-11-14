@@ -6112,16 +6112,25 @@ describe.concurrent("tls socket that is paused when its graceful close starts", 
     const received = { server: 0, client: 0 };
     const closed = [Promise.withResolvers<string>(), Promise.withResolvers<string>()];
     const outcome = (error?: Error) => (error ? String((error as NodeJS.ErrnoException).code) : "closed");
+    let replied = 0;
+    // A write() may take a part of the reply. The rest goes out in drain(), and shutdown() comes behind all of it.
+    const sendReply = (socket: Socket) => {
+      if (replied === reply.length) return;
+      while (replied < reply.length) {
+        const wrote = socket.write(reply.subarray(replied));
+        if (wrote <= 0) return;
+        replied += wrote;
+      }
+      socket.shutdown();
+    };
     using server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       // Before TLS 1.3 the reply comes with the end of the handshake.
       tls: { ...tls, maxVersion: 0x0303 } as any,
       socket: {
-        handshake(socket) {
-          socket.write(reply);
-          socket.shutdown();
-        },
+        handshake: sendReply,
+        drain: sendReply,
         data: (_socket, data) => void (received.server += data.length),
         close: (_socket, error) => closed[0].resolve(outcome(error)),
       },

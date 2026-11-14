@@ -126,9 +126,7 @@ pub(crate) fn post_process_js_chunk(
     let mut cross_chunk_prefix: PrintResult;
     let mut cross_chunk_suffix: PrintResult;
 
-    let runtime_input_file =
-        c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[runtime_input_file];
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[Index::RUNTIME.get() as usize];
     let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c
         .graph

@@ -889,15 +889,11 @@ it.each([
   ["pending", ``, `new Promise(() => {})`],
   // catch() also makes a promise, and that one becomes fulfilled: in the cell, it hides the bug.
   // All rejected promises are made first, so that the cell goes to one of them.
-  // Windows keeps the loop of before. With the promises made first, `bun --hot` stops for more than 90 s on
-  // windows 11 aarch64 in CI, and the cause is not known.
-  isWindows
-    ? ["rejected and handled", ``, `Promise.reject(new Error("not the entry point's"))`]
-    : [
-        "rejected and handled",
-        `const rejected = Array(20000).fill(new Error("not the entry point's")).map(error => Promise.reject(error));`,
-        `rejected[i]`,
-      ],
+  [
+    "rejected and handled",
+    `const rejected = Array(20000).fill(new Error("not the entry point's")).map(error => Promise.reject(error));`,
+    `rejected[i]`,
+  ],
 ])("does not take a promise of the program's, %s, for that of the entry point", async (_, before, promise) => {
   using dir = tempDir("hot-entry-promise-reused", { "main.js": `console.log("first load");` });
   await using runner = spawn({

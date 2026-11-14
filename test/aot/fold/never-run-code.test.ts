@@ -183,7 +183,8 @@ test("a build reports no regexp literal in a file that plain Bun loads", async (
 });
 
 // `bun test --coverage` turns dead code elimination off on the main thread, for a file of a package too. So an `if` stays with
-// its test, and a mock factory says what stands behind its `return`: the word there asks for the file that it replaces.
+// its test, and a mock factory says what stands behind its `return` and in a const that nothing reads: the word there asks
+// for the file that it replaces.
 const factory = `async () => {
     return { value: "mock" };
     var spare = "importOriginal";
@@ -200,9 +201,14 @@ export function lay() {
   "own.cjs": "if (/a**/) {}\n",
   "mocked.js": `globalThis.ran = "ran";\nexport const value = "own";\n`,
   "other.js": `globalThis.ranOther = "ran";\nexport const value = "own";\n`,
+  "third.js": `globalThis.ranThird = "ran";\nexport const value = "own";\n`,
   "user.js": `import { value } from "./mocked.js";
 import { value as other } from "./other.js";
-export const look = () => [value, String(globalThis.ran), other, String(globalThis.ranOther)];
+import { value as third } from "./third.js";
+export const look = () => [
+  ...[value, String(globalThis.ran), other, String(globalThis.ranOther)],
+  ...[third, String(globalThis.ranThird)],
+];
 `,
   "a.test.js": `import { test, vi } from "bun:test";
 import { lay } from "pkg/lay.mjs";
@@ -217,6 +223,10 @@ test("what the run takes for printed", async () => {
     }
   }
   vi.doMock("./mocked.js", ${factory});
+  vi.doMock("./third.js", async () => {
+    const word = "importOriginal";
+    return { value: "mock" };
+  });
   lay();
   const user = await import("./user.js");
   console.log("SAID " + [...said, ...user.look()].join(" "));
@@ -236,8 +246,8 @@ test("a run that counts executions takes no never-run code for gone", async () =
     run("--coverage"),
     run("--aot", "--coverage"),
   ]);
-  const removed = { said: "loads loads mock undefined mock undefined", exitCode: 0 };
-  const whole = { said: "SyntaxError SyntaxError mock ran mock ran", exitCode: 0 };
+  const removed = { said: "loads loads mock undefined mock undefined mock undefined", exitCode: 0 };
+  const whole = { said: "SyntaxError SyntaxError mock ran mock ran mock ran", exitCode: 0 };
   expect({ plain, compiled, plainCounted, compiledCounted }).toEqual({
     plain: removed,
     compiled: removed,

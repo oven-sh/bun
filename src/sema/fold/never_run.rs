@@ -170,8 +170,8 @@ impl<'a, 's> NeverRun<'a, 's> {
         }
     }
 
-    /// With a direct `eval` in its scope the parser leaves the declaration.
-    fn holds_direct_eval(&self, (start, end): (u32, u32)) -> bool {
+    /// Whether a direct `eval` stands in this text. The parser then leaves the declarations of the scopes around it.
+    pub fn holds_direct_eval(&self, (start, end): (u32, u32)) -> bool {
         let hir = self.hir;
         let is_inside = |position: u32| (start..end).contains(&position);
         let mut running = self.bound.runtime.eval_scopes().iter();

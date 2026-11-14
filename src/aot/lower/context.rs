@@ -457,7 +457,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             self.builtins,
             self.inputs.options.removable,
         )
-        .find_regexp_literals_left_out(self.keeps_never_run_code());
+        .find_regexp_literals_left_out(self.removes_no_code());
         for (literal, sentence) in invalid {
             if left_out.binary_search(&literal).is_ok() {
                 Arc::make_mut(&mut self.invalid_regexp_literals_left_out).push(literal);
@@ -543,9 +543,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         NeverRun::new(self.hir, self.bound)
     }
 
-    /// Under `bun test --coverage` the main thread removes no never-run code, from a file that the report leaves out either.
+    /// Under `bun test --coverage` the main thread removes no code from a file, from one that the report leaves out either.
     #[inline]
-    pub(in crate::lower) fn keeps_never_run_code(&self) -> bool {
+    pub(in crate::lower) fn removes_no_code(&self) -> bool {
         self.inputs.options.counts_executions
     }
 

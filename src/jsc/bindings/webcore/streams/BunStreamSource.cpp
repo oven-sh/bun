@@ -885,15 +885,9 @@ static void rsisFailBeforeAcquire(JSC::VM& vm, JSGlobalObject* globalObject, JSR
     auto scope = DECLARE_THROW_SCOPE(vm);
     rejectPromise(globalObject, result, error);
     RETURN_IF_EXCEPTION(scope, );
-    if (!isReadableStreamLocked(stream)) {
-        // The stream is unlocked, so its lazy start threw before creating a controller. The pump was its only consumer, so cancel it.
-        auto* cancelPromise = readableStreamCancel(globalObject, stream, error);
-        RETURN_IF_EXCEPTION(scope, );
-        markPromiseAsHandled(vm, cancelPromise);
-    } else {
-        // Clear the pipe slot first. Otherwise the sink's owner would end the stream when the sink closes (FileSink's on_close and handle_reject_stream).
+    // Clear the pipe slot first. Otherwise the sink's owner would end the stream when the sink closes (FileSink's on_close and handle_reject_stream).
+    if (isReadableStreamLocked(stream))
         sink->clearPipeStream();
-    }
     RELEASE_AND_RETURN(scope, sink->closeWithError(globalObject, error));
 }
 

@@ -22,7 +22,7 @@ import {
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, finished, isDisturbed, isErrored, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2253,6 +2253,188 @@ it("ReadableStream for File errors", async () => {
     expect(e.code).toBe("ENOENT");
     expect(e.syscall).toBe("open");
   }
+});
+
+describe("ReadableStream for a File that fails to open", () => {
+  // The file opens when the stream is first consumed. A failure there is recorded on the stream,
+  // so a later consumer gets the same error instead of a read that never settles.
+  const missing = join(import.meta.dir, "fetch.js.txt.notfound");
+  const enoent = expect.objectContaining({ code: "ENOENT", syscall: "open" });
+  // label => [makeStream, expected error]
+  const sources = {
+    "Bun.file(missing).stream()": [() => file(missing).stream(), enoent],
+    "Bun.file(missing).slice().stream()": [() => file(missing).slice(0, 10).stream(), enoent],
+    "new Response(Bun.file(missing)).body": [() => new Response(file(missing)).body, enoent],
+    "new Request({ body: Bun.file(missing) }).body": [
+      () => new Request("http://example.com/", { method: "POST", body: file(missing) }).body,
+      enoent,
+    ],
+    "file removed after .stream()": [
+      () => {
+        using dir = tempDir("file-stream-open-fail", { "gone.txt": "gone before the first read" });
+        return file(join(String(dir), "gone.txt")).stream();
+      },
+      enoent,
+    ],
+    // open() succeeds, the fstat() after it reports a directory. POSIX only: that check in open_file_blob is #[cfg(unix)].
+    ...(isWindows
+      ? {}
+      : {
+          directory: [
+            () => file(import.meta.dir).stream(),
+            expect.objectContaining({ code: "EISDIR", syscall: "fstat" }),
+          ],
+        }),
+  };
+  // These throw the open error at the call. A Bun.serve handler reaches error() through that throw.
+  // values() returned up to 1.3.14, and its next() rejected. The others have thrown on every release.
+  const throwingConsumers = {
+    "getReader()": stream => stream.getReader(),
+    "tee()": stream => stream.tee(),
+    "pipeThrough()": stream => stream.pipeThrough(new TransformStream()),
+    "values()": stream => stream.values(),
+    "new ReadableStreamDefaultReader()": stream => new ReadableStreamDefaultReader(stream),
+    "new Response(stream).textStream()": stream => new Response(stream).textStream(),
+  };
+  // Bun.readableStreamToText(), ToJSON(), stream.text(), stream.json() and new Response(stream).text()
+  // rejected up to 1.3.14 and threw at the call from 1.4.0.
+  const promiseConsumers = {
+    "stream.text()": stream => stream.text(),
+    "stream.json()": stream => stream.json(),
+    "stream.bytes()": stream => stream.bytes(),
+    "stream.blob()": stream => stream.blob(),
+    "Bun.readableStreamToText()": stream => readableStreamToText(stream),
+    "Bun.readableStreamToJSON()": stream => Bun.readableStreamToJSON(stream),
+    "Bun.readableStreamToBlob()": stream => Bun.readableStreamToBlob(stream),
+    "Bun.readableStreamToBytes()": stream => readableStreamToBytes(stream),
+    "Bun.readableStreamToArrayBuffer()": stream => readableStreamToArrayBuffer(stream),
+    "Bun.readableStreamToArray()": stream => readableStreamToArray(stream),
+    "Bun.readableStreamToFormData()": stream => Bun.readableStreamToFormData(stream),
+    "new Response(stream).text()": stream => new Response(stream).text(),
+    "stream.pipeTo()": stream => stream.pipeTo(new WritableStream()),
+  };
+
+  describe.each(Object.entries(sources))("%s", (_label, [makeStream, expected]) => {
+    it.each(Object.entries(throwingConsumers))("%s throws and leaves the stream errored", async (_name, consume) => {
+      const stream = makeStream();
+      let thrown;
+      try {
+        consume(stream);
+      } catch (e) {
+        thrown = e;
+      }
+      // Checked before any read: without the fix the stream stays readable and the reads below never settle.
+      expect({ thrown, errored: isErrored(stream), disturbed: isDisturbed(stream), locked: stream.locked }).toEqual({
+        thrown: expected,
+        errored: true,
+        disturbed: true,
+        locked: false,
+      });
+
+      const reader = stream.getReader();
+      const read = await reader.read().catch(e => e);
+      const closed = await reader.closed.catch(e => e);
+      reader.releaseLock();
+      const { promise: fromWeb, resolve } = Promise.withResolvers();
+      Readable.fromWeb(stream).on("error", resolve).on("end", resolve).on("close", resolve).resume();
+      expect({
+        read: read === thrown,
+        closed: closed === thrown,
+        cancel: (await stream.cancel().catch(e => e)) === thrown,
+        finished: (await new Promise(done => finished(stream, done))) === thrown,
+        "Readable.fromWeb": (await fromWeb) === thrown,
+        "tee()":
+          (await stream
+            .tee()[1]
+            .getReader()
+            .read()
+            .catch(e => e)) === thrown,
+      }).toEqual({ read: true, closed: true, cancel: true, finished: true, "Readable.fromWeb": true, "tee()": true });
+    });
+
+    it("promise-returning consumers reject instead of throwing", async () => {
+      const outcomes = {};
+      for (const [name, consume] of Object.entries(promiseConsumers)) {
+        let promise;
+        try {
+          promise = consume(makeStream());
+        } catch (e) {
+          outcomes[name] = `threw at the call: ${e.code ?? e.message}`;
+          continue;
+        }
+        outcomes[name] = await promise.then(
+          () => "resolved",
+          error => error,
+        );
+      }
+      expect(outcomes).toEqual(Object.fromEntries(Object.keys(promiseConsumers).map(name => [name, expected])));
+    });
+
+    it("pipeTo() aborts its destination unless preventAbort, and leaves the stream errored", async () => {
+      async function pipe(options) {
+        const stream = makeStream();
+        const written = [];
+        const aborts = [];
+        const destination = new WritableStream({
+          write(chunk) {
+            written.push(chunk);
+          },
+          abort(reason) {
+            aborts.push(reason);
+          },
+        });
+        const error = await stream.pipeTo(destination, options).catch(e => e);
+        // Only a destination that was not aborted takes a later write.
+        const later = await destination
+          .getWriter()
+          .write("footer")
+          .then(
+            () => "written",
+            e => (e === error ? "rejects with the open error" : e),
+          );
+        // Read only from an errored stream: a stream that the failed open left readable never settles this read.
+        const read = isErrored(stream)
+          ? await stream
+              .getReader()
+              .read()
+              .catch(e => e)
+          : "not errored";
+        return { error, aborted: aborts.length === 1 && aborts[0] === error, later, written, read: read === error };
+      }
+      expect({ default: await pipe(), preventAbort: await pipe({ preventAbort: true }) }).toEqual({
+        default: { error: expected, aborted: true, later: "rejects with the open error", written: [], read: true },
+        preventAbort: { error: expected, aborted: false, later: "written", written: ["footer"], read: true },
+      });
+    });
+  });
+
+  // The first consumer already got the error. A cleanup that drops the promise of cancel() must not end the process.
+  it("a dropped cancel() after the failed start is not an unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const stream = Bun.file(${JSON.stringify(missing)}).stream();
+          try {
+            stream.getReader();
+          } catch {
+            stream.cancel();
+          }
+          const text = Bun.file(${JSON.stringify(missing)}).stream();
+          await text.text().catch(() => {});
+          text.cancel();
+          await new Promise(resolve => setImmediate(resolve));
+          console.log("alive");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive\n", stderr: "", exitCode: 0 });
+  });
 });
 
 it("ReadableStream for empty blob closes immediately", async () => {

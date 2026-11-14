@@ -110,7 +110,11 @@ bun add <package> <@version>
 </ParamField>
 
 <ParamField path="--minimum-release-age" type="number">
-  Only install package versions published at least this many seconds ago
+  Only install packages published at least N seconds ago (security feature)
+</ParamField>
+
+<ParamField path="--minimum-release-age-excludes" type="string">
+  Packages exempt from <code>--minimum-release-age</code> (comma-separated or repeated; replaces the bunfig.toml list)
 </ParamField>
 
 ### Network & Registry
@@ -193,6 +197,10 @@ bun add <package> <@version>
 <ParamField path="--os" type="string">
   Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
   all)
+</ParamField>
+
+<ParamField path="--libc" type="string">
+  Override libc for optional dependencies (e.g., <code>glibc</code>, <code>musl</code>, <code>*</code> for all)
 </ParamField>
 
 ### Global Configuration &amp; Context

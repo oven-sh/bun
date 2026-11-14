@@ -13,6 +13,7 @@ export const MySQLConnection = b.class({
     flush: {},
     hold: {},
     inTransaction: { getter: b.bool },
+    pump: { capability: "js", args: { ms: b.f64 }, returns: b.i32 },
     unhold: { capability: "js" },
   },
 });

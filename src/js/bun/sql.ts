@@ -21,7 +21,7 @@ const {
   Query,
   SQLQueryFlags,
   onQuerySettled,
-  symbols: { _flags, _strings, _waiter, _copy },
+  symbols: { _flags, _strings, _waiter, _copy, _pumped },
 } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
@@ -71,6 +71,7 @@ class Client implements Target {
   flags: number;
   handler: QueryHandler = dispatchToPool.bind(this);
   reserve = reserve.bind(this);
+  reserveSync = reserveSync.bind(this);
   listen = listen.bind(this);
   array = array.bind(this);
   json = json.bind(this);
@@ -194,6 +195,7 @@ function runOn(pool: Pool, pooledConnection: PooledConnection | null, query: Que
   try {
     const connection = pool.getConnectionForQuery(pooledConnection);
     query.active = true;
+    query[_pumped] = connection;
     handle.run(connection, query);
   } catch (err) {
     query.reject(err as Error);
@@ -869,6 +871,51 @@ function reserve(this: Client, options?: { signal?: AbortSignal }) {
   return promise;
 }
 
+/// reserve(), where it is called: blocks this thread until a connection is the caller's, without the event loop
+/// turning. undefined when none can be had that way within `ms` milliseconds: every connection is busy with
+/// something that only the event loop can finish. reserve() then waits for one.
+function reserveSync(this: Client, ms?: number): Bun.ReservedSQL | undefined {
+  const pool = this.pool as Pool & {
+    connectSync?: (done: () => boolean, ms: number | undefined) => boolean | null;
+    sweepSync?: () => void;
+  };
+  if (pool.closed) {
+    throw pool.connectionClosedError();
+  }
+  if (!pool.supportsReservedConnections || !pool.connectSync) {
+    throw new Error("This adapter doesn't support connection reservation");
+  }
+  pool.sweepSync?.();
+
+  let handle: Bun.ReservedSQL | undefined;
+  let failure: { error: unknown } | undefined;
+  const pending: PendingReservation = {
+    client: this,
+    signal: undefined,
+    resolve: reserved => {
+      handle = reserved;
+    },
+    reject: error => {
+      failure = { error };
+    },
+    onConnected: null,
+    onAbort: null,
+  };
+  const onConnected = (pending.onConnected = onReserveConnected.bind(pending));
+  pool.connect(onConnected, true);
+  if (handle === undefined && failure === undefined) {
+    pool.connectSync(() => handle !== undefined || failure !== undefined, ms);
+    // Still in the queue: it leaves it, and the caller owns nothing.
+    if (handle === undefined && failure === undefined) {
+      pool.cancelConnect(onConnected);
+    }
+  }
+  if (failure !== undefined) {
+    throw failure.error;
+  }
+  return handle;
+}
+
 function validateChannel(channel: unknown): asserts channel is string {
   if (typeof channel !== "string" || channel.length === 0) {
     throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
@@ -997,6 +1044,7 @@ function makeHandle(target: Client | Scope) {
   handle.rollbackDistributed = finishDistributed.bind(target, false);
   // reserve() takes another connection from the pool, whatever it is called on, as in the postgres package
   handle.reserve = client.reserve;
+  handle.reserveSync = client.reserveSync;
   handle.listen = client.listen;
   handle.array = client.array;
   handle.json = client.json;
@@ -1086,6 +1134,7 @@ const defaultSQLMembers = [
   "commitDistributed",
   "rollbackDistributed",
   "reserve",
+  "reserveSync",
   "listen",
   "array",
   "json",

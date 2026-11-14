@@ -360,3 +360,20 @@ expectType<Bun.SQL.ContextCallbackResult<unknown>>;
 declare const aSqlInstance: Bun.SQL;
 expectType(aSqlInstance.options.host).is<string | undefined>(); // property exists in postgres/mysql/mariadb options
 expectType(aSqlInstance.options.safeIntegers).is<boolean | undefined>(); // property exits in sqlite options
+
+{
+  const postgres = new Bun.SQL("postgres://localhost:5432/mydb");
+
+  expectType(postgres<{ id: number }[]>`select id from users`.executeSync(5000)).is<
+    { id: number }[] & Bun.SQL.ResultMetadata
+  >();
+
+  const query = postgres.unsafe("select 1");
+  expectType(query.wait(50)).is<boolean | null>();
+  expectType(query.cancelSync(2000)).is<typeof query>();
+
+  const reserved = postgres.reserveSync(1000);
+  expectType(reserved).is<Bun.ReservedSQL | undefined>();
+  reserved?.unsafe("BEGIN").executeSync();
+  reserved?.release();
+}

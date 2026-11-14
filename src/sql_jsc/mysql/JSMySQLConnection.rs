@@ -343,6 +343,8 @@ impl JSMySQLConnection {
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
             let group = vm.mysql_socket_group::<false>(context);
+            // So that `pump()` can see the address arrive.
+            let _resolve = crate::shared::pump::ResolveOnWorkPool::new();
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(
                     group,
@@ -416,6 +418,21 @@ impl JSMySQLConnection {
     pub fn close(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+    }
+
+    /// `pump(ms)`: blocks the calling thread on this connection's socket alone, for at most `ms`
+    /// milliseconds, and handles what arrives. See `shared/pump.rs`.
+    pub fn pump(this: &Self, _: &mut JsScope<'_>, ms: f64) -> i32 {
+        let _guard = this.ref_guard();
+        // What arrives calls back into JS. The promises that settles are run by the caller's own
+        // checkpoint, not in the middle of its frame.
+        let _entered = this.entered_from_js();
+        // The loop writes what is buffered before it sleeps. It is not going to.
+        if this.can_flush() {
+            this.drain_internal();
+        }
+        let socket = this.connection.get().socket();
+        crate::shared::pump::pump(socket, crate::shared::pump::timeout_ms(ms))
     }
 
     pub fn hold(this: &Self) {

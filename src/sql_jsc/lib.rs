@@ -32,6 +32,8 @@ pub mod shared {
 
     pub mod datetime_text;
 
+    pub(crate) mod pump;
+
     #[path = "QueryCtorArgs.rs"]
     pub mod query_ctor_args;
 

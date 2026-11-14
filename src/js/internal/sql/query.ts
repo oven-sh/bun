@@ -13,6 +13,10 @@ const _adapter = Symbol("adapter");
 const _waiter = Symbol("waiter");
 const _settled = Symbol("settled");
 const _copy = Symbol("copy");
+const _onSettled = Symbol("onSettled");
+const _pumped = Symbol("pumped");
+const _outcome = Symbol("outcome");
+const _failed = Symbol("failed");
 
 const PublicPromise = Promise;
 
@@ -35,6 +39,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_flags]: SQLQueryFlags;
   public [_waiter]: ((err: Error | null, connection: any) => void) | null;
   public [_settled]: Promise<void> | null;
+  /// The callbacks of onQuerySettled() that have not run. wait() runs them itself: no microtask runs while it blocks.
+  public [_onSettled]: Array<() => void> | null;
+  /// The native connection it runs on, for wait().
+  public [_pumped]: { pump(ms: number): number } | null;
+  /// What it settled with, for executeSync().
+  public [_outcome]: unknown;
+  public [_failed]: boolean;
   /// What is behind the stream of a query with SQLQueryFlags.copy. No other query has the property.
   declare public [_copy]: { attach(handle: Handle): void; abandon(why: string): void };
 
@@ -112,6 +123,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_flags] = flags;
     this[_waiter] = null;
     this[_settled] = null;
+    this[_onSettled] = null;
+    this[_pumped] = null;
+    this[_outcome] = undefined;
+    this[_failed] = false;
 
     this[_results] = null;
   }
@@ -191,6 +206,9 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   resolve(x: T) {
     this.#settling();
+    if ($isPromisePending(this)) {
+      this[_outcome] = x;
+    }
 
     return this[_resolve](x);
   }
@@ -198,8 +216,51 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   reject(x: Error) {
     this[_queryStatus] |= SQLQueryStatus.error;
     this.#settling();
+    if ($isPromisePending(this)) {
+      this[_outcome] = x;
+      this[_failed] = true;
+    }
 
     return this[_reject](x);
+  }
+
+  /// Starts the query and blocks this thread until it has settled, or for `ms` milliseconds. The event loop does
+  /// not turn meanwhile: the thread waits on the socket of the connection the query is on, and nothing else of
+  /// the program runs. true: it has settled. false: the time passed. null: there is nothing for the thread to
+  /// wait on, so only the event loop can settle it (every connection is in the hands of a caller that awaits,
+  /// say), and waiting longer here would not help.
+  wait(ms?: number): boolean | null {
+    if (!(this[_queryStatus] & (SQLQueryStatus.executed | SQLQueryStatus.error))) {
+      (this[_adapter] as { sweepSync?: () => void }).sweepSync?.();
+    }
+    this.#run();
+    // As with execute(): whoever waits this way reads the outcome from executeSync().
+    $pokePromiseAsHandled(this);
+    if ($isPromisePending(this)) {
+      const adapter = this[_adapter] as {
+        waitSync?: (query: Query<T, Handle>, ms: number | undefined) => boolean | null;
+      };
+      const waited = adapter.waitSync ? adapter.waitSync(this, ms) : null;
+      if ($isPromisePending(this)) {
+        return waited === null ? null : false;
+      }
+    }
+    runSettled.$call(this);
+    return true;
+  }
+
+  /// The result of the query, where it is called: wait(), then what the query resolved with, or a throw of what
+  /// it rejected with. A query that has not settled after `ms` milliseconds keeps running, and can be awaited.
+  executeSync(ms?: number): T {
+    if (!this.wait(ms)) {
+      const adapter = this[_adapter] as { error?: (code: string, message: string) => Error };
+      const message = "The query has not settled, and executeSync() cannot wait for it any longer";
+      throw adapter.error ? adapter.error("SYNC_TIMEOUT", message) : new Error(message);
+    }
+    if (this[_failed]) {
+      throw this[_outcome];
+    }
+    return this[_outcome] as T;
   }
 
   cancel() {
@@ -226,6 +287,19 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       this.reject(this[_adapter].queryCancelledError());
     }
 
+    return this;
+  }
+
+  /// cancel(), for a caller that does not yield: it then blocks until the request to stop the statement has
+  /// reached the server, or for `ms` milliseconds. On PostgreSQL that request travels on a connection of its own.
+  /// Left to the event loop it goes out after whatever the caller does next, which can be what the statement was
+  /// waiting for: the statement then runs although it was cancelled.
+  cancelSync(ms?: number) {
+    const native = this[_pumped];
+    this.cancel();
+    if (native !== null) {
+      (this[_adapter] as { cancelSync?: (native: unknown, ms: number | undefined) => void }).cancelSync?.(native, ms);
+    }
     return this;
   }
 
@@ -312,6 +386,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 }
 
+/// The callbacks of onQuerySettled(), once: in their microtask, or before it from wait().
+function runSettled(this: Query<any, any>) {
+  const callbacks = this[_onSettled];
+  if (callbacks !== null) {
+    this[_onSettled] = null;
+    for (let i = 0; i < callbacks.length; i++) {
+      callbacks[i]();
+    }
+  }
+}
+
 /// Calls `callback` in a microtask once the query has settled, before the reactions of the caller.
 function onQuerySettled(query: Query<any, any>, callback: () => void) {
   // A query that is only started, sql`...`.execute(), does not end the process when it fails. What the caller makes
@@ -323,8 +408,17 @@ function onQuerySettled(query: Query<any, any>, callback: () => void) {
     if (!$isPromisePending(query)) {
       $resolvePromise(settled, undefined);
     }
+    query[_onSettled] = [callback];
+    settled.$then(runSettled.bind(query));
+    return;
   }
-  settled.$then(callback);
+  const callbacks = query[_onSettled];
+  if (callbacks !== null) {
+    callbacks.push(callback);
+  } else {
+    // They have run. As before: in a microtask of its own.
+    settled.$then(callback);
+  }
 }
 
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
@@ -374,5 +468,6 @@ export default {
     _results,
     _waiter,
     _copy,
+    _pumped,
   },
 };

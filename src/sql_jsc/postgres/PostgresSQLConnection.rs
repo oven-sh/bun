@@ -104,6 +104,9 @@ pub struct PostgresSQLConnection {
     backend_key_data: Cell<Option<protocol::BackendKeyData>>,
     /// Of a connection that only carries a CancelRequest, until it ends.
     cancel_target: JsCell<Option<CancelTarget>>,
+    /// The connection that carries a CancelRequest for a request of this one, while it is under
+    /// way. A caller that blocks on this connection pumps that one first (`do_pump`).
+    cancelling: JsCell<Option<RefPtr<PostgresSQLConnection>>>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
     // into `options_buf` (built by `ConnectionStrings::new`). Struct is Box-allocated
@@ -1077,6 +1080,7 @@ fn open(
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
             backend_key_data: Cell::new(None),
             cancel_target: JsCell::new(params.cancel),
+            cancelling: JsCell::new(None),
             database,
             user: username,
             password,
@@ -1118,6 +1122,8 @@ fn open(
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
         let path_slice = this.path.slice();
+        // So that `pump()` can see the address arrive.
+        let _resolve = crate::shared::pump::ResolveOnWorkPool::new();
         let result = if !path_slice.is_empty() {
             uws::SocketTCP::connect_unix_group(
                 group,
@@ -1169,6 +1175,9 @@ fn open(
     }
     if !carries_cancel_request {
         bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
+    } else if let Some(target) = this.cancel_target.get() {
+        // Where a caller that blocks on the session finds this connection (`pump`).
+        target.session.cancelling.set(Some(this.ref_guard()));
     }
     Ok(js_value)
 }
@@ -1248,6 +1257,51 @@ impl PostgresSQLConnection {
 
     pub fn flush(&self) {
         self.register_auto_flusher();
+    }
+
+    /// `pump(ms)`: blocks the calling thread on this connection's socket alone, for at most `ms`
+    /// milliseconds, and handles what arrives. See `shared/pump.rs`.
+    pub fn pump(&self, _: &mut JsScope<'_>, ms: f64) -> i32 {
+        let _guard = self.ref_guard();
+        // What arrives calls back into JS. The promises that settles are run by the caller's own
+        // checkpoint, not in the middle of its frame.
+        let _entered = self.vm.get().enter_event_loop_scope_without_checkpoint();
+        // The loop writes what is buffered before it sleeps. It is not going to.
+        if self.can_flush() {
+            self.drain_internal();
+        }
+        let timeout = crate::shared::pump::timeout_ms(ms);
+        // A CancelRequest for a request of this connection travels on a connection of its own,
+        // which nothing else drives while the caller blocks. It goes first: what it is to stop
+        // would otherwise be waited for to its end.
+        let carrier = self
+            .cancelling
+            .get()
+            .as_ref()
+            .map(|carrier| *carrier.socket.get());
+        if let Some(carrier) = carrier {
+            let outcome = crate::shared::pump::pump(carrier, timeout);
+            if outcome >= 0 {
+                return outcome;
+            }
+        }
+        crate::shared::pump::pump(*self.socket.get(), timeout)
+    }
+
+    /// `pumpCancel(ms)`: as `pump`, on the connection that carries a CancelRequest for a request of
+    /// this one. -1 when none is under way: the request has gone out, or there was none.
+    pub fn pump_cancel(&self, _: &mut JsScope<'_>, ms: f64) -> i32 {
+        let _guard = self.ref_guard();
+        let _entered = self.vm.get().enter_event_loop_scope_without_checkpoint();
+        let carrier = self
+            .cancelling
+            .get()
+            .as_ref()
+            .map(|carrier| *carrier.socket.get());
+        match carrier {
+            Some(carrier) => crate::shared::pump::pump(carrier, crate::shared::pump::timeout_ms(ms)),
+            None => -1,
+        }
     }
 
     pub fn hold(&self) {
@@ -1547,6 +1601,7 @@ impl PostgresSQLConnection {
                 }),
             },
         );
+        // The connection that carries it has named itself in `cancelling` (see `open`).
         if dialed.is_err() {
             self.update_flags(|f| f.remove(ConnectionFlags::CANCEL_IN_FLIGHT));
         }
@@ -1555,6 +1610,7 @@ impl PostgresSQLConnection {
 
     /// `asked`: the CancelRequest for `request` went out, and the server has dealt with it.
     fn on_cancel_connection_closed(&self, request: &PostgresSQLQuery, asked: bool) {
+        self.cancelling.set(None);
         self.update_flags(|f| f.remove(ConnectionFlags::CANCEL_IN_FLIGHT));
         if self.status.get() != Status::Connected {
             return;

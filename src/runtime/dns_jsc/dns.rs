@@ -2835,9 +2835,16 @@ pub(crate) mod internal {
         #[cfg(target_os = "macos")]
         {
             use bun_uws::InternalLoopDataExt as _;
-            if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
-                .get()
-                .unwrap_or(false)
+            unsafe extern "C" {
+                fn us_internal_dns_prefers_work_pool() -> core::ffi::c_int;
+            }
+            // A caller that blocks on its socket (`pump()` of a SQL connection) cannot see an
+            // answer that only a tick of the event loop reads.
+            // SAFETY: reads a thread-local.
+            if unsafe { us_internal_dns_prefers_work_pool() } == 0
+                && !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
+                    .get()
+                    .unwrap_or(false)
             {
                 // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
                 // was set by `EventLoopHandle::set_as_parent_of` at startup.

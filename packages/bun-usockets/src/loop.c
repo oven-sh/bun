@@ -1209,3 +1209,248 @@ __attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
 }
 
 #undef us_ioctl
+
+/* ── Waiting on one socket (stacksjs/bun) ──────────────────────────────────
+ *
+ * A synchronous database call has to wait for its answer without the event
+ * loop turning: a tick would run every other socket's callbacks, timers and
+ * tasks in the middle of the caller's statement. So the caller blocks on the
+ * one file descriptor its answer arrives on, and what that descriptor has is
+ * dispatched exactly as a tick would dispatch it (TLS included). Nothing else
+ * of the loop is touched: no other poll, no timer, no pre or post callback.
+ *
+ * The socket stays registered with the loop. What the loop later reports for
+ * an event that was already taken here is a read that finds nothing, which
+ * the dispatch tolerates.
+ *
+ * The caller can itself be inside a dispatch: a request handler that the HTTP
+ * parser called from the middle of a read, say. That read's bytes are in the
+ * loop's one receive buffer (and its plaintext in the loop's one TLS buffer),
+ * and the handler's caller goes on reading them when the handler returns. So
+ * a dispatch from inside another gets buffers of its own for as long as it
+ * runs, and the TLS layer's notion of whose read is under way is put back
+ * after it (us_internal_ssl_pump_enter).
+ *
+ * Returns 1 when something was dispatched, 0 when `timeout_ms` passed first
+ * (negative: no limit), -1 when there is nothing to wait on (closed).
+ */
+#ifndef LIBUS_USE_LIBUV
+#include <errno.h>
+#include <poll.h>
+
+int us_socket_pump(struct us_socket_t *s, int timeout_ms);
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms);
+void us_internal_dns_prefer_work_pool(int prefer);
+int us_internal_dns_prefers_work_pool(void);
+
+/* How much us_internal_ssl_pump_enter sets aside (crypto/openssl.c). */
+#define US_PUMP_SSL_STATE_SLOTS 8
+#ifndef LIBUS_NO_SSL
+void us_internal_ssl_pump_enter(struct us_loop_t *loop, void **saved);
+void us_internal_ssl_pump_leave(struct us_loop_t *loop, void **saved);
+#endif
+
+/* Bun's resolver cache answers a lookup on macOS through a connection to
+ * mDNSResponder that only a loop tick reads. A lookup started while this is
+ * set goes to the thread pool instead, whose answer us_connecting_socket_pump
+ * can see. */
+static _Thread_local int us_dns_prefer_work_pool_depth = 0;
+
+void us_internal_dns_prefer_work_pool(int prefer) {
+    us_dns_prefer_work_pool_depth += prefer ? 1 : -1;
+}
+
+int us_internal_dns_prefers_work_pool(void) {
+    return us_dns_prefer_work_pool_depth > 0;
+}
+
+/* The loop takes parked TLS handshakes back a few per tick
+ * (us_internal_handle_low_priority_sockets). No tick runs while a caller
+ * blocks here, so the one it waits for is taken back now. */
+static void us_internal_pump_unpark(struct us_loop_t *loop, struct us_socket_t *s) {
+    if (s->flags.low_prio_state != 1) {
+        return;
+    }
+    if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
+    if (s->prev) s->prev->next = s->next;
+    else loop->data.low_prio_head = s->next;
+    if (s->next) s->next->prev = s->prev;
+    s->prev = s->next = 0;
+    s->group->low_prio_count--;
+
+    us_internal_socket_group_link_socket(s->group, s);
+    if (s->flags.is_paused) {
+        s->flags.low_prio_state = 0;
+        return;
+    }
+    us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
+    s->flags.low_prio_state = 2;
+}
+
+static int us_internal_pump_poll(struct pollfd *fds, int count, int timeout_ms) {
+    int ready;
+    do {
+        ready = poll(fds, (nfds_t) count, timeout_ms < 0 ? -1 : timeout_ms);
+    } while (ready < 0 && errno == EINTR);
+    return ready;
+}
+
+static void us_internal_pump_dispatch(struct us_loop_t *loop, struct us_socket_t *s, short revents) {
+    const int error = (revents & POLLERR) != 0;
+#ifdef LIBUS_USE_EPOLL
+    /* poll() and epoll report a hangup alike. */
+    const int eof = (revents & POLLHUP) ? LIBUS_POLL_HANGUP : 0;
+#else
+    /* As kqueue's EV_EOF on the read filter: the peer's FIN. */
+    const int eof = (revents & POLLHUP) ? LIBUS_POLL_EOF : 0;
+#endif
+    int events = ((revents & POLLIN) ? LIBUS_SOCKET_READABLE : 0)
+               | ((revents & POLLOUT) ? LIBUS_SOCKET_WRITABLE : 0);
+    events &= us_poll_events(&s->p);
+    if (!events && !error && !eof) {
+        return;
+    }
+    /* A handshake that the dispatch would park for the next tick's budget. */
+    if (loop->data.low_prio_budget < 1) {
+        loop->data.low_prio_budget = 1;
+    }
+    /* Inside a tick or another pump, a read may be under way further up the
+     * stack: its buffers are left as they are. */
+    const int nested = loop->data.tick_depth > 0;
+    char *outer_recv_buf = NULL;
+    void *outer_ssl[US_PUMP_SSL_STATE_SLOTS];
+    if (nested) {
+        outer_recv_buf = loop->data.recv_buf;
+        loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+        if (!loop->data.recv_buf) Bun__outOfMemory();
+#ifndef LIBUS_NO_SSL
+        us_internal_ssl_pump_enter(loop, outer_ssl);
+#else
+        (void) outer_ssl;
+#endif
+    }
+    /* As inside a tick: a callback that runs a nested tick must not free the
+     * socket this dispatch is still reading (us_internal_loop_post). */
+    loop->data.tick_depth++;
+    us_internal_dispatch_ready_poll(&s->p, error, eof, events);
+    loop->data.tick_depth--;
+    if (nested) {
+#ifndef LIBUS_NO_SSL
+        us_internal_ssl_pump_leave(loop, outer_ssl);
+#endif
+        us_free(loop->data.recv_buf);
+        loop->data.recv_buf = outer_recv_buf;
+    }
+}
+
+int us_socket_pump(struct us_socket_t *s, int timeout_ms) {
+    s = us_internal_socket_follow_adopted(s);
+    if (!s || us_socket_is_closed(s) || !s->group) {
+        return -1;
+    }
+    struct us_loop_t *loop = s->group->loop;
+    us_internal_pump_unpark(loop, s);
+
+    const int wanted = us_poll_events(&s->p);
+    struct pollfd pfd;
+    pfd.fd = us_poll_fd(&s->p);
+    pfd.events = (short) (((wanted & LIBUS_SOCKET_READABLE) ? POLLIN : 0)
+                        | ((wanted & LIBUS_SOCKET_WRITABLE) ? POLLOUT : 0));
+    pfd.revents = 0;
+
+    const int ready = us_internal_pump_poll(&pfd, 1, timeout_ms);
+    if (ready <= 0) {
+        return ready < 0 ? -1 : 0;
+    }
+    if (pfd.revents & POLLNVAL) {
+        return -1;
+    }
+    us_internal_pump_dispatch(loop, s, pfd.revents);
+    return 1;
+}
+
+#define US_PUMP_MAX_CANDIDATES 8
+
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms) {
+    if (c->closed) {
+        return -1;
+    }
+    struct us_loop_t *loop = c->loop;
+
+    if (c->pending_resolve_callback) {
+        /* The resolver puts `c` on the loop's list when it has the answer
+         * (us_internal_dns_callback), from another thread or from this one.
+         * The loop would take the whole list at its next tick; this takes `c`
+         * alone. */
+        int waited_ms = 0;
+        for (;;) {
+            int found = 0;
+            Bun__lock(&loop->data.mutex);
+            for (struct us_connecting_socket_t **link = &loop->data.dns_ready_head; *link; link = &(*link)->next) {
+                if (*link == c) {
+                    *link = c->next;
+                    c->next = NULL;
+                    found = 1;
+                    break;
+                }
+            }
+            Bun__unlock(&loop->data.mutex);
+            if (found) {
+                us_internal_socket_after_resolve(c);
+                return 1;
+            }
+            if (timeout_ms >= 0 && waited_ms >= timeout_ms) {
+                return 0;
+            }
+            struct timespec one_ms = { 0, 1000000 };
+            nanosleep(&one_ms, NULL);
+            waited_ms++;
+        }
+    }
+
+    /* One candidate per resolved address is connecting. The first to answer
+     * is dispatched; if it failed, the next call waits on the ones left. */
+    struct pollfd fds[US_PUMP_MAX_CANDIDATES];
+    struct us_socket_t *candidates[US_PUMP_MAX_CANDIDATES];
+    int count = 0;
+    for (struct us_socket_t *s = c->connecting_head; s && count < US_PUMP_MAX_CANDIDATES; s = s->connect_next) {
+        if (us_socket_is_closed(s)) {
+            continue;
+        }
+        fds[count].fd = us_poll_fd(&s->p);
+        fds[count].events = POLLOUT;
+        fds[count].revents = 0;
+        candidates[count++] = s;
+    }
+    if (count == 0) {
+        return -1;
+    }
+
+    const int ready = us_internal_pump_poll(fds, count, timeout_ms);
+    if (ready <= 0) {
+        return ready < 0 ? -1 : 0;
+    }
+    for (int i = 0; i < count; i++) {
+        if (fds[i].revents && !(fds[i].revents & POLLNVAL)) {
+            /* May free `c` and close the other candidates. */
+            us_internal_pump_dispatch(loop, candidates[i], fds[i].revents);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+#else /* LIBUS_USE_LIBUV */
+
+int us_socket_pump(struct us_socket_t *s, int timeout_ms);
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms);
+void us_internal_dns_prefer_work_pool(int prefer);
+int us_internal_dns_prefers_work_pool(void);
+
+/* Not on libuv (Windows): the caller is told there is nothing to wait on. */
+int us_socket_pump(struct us_socket_t *s, int timeout_ms) { (void) s; (void) timeout_ms; return -1; }
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms) { (void) c; (void) timeout_ms; return -1; }
+void us_internal_dns_prefer_work_pool(int prefer) { (void) prefer; }
+int us_internal_dns_prefers_work_pool(void) { return 0; }
+
+#endif

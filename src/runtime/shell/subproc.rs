@@ -19,8 +19,6 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_sys::FdExt;
 use bun_sys::{self, Fd, SystemError};
 use enumset::EnumSet;
 
@@ -836,8 +834,6 @@ pub enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Inherit,
     Ignore,
 }
@@ -962,18 +958,7 @@ impl Writable {
                     )))
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(memfd) => {
-                    debug_assert!(memfd.is_valid());
-                    let fd = *memfd;
-                    // Ownership of the fd transfers to `Writable::Memfd`.
-                    // Swap in `Ignore` and suppress the old value's destructor
-                    // so `Stdio::Drop` doesn't close the fd we just took
-                    // (`stdio = Stdio::Ignore` alone would drop+close the old
-                    // `Stdio::Memfd`).
-                    let _ =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Ok(Writable::Memfd(fd))
-                }
+                Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
                 Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
@@ -1008,11 +993,6 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
-                *self = Writable::Ignore;
-            }
             Writable::Ignore => {}
             Writable::Fd(_) | Writable::Inherit => {}
         }
@@ -1025,8 +1005,6 @@ impl Writable {
 
 pub(crate) enum Readable {
     Fd,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Pipe(Rc<PipeReader>),
     Inherit,
     Ignore,
@@ -1163,15 +1141,7 @@ impl Readable {
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(memfd) => {
-                    let fd = *memfd;
-                    // Ownership of the fd transfers to `Readable::Memfd`. Swap in
-                    // `Ignore` and suppress the old value's destructor so
-                    // `Stdio::Drop` doesn't close the fd we just took.
-                    let _ =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Readable::Memfd(fd)
-                }
+                Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
@@ -1199,11 +1169,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                *self = Readable::Closed;
-                fd.close();
-            }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
             // the `Cmd`'s `redirection_fd`; the owner closes it.
             Readable::Fd => {

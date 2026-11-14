@@ -2128,12 +2128,7 @@ impl Package<u64> {
         #[cfg(not(windows))]
         let external_version = string_builder.append::<String>(version);
 
-        // SAFETY: `buf` aliases `string_builder.string_bytes` while later
-        // `string_builder.append()` calls write into the *pre-reserved* tail
-        // (`allocate()` ran before this fn). No realloc occurs, so the detached
-        // borrow stays valid; a tracked `&[u8]` would needlessly lock the builder.
-        let buf: &[u8] =
-            unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
+        let buf = string_builder.string_bytes.as_slice();
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
@@ -2205,7 +2200,7 @@ impl Package<u64> {
             );
         }
 
-        let unsafe_folder_path = |log: &mut bun_ast::Log| {
+        let unsafe_folder_path = |log: &mut bun_ast::Log, buf: &[u8]| {
             log.add_error_fmt(
                 source,
                 value_loc_of(source, key_loc),
@@ -2230,7 +2225,7 @@ impl Package<u64> {
                     target.slice(buf),
                     &mut folder_buf.0,
                 ) else {
-                    return Err(unsafe_folder_path(log));
+                    return Err(unsafe_folder_path(log, buf));
                 };
                 dependency_version.value = if is_link {
                     let path = dependency::link_path_for_lockfile(relative);
@@ -2295,7 +2290,7 @@ impl Package<u64> {
                     && name_hash != 0
                     && name_hash == pm.workspace_root_name_hash
                 {
-                    workspace_path = Some(string_builder.append::<String>(b"."));
+                    workspace_path = Some(String::from(b"."));
                     version_buf = &pm.workspace_root_version;
                     let parsed = SemverVersion::parse_utf8(version_buf);
                     workspace_version = (parsed.valid && parsed.wildcard == Wildcard::None)
@@ -2357,10 +2352,11 @@ impl Package<u64> {
                             &mut relative_buf.0,
                         ) {
                             Some(relative) => relative,
-                            None => return Err(unsafe_folder_path(log)),
+                            None => return Err(unsafe_folder_path(log, buf)),
                         }
                     };
                     let path = string_builder.append::<String>(relative);
+                    let buf = string_builder.string_bytes.as_slice();
                     debug_assert!(path.len() > 0);
                     debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value = dependency::Value::Workspace(path);
@@ -2423,6 +2419,7 @@ impl Package<u64> {
             }
             _ => {}
         }
+        let buf = string_builder.string_bytes.as_slice();
 
         let mut this_dep = Dependency {
             behavior: group.behavior,

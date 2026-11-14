@@ -234,12 +234,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     }
     /// `CompiledProgram::root_beside_executable`
     fn root_beside_executable(&self) -> Option<Vec<u8>> {
-        let program = self.compiled_program()?;
-        if let Some(file) = crate::compiled_program::FILE_IN_PLACE_OF_EXECUTABLE.get() {
-            return program.root_beside_executable(&file.path);
-        }
-        let executable = bun_core::self_exe_path().ok()?;
-        program.root_beside_executable(executable.as_bytes())
+        self.compiled_program()?.root_beside_executable()
     }
     fn root_on_disk(&self) -> Option<Vec<u8>> {
         let program = self.compiled_program()?;

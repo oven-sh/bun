@@ -155,11 +155,11 @@ impl Observation<'_> {
         }
         // The parser also lists `a` of `import { a }` and of `const { a } = require()` under a namespace, one that has
         // no name in the source.
-        if host.is_module_level(reference) {
+        if host.is_named_by_enclosing_scope(reference) {
             return SymbolOrigin::Source;
         }
         match host.namespace_of_import_item(reference) {
-            Some(namespace) if host.is_module_level(namespace) => {
+            Some(namespace) if host.is_named_by_enclosing_scope(namespace) => {
                 SymbolOrigin::NamespaceMember(namespace)
             }
             _ => SymbolOrigin::Source,
@@ -232,8 +232,11 @@ impl Host for RecordingHost<'_> {
     fn namespace_of_import_item(&self, item: Ref) -> Option<Ref> {
         self.host.namespace_of_import_item(item)
     }
-    fn is_module_level(&self, ref_: Ref) -> bool {
-        self.host.is_module_level(ref_)
+    fn is_named_by_enclosing_scope(&self, ref_: Ref) -> bool {
+        self.host.is_named_by_enclosing_scope(ref_)
+    }
+    fn locals_without_declaration(&self) -> &[Ref] {
+        self.host.locals_without_declaration()
     }
     fn source(&self) -> &[u8] {
         self.host.source()

@@ -9,7 +9,7 @@ pub(crate) struct LintHost<'c> {
     converted: &'c Converted,
     arena: &'c Arena,
     source: &'c [u8],
-    /// Always empty. [`Host::is_module_level`] tells the compiler what's bound outside the function.
+    /// Always empty. The compiler takes what the function doesn't declare for bound outside of it.
     module_scope: Scope,
 }
 
@@ -43,9 +43,8 @@ impl Host for LintHost<'_> {
     fn parentheses(&self) -> &[(Loc, Loc)] {
         &self.converted.parentheses
     }
-    fn is_module_level(&self, ref_: Ref) -> bool {
-        let is_outside = self.converted.is_outside.get(ref_.inner_index() as usize);
-        is_outside.copied().unwrap_or(true)
+    fn locals_without_declaration(&self) -> &[Ref] {
+        &self.converted.locals_without_declaration
     }
     fn source(&self) -> &[u8] {
         self.source

@@ -1603,6 +1603,263 @@ describe("bundler", () => {
     },
   });
 
+  // The parser turns a read of a member that a TypeScript namespace or enum exports into a property of the closure
+  // parameter of the block, and a read of a member of another block of the namespace into a symbol that prints as one.
+  // No scope has a name for either, so the compiler took both for locals of the function that reads them and printed a
+  // symbol of its own: `N2.size` where nothing declares `N2`, which can be the name of something else, and a bare `a`
+  // for `N.a`. A function that reads one is left as it is written.
+  //
+  // Each line is the value and whether the function asked for a memo cache.
+  const namespaceMemberReads = {
+    "/entry.tsx": /* tsx */ `
+      import { memo, useState } from "react";
+      import { Ui as First } from "./first";
+      import { Ui as Second } from "./second";
+
+      const seed = (value: any) => value;
+      const lines: string[] = [];
+      function line(name: string, render: () => unknown) {
+        const caches = globalThis.memoCaches | 0;
+        let value;
+        try {
+          value = JSON.stringify(render());
+        } catch (e: any) {
+          value = e.name + ": " + e.message;
+        }
+        lines.push(name + " " + value + ((globalThis.memoCaches | 0) > caches ? " compiled" : " as written"));
+      }
+
+      namespace Same {
+        const local = seed(1);
+        export const size = seed(16);
+        export function Star() {
+          return <i v={[1].map(n => size + n)} />;
+        }
+        export function InBody() {
+          return <i v={[size + 1]} />;
+        }
+        export function Defaulted({ a = size }: any) {
+          return <i v={[a]} />;
+        }
+        export function Destructured(props: any) {
+          const { a = size } = props;
+          return <i v={[a]} />;
+        }
+        export function Switched({ k }: any) {
+          switch (k) {
+            case size:
+              return <i v={["size"]} />;
+          }
+          return <i v={[k]} />;
+        }
+        export function NoMember() {
+          return <i v={[1].map(n => local + n)} />;
+        }
+      }
+      line("same block, callback", () => Same.Star().p.v);
+      line("same block, body", () => Same.InBody().p.v);
+      line("same block, default value", () => Same.Defaulted({}).p.v);
+      line("same block, default in a pattern", () => Same.Destructured({}).p.v);
+      line("same block, case", () => Same.Switched({ k: 16 }).p.v);
+      line("same block, no member", () => Same.NoMember().p.v);
+
+      const N2 = { size: 99 };
+      namespace N {
+        export const size = seed(16);
+        export function Star() {
+          return <i v={[1].map(n => size + n)} />;
+        }
+      }
+      line("beside a module-level N2", () => [N.Star().p.v, N2.size]);
+
+      namespace Tags {
+        export const Dot = ({ n }: any) => <b>{n}</b>;
+        export const Dots = ({ items }: any) => <ul>{[...items].map((n: any) => <Dot key={n} n={n} />)}</ul>;
+      }
+      line("member as a tag", () => Tags.Dots({ items: [1] }).p.children.map((it: any) => it.t === Tags.Dot));
+      const which = (it: any) => (it.t === First.Dot ? "first" : it.t === Second.Dot ? "second" : typeof it.t);
+      line("one name in two files", () => [
+        First.Dots({ items: [1] }).p.children.map(which),
+        Second.Dots({ items: [1] }).p.children.map(which),
+      ]);
+
+      namespace Outer {
+        export const k = seed(1);
+        export namespace Inner {
+          export const j = seed(10);
+          export function Own() {
+            return <i v={[1].map(n => j + n)} />;
+          }
+          export function Enclosing() {
+            return <i v={[1].map(n => k + n)} />;
+          }
+        }
+      }
+      line("nested, own member", () => Outer.Inner.Own().p.v);
+      line("nested, member of the outer one", () => Outer.Inner.Enclosing().p.v);
+
+      namespace Kinds {
+        export var size = seed(16);
+        export let step = seed(2);
+        export import ten = Outer.Inner.j;
+        export const Star = () => <i v={[1].map(n => size + n)} />;
+        export function useSteps() {
+          const [first] = useState(0);
+          return [first].map(n => step + n);
+        }
+        export function Imported() {
+          return <i v={[1].map(n => ten + n)} />;
+        }
+      }
+      line("var member, arrow component", () => Kinds.Star().p.v);
+      line("let member, hook", () => Kinds.useSteps());
+      line("export import", () => Kinds.Imported().p.v);
+
+      namespace Compared {
+        export const size = seed(16);
+        export const Star = memo(
+          ({ x }: any) => <i v={[x].map(n => size + n)} />,
+          (before: any, after: any) => before.x === after.x,
+        );
+      }
+      line("memo with a comparator", () => (Compared.Star as any)({ x: 1 }).p.v);
+      enum E {
+        E = seed(3),
+        Star = memo(() => <i v={[1].map(n => E + n)} />) as any,
+      }
+      line("enum with a member of its name", () => (E.Star as any)().p.v);
+
+      const shadowed = "outer";
+      const obj = { Dot: "outer" };
+      namespace Parts {
+        export const a = seed("a1");
+        export const shadowed = seed("member");
+        export const Map = seed("mine");
+        export const Dot = ({ n }: any) => <b>{n}</b>;
+        export const obj = { Dot };
+        export const useTwo = () => 2;
+        export function self(this: unknown) {
+          return this;
+        }
+      }
+      namespace Parts {
+        export function InCallback() {
+          return <i v={[1].map(n => a + n)} />;
+        }
+        export function Shadowing() {
+          return <i v={[1].map(n => shadowed + n)} />;
+        }
+        export function Typeof() {
+          return <i v={[1].map(() => typeof Map)} />;
+        }
+        export function InBody() {
+          return <i v={[a + "!"]} />;
+        }
+        export function AsTag() {
+          return <Dot n={1} />;
+        }
+        export function MemberTag() {
+          return <obj.Dot n={1} />;
+        }
+        export function MemberTagInCallback() {
+          return <i v={[1].map(n => <obj.Dot key={n} n={n} />)} />;
+        }
+        export function Hook() {
+          const two = useTwo();
+          return <i v={[two]} />;
+        }
+        export function Called() {
+          return <i v={[self() === Parts]} />;
+        }
+      }
+      line("other block, callback", () => Parts.InCallback().p.v);
+      line("other block, over a module-level name", () => [Parts.Shadowing().p.v, shadowed]);
+      line("other block, typeof", () => Parts.Typeof().p.v);
+      line("other block, body", () => Parts.InBody().p.v);
+      line("other block, tag", () => Parts.AsTag().t === Parts.Dot);
+      line("other block, member tag", () => [Parts.MemberTag().t === Parts.Dot, obj.Dot]);
+      line("other block, member tag in a callback", () => Parts.MemberTagInCallback().p.v[0].t === Parts.Dot);
+      line("other block, hook", () => Parts.Hook().p.v);
+      line("other block, call", () => Parts.Called().p.v);
+
+      // The name of a function declaration is bound in the scope around the function. It is no local of it.
+      function Recur({ depth }: any) {
+        if (depth === 0) return <b />;
+        return <div>{[depth - 1].map(d => <Recur key={d} depth={d} />)}</div>;
+      }
+      line("name of a declaration", () => Recur({ depth: 1 }).p.children.map((it: any) => it.t === Recur));
+
+      console.log(lines.join("\\n"));
+    `,
+    "/first.tsx": /* tsx */ `
+      export namespace Ui {
+        export const Dot = ({ n }: any) => <b>{n}</b>;
+        export const Dots = ({ items }: any) => <ul>{[...items].map((n: any) => <Dot key={n} n={n} />)}</ul>;
+      }
+    `,
+    "/second.tsx": /* tsx */ `
+      export namespace Ui {
+        export const Dot = ({ n }: any) => <b>{n}</b>;
+        export const Dots = ({ items }: any) => <ul>{[...items].map((n: any) => <Dot key={n} n={n} />)}</ul>;
+      }
+    `,
+    ...stubReact,
+    "/node_modules/react/index.js": `exports.memo = it => it; exports.useState = value => [value, () => {}];`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      exports.c = n => {
+        globalThis.memoCaches = (globalThis.memoCaches | 0) + 1;
+        return new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  const namespaceMemberLines = `
+    same block, callback [17] as written
+    same block, body [17] as written
+    same block, default value [16] as written
+    same block, default in a pattern [16] as written
+    same block, case ["size"] as written
+    same block, no member [2] compiled
+    beside a module-level N2 [[17],99] as written
+    member as a tag [true] as written
+    one name in two files [["first"],["second"]] as written
+    nested, own member [11] as written
+    nested, member of the outer one [2] as written
+    var member, arrow component [17] as written
+    let member, hook [2] as written
+    export import [11] as written
+    memo with a comparator [17] as written
+    enum with a member of its name [4] as written
+    other block, callback ["a11"] as written
+    other block, over a module-level name [["member1"],"outer"] as written
+    other block, typeof ["string"] as written
+    other block, body ["a1!"] as written
+    other block, tag true as written
+    other block, member tag [true,"outer"] as written
+    other block, member tag in a callback true as written
+    other block, hook [2] as written
+    other block, call [true] as written
+    name of a declaration [true] compiled
+  `;
+  for (const [leg, backend, target] of [
+    ["cli", "cli", "browser"],
+    ["api", "api", "browser"],
+    ["server", "cli", "bun"],
+  ] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/NamespaceMemberReads-${leg}${minifyIdentifiers ? "-MinifyIdentifiers" : ""}`, {
+        files: namespaceMemberReads,
+        reactCompiler: true,
+        target,
+        backend,
+        minifyIdentifiers,
+        // A function that is compiled for a server asks for no memo cache.
+        run: {
+          stdout: target === "bun" ? namespaceMemberLines.replaceAll(" compiled", " as written") : namespaceMemberLines,
+        },
+      });
+    }
+  }
+
   // Regression: `codegen.rs well_known()` minted fresh `Kind::Other` symbols
   // for `Symbol` / `NaN` / `Infinity`. The renamer treated them as renameable
   // locals, so minified bundles had `tQE.for("react.memo_cache_sentinel")`
@@ -4595,6 +4852,100 @@ describe("bundler", () => {
       });
     },
   });
+});
+
+// `bun test --react-compiler` runs no renamer: a symbol is printed by its name. The symbol that the compiler made for a
+// member of another block of a namespace was taken there for a variable of the module or a global of that name, and
+// the one for the closure parameter, beside the namespace's own name, for nothing: `Parts$0 is not defined`.
+test("react-compiler reads the members of a namespace in a file that bun test compiles", async () => {
+  using dir = tempDir("react-compiler-namespace", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: {
+        ".": "./index.js",
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/index.js": `export const memo = component => component;`,
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "src/Parts.tsx": /* tsx */ `
+      import { memo } from "react";
+      const seed = (value: any) => value;
+      const shadowed = "outer";
+      const tags = { Dot: "outer" };
+      export namespace Parts {
+        export const a = seed("a1");
+        export const shadowed = seed("member");
+        export const Map = seed("mine");
+        export const size = seed(16);
+        export const tags = { Dot: () => null };
+        export function BesideItsName() {
+          return <i v={[1].map(n => size + Parts.size + n)} />;
+        }
+        export const Compared = memo(
+          ({ x }: any) => <i v={[x].map(n => size + n)} />,
+          (before: any, after: any) => before.x === after.x,
+        );
+      }
+      export namespace Parts {
+        export function InCallback() {
+          return <i v={[1].map(n => a + n)} />;
+        }
+        export function Shadowing() {
+          return <i v={[1].map(n => shadowed + n)} />;
+        }
+        export function Typeof() {
+          return <i v={[1].map(() => typeof Map)} />;
+        }
+        export function MemberTag() {
+          return <i v={[1].map(n => <tags.Dot key={n} />).map(made => typeof made.type)} />;
+        }
+      }
+      export const outer = [shadowed, tags.Dot];
+    `,
+    "parts.test.tsx": /* tsx */ `
+      import { test } from "bun:test";
+      import { Parts, outer } from "./src/Parts";
+      test("members", () => {
+        const values = { outer };
+        const compiled = [];
+        for (const name of ["BesideItsName", "Compared", "InCallback", "Shadowing", "Typeof", "MemberTag"]) {
+          if (/\\$\\[\\d+\\]/.test(String(Parts[name]))) compiled.push(name);
+          try {
+            values[name] = Parts[name]({ x: 1 }).props.v;
+          } catch (e) {
+            values[name] = String(e);
+          }
+        }
+        console.log("result: " + JSON.stringify({ values, compiled }));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./parts.test.tsx"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.match(/^result: (.*)$/m)?.[1] ?? JSON.stringify(stderr))).toEqual({
+    values: {
+      outer: ["outer", "outer"],
+      BesideItsName: [33],
+      Compared: [17],
+      InCallback: ["a11"],
+      Shadowing: ["member1"],
+      Typeof: ["string"],
+      MemberTag: ["function"],
+    },
+    compiled: [],
+  });
+  expect(exitCode).toBe(0);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

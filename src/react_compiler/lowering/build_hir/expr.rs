@@ -1500,7 +1500,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    builder.host().is_module_level(ref_)
+    builder.function_bindings().local(ref_).is_none()
 }
 
 // =============================================================================

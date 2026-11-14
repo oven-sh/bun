@@ -53,8 +53,8 @@ pub(crate) struct Converted {
     pub(crate) root: Root,
     pub(crate) spans: Vec<Span>,
     pub(crate) symbols: Vec<JsSymbol>,
-    /// For each of `symbols`: true if it's bound outside the function, or not bound at all.
-    pub(crate) is_outside: Vec<bool>,
+    /// [`Host::locals_without_declaration`](bun_react_compiler::Host::locals_without_declaration)
+    pub(crate) locals_without_declaration: Vec<Ref>,
     pub(crate) import_bindings: Vec<(Ref, VariableBinding)>,
     /// The tag of `<>`.
     pub(crate) fragment: Ref,
@@ -161,7 +161,7 @@ pub(crate) struct Converter<'a, 'x> {
     root: Span,
     spans: Vec<Span>,
     symbols: Vec<JsSymbol>,
-    is_outside: Vec<bool>,
+    locals_without_declaration: Vec<Ref>,
     import_bindings: Vec<(Ref, VariableBinding)>,
     by_symbol: FxHashMap<usize, Ref>,
     by_name: FxHashMap<(Named, Name<'a>), Ref>,
@@ -191,7 +191,7 @@ pub(crate) fn convert<'a>(
         root: func.estree_span(),
         spans: Vec::with_capacity(256),
         symbols: Vec::with_capacity(32),
-        is_outside: Vec::with_capacity(32),
+        locals_without_declaration: Vec::new(),
         import_bindings: Vec::new(),
         by_symbol: FxHashMap::default(),
         by_name: FxHashMap::default(),
@@ -205,12 +205,21 @@ pub(crate) fn convert<'a>(
         clock_reads: Vec::new(),
         stack,
     };
-    converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound, true);
-    converter.fragment = converter.new_symbol(b"Fragment", SymbolKind::Unbound, true);
+    converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound);
+    converter.fragment = converter.new_symbol(b"Fragment", SymbolKind::Unbound);
     let root = match func.is_arrow() {
         true => Root::Arrow(converter.arrow(func)?),
         false => Root::Function(converter.function(func)?),
     };
+    // Upstream's compiler takes the name of a function expression for a local of it.
+    if let Root::Function(G::Fn {
+        name: Some(name), ..
+    }) = &root
+        && func.kind() == FnKind::Expr
+        && !converter.treats_own_name_as_outer(func)
+    {
+        converter.locals_without_declaration.push(name.ref_);
+    }
     // `(x as A) as B` is recorded twice with the same start. Keep the outer cast, which was pushed later.
     let mut casts = converter.casts;
     casts.reverse();
@@ -231,7 +240,7 @@ pub(crate) fn convert<'a>(
         wrapped_defaults: converter.wrapped_defaults,
         spans: converter.spans,
         symbols: converter.symbols,
-        is_outside: converter.is_outside,
+        locals_without_declaration: converter.locals_without_declaration,
         import_bindings: converter.import_bindings,
         fragment: converter.fragment,
         recorded: converter.recorded,
@@ -262,14 +271,13 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── symbols ─────────────────────────────
 
-    fn new_symbol(&mut self, name: &[u8], kind: SymbolKind, is_outside: bool) -> Ref {
+    fn new_symbol(&mut self, name: &[u8], kind: SymbolKind) -> Ref {
         let index = self.symbols.len() as u32;
         self.symbols.push(JsSymbol {
             original_name: StoreStr::new(name),
             kind,
             ..JsSymbol::default()
         });
-        self.is_outside.push(is_outside);
         Ref::new(index, 0, RefTag::Symbol)
     }
 
@@ -282,7 +290,7 @@ impl<'a> Converter<'a, '_> {
             Named::Label => SymbolKind::Label,
             Named::Private => SymbolKind::PrivateField,
         };
-        let made = self.new_symbol(name.bytes(), kind, true);
+        let made = self.new_symbol(name.bytes(), kind);
         self.by_name.insert((named, name), made);
         made
     }
@@ -354,7 +362,7 @@ impl<'a> Converter<'a, '_> {
             Some(Declaration::Module(_)) => SymbolKind::TsNamespace,
             _ => SymbolKind::Other,
         };
-        let made = self.new_symbol(symbol.name().bytes(), kind, is_outside);
+        let made = self.new_symbol(symbol.name().bytes(), kind);
         if let Some(import) = import {
             self.import_bindings.push((made, import));
         }
@@ -379,7 +387,7 @@ impl<'a> Converter<'a, '_> {
         match symbol {
             Some(symbol) => self.ref_of_symbol(symbol),
             // Nothing refers to it.
-            None => self.new_symbol(name.bytes(), SymbolKind::Other, false),
+            None => self.new_symbol(name.bytes(), SymbolKind::Other),
         }
     }
 
@@ -435,7 +443,7 @@ impl<'a> Converter<'a, '_> {
         first: &mut AstVec<JsStmt>,
     ) -> Binding {
         let loc = binding.loc;
-        let r#ref = self.new_symbol(b"t", kind, false);
+        let r#ref = self.new_symbol(b"t", kind);
         let mut decls: G::DeclList = AstAlloc::vec_with_capacity(1);
         decls.push(G::Decl {
             binding,
@@ -1337,8 +1345,16 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
+            // A signature without a body declares its name: a local that nothing initializes, as in oxc's compiler.
+            StmtKind::Fn(func) => {
+                if let Some(name) = func.name() {
+                    let declared = self.declared(func.symbol(), name.name());
+                    self.locals_without_declaration.push(declared);
+                }
+                JsStmt::alloc(S::TypeScript::default(), loc)
+            }
             // Type-only declarations.
-            StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {
                 JsStmt::alloc(S::TypeScript::default(), loc)
             }
             StmtKind::Class(class) => JsStmt::alloc(

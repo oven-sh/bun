@@ -39,6 +39,7 @@ use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
 use crate::hir::MutationReason;
 use crate::hir::ParamPattern;
+use crate::hir::Pattern;
 use crate::hir::Place;
 use crate::hir::PlaceOrSpread;
 use crate::hir::PlaceOrSpreadOrHole;
@@ -2406,6 +2407,11 @@ fn compute_signature_for_instruction(
             let sig = get_function_call_signature(env, callee.identifier)
                 .ok()
                 .flatten();
+            // Not in upstream: `new String(x)` makes an object, whatever the signature says that `String(x)` returns.
+            let sig = sig.filter(|sig| {
+                !env.config.objects_are_not_primitives
+                    || sig.return_value_kind != ValueKind::Primitive
+            });
             effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                 receiver: callee.clone(),
                 function: callee.clone(),
@@ -2671,6 +2677,14 @@ fn compute_signature_for_instruction(
             value: dest_value,
             ..
         } => {
+            // Not in upstream: an array pattern takes from an iterator, as the spread of an `ArrayExpression` does.
+            if env.config.array_patterns_run_iterators && matches!(dl.pattern, Pattern::Array(_)) {
+                let ty =
+                    &env.types[env.identifiers[dest_value.identifier.0 as usize].type_.0 as usize];
+                if let Some(mutate_iter) = conditionally_mutate_iterator(dest_value, ty) {
+                    effects.push(mutate_iter);
+                }
+            }
             for pat_item in each_pattern_items(&dl.pattern) {
                 match pat_item {
                     PatternItem::Place(place) => {
@@ -2870,6 +2884,32 @@ fn compute_signature_for_instruction(
                 value: ValueKind::Primitive,
                 reason: ValueReason::Other,
             });
+        }
+        // Not in upstream, where the arm below has it.
+        InstructionValue::RegExpLiteral { .. } if env.config.objects_are_not_primitives => {
+            effects.push(AliasingEffect::Create {
+                into: lvalue.clone(),
+                value: ValueKind::Mutable,
+                reason: ValueReason::Other,
+            });
+        }
+        // Upstream has this in the arm below. react/react#37506 moves it here: the tag is called with the template
+        // object, which is no place of the HIR.
+        InstructionValue::TaggedTemplateExpression { tag, loc, .. }
+            if env.config.tagged_templates_have_the_effects_of_a_call =>
+        {
+            let sig = get_function_call_signature(env, tag.identifier)
+                .ok()
+                .flatten();
+            effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
+                receiver: tag.clone(),
+                function: tag.clone(),
+                mutates_function: true,
+                args: crate::hir_vec![PlaceOrSpreadOrHole::Hole],
+                into: lvalue.clone(),
+                signature: sig,
+                loc: *loc,
+            })));
         }
         // All primitive-creating instructions
         InstructionValue::TaggedTemplateExpression { .. }
@@ -3193,6 +3233,8 @@ fn compute_effects_for_aliasing_signature_config(
     substitutions.insert(config.returns, vec![lvalue.clone()]);
 
     let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
+    // Not in upstream, which only takes note of such a spread: the call takes from the iterator.
+    let mut spread_effects: Vec<AliasingEffect> = Vec::new();
 
     for (i, arg) in args.iter().enumerate() {
         match arg {
@@ -3214,6 +3256,9 @@ fn compute_effects_for_aliasing_signature_config(
                     if mutate_iterator.is_some() {
                         mutable_spreads.insert(place.identifier);
                     }
+                    if env.config.spread_arguments_run_iterators {
+                        spread_effects.extend(mutate_iterator);
+                    }
                 }
             }
         }
@@ -3230,6 +3275,7 @@ fn compute_effects_for_aliasing_signature_config(
     }
 
     let mut effects: Vec<AliasingEffect> = Vec::new();
+    effects.append(&mut spread_effects);
 
     for eff_config in &config.effects {
         match eff_config {
@@ -3467,6 +3513,8 @@ fn compute_effects_for_aliasing_signature(
     }
 
     let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
+    // Not in upstream, which only takes note of such a spread: the call takes from the iterator.
+    let mut spread_effects: Vec<AliasingEffect> = Vec::new();
     let mut substitutions: HashMap<IdentifierId, Vec<Place>> = HashMap::default();
     substitutions.insert(signature.receiver, vec![receiver.clone()]);
     substitutions.insert(signature.returns, vec![lvalue.clone()]);
@@ -3495,6 +3543,9 @@ fn compute_effects_for_aliasing_signature(
                     if mutate_iterator.is_some() {
                         mutable_spreads.insert(place.identifier);
                     }
+                    if env.config.spread_arguments_run_iterators {
+                        spread_effects.extend(mutate_iterator);
+                    }
                 }
             }
         }
@@ -3512,6 +3563,7 @@ fn compute_effects_for_aliasing_signature(
     }
 
     let mut effects: Vec<AliasingEffect> = Vec::new();
+    effects.append(&mut spread_effects);
 
     for eff in &signature.effects {
         match eff {

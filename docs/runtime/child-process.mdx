@@ -113,6 +113,33 @@ Configure the output stream by passing one of the following values to `stdout/st
 | `Bun.file()` | Write to the specified file                                                                         |
 | `number`     | Write to the file with the given file descriptor                                                    |
 
+### Memory and backpressure
+
+By default, Bun starts reading a `"pipe"` stream as soon as the process starts. It holds every byte that your code has not read yet in the parent's memory. There is no upper bound other than `maxBuffer`. The child never blocks on a write, so this pattern works for output of any size:
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn(["git", "log"]);
+await proc.exited; // the child can exit before you read anything
+const log = await proc.stdout.text(); // all of its output is still here
+```
+
+The cost is memory. A child that writes 512 MiB to a pipe that nothing reads grows the parent by 512 MiB. This matters when the consumer attaches late, for example in an `onExit` handler, or when your code reads `stderr` to the end before it touches `stdout`.
+
+Pass `lazy: true` to leave the output in the operating system's pipe instead. Bun does not read until you first read from the stream, for example with `.text()`, `.getReader()` or `for await`. Accessing the `stdout` property alone does not start the read. Until then, the child blocks on `write()` once the pipe buffer is full (64 KiB on Linux), and the parent's memory stays flat.
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn(["git", "log"], { lazy: true });
+
+for await (const chunk of proc.stdout) {
+  // the child writes only as fast as this loop reads
+}
+await proc.exited;
+```
+
+With `lazy: true`, read the stream before you `await proc.exited`. A child that writes more than the pipe buffer holds cannot exit until something reads, so `await proc.exited` before the first read waits forever. This is the same behavior as `child_process.spawn` in Node.js.
+
+To put a hard cap on the output instead, see [`maxBuffer`](#using-maxbuffer).
+
 ## Exit handling
 
 Use the `onExit` callback to listen for the process exiting or being killed.
@@ -235,7 +262,7 @@ The `killSignal` option also controls which signal Bun sends when an AbortSignal
 
 ## Using maxBuffer
 
-For `Bun.spawnSync`, `maxBuffer` limits how many bytes of output the process can emit before Bun kills it:
+`maxBuffer` limits how many bytes of output the process can emit before Bun kills it. It applies to both `Bun.spawn` and `Bun.spawnSync`:
 
 ```ts index.ts icon="/icons/typescript.svg"
 // Kill 'yes' after it emits over 100 bytes of output
@@ -246,10 +273,21 @@ const result = Bun.spawnSync({
 // process exits
 ```
 
-Bun stops reading as soon as the limit is passed. The returned output can
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn({
+  cmd: ["yes"],
+  maxBuffer: 100,
+});
+await proc.exited;
+proc.signalCode; // "SIGTERM"
+```
+
+Bun sends `killSignal` (`SIGTERM` by default) when the output passes the limit. Bun stops reading as soon as the limit is passed. The returned output can
 therefore exceed `maxBuffer` only by the single read that passed it, never by
 whatever the process manages to write before the kill lands. This matches
 Node.js.
+
+`maxBuffer` counts the bytes Bun reads from the pipe, whether or not your code has consumed them yet. With the default `lazy: false` it is the only bound on how much unread output the parent holds in memory. It is a kill switch, not backpressure: the child dies and you get partial output. To keep the child alive and make it wait for the reader instead, use `lazy: true` (see [Memory and backpressure](#memory-and-backpressure)).
 
 ## Inter-process communication (IPC)
 

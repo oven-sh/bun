@@ -233,7 +233,6 @@ impl PackageManager {
                         || strings::eql_long(
                             failed_dep.name.slice(string_buf),
                             failed_dep.version.literal.slice(string_buf),
-                            true,
                         )
                     {
                         Output::err_generic(

@@ -1107,7 +1107,7 @@ pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 /// Returns true if an installed tarball's `.bun-tag` matches the integrity in bun.lock.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
     // A copy installed with `--no-verify` has an empty tag.
-    strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag, true)
+    strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag)
         || (skips_verify && tag.is_empty())
 }
 
@@ -1182,7 +1182,7 @@ impl<'a> PackageInstall<'a> {
                     .resolved
                     .slice(&lockfile.buffers.string_bytes);
                 self.verify_bun_tag(
-                    &|tag| strings::eql_long(resolved, tag, true),
+                    &|tag| strings::eql_long(resolved, tag),
                     root_node_modules_dir,
                 )
             }

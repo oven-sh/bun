@@ -462,7 +462,7 @@ impl TrustCommand {
         let named = |name: &[u8]| {
             packages_to_trust
                 .iter()
-                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name, true))
+                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name))
         };
         for info in &mut blocked {
             let (alias, trusted_name) = info.names(lockfile);

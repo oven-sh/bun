@@ -463,7 +463,7 @@ pub(crate) fn edit_update_entries(
                 .map(|(row, &package_id)| (row, &resolutions[package_id as usize]))
                 .find(|(workspace_dep, resolution)| {
                     resolution.tag == resolution::Tag::Npm
-                        && strings::eql_long(workspace_dep.name.slice(string_buf), key_str, true)
+                        && strings::eql_long(workspace_dep.name.slice(string_buf), key_str)
                 })
             else {
                 continue;
@@ -767,7 +767,7 @@ pub(crate) fn edit_catalogs_after_update(
                 .and_then(|i| {
                     let info = &infos[i];
                     info.new_version_literal.as_deref().filter(|new_literal| {
-                        !strings::eql_long(new_literal, &info.original_version_literal, true)
+                        !strings::eql_long(new_literal, &info.original_version_literal)
                     })
                 })
             else {
@@ -1107,8 +1107,7 @@ pub(crate) fn edit(
                                                     == dependency::Tag::Catalog
                                             },
                                         );
-                                    let in_target_list =
-                                        strings::eql_long(list, dependency_list, true);
+                                    let in_target_list = strings::eql_long(list, dependency_list);
 
                                     // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
                                     if request.package_id != INVALID_PACKAGE_ID
@@ -1528,11 +1527,8 @@ pub(crate) fn edit(
                                 Some(new_version) => break 'npm arena_dup(arena, &new_version),
                                 // no explicit `@range`: the row still spells the declared literal, which stays as written
                                 None => {
-                                    if strings::eql_long(
-                                        installed,
-                                        &entry.original_version_literal,
-                                        true,
-                                    ) {
+                                    if strings::eql_long(installed, &entry.original_version_literal)
+                                    {
                                         break 'npm arena_dup(arena, installed);
                                     }
                                 }

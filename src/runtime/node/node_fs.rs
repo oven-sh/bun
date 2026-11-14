@@ -8004,7 +8004,7 @@ impl NodeFS {
         let link_path: &[u8] = &outbuf[..link_len];
         if args.encoding == Encoding::Utf8 {
             if let PathLike::String(s) = &args.path {
-                if strings::eql_long(s.slice(), link_path, true) {
+                if strings::eql_long(s.slice(), link_path) {
                     return Ok(StringOrBuffer::String(s.clone()));
                 }
             }
@@ -8086,7 +8086,7 @@ impl NodeFS {
             let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
-                    if strings::eql_long(s.slice(), buf, true) {
+                    if strings::eql_long(s.slice(), buf) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }
@@ -8164,7 +8164,7 @@ impl NodeFS {
 
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
-                    if strings::eql_long(s.slice(), buf, true) {
+                    if strings::eql_long(s.slice(), buf) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }

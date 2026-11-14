@@ -3395,11 +3395,7 @@ impl Lockfile {
     ) -> Result<bool, BunError> {
         let previous_meta_hash = self.meta_hash;
         self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
-        Ok(!strings::eql_long(
-            &previous_meta_hash,
-            &self.meta_hash,
-            false,
-        ))
+        Ok(!strings::eql_long(&previous_meta_hash, &self.meta_hash))
     }
 
     pub(crate) fn generate_meta_hash(

@@ -530,10 +530,12 @@ fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
 
 /// Calls `lstat` on file systems that don't report an entry's kind (FUSE, NFS, XFS with `ftype=0`),
 /// so a symlink is still reported as a symlink.
-pub(crate) fn next_dir_entry(
-    iter: &mut DirIterator::WrappedIterator,
+pub(crate) fn next_dir_entry<'a>(
+    iter: &'a mut DirIterator::WrappedIterator,
     dir_subpath: &[u8],
-) -> Option<DirIterator::IteratorResult> {
+) -> Option<DirIterator::IteratorResult<'a>> {
+    #[cfg(not(windows))]
+    let dir = iter.dir();
     #[cfg_attr(windows, allow(unused_mut))] // The Windows iterator always knows the kind.
     let mut entry = match iter.next() {
         Ok(entry) => entry?,
@@ -542,7 +544,7 @@ pub(crate) fn next_dir_entry(
     };
     #[cfg(not(windows))]
     if entry.kind == bun_sys::FileKind::Unknown {
-        match bun_sys::lstatat(iter.dir(), entry.name.as_zstr()) {
+        match bun_sys::lstatat(dir, entry.name.as_zstr()) {
             Ok(stat) => entry.kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
             // Removed since it was listed. No walk packs an `Unknown`.
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
@@ -1325,7 +1327,7 @@ enum Exclusion<'a> {
 type InheritedIgnore = Option<(Box<[u8]>, IgnorePatternsKind)>;
 
 fn is_excluded<'a>(
-    entry: &DirIterator::IteratorResult,
+    entry: &DirIterator::IteratorResult<'_>,
     entry_subpath: &'a ZStr,
     dir_depth: usize,
     ignores: &'a [IgnorePatterns],

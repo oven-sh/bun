@@ -363,9 +363,10 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 //
 // Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
 // not string-interpolated — the selector can contain any characters.
-// `holds`: a look that could click waits for the next one when an animation is pending at it, at most this many times per call. Two animations that begin one frame apart need 2.
+// `dom` reads a property past the own names of an element (a form control can take the name of any property of its form), by `super` because a page can have its own `Reflect`. `holds`: how many looks that could click may wait for a pending animation (two that begin one frame apart need 2).
 static constexpr const char* kActionabilityJS = R"js(
 const deadline = performance.now() + timeout;
+const dom = (e, k) => ({ __proto__: Object.getPrototypeOf(e), get() { return super[k]; } }).get.call(e);
 let last, holds = 2;
 document.querySelector(sel);
 for (;;) {
@@ -375,13 +376,9 @@ for (;;) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      const held = [], seen = [];
-      try {
-        for (let e = el; e && !seen.includes(e); e = e.assignedSlot || e.parentElement || (e.parentNode !== document && e.parentNode?.host)) {
-          seen.push(e);
-          for (const a of e.getAnimations()) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
-        }
-      } catch {}
+      const held = [];
+      for (let e = el, n; e; e = dom(e, "assignedSlot") || dom(e, "parentElement") || ((n = dom(e, "parentNode")) !== document && n?.host))
+        for (const a of dom(e, "getAnimations").call(e)) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
       if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height && !last.held.some(([a, t]) => a.playState === "running" && a.currentTime === t)) {
         const hit = document.elementFromPoint(cx, cy);
         if ((hit === el || el.contains(hit)) && !(held.length && performance.now() < deadline && holds-- > 0)) return cx + "," + cy;

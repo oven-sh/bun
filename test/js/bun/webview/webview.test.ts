@@ -596,7 +596,7 @@ itRendering("click(selector) waits for element to stop animating", async () => {
 });
 
 // The pages of the next tests make their frames with a timer, so they run without a display, where the real requestAnimationFrame never calls back.
-const timerFrames = `<script>window.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 16);</script>`;
+const timerFrames = `<script>window.__frames = 0; window.requestAnimationFrame = callback => setTimeout(() => { __frames++; callback(performance.now()); }, 16);</script>`;
 
 it("click(selector) clicks after two frames that the page makes with a timer", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
@@ -607,7 +607,7 @@ it("click(selector) clicks after two frames that the page makes with a timer", a
           window.__clicks = [];
           document.addEventListener(
             "click",
-            event => __clicks.push({ trusted: event.isTrusted, x: event.clientX, y: event.clientY, target: event.target.id }),
+            event => __clicks.push({ trusted: event.isTrusted, x: event.clientX, y: event.clientY, target: event.target.id, frames: __frames }),
             true,
           );
         </script>
@@ -616,40 +616,8 @@ it("click(selector) clicks after two frames that the page makes with a timer", a
   );
   await view.click("#btn");
   expect(JSON.parse(await view.evaluate<string>("JSON.stringify(__clicks)"))).toEqual([
-    { trusted: true, x: 90, y: 100, target: "btn" },
+    { trusted: true, x: 90, y: 100, target: "btn", frames: 2 },
   ]);
-});
-
-// form.parentElement is the input, and the parent of the input is the form.
-it("click(selector) clicks a button in a form with a control named parentElement", async () => {
-  await using view = new Bun.WebView({ width: 300, height: 300 });
-  await view.navigate(
-    html(`
-        ${timerFrames}
-        <form onsubmit="return false">
-          <button id=b onclick="window.__hit=1">b</button>
-          <input name=parentElement>
-        </form>
-      `),
-  );
-  await view.click("#b");
-  expect(await view.evaluate("String(window.__hit)")).toBe("1");
-});
-
-// form.getAnimations is the input: to call it throws.
-it("click(selector) clicks a button in a form with a control named getAnimations", async () => {
-  await using view = new Bun.WebView({ width: 300, height: 300 });
-  await view.navigate(
-    html(`
-        ${timerFrames}
-        <form onsubmit="return false">
-          <button id=b onclick="window.__hit=1">b</button>
-          <input name=getAnimations>
-        </form>
-      `),
-  );
-  await view.click("#b");
-  expect(await view.evaluate("String(window.__hit)")).toBe("1");
 });
 
 // An animation of the button begins at the look that finds the button still for the second time. It is pending there, and the look before did not see it. At the next look the page cancels it and moves the button: without a display the animation would never start.
@@ -678,7 +646,7 @@ it("click(selector) waits for an animation that begins at the look that would cl
   expect(await view.evaluate("String(window.__hit)")).toBe("100");
 });
 
-// The same, where the animation is of x-b. The button is slotted into x-a, and in its shadow tree x-a hands the slot on to x-b. The way from the button to x-b goes into each shadow tree at its slot, and out of the tree of x-b at its host.
+// The same, where the animation is of x-b. The button is slotted into x-a, and in its shadow tree x-a hands the slot on to x-b. The way from the button to x-b goes into each shadow tree at its slot, and out of the tree of x-b at its host. In that tree the slot is in a form with a control named parentNode, which is not the parent of the form.
 it("click(selector) waits for an animation of a shadow host that the slot of the element is handed on to", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
@@ -690,7 +658,7 @@ it("click(selector) waits for an animation of a shadow host that the slot of the
           const outer = document.querySelector("x-a").attachShadow({ mode: "open" });
           outer.innerHTML = "<style>x-b { display: block; position: fixed; left: 0; top: 50px; }</style><x-b><slot></slot></x-b>";
           const inner = outer.querySelector("x-b");
-          inner.attachShadow({ mode: "open" }).innerHTML = "<div><slot></slot></div>";
+          inner.attachShadow({ mode: "open" }).innerHTML = "<form><slot></slot><input name=parentNode hidden></form>";
           const look = document.querySelector;
           let looks = 0, animation;
           document.querySelector = function (selector) {
@@ -698,6 +666,42 @@ it("click(selector) waits for an animation of a shadow host that the slot of the
             if (looks === 4) {
               animation.cancel();
               inner.style.left = "100px";
+            }
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+// The same, where the animation is of the box around a form. The controls of the form and an image have the names of what the check reads on its way up: form.assignedSlot and form.parentElement are inputs, to call form.getAnimations throws, and document.host is the image. The page also has a function named Reflect, as the output of Haxe has.
+it("click(selector) waits for an animation above a form whose controls are named as the properties that it reads", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        ${timerFrames}
+        <style>
+          #box { position: fixed; left: 0; top: 50px; }
+          #mover { width: 60px; height: 60px; }
+        </style>
+        <div id=box>
+          <form onsubmit="return false">
+            <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+            <input name=assignedSlot hidden><input name=parentElement hidden><input name=getAnimations hidden>
+          </form>
+        </div>
+        <img name=host hidden>
+        <script>
+          function Reflect() {}
+          const look = document.querySelector;
+          let looks = 0, animation;
+          document.querySelector = function (selector) {
+            if (++looks === 3) animation = box.animate([{ color: "#000" }, { color: "#222" }], 1000);
+            if (looks === 4) {
+              animation.cancel();
+              box.style.left = "100px";
             }
             return look.call(this, selector);
           };

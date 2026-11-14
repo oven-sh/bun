@@ -7,7 +7,7 @@
 // kept the connection alive.
 //
 // The server:
-// 1. Binds to a random port and prints it to stdout
+// 1. Binds to a random port, listens, and prints the port to stdout
 // 2. Accepts one connection
 // 3. Sends HTTP headers with Transfer-Encoding: chunked
 // 4. Sends one chunk containing "hello\n"
@@ -63,17 +63,18 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  // Listen before the port is printed: the test connects as soon as it has
+  // read the port, and a bound socket that does not listen yet refuses it.
+  if (listen(server_fd, 1) < 0) {
+    perror("listen");
+    exit(EXIT_FAILURE);
+  }
+
   // Print port to stdout so test can read it
   printf("%d\n", ntohs(address.sin_port));
   fflush(stdout);
   // Close stdout so we can simply read it.
   close(1);
-
-  // Listen
-  if (listen(server_fd, 1) < 0) {
-    perror("listen");
-    exit(EXIT_FAILURE);
-  }
 
   // Accept connection
   if ((client_fd = accept(server_fd, (struct sockaddr *)&address,

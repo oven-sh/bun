@@ -16,7 +16,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunRun, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 import { emitBindgen, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
@@ -185,6 +185,24 @@ describe("emitBindgen", () => {
     expect(normalized(o.rustInputs)).toEqual(rust);
     expect(o.generatedTypes).toEqual([types]);
     expect(normalized(o.all)).toEqual(normalized([...cpp, ...headers, ...rust, types]));
+  });
+
+  test("passes the schemas in a file, so its command line does not grow with them", () => {
+    using dir = tempDir("build-codegen-bindgen-sources", {});
+    const c = configure(String(dir));
+    const { cfg, n, o, dirStamp } = c;
+    const bindgen = repoBindFiles(cfg);
+
+    emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenCodegen: [] }), o, dirStamp });
+
+    const file = resolve(cfg.buildDir, "bindgen.sources");
+    const edge = n.toString().replaceAll("$:", ":");
+    expect(edge).toContain(`--sources=@${file}`);
+    expect(edge).not.toContain(`=${bindgen[0]},`);
+    expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(bindgen.length);
+    // cmd.exe's limit, for the line that names every schema; well under it whatever the schema count.
+    const argsLine = edge.split("\n").find(line => line.includes("--sources=@"))!;
+    expect(argsLine.length).toBeLessThan(2048);
   });
 
   test.concurrent(

@@ -123,6 +123,11 @@ export function pathToUpperSnakeCase(filepath: string) {
     .toUpperCase();
 }
 
+/**
+ * `--name=value` arguments. `--name=@file` reads a list from a file, one item per line, and hands it on
+ * comma-separated like an inline list: the build passes long lists that way (`sourcesFlag` in
+ * scripts/build/codegen.ts) so that no command line grows with them.
+ */
 export function argParse(keys: string[]): any {
   const options: { [key: string]: boolean | string } = {};
   for (const arg of process.argv.slice(2)) {
@@ -136,6 +141,13 @@ export function argParse(keys: string[]): any {
     if (splitPos !== -1) {
       name = arg.slice(0, splitPos);
       value = arg.slice(splitPos + 1);
+      if (value.startsWith("@")) {
+        value = fs
+          .readFileSync(value.slice(1), "utf8")
+          .split(/\r?\n/)
+          .filter(line => line.length > 0)
+          .join(",");
+      }
     }
     options[name.slice(2)] = value;
   }

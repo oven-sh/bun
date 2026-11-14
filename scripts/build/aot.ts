@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
+import { crateOf, debugFlag, shJoin, sourcesFlag, typesOnlyFlag, type Ctx } from "./codegen.ts";
 import type { CodegenFields } from "./config.ts";
 import { assert } from "./error.ts";
 
@@ -191,6 +191,11 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
     engineFunctionsJson(cfg),
   ];
   const outputs = [...rust, cpp, tableHeader, ...table, ...data, ...engine.builtinTableOutputs];
+  const list = sourcesFlag(
+    cfg,
+    "builtins-table",
+    sources.bindgen.map(src => `${crateOf(src)}=${src}`),
+  );
 
   n.build({
     outputs,
@@ -220,7 +225,7 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
       ...engine.schemaInputs,
       ...engine.builtinTableInputs,
     ],
-    implicitInputs: [o.rootInstall],
+    implicitInputs: [o.rootInstall, list.file],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -230,7 +235,7 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
         script,
         `--codegen-path=${cfg.codegenDir}`,
         `--target=${builtinTableTarget(cfg)}`,
-        `--sources=${sources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
+        list.flag,
         `--engine-directory=${engine.directory}`,
         ...(engine.javaScriptCore === undefined
           ? [`--prebuilt-generated=${engine.builtinsGeneratedDirectory}`]

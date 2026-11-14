@@ -298,7 +298,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let is_source_replaced = replaced_file.is_some_and(|replaced| {
                 let mut sources = compilation.program_files.iter();
                 sources.any(|source| source.source_path == replaced)
-                    || embedded.iter().any(|file| file.src_path.text == replaced)
+                    || embedded.iter().any(|file| &*file.src_path == replaced)
             });
             let mut build = output::finish_build(compilation, &names, embedded);
             build.is_source_replaced = is_source_replaced;

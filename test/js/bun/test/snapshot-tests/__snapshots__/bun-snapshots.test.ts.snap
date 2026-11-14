@@ -75,3 +75,27 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`a snapshot serializer prints the values inside a Proxy and an arguments object 1`] = `
+{
+  "price": Money<1>,
+}
+`;
+
+exports[`a snapshot serializer prints the values inside a Proxy and an arguments object 2`] = `
+Arguments [
+  Money<2>,
+]
+`;
+
+exports[`a snapshot serializer prints the values inside a Proxy and an arguments object 3`] = `
+Map {
+  "price" => Money<3>,
+}
+`;
+
+exports[`a snapshot serializer prints the values inside a Proxy and an arguments object 4`] = `
+{
+  "proxyOfMap": the Proxy of a Map,
+}
+`;

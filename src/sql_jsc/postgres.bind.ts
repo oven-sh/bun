@@ -51,6 +51,7 @@ export const binding = b.namespace({
       channelBinding: b.u8.validateInteger(0, 2),
       columnTransform: b.callable.optional,
       scramPassword: text,
+      resolveOnWorkPool: b.bool.loose,
     },
     returns: PostgresSQLConnection,
     length: 2,

@@ -11,7 +11,7 @@
 
 import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { describeWithContainer, isWindows } from "harness";
 import path from "node:path";
 
 const isPromise = (value: unknown): boolean =>
@@ -92,7 +92,8 @@ const dialects = {
   },
 };
 
-for (const server of servers) {
+// Under libuv the calls have nothing to wait on: see the test for Windows at the end.
+for (const server of isWindows ? [] : servers) {
   describeWithContainer(server.image, { image: server.image }, container => {
     const dialect = dialects[server.dialect];
     const table = `sync_sql_${server.image}_${process.pid}`;
@@ -109,6 +110,8 @@ for (const server of servers) {
     beforeAll(async () => {
       await container.ready;
       sql = client({ max: 4 });
+      await sql.unsafe(`drop table if exists ${table}`);
+      await sql.unsafe(`create table ${table} (id int primary key, name varchar(64))`);
     });
 
     afterAll(async () => {
@@ -194,8 +197,7 @@ for (const server of servers) {
     });
 
     test("a transaction on a reserved connection, committed and rolled back in place", () => {
-      sql.unsafe(`drop table if exists ${table}`).executeSync();
-      sql.unsafe(`create table ${table} (id int primary key, name varchar(64))`).executeSync();
+      sql.unsafe(`delete from ${table}`).executeSync();
 
       const committed = sql.reserveSync()!;
       committed.unsafe("BEGIN").executeSync();
@@ -244,6 +246,38 @@ for (const server of servers) {
         expect.objectContaining({ code: expect.stringContaining("CONNECTION") }),
       );
     });
+
+    test("a server that accepts and then says nothing fails with the connection timeout", () => {
+      // The kernel completes the connection; nothing ever accepts it or answers. The connection timeout is a
+      // timer of the event loop, which does not turn while the statement is waited for without a limit.
+      using silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const unanswered = client({ max: 1, connectionTimeout: 1 }, "127.0.0.1", silent.port);
+      expect(() => unanswered.unsafe("select 1").executeSync()).toThrow(
+        expect.objectContaining({ code: expect.stringContaining("CONNECTION_TIMEOUT") }),
+      );
+    });
+
+    test.skipIf(server.dialect !== "postgres")(
+      "a COPY stream is read and fed by this program, so wait() is null and does not block",
+      async () => {
+        sql.unsafe(`delete from ${table}`).executeSync();
+
+        // The server waits for rows that only the caller can write.
+        const into = sql.unsafe(`COPY ${table} (id, name) FROM STDIN`);
+        const writer = into.writable().getWriter();
+        expect(into.wait()).toBe(null);
+        await writer.write("7\tcopied\n");
+        await writer.close();
+        expect(sql.unsafe(`select name from ${table} where id = 7`).executeSync()[0].name).toBe("copied");
+
+        // The rows wait for a reader that is this program.
+        const out = sql.unsafe(`COPY (select name from ${table} where id = 7) TO STDOUT`);
+        const stream = out.readable();
+        expect(out.wait()).toBe(null);
+        expect(await new Response(stream).text()).toBe("copied\n");
+        sql.unsafe(`delete from ${table}`).executeSync();
+      },
+    );
 
     test("what only the event loop can free is reported, not waited for", async () => {
       const single = client({ max: 1 });
@@ -330,3 +364,15 @@ for (const server of servers) {
     });
   });
 }
+
+test.skipIf(!isWindows)("under libuv a query has nothing to wait on: wait() is null, and executeSync() throws", async () => {
+  // A server that accepts and says nothing, so that the query stays pending whatever the dial does.
+  using silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  await using sql = new SQL({ url: `postgres://bun_sql_test@127.0.0.1:${silent.port}/bun_sql_test`, max: 1 });
+  const query = sql.unsafe("select 1");
+  query.catch(() => {});
+  expect(query.wait(1000)).toBe(null);
+  const second = sql.unsafe("select 1");
+  second.catch(() => {});
+  expect(() => second.executeSync(1000)).toThrow(expect.objectContaining({ code: "ERR_POSTGRES_SYNC_TIMEOUT" }));
+});

@@ -2782,6 +2782,22 @@ pub(crate) mod internal {
                         bstr::BStr::new(host.unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_INFLIGHT.fetch_add(1, Ordering::Relaxed);
+                    #[cfg(target_os = "macos")]
+                    {
+                        unsafe extern "C" {
+                            fn us_internal_dns_prefers_work_pool() -> core::ffi::c_int;
+                            fn us_internal_dns_note_inflight_join();
+                        }
+                        // The caller asked for an answer it can see without the event loop
+                        // (`pump()` of a SQL connection), and shares a lookup that may be the
+                        // system resolver's. It is told, and does not wait for it.
+                        // SAFETY: reads and writes thread-locals.
+                        unsafe {
+                            if us_internal_dns_prefers_work_pool() != 0 {
+                                us_internal_dns_note_inflight_join();
+                            }
+                        }
+                    }
                 }
 
                 drop(guard);

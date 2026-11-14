@@ -747,7 +747,9 @@ if (query.wait(1000) !== true) {
 - A query that failed has settled, so `wait()` returns `true` and does not throw.
 - `query.cancelSync(ms)` is `cancel()` followed by a wait until the request to stop the query has reached the server, for at most `ms` milliseconds. Code that does not yield needs it on PostgreSQL: the request goes out on a second connection, which would otherwise only be written to when the event loop turns, after whatever the code does next.
 - `sql.reserveSync(ms)` is [`sql.reserve()`](#reserved-connections) without `await`. It returns `undefined` when no connection can be had without the event loop turning.
-- You can mix the two styles on one pool. A query that you await behaves as before.
+- `connectionTimeout` and `idleTimeout` apply while a call blocks, as they do to a query that you await.
+- A `COPY` query that you read with `readable()` or feed with `writable()` cannot be waited for this way, because the code that reads or writes the stream is the code that would block. `wait()` returns `null` for it.
+- You can mix the two styles on one pool. A query that you await behaves as before, and so does a connection that it opens.
 - SQLite already runs a query inside the call that starts it, so `wait()` returns `true` and `executeSync()` returns the result. `reserveSync()` throws, as `reserve()` rejects.
 - On Windows, `wait()` returns `null` for PostgreSQL and MySQL, so `executeSync()` throws: use `await` there.
 

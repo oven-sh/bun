@@ -113,6 +113,30 @@ pub trait TimedConnection {
         }
     }
 
+    /// Milliseconds until the timeout that is running fires. None: none is running.
+    ///
+    /// For a caller that blocks on the connection (`pump`): the event loop fires the timer, and
+    /// it does not turn while the caller blocks. So the caller waits no longer than this, and
+    /// then does what the loop would have done (`fire_timeout_if_due`).
+    fn ms_until_timeout(&self) -> Option<i64> {
+        let timer = &self.timers().timer;
+        if timer.state.get() != EventLoopTimerState::ACTIVE {
+            return None;
+        }
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        Some(timer.next.get().duration(&now).ms().max(0))
+    }
+
+    /// true when the timeout was due and has been acted on.
+    fn fire_timeout_if_due(&self) -> bool {
+        if self.ms_until_timeout() != Some(0) {
+            return false;
+        }
+        stop(&self.timers().timer);
+        self.on_connection_timeout();
+        true
+    }
+
     fn on_connection_timeout(&self) {
         self.timers().timer.state.set(EventLoopTimerState::FIRED);
         let (kind, ms, stage) = self.timeout();

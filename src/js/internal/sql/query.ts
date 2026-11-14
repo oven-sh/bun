@@ -230,19 +230,37 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   /// wait on, so only the event loop can settle it (every connection is in the hands of a caller that awaits,
   /// say), and waiting longer here would not help.
   wait(ms?: number): boolean | null {
+    const adapter = this[_adapter] as {
+      sweepSync?: () => void;
+      waitSync?: (query: Query<T, Handle>, ms: number | undefined) => boolean | null;
+      syncCallers?: number;
+    };
     if (!(this[_queryStatus] & (SQLQueryStatus.executed | SQLQueryStatus.error))) {
-      (this[_adapter] as { sweepSync?: () => void }).sweepSync?.();
+      adapter.sweepSync?.();
     }
-    this.#run();
-    // As with execute(): whoever waits this way reads the outcome from executeSync().
-    $pokePromiseAsHandled(this);
-    if ($isPromisePending(this)) {
-      const adapter = this[_adapter] as {
-        waitSync?: (query: Query<T, Handle>, ms: number | undefined) => boolean | null;
-      };
-      const waited = adapter.waitSync ? adapter.waitSync(this, ms) : null;
+    // A dial that this call starts is one that this call waits for: see BaseSQLAdapter#syncCallers.
+    const counted = adapter.syncCallers !== undefined;
+    if (counted) {
+      (adapter.syncCallers as number)++;
+    }
+    try {
+      this.#run();
+      // As with execute(): whoever waits this way reads the outcome from executeSync().
+      $pokePromiseAsHandled(this);
       if ($isPromisePending(this)) {
-        return waited === null ? null : false;
+        // A COPY stream is read or fed by code of this program, which runs on the thread that would block
+        // here: the server waits for what the caller writes, or the caller for what its own reader takes.
+        if (this[_flags] & SQLQueryFlags.copy) {
+          return null;
+        }
+        const waited = adapter.waitSync ? adapter.waitSync(this, ms) : null;
+        if ($isPromisePending(this)) {
+          return waited === null ? null : false;
+        }
+      }
+    } finally {
+      if (counted) {
+        (adapter.syncCallers as number)--;
       }
     }
     runSettled.$call(this);

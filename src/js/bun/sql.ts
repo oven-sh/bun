@@ -878,6 +878,7 @@ function reserveSync(this: Client, ms?: number): Bun.ReservedSQL | undefined {
   const pool = this.pool as Pool & {
     connectSync?: (done: () => boolean, ms: number | undefined) => boolean | null;
     sweepSync?: () => void;
+    syncCallers?: number;
   };
   if (pool.closed) {
     throw pool.connectionClosedError();
@@ -902,13 +903,19 @@ function reserveSync(this: Client, ms?: number): Bun.ReservedSQL | undefined {
     onAbort: null,
   };
   const onConnected = (pending.onConnected = onReserveConnected.bind(pending));
-  pool.connect(onConnected, true);
-  if (handle === undefined && failure === undefined) {
-    pool.connectSync(() => handle !== undefined || failure !== undefined, ms);
-    // Still in the queue: it leaves it, and the caller owns nothing.
+  // A dial that this call starts is one that this call waits for: see BaseSQLAdapter#syncCallers.
+  (pool.syncCallers as number)++;
+  try {
+    pool.connect(onConnected, true);
     if (handle === undefined && failure === undefined) {
-      pool.cancelConnect(onConnected);
+      pool.connectSync(() => handle !== undefined || failure !== undefined, ms);
+      // Still in the queue: it leaves it, and the caller owns nothing.
+      if (handle === undefined && failure === undefined) {
+        pool.cancelConnect(onConnected);
+      }
     }
+  } finally {
+    (pool.syncCallers as number)--;
   }
   if (failure !== undefined) {
     throw failure.error;

@@ -59,6 +59,8 @@ export type NativeCreateConnection<ConnectionHandle> = (
   channelBinding: 0 | 1 | 2,
   columnTransform: ((name: string) => string) | undefined,
   scramPassword: string,
+  /// A caller that blocks started the dial: the address is looked up where its wait can see the answer.
+  resolveOnWorkPool: boolean,
 ) => ConnectionHandle;
 
 export type NativeCreateQuery<QueryHandle> = (
@@ -435,7 +437,12 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
   onRetire: (() => void) | undefined,
-  login: Login & { state?: PooledConnectionState; dialing?: ConnectionHandle | null; dialFailure?: unknown },
+  login: Login & {
+    state?: PooledConnectionState;
+    dialing?: ConnectionHandle | null;
+    dialFailure?: unknown;
+    adapter?: { syncCallers: number };
+  },
 ): Promise<ConnectionHandle | null> {
   const {
     hostname,
@@ -503,6 +510,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       channelBinding === "disable" ? 0 : channelBinding === "require" ? 2 : 1,
       transform?.column.from,
       login.saslprep ? prepared : password,
+      (login.adapter?.syncCallers as number) > 0,
     ));
   } catch (err) {
     login.dialFailure = err;
@@ -532,6 +540,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   public readonly supportsReservedConnections = true;
+  /// How many callers that block are on the stack: Query.wait() and reserveSync(). A dial that one of them
+  /// starts has its address looked up where the wait can see the answer (createPooledConnectionHandle). Every
+  /// other dial resolves as it always has.
+  syncCallers = 0;
 
   abstract readonly createNativeConnection: NativeCreateConnection<ConnectionHandle>;
   protected abstract readonly createNativeQuery: NativeCreateQuery<QueryHandle>;

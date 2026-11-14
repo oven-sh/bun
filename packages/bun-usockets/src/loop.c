@@ -1239,9 +1239,11 @@ __attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
 #include <poll.h>
 
 int us_socket_pump(struct us_socket_t *s, int timeout_ms);
-int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms);
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms, int resolve_needs_loop);
 void us_internal_dns_prefer_work_pool(int prefer);
 int us_internal_dns_prefers_work_pool(void);
+void us_internal_dns_note_inflight_join(void);
+int us_internal_dns_take_inflight_join(void);
 
 /* How much us_internal_ssl_pump_enter sets aside (crypto/openssl.c). */
 #define US_PUMP_SSL_STATE_SLOTS 8
@@ -1262,6 +1264,27 @@ void us_internal_dns_prefer_work_pool(int prefer) {
 
 int us_internal_dns_prefers_work_pool(void) {
     return us_dns_prefer_work_pool_depth > 0;
+}
+
+/* A lookup that asked for the thread pool can still be handed one that is
+ * already under way for the same name, started by a caller that did not ask.
+ * The resolver notes that here, and whoever started the lookup takes the note
+ * (reading clears it): that answer may be one only a loop tick reads. */
+static _Thread_local int us_dns_joined_inflight = 0;
+
+void us_internal_dns_note_inflight_join(void) {
+    us_dns_joined_inflight = 1;
+}
+
+int us_internal_dns_take_inflight_join(void) {
+    const int joined = us_dns_joined_inflight;
+    us_dns_joined_inflight = 0;
+    return joined;
+}
+
+/* Milliseconds on the clock that does not jump. */
+static int64_t us_internal_pump_now_ms(void) {
+    return (int64_t) (us_internal_monotonic_ns() / 1000000ULL);
 }
 
 /* The loop takes parked TLS handshakes back a few per tick
@@ -1287,12 +1310,30 @@ static void us_internal_pump_unpark(struct us_loop_t *loop, struct us_socket_t *
     s->flags.low_prio_state = 2;
 }
 
+/* poll(), gone on with after a signal. A signal ends poll() early, so what is
+ * left of `timeout_ms` is what the next call gets: started over each time, a
+ * program that takes signals often enough would never see the time pass. */
 static int us_internal_pump_poll(struct pollfd *fds, int count, int timeout_ms) {
-    int ready;
-    do {
-        ready = poll(fds, (nfds_t) count, timeout_ms < 0 ? -1 : timeout_ms);
-    } while (ready < 0 && errno == EINTR);
-    return ready;
+    if (timeout_ms < 0) {
+        int ready;
+        do {
+            ready = poll(fds, (nfds_t) count, -1);
+        } while (ready < 0 && errno == EINTR);
+        return ready;
+    }
+    const int64_t deadline = us_internal_pump_now_ms() + timeout_ms;
+    int left = timeout_ms;
+    for (;;) {
+        const int ready = poll(fds, (nfds_t) count, left);
+        if (ready >= 0 || errno != EINTR) {
+            return ready;
+        }
+        const int64_t remaining = deadline - us_internal_pump_now_ms();
+        if (remaining <= 0) {
+            return 0;
+        }
+        left = (int) remaining;
+    }
 }
 
 static void us_internal_pump_dispatch(struct us_loop_t *loop, struct us_socket_t *s, short revents) {
@@ -1357,6 +1398,13 @@ int us_socket_pump(struct us_socket_t *s, int timeout_ms) {
     pfd.events = (short) (((wanted & LIBUS_SOCKET_READABLE) ? POLLIN : 0)
                         | ((wanted & LIBUS_SOCKET_WRITABLE) ? POLLOUT : 0));
     pfd.revents = 0;
+    /* Paused, with nothing to write: the socket waits for its consumer (a
+     * COPY TO STDOUT stream that is read in this process, say), and that runs
+     * on the thread that would block here. Nothing the kernel reports for the
+     * descriptor would be dispatched, so there is nothing to wait on. */
+    if (pfd.events == 0) {
+        return -1;
+    }
 
     const int ready = us_internal_pump_poll(&pfd, 1, timeout_ms);
     if (ready <= 0) {
@@ -1371,18 +1419,24 @@ int us_socket_pump(struct us_socket_t *s, int timeout_ms) {
 
 #define US_PUMP_MAX_CANDIDATES 8
 
-int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms) {
+/* `resolve_needs_loop`: the address of `c` is looked up in a way whose answer
+ * only a loop tick reads (see us_internal_dns_prefer_work_pool). While that
+ * lookup is under way there is nothing here to wait on. */
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms, int resolve_needs_loop) {
     if (c->closed) {
         return -1;
     }
     struct us_loop_t *loop = c->loop;
 
     if (c->pending_resolve_callback) {
+        if (resolve_needs_loop) {
+            return -1;
+        }
         /* The resolver puts `c` on the loop's list when it has the answer
          * (us_internal_dns_callback), from another thread or from this one.
          * The loop would take the whole list at its next tick; this takes `c`
          * alone. */
-        int waited_ms = 0;
+        const int64_t deadline = timeout_ms < 0 ? 0 : us_internal_pump_now_ms() + timeout_ms;
         for (;;) {
             int found = 0;
             Bun__lock(&loop->data.mutex);
@@ -1399,12 +1453,11 @@ int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms) 
                 us_internal_socket_after_resolve(c);
                 return 1;
             }
-            if (timeout_ms >= 0 && waited_ms >= timeout_ms) {
+            if (timeout_ms >= 0 && us_internal_pump_now_ms() >= deadline) {
                 return 0;
             }
             struct timespec one_ms = { 0, 1000000 };
             nanosleep(&one_ms, NULL);
-            waited_ms++;
         }
     }
 
@@ -1443,14 +1496,18 @@ int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms) 
 #else /* LIBUS_USE_LIBUV */
 
 int us_socket_pump(struct us_socket_t *s, int timeout_ms);
-int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms);
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms, int resolve_needs_loop);
 void us_internal_dns_prefer_work_pool(int prefer);
 int us_internal_dns_prefers_work_pool(void);
+void us_internal_dns_note_inflight_join(void);
+int us_internal_dns_take_inflight_join(void);
 
 /* Not on libuv (Windows): the caller is told there is nothing to wait on. */
 int us_socket_pump(struct us_socket_t *s, int timeout_ms) { (void) s; (void) timeout_ms; return -1; }
-int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms) { (void) c; (void) timeout_ms; return -1; }
+int us_connecting_socket_pump(struct us_connecting_socket_t *c, int timeout_ms, int resolve_needs_loop) { (void) c; (void) timeout_ms; (void) resolve_needs_loop; return -1; }
 void us_internal_dns_prefer_work_pool(int prefer) { (void) prefer; }
 int us_internal_dns_prefers_work_pool(void) { return 0; }
+void us_internal_dns_note_inflight_join(void) {}
+int us_internal_dns_take_inflight_join(void) { return 0; }
 
 #endif

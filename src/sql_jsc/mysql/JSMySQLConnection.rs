@@ -48,6 +48,9 @@ pub struct JSMySQLConnection {
 
     auto_flush_registered: Cell<bool>,
     timers: ConnectionTimers,
+    /// The lookup of this connection's address ends in a way `pump` cannot see: see
+    /// `shared::pump::resolve_needs_loop`.
+    resolve_needs_loop: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(JSMySQLConnection;
@@ -272,6 +275,8 @@ impl JSMySQLConnection {
         found_rows: bool,
         _: JsLocal<'a>,
         column_transform: Option<JsLocal<'a, Callable>>,
+        _: JsLocal<'a>,
+        resolve_on_work_pool: bool,
     ) -> JsResult<JSValue> {
         let global_object = cx.global();
         let vm = global_object.bun_vm();
@@ -336,6 +341,7 @@ impl JSMySQLConnection {
                 EventLoopTimerTag::MySQLConnectionTimeout,
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
             ),
+            resolve_needs_loop: Cell::new(false),
         }));
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
@@ -344,7 +350,7 @@ impl JSMySQLConnection {
             // group after the SSLRequest exchange.
             let group = vm.mysql_socket_group::<false>(context);
             // So that `pump()` can see the address arrive.
-            let _resolve = crate::shared::pump::ResolveOnWorkPool::new();
+            let _resolve = crate::shared::pump::ResolveOnWorkPool::when(resolve_on_work_pool);
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(
                     group,
@@ -386,6 +392,10 @@ impl JSMySQLConnection {
             };
             this.connection_mut()
                 .set_socket(AnySocket::SocketTcp(socket));
+            this.resolve_needs_loop
+                .set(crate::shared::pump::resolve_needs_loop(
+                    resolve_on_work_pool,
+                ));
         }
         this.reset_connection_timeout();
         this.poll_ref.r#ref(vm.vm_ctx());
@@ -431,8 +441,18 @@ impl JSMySQLConnection {
         if this.can_flush() {
             this.drain_internal();
         }
+        // The connection and idle timeouts are timers of the event loop, which does not turn
+        // while the caller blocks. The wait ends when one is due, and it is acted on here.
+        let timeout = crate::shared::pump::sooner(
+            crate::shared::pump::timeout_ms(ms),
+            this.ms_until_timeout(),
+        );
         let socket = this.connection.get().socket();
-        crate::shared::pump::pump(socket, crate::shared::pump::timeout_ms(ms))
+        let outcome = crate::shared::pump::pump(socket, timeout, this.resolve_needs_loop.get());
+        if outcome == 0 && this.fire_timeout_if_due() {
+            return 1;
+        }
+        outcome
     }
 
     pub fn hold(this: &Self) {

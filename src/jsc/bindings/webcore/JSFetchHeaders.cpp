@@ -525,24 +525,21 @@ JSC::JSValue FetchHeadersIteratorBase::next(JSC::JSGlobalObject& lexicalGlobalOb
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_iterator) {
-        if (auto* entry = m_iterator->nextEntry()) {
-            JSC::JSValue result;
-            switch (m_kind) {
-            case IterationKind::Keys:
-                result = headerNameToJS(vm, globalObject(), *entry);
-                break;
-            case IterationKind::Values:
-                result = JSC::jsStringWithCache(vm, *entry->value);
-                break;
-            case IterationKind::Entries:
-                result = JSC::constructArrayPair(globalObject(), headerNameToJS(vm, globalObject(), *entry), JSC::jsStringWithCache(vm, *entry->value));
-                RETURN_IF_EXCEPTION(scope, {});
-                break;
-            }
-            return createIteratorResultObject(&lexicalGlobalObject, result, false);
+    if (auto* entry = m_iterator.nextEntry()) {
+        JSC::JSValue result;
+        switch (m_kind) {
+        case IterationKind::Keys:
+            result = headerNameToJS(vm, globalObject(), *entry);
+            break;
+        case IterationKind::Values:
+            result = JSC::jsStringWithCache(vm, *entry->value);
+            break;
+        case IterationKind::Entries:
+            result = JSC::constructArrayPair(globalObject(), headerNameToJS(vm, globalObject(), *entry), JSC::jsStringWithCache(vm, *entry->value));
+            RETURN_IF_EXCEPTION(scope, {});
+            break;
         }
-        m_iterator = std::nullopt;
+        return createIteratorResultObject(&lexicalGlobalObject, result, false);
     }
     return createIteratorResultObject(&lexicalGlobalObject, JSC::jsUndefined(), true);
 }

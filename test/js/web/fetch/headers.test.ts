@@ -940,12 +940,28 @@ describe("Headers", () => {
       expect(() => new Headers().forEach()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     });
 
-    test("an iterator that is done stays done", () => {
+    // https://github.com/oven-sh/bun/issues/48347
+    test("an iterator that is done yields what is added after it", () => {
       const headers = new Headers({ a: "1" });
       const iterator = headers.entries();
       expect(iterator.next()).toEqual({ value: ["a", "1"], done: false });
       expect(iterator.next()).toEqual({ value: undefined, done: true });
       headers.set("b", "2");
+      expect(iterator.next()).toEqual({ value: ["b", "2"], done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+    });
+
+    test.each([
+      ["keys", "a"],
+      ["values", "1"],
+      ["entries", ["a", "1"]],
+      [Symbol.iterator, ["a", "1"]],
+    ] as const)("a %p iterator over empty headers that is done yields what is added after it", (kind, value) => {
+      const headers = new Headers();
+      const iterator = headers[kind]();
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      headers.set("a", "1");
+      expect(iterator.next()).toEqual({ value, done: false });
       expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
 

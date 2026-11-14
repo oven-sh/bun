@@ -152,6 +152,69 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.
+  const typedConstants = async (index: string) => {
+    using dir = tempDir("build-api-dts-constants", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/flag.ts": `type Flag = true | false;
+declare const stored: Flag;
+export const on = stored;
+`,
+      "src/index.ts": index,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    return readFileSync(join(root, "out/index.aot.ts"), "utf8");
+  };
+
+  test("a constant that only a type names is declared with a type that names nothing", async () => {
+    const typed = await typedConstants(`import { on } from "./flag";
+type Flag = "yes" | "no";
+const big = 1e999;
+const small = -1e999;
+const word = "a";
+const five = 5;
+const ten = 10n;
+const yes = true;
+export type On = typeof on;
+export type Sizes = [typeof big, typeof small, typeof word, typeof five, typeof ten, typeof yes];
+export function pick(flag: Flag): On {
+  return flag === "yes";
+}
+export function sizes(): Sizes {
+  return [1e999, -1e999, "a", 5, 10n, true];
+}
+`);
+    // `Flag` of the other file is `boolean`, and the bundle has `Infinity` for `1e999`, which is a `number`. Each
+    // other literal keeps its type.
+    expect(typed.match(/^declare const .*$/gm)?.sort()).toEqual([
+      "declare const big: number;",
+      "declare const five: 5;",
+      "declare const on: boolean;",
+      "declare const small: number;",
+      "declare const ten: 10n;",
+      `declare const word: "a";`,
+      "declare const yes: true;",
+    ]);
+  });
+
+  // Observed: `declare const pair: readonly [Infinity, 1];` and TS2749. The text is the one that index.d.ts has for a
+  // constant whose type is no literal and no keyword.
+  test.todo("a constant that only a type names and that holds a value that is not finite", async () => {
+    await typedConstants(`const pair = [1e999, 1] as const;
+export type Pair = typeof pair;
+export function first(value: Pair): number {
+  return value[1];
+}
+`);
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),

@@ -1845,12 +1845,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
             bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
 
-            if (mode.isStrict && !isLikeVitest) {
-                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
-                    return false;
-                }
-            }
-
             VM& vm = JSC::getVM(globalObject);
 
             // `.cause` is non-enumerable, so it must be checked explicitly.

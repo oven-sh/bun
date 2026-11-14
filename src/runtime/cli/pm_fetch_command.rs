@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    PackageManager, get_cache_directory_and_abs_path, populate_package_cache,
+    PackageManager, get_cache_directory_abs_path, populate_package_cache,
 };
 
 use crate::cli::Command;
@@ -63,7 +63,7 @@ pub(crate) fn exec(
     Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
     bun_core::pretty!("<r>\n");
 
-    let (_, cache_dir) = get_cache_directory_and_abs_path(pm);
+    let cache_dir = get_cache_directory_abs_path(pm);
     bun_core::prettyln!("<d>Cache: {}<r>", BStr::new(cache_dir.slice()));
     Output::flush();
 

@@ -569,9 +569,6 @@ pub fn update_package_json_and_install_and_cli(
         }
     };
     let original_cwd: &[u8] = &original_cwd;
-    // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
-    // singleton. We are on the single CLI thread; no worker
-    // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
     let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {

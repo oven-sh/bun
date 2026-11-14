@@ -2,7 +2,7 @@
 //!
 //! The HTTP thread hands each body chunk to `on_chunk`, which appends to a
 //! small pending buffer and (if not already running) schedules
-//! `drain_task` on `PackageManager.thread_pool`. The drain task feeds
+//! `drain_task` on `THREAD_POOL`. The drain task feeds
 //! whatever is available to a `bun_tar::Decoder`, writing files as their
 //! data arrives, until the decoder has consumed everything that is
 //! buffered. At that point the drain task returns and the worker is
@@ -30,16 +30,11 @@ use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
 use crate::cache_publish::UnfinishedEntry;
 use crate::integrity::{self, Integrity};
-use crate::package_manager_real::PackageManager;
+use crate::package_manager_real::{INBOX, PackageManager, THREAD_POOL};
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
 
-// `extract_task` / `package_manager` are raw pointers, not
-// `&'a mut` / `&'a`. This struct is heap-allocated,
-// crosses threads via `drain_task`, and self-destroys in `finish()`, so a
-// borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
-// `finish` borrows the task's fields through a raw copy of it
-// would be aliased UB; raw pointers avoid forming aliased references.
+// Crosses threads via `drain_task` and frees itself in `finish()`, so it cannot borrow its tasks.
 pub struct TarballStream {
     incoming: Guarded<Incoming>,
 
@@ -71,7 +66,6 @@ pub struct TarballStream {
     drain_task: thread_pool::Task,
 
     network_task: *mut NetworkTask,
-    package_manager: *mut PackageManager,
 }
 
 /// What the HTTP thread hands to the drain task.
@@ -155,7 +149,6 @@ impl TarballStream {
     pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
-        manager: *mut PackageManager,
     ) -> Box<TarballStream> {
         // Caller guarantees `extract_task` is live for the lifetime of this
         // stream (it is published back to the main thread only in `finish()`).
@@ -178,16 +171,7 @@ impl TarballStream {
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
-        let lockfile_github_tag = tarball.github_resolved.slice();
-        let resolved_github_dirname: &'static [u8] =
-            if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {
-                FileSystem::get()
-                    .dirname_store()
-                    .append(lockfile_github_tag)
-                    .expect("unreachable")
-            } else {
-                b""
-            };
+        let resolved_github_dirname = tarball.github_resolved;
         let want_first_dirname =
             tarball.resolution.tag == ResolutionTag::Github && resolved_github_dirname.is_empty();
         let hasher = integrity::Streaming::init(
@@ -228,7 +212,6 @@ impl TarballStream {
                 callback: drain_callback,
             },
             network_task,
-            package_manager: manager,
         })
     }
 
@@ -280,8 +263,7 @@ impl TarballStream {
     /// (false -> true) with `incoming` locked, so no worker is inside `drain()`.
     /// Never forms `&mut TarballStream`.
     unsafe fn schedule_drain(this: *mut Self) {
-        // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
-        // outlives this stream (it owns the thread pool that runs us). Field
+        // SAFETY: see fn-level # Safety — `this` is live. Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
         unsafe {
             // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
@@ -290,11 +272,7 @@ impl TarballStream {
             // via `offset_of!`, which is OOB for a
             // pointer whose provenance is limited to the `drain_task` field
             // bytes. See ThreadPool.rs:442 for the same pattern.
-            (*(*this).package_manager)
-                .thread_pool
-                .schedule(thread_pool::Batch::from(core::ptr::addr_of_mut!(
-                    (*this).drain_task
-                )));
+            THREAD_POOL.schedule(thread_pool::Batch::from(&raw mut (*this).drain_task));
         }
     }
 
@@ -694,7 +672,7 @@ impl TarballStream {
     /// `&mut self`) so no Rust reference dangles across the drop of the
     /// `Box` in `network_task.tarball_stream`.
     unsafe fn finish(this: *mut Self) {
-        // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
+        // SAFETY: see fn-level # Safety — `this`/`task`/`network`
         // are live raw pointers; this fn is the sole owner. After
         // `tarball_stream.take()` is dropped nothing touches `this`.
         unsafe {
@@ -703,7 +681,6 @@ impl TarballStream {
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
             let task: *mut Task = (*this).extraction.extract_task.as_mut_ptr();
             let network: *mut NetworkTask = (*this).network_task;
-            let manager: *mut PackageManager = (*this).package_manager;
 
             (*this).extraction.out = None;
 
@@ -747,10 +724,8 @@ impl TarballStream {
                 (*network).response.fail = Some(err);
                 (*network).streaming_committed = false;
                 drop((*network).tarball_stream.take());
-                (*manager)
-                    .async_network_task_queue
-                    .push(core::ptr::NonNull::new_unchecked(network));
-                PackageManager::wake_raw(manager);
+                (INBOX.network_tasks).push(core::ptr::NonNull::new_unchecked(network));
+                INBOX.wake();
                 return;
             }
 
@@ -771,14 +746,8 @@ impl TarballStream {
             // Publish last: once the task is on `resolve_tasks` the main
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
-            // SAFETY: manager/task outlive this stream by construction; manager
-            // is `*mut` and shared across
-            // threads, so we mutate via raw-ptr deref without forming a
-            // long-lived `&mut PackageManager`.
-            (*manager)
-                .resolve_tasks
-                .push(core::ptr::NonNull::new_unchecked(task));
-            PackageManager::wake_raw(manager);
+            (INBOX.resolve_tasks).push(core::ptr::NonNull::new_unchecked(task));
+            INBOX.wake();
         } // unsafe
     }
 

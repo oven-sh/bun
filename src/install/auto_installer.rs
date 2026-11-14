@@ -130,7 +130,7 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 
 // ─── The wait of a resolve ────────────────────────────────────────────────
 
-/// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
+/// Bumped by every `Inbox::wake` of the auto-install manager.
 static WAKES: AtomicU32 = AtomicU32::new(0);
 /// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);

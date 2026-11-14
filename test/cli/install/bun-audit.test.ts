@@ -554,6 +554,10 @@ describe("`bun audit`", () => {
         "workspaces": {
           "": {
             "name": "test",
+            "dependencies": {
+              "@foo/bar": "1.0.0",
+              "@foo/baz": "1.0.0",
+            },
           },
         },
         "packages": {
@@ -576,6 +580,33 @@ describe("`bun audit`", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
+
+  // No lookup of a dependency stops at the key `zzz`, so no install uses that entry. `bun audit` asks about the
+  // packages that an install uses.
+  test("an entry of bun.lock that no dependency resolves to is not audited", async () => {
+    const bulkBodies: Record<string, string[]>[] = [];
+    await using registry = startRegistry({ "a-dep": [adv("<2.0.0")] }, { bulkBodies });
+    using dir = tempDir("bun-test-audit-unused-entry", {
+      "package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "test", dependencies: { "no-deps": "1.0.0" } } },
+        packages: {
+          "no-deps": ["no-deps@1.0.0", "", {}, fakeIntegrity],
+          "zzz": ["a-dep@1.0.1", "", {}, fakeIntegrity],
+        },
+      }),
+    });
+    await writeBunfig(String(dir), registry);
+
+    const { stdout, stderr, exitCode } = await audit(String(dir));
+    expect({ bulkBodies, stdout: normalizeBunSnapshot(stdout), stderr, exitCode }).toEqual({
+      bulkBodies: [{ "no-deps": ["1.0.0"] }],
+      stdout: AUDIT_HEADER + noVulnerabilities(1),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   test("packages served by a scoped registry are audited against that registry", async () => {
     await using scoped = startRegistry({}, { bulkResponse: { "@foo/bar": [adv("<2.0.0")] } });

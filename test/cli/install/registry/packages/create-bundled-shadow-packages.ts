@@ -42,6 +42,14 @@
  * shared@1.0.0 has been hoisted to the root (up through deep-host's
  * node_modules) by the time inner's shared@2.0.0 reaches that folder.
  *
+ * And the bundling package depends on the version that its bundle depends on:
+ *
+ * - bundled-shadow-twin-host@1.0.0  -> shared@2.0.0, and bundles inner@1.0.0
+ *
+ * host's shared@2.0.0 is hoisted to the root, and inner's shared@2.0.0 gets
+ * no further than `twin-host/shared`. So bun.lock has an entry at both keys,
+ * and host's own `shared` edge resolves to the nearer one.
+ *
  * The tarballs carry their bundled packages like `npm pack` would, so the
  * bundled copies are what gets installed for them.
  */
@@ -97,6 +105,13 @@ const packages: Record<string, Manifest[]> = {
   consumer: [{ version: "1.0.0", dependencies: { [`${prefix}mid`]: "1.0.0" } }, { version: "2.0.0" }],
   mid: [{ version: "1.0.0", dependencies: { [`${prefix}shared`]: "1.0.0" } }, { version: "2.0.0" }],
   wrapper: [{ version: "1.0.0", dependencies: { [`${prefix}inner`]: "1.0.0" } }],
+  "twin-host": [
+    {
+      version: "1.0.0",
+      dependencies: { [`${prefix}inner`]: "1.0.0", [`${prefix}shared`]: "2.0.0" },
+      bundleDependencies: [`${prefix}inner`],
+    },
+  ],
 };
 
 function manifestOf(name: string, version: string): Manifest {

@@ -20,6 +20,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "ObjectBindings.h"
+#include "Bindgen/IDLConvert.h"
 #include "JavaScriptCore/DateInstance.h"
 #if ENABLE(AOT)
 #include <JavaScriptCore/AOTPropertyWalk.h>
@@ -215,7 +216,15 @@ static const Identifier& identifier(JSC::VM& vm, DateFieldType dateField)
     ASSERT_NOT_REACHED();
 }
 
-template<DateFieldType field, bool isBigInt>
+// Both class structures keep the four `*Ms` fields at the same offsets.
+static ALWAYS_INLINE bool hasStatsStructure(Zig::GlobalObject* globalObject, JSC::JSObject* object)
+{
+    JSC::Structure* structure = object->structure();
+    return structure == globalObject->m_JSStatsClassStructure.getConcurrently()
+        || structure == globalObject->m_JSStatsBigIntClassStructure.getConcurrently();
+}
+
+template<DateFieldType field>
 inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName)
 {
     auto& vm = globalObject->vm();
@@ -226,7 +235,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
         return JSC::jsUndefined();
 
     JSValue value;
-    if (thisObject->structureID() == getStructure<isBigInt>(defaultGlobalObject(globalObject))->id()) {
+    if (hasStatsStructure(defaultGlobalObject(globalObject), thisObject)) {
         value = thisObject->getDirect(static_cast<int>(field));
         ASSERT(thisObject->getDirectOffset(vm, identifier(vm, field)) == static_cast<int>(field));
     } else {
@@ -234,8 +243,15 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    double internalNumber = isBigInt ? value.toBigInt64(globalObject) : value.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    // Node.js: `Number(ms)` for both classes, then Math.round, which Bun leaves out. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L459-L469
+    double internalNumber;
+    if (auto exact = JSBigInt::tryExtractDouble(value)) [[likely]] {
+        internalNumber = *exact;
+    } else {
+        auto ctx = DefaultConversionContext {};
+        internalNumber = convertIDL<Bindgen::IDLLooseDoubleOrBigInt>(*globalObject, value, ctx);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
     if (!thisObject->structure()->mayBePrototype()) {
@@ -247,38 +263,19 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
 
 JSC_DEFINE_CUSTOM_GETTER(jsStatsPrototypeGetter_atime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    return JSValue::encode(getDateField<DateFieldType::atime, false>(globalObject, thisValue, propertyName));
+    return JSValue::encode(getDateField<DateFieldType::atime>(globalObject, thisValue, propertyName));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsStatsPrototypeGetter_mtime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    return JSValue::encode(getDateField<DateFieldType::mtime, false>(globalObject, thisValue, propertyName));
+    return JSValue::encode(getDateField<DateFieldType::mtime>(globalObject, thisValue, propertyName));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsStatsPrototypeGetter_ctime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    return JSValue::encode(getDateField<DateFieldType::ctime, false>(globalObject, thisValue, propertyName));
+    return JSValue::encode(getDateField<DateFieldType::ctime>(globalObject, thisValue, propertyName));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsStatsPrototypeGetter_birthtime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    return JSValue::encode(getDateField<DateFieldType::birthtime, false>(globalObject, thisValue, propertyName));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_birthtime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
-{
-    return JSValue::encode(getDateField<DateFieldType::birthtime, true>(globalObject, thisValue, propertyName));
-}
-JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_ctime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
-{
-    return JSValue::encode(getDateField<DateFieldType::ctime, true>(globalObject, thisValue, propertyName));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_mtime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
-{
-    return JSValue::encode(getDateField<DateFieldType::mtime, true>(globalObject, thisValue, propertyName));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_atime, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
-{
-    return JSValue::encode(getDateField<DateFieldType::atime, true>(globalObject, thisValue, propertyName));
+    return JSValue::encode(getDateField<DateFieldType::birthtime>(globalObject, thisValue, propertyName));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
@@ -375,10 +372,10 @@ static const HashTableValue JSBigIntStatsPrototypeTableValues[] = {
     { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isFile, 0 } },
     { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isSocket, 0 } },
     { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBigIntStatsPrototypeFunction_isSymbolicLink, 0 } },
-    { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_atime, jsStatsPrototypeFunction_DatePutter } },
-    { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_mtime, jsStatsPrototypeFunction_DatePutter } },
-    { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_ctime, jsStatsPrototypeFunction_DatePutter } },
-    { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsBigIntStatsPrototypeGetter_birthtime, jsStatsPrototypeFunction_DatePutter } },
+    { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStatsPrototypeGetter_atime, jsStatsPrototypeFunction_DatePutter } },
+    { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStatsPrototypeGetter_mtime, jsStatsPrototypeFunction_DatePutter } },
+    { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStatsPrototypeGetter_ctime, jsStatsPrototypeFunction_DatePutter } },
+    { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStatsPrototypeGetter_birthtime, jsStatsPrototypeFunction_DatePutter } },
 };
 
 class JSStatsPrototype final : public JSC::JSNonFinalObject {
@@ -757,6 +754,20 @@ const JSC::ClassInfo JSBigIntStatsPrototype::s_info = { "BigIntStats"_s, &Base::
 const JSC::ClassInfo JSStatsConstructor::s_info = { "Stats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStatsConstructor) };
 const JSC::ClassInfo JSBigIntStatsConstructor::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsConstructor) };
 
+// Node.js divides with the JS `/` operator: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L624-L627
+static void divideNsIntoMs(JSC::JSGlobalObject* globalObject, JSValue& atime, JSValue& mtime, JSValue& ctime, JSValue& birthtime)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nsPerMs = JSC::JSBigInt::createFrom(globalObject, kNsPerMs);
+    RETURN_IF_EXCEPTION(scope, );
+    for (JSValue* time : { &atime, &mtime, &ctime, &birthtime }) {
+        *time = jsDiv(globalObject, *time, nsPerMs);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 template<bool isBigInt>
 inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
@@ -793,18 +804,7 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     JSValue birthtimeMs = birthtimeNs;
 
     if constexpr (isBigInt) {
-        // this.atimeMs = atimeNs / kNsPerMsBigInt;
-        // this.mtimeMs = mtimeNs / kNsPerMsBigInt;
-        // this.ctimeMs = ctimeNs / kNsPerMsBigInt;
-        // this.birthtimeMs = birthtimeNs / kNsPerMsBigInt;
-        const double kNsPerMsBigInt = 1000000;
-        atimeMs = jsDoubleNumber(atimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        mtimeMs = jsDoubleNumber(mtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        ctimeMs = jsDoubleNumber(ctimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        birthtimeMs = jsDoubleNumber(birthtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
+        divideNsIntoMs(globalObject, atimeMs, mtimeMs, ctimeMs, birthtimeMs);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -876,18 +876,7 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     JSValue birthtimeMs = birthtimeNs;
 
     if constexpr (isBigInt) {
-        // this.atimeMs = atimeNs / kNsPerMsBigInt;
-        // this.mtimeMs = mtimeNs / kNsPerMsBigInt;
-        // this.ctimeMs = ctimeNs / kNsPerMsBigInt;
-        // this.birthtimeMs = birthtimeNs / kNsPerMsBigInt;
-        const double kNsPerMsBigInt = 1000000;
-        atimeMs = jsDoubleNumber(atimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        mtimeMs = jsDoubleNumber(mtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        ctimeMs = jsDoubleNumber(ctimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
-        RETURN_IF_EXCEPTION(scope, {});
-        birthtimeMs = jsDoubleNumber(birthtimeNs.toBigInt64(globalObject) / kNsPerMsBigInt);
+        divideNsIntoMs(globalObject, atimeMs, mtimeMs, ctimeMs, birthtimeMs);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

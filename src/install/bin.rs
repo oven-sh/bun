@@ -681,7 +681,7 @@ impl<'a> LinkOrder<'a> {
     /// Compares by package, because a hoisted package keeps the id of the first dependency that
     /// reached it.
     pub fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let mut direct = DynamicBitSet::init_empty(pkgs.len())?;
         for ((resolution, dependencies), resolutions) in pkgs
             .items_resolution()
@@ -1866,7 +1866,7 @@ impl<'a> Linker<'a> {
 /// The installers only link the bins of packages that the command names or installs. This links
 /// the bins of the remaining global packages, skipping any name that is already taken.
 pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let (Some(dependencies), Some(resolutions)) = (
         pkgs.items_dependencies().first(),
         pkgs.items_resolutions().first(),

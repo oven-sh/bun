@@ -238,11 +238,13 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
       const upload = prepareUploads(device);
       await queue.onSubmittedWorkDone();
       const before = driver.memoryBlocks();
+      const start = performance.now();
       driver.findNotReady(3);
       upload(16);
       console.log(driver.memoryBlocks() - before);
       for (let i = 0; i < 8; i++) driver.findNotReady(0), queue.submit([]);
-      console.log(driver.memoryBlocks() - before <= 7);
+      const kept = driver.memoryBlocks() - before;
+      console.log(kept === 7 || (kept < 7 && performance.now() - start > 500));
       console.log(await until(() => driver.memoryBlocks() === before, () => (${use}, Bun.sleep(1))));`;
     expect(await runWithDevice(script)).toEqual(printed("15\ntrue\ntrue"));
   });
@@ -250,18 +252,28 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
   test.each([
     ["Dawn submits", 6, "upload(4)"],
     ["the script submits", 6, "upload(3), queue.submit([])"],
-    ["the script waits for", 6, "upload(3), queue.submit([]), await queue.onSubmittedWorkDone()"],
+    ["the script waits for", 6, "upload(3), await finish()"],
+    ["differ in size", 6, "uploadTexel(), await finish(), upload(1), await finish()"],
     // An idle device is looked at after 500 ms.
-    ["pauses follow", 14, "upload(2), queue.submit([]), await queue.onSubmittedWorkDone(), await Bun.sleep(50)"],
+    ["pauses follow", 14, "upload(2), await finish(), await Bun.sleep(50)"],
   ])("has its staging buffers used again in a loop of uploads that %s", async (_, rounds, round) => {
     const script = `
       const { queue } = device;
       const upload = prepareUploads(device);
+      const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
+      const uploadTexel = () => queue.writeTexture({ texture }, pixels, {}, [1]);
+      const finish = () => (queue.submit([]), queue.onSubmittedWorkDone());
       for (let i = 0; i < 2; i++) driver.findNotReady(0), queue.submit([]);
       const [blocks, frees] = [driver.memoryBlocks(), driver.frees()];
-      for (let i = 0; i < ${rounds}; i++) driver.findNotReady(0), ${round};
-      console.log(driver.memoryBlocks() - blocks < 8, driver.frees() - frees);`;
-    expect(await runWithDevice(script)).toEqual(printed("true 0"));
+      let longest = 0;
+      for (let i = 0; i < ${rounds}; i++) {
+        const start = performance.now();
+        driver.findNotReady(0), ${round};
+        longest = Math.max(longest, performance.now() - start);
+      }
+      // One can sit out a round, and is kept for 500 ms.
+      console.log(driver.memoryBlocks() - blocks < 8, driver.frees() === frees || longest > 250);`;
+    expect(await runWithDevice(script)).toEqual(printed("true true"));
   });
 
   test.each([
@@ -294,6 +306,26 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
       for (let i = 0; i < 10; i++) { ${round}; }
       console.log(driver.submits() - before);`;
     expect(await runWithDevice(script, withGC)).toEqual(printed("10"));
+  });
+
+  test("gets no submit for a buffer that is collected after an upload, but that a bind group holds", async () => {
+    const script = `
+      import { heapStats } from "bun:jsc";
+      async function create() {
+        const layout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: {} }] });
+        const resource = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM });
+        const encoder = device.createCommandEncoder();
+        encoder.clearBuffer(resource);
+        device.queue.submit([encoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
+        device.queue.writeBuffer(resource, 0, pixels, 0, 4);
+        return device.createBindGroup({ layout, entries: [{ binding: 0, resource }] });
+      }
+      globalThis.bindGroup = await create();
+      console.log(await until(() => !heapStats().objectTypeCounts.GPUBuffer, () => (Bun.gc(true), pause())));
+      await pause();
+      console.log(driver.submits());`;
+    expect(await runWithDevice(script, withGC)).toEqual(printed("true\n1"));
   });
 
   test.each([

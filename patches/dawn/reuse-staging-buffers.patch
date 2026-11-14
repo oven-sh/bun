@@ -37,7 +37,7 @@ https://crbug.com/42240396
  
      // Reclaim memory within the ring buffers by ticking (or removing requests no longer
      // in-flight).
-+    const TimePoint now = mRingBuffers.size() > 1 ? TimePoint::clock::now() : TimePoint();
++    const TimePoint now = TimePoint::clock::now();
      size_t i = 0;
      while (i < mRingBuffers.size()) {
 -        mRingBuffers[i]->mAllocator.Deallocate(lastCompletedSerial);

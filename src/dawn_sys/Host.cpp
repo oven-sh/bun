@@ -239,10 +239,11 @@ extern "C" bool BunDawn__freeMemory(QueueWatcher* watcher, Moment moment)
 }
 
 // With Vulkan, commands that have yet to be submitted hold the buffers that can be mapped.
-extern "C" void BunDawn__willReleaseBuffer(WGPUBuffer buffer)
+extern "C" void BunDawn__willReleaseBuffer(WGPUBuffer handle)
 {
-    QueueBase* queue = FromAPI(buffer)->GetDevice()->GetQueue();
-    if (FromAPI(buffer)->GetLastUsageSerial() > queue->GetLastSubmittedCommandSerial())
+    BufferBase* buffer = FromAPI(handle);
+    QueueBase* queue = buffer->GetDevice()->GetQueue();
+    if (buffer->GetLastUsageSerial() > queue->GetLastSubmittedCommandSerial() && (buffer->GetInternalUsage() & kMappableBufferUsages))
         queue->AwaitRecordedCommands();
 }
 

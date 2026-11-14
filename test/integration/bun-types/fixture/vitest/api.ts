@@ -236,6 +236,9 @@ test("expect", async () => {
       const state: MatcherState = this;
       expectTypeOf(state.isNot).toBeBoolean();
       expectTypeOf(this.equals(1, 1)).toBeBoolean();
+      expectTypeOf(this.utils.printDiffOrStringify(received, floor)).toBeString();
+      expectTypeOf(this.utils.printDiffOrStringify(received, floor, { aAnnotation: "Floor" })).toBeString();
+      expectTypeOf(this.utils.printDiffOrStringify(floor, received, "Floor", "Received", true)).toBeString();
       return { pass: received >= floor && received <= ceiling, message: () => this.utils.printReceived(received) };
     },
   });

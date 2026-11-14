@@ -66,7 +66,7 @@ export const H2FrameParser = b.class({
     },
     rstStream: {
       ...js,
-      args: { streamId: b.any, code: b.any },
+      args: { streamId: b.any, code: b.any, sendQueued: b.any },
       returns: b.any.returning("boolean", "undefined"),
       length: 1,
     },

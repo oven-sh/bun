@@ -1697,6 +1697,10 @@ impl Stream {
             if bytes.is_empty() {
                 // just merge the end_stream
                 lf!().end_stream = end_stream;
+                if !callback.is_callable() {
+                    // The queued frame keeps its callback, which runs once its own bytes are flushed.
+                    return;
+                }
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
                 let old_callback = core::mem::replace(
@@ -5030,11 +5034,13 @@ impl H2FrameParser {
         cx: &mut JsScope<'_>,
         stream_id: JsLocal<'_>,
         code: JsLocal<'_>,
+        send_queued: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_object = cx.global();
         bun_output::scoped_log!(H2FrameParser, "rstStream");
         let stream_id = stream_id.to_js();
         let code = code.to_js();
+        let send_queued = send_queued.to_js().to_boolean();
         if !stream_id.is_number() {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
@@ -5068,7 +5074,7 @@ impl H2FrameParser {
             }
         }
 
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(mut stream) = self.streams.get().get(&stream_id).copied() else {
             // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
             // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
             // built here rather than through the engine so this stays callable from inside an
@@ -5094,10 +5100,39 @@ impl H2FrameParser {
             return Ok(JSValue::TRUE);
         };
 
+        if send_queued {
+            // Like node, which sends its pending data ahead of an RST_STREAM: end_stream drops what is still queued.
+            self.send_queued_frames(stream_id);
+            let Some(found) = self.streams.get().get(&stream_id).copied() else {
+                return Ok(JSValue::TRUE);
+            };
+            stream = found;
+        }
         // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
         self.end_stream(unsafe { &mut *stream }, ErrorCode(error_code));
 
         Ok(JSValue::TRUE)
+    }
+
+    /// Writes the queued DATA frames of a stream that flow control lets through, with socket backpressure too.
+    fn send_queued_frames(&self, stream_id: u32) {
+        // A write callback runs JS between two frames, so the stream is looked up again for each one.
+        while let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
+            let stream = unsafe { &mut *stream };
+            let queued = stream.data_frame_queue.len;
+            let mut written: usize = 0;
+            if matches!(stream.flush_queue(self, &mut written), FlushState::NoAction) {
+                break;
+            }
+            let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+                break;
+            };
+            // SAFETY: as above, the entry was just read from the map
+            if written == 0 && unsafe { (*stream).data_frame_queue.len } >= queued {
+                break;
+            }
+        }
     }
 }
 

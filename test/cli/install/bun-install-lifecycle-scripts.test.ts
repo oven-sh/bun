@@ -7,8 +7,10 @@ import {
   existsSync,
   constants as fsConstants,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -23,11 +25,14 @@ import {
   bunExe,
   githubTarball,
   isLinux,
+  isRoot,
   isWindows,
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
   tempDir,
+  unprivilegedSpawnOptions,
+  withoutWriteBits,
 } from "harness";
 import { constants as osConstants, type as osType, tmpdir } from "os";
 import { join, sep } from "path";
@@ -666,6 +671,183 @@ test.concurrent.skipIf(!canForceExdevTmpdir)(
     }
   },
 );
+
+// An install cache that the user can read and cannot write: a cache volume or an image layer that
+// another user filled, or a read-only mount. The node-gyp script of `bun install` is never renamed
+// into the cache, so it goes into the temp directory then.
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+describe.skipIf(isWindows)("install cache that cannot be written", () => {
+  // Scripts find `node-gyp` only through the directory that `bun install` adds to PATH, and that
+  // one runs $npm_config_node_gyp. It records its arguments and its PATH outside of the packages:
+  // on macOS a package is cloned from the cache with the modes it has there.
+  async function setup(linker: "hoisted" | "isolated", manifest: object, { foreignCache = false } = {}) {
+    const ctx = await setupScriptPackages(linker, {
+      native: { scripts: { install: "node-gyp rebuild" } },
+      "not-cached": {},
+    });
+    const fakeNodeGyp = join(ctx.packageDir, "fake-node-gyp");
+    const ranFile = join(ctx.packageDir, "node-gyp-ran.txt");
+    const pathFile = join(ctx.packageDir, "node-gyp-path.txt");
+    await Promise.all([
+      writeFile(ctx.packageJson, JSON.stringify({ name: "root", ...manifest })),
+      writeFile(fakeNodeGyp, '#!/bin/sh\necho "$@" >> "$NODE_GYP_RAN"\necho "$PATH" > "$NODE_GYP_PATH"\n', {
+        mode: 0o755,
+      }),
+    ]);
+    Object.assign(ctx.env, {
+      PATH: "/usr/bin:/bin",
+      npm_config_node_gyp: fakeNodeGyp,
+      NODE_GYP_RAN: ranFile,
+      NODE_GYP_PATH: pathFile,
+    });
+    // Another user's cache is outside of the project, which `unprivilegedSpawnOptions` gives away.
+    const foreignCacheRoot = foreignCache ? tempDir("foreign-install-cache", {}) : undefined;
+    if (foreignCacheRoot) {
+      chmodSync(String(foreignCacheRoot), 0o755);
+      ctx.env.BUN_INSTALL_CACHE_DIR = join(String(foreignCacheRoot), "cache");
+    }
+    const cache = ctx.env.BUN_INSTALL_CACHE_DIR;
+    const tmp = ctx.env.BUN_TMPDIR;
+    return {
+      ...ctx,
+      cache,
+      tmp,
+      /** What the scripts passed to node-gyp since the last call, one line per script. */
+      async ran() {
+        const ran = (await exists(ranFile)) ? await file(ranFile).text() : "";
+        await rm(ranFile, { force: true });
+        return ran;
+      },
+      /** Where the last script found the node-gyp script of `bun install`, and what the temp directory holds now. */
+      nodeGypScript() {
+        const entries = readFileSync(pathFile, "utf8").trim().split(":");
+        const dir = entries.find(entry => entry.endsWith(".node-gyp"));
+        return { inTmp: dir?.startsWith(tmp + sep), left: readdirSync(tmp) };
+      },
+      /** Runs bun as a user who cannot write the cache. Root can write anything, so as root it is another user. */
+      async withoutCacheAccess(...args: string[]) {
+        using unprivileged = unprivilegedSpawnOptions(ctx.packageDir);
+        using _ = foreignCache ? undefined : withoutWriteBits(cache);
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: ctx.packageDir,
+          env: ctx.env,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out, err, exitCode };
+      },
+      [Symbol.dispose]() {
+        foreignCacheRoot?.[Symbol.dispose]();
+        ctx[Symbol.dispose]();
+      },
+    };
+  }
+  const withScripts = {
+    dependencies: { native: "1.0.0" },
+    trustedDependencies: ["native"],
+    scripts: { postinstall: "node-gyp configure" },
+  };
+  async function warmCache(ctx: Awaited<ReturnType<typeof setup>>) {
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect({ ran: await ctx.ran(), exitCode }).toEqual({ ran: "rebuild\nconfigure\n", exitCode: 0 });
+    await rm(ctx.installed(), { recursive: true, force: true });
+  }
+
+  describe.each(["hoisted", "isolated"] as const)("%s", linker => {
+    test.serial.each([
+      { state: "no <cache>/.tmp", dotTmp: false },
+      { state: "a <cache>/.tmp from an earlier install", dotTmp: true },
+    ])("a trusted dependency's script and the root's script run ($state)", async ({ dotTmp }) => {
+      using ctx = await setup(linker, withScripts);
+      await warmCache(ctx);
+      if (dotTmp) mkdirSync(join(ctx.cache, ".tmp"));
+
+      const { err, exitCode } = await ctx.withoutCacheAccess("install", "--frozen-lockfile");
+      expect(err).not.toContain("error:");
+      expect({ ran: await ctx.ran(), exitCode }).toEqual({ ran: "rebuild\nconfigure\n", exitCode: 0 });
+      expect(ctx.nodeGypScript()).toEqual({ inTmp: true, left: [] });
+    });
+
+    // Only root can make a cache that belongs to somebody else.
+    test.serial.skipIf(!isRoot)("the scripts run from a cache that another user filled", async () => {
+      using ctx = await setup(linker, withScripts, { foreignCache: true });
+      await warmCache(ctx);
+
+      const { err, exitCode } = await ctx.withoutCacheAccess("install", "--frozen-lockfile");
+      expect(err).not.toContain("error:");
+      expect({ ran: await ctx.ran(), exitCode }).toEqual({ ran: "rebuild\nconfigure\n", exitCode: 0 });
+      expect(ctx.nodeGypScript()).toEqual({ inTmp: true, left: [] });
+    });
+  });
+
+  test.serial("a project without dependencies runs its script", async () => {
+    using ctx = await setup("hoisted", { scripts: { postinstall: "node-gyp configure" } });
+    mkdirSync(ctx.cache);
+
+    const { err, exitCode } = await ctx.withoutCacheAccess("install");
+    expect(err).not.toContain("error:");
+    expect({ ran: await ctx.ran(), exitCode }).toEqual({ ran: "configure\n", exitCode: 0 });
+  });
+
+  // Then no directory can hold the node-gyp script, and a script that does not call it still runs.
+  test.serial.each([
+    { state: "no <cache>/.tmp", dotTmp: false, why: "cannot access tempdir: EACCES" },
+    {
+      state: "a <cache>/.tmp from an earlier install",
+      dotTmp: true,
+      why: "EACCES accessing temporary directory. set $BUN_TMPDIR or $BUN_INSTALL",
+    },
+  ])("a script runs when the temp directory cannot be written either ($state)", async ({ dotTmp, why }) => {
+    using ctx = await setup("hoisted", { scripts: { postinstall: 'echo ran > "$NODE_GYP_RAN"' } });
+    mkdirSync(dotTmp ? join(ctx.cache, ".tmp") : ctx.cache, { recursive: true });
+    mkdirSync(ctx.tmp);
+    using _ = withoutWriteBits(ctx.tmp);
+
+    const { err, exitCode } = await ctx.withoutCacheAccess("install", "--verbose");
+    expect(err).not.toContain("error:");
+    expect(splitErrLines(err)).toEqual(
+      expect.arrayContaining([
+        `warn: EACCES creating a directory for the node-gyp script in "${ctx.tmp}". Lifecycle scripts run without it.`,
+        `note: ${why}`,
+      ]),
+    );
+    expect({ ran: await ctx.ran(), exitCode }).toEqual({ ran: "ran\n", exitCode: 0 });
+  });
+
+  test.serial("bun pm trust and bun remove run the scripts", async () => {
+    using ctx = await setup("hoisted", { ...withScripts, trustedDependencies: undefined });
+    const warm = await ctx.bun("install");
+    expect(warm.err).not.toContain("error:");
+    expect({ ran: await ctx.ran(), exitCode: warm.exitCode }).toEqual({ ran: "configure\n", exitCode: 0 });
+
+    const trust = await ctx.withoutCacheAccess("pm", "trust", "native");
+    expect(trust.err).not.toContain("error:");
+    expect({ ran: await ctx.ran(), exitCode: trust.exitCode }).toEqual({ ran: "rebuild\n", exitCode: 0 });
+
+    const remove = await ctx.withoutCacheAccess("remove", "native");
+    expect(remove.err).not.toContain("error:");
+    expect({ ran: await ctx.ran(), exitCode: remove.exitCode }).toEqual({ ran: "configure\n", exitCode: 0 });
+  });
+
+  // A package that the cache does not hold has to be stored in it. That still ends the command.
+  test.serial("bun add of a package that is not cached fails", async () => {
+    using ctx = await setup("hoisted", withScripts);
+    await warmCache(ctx);
+
+    const { err, exitCode } = await ctx.withoutCacheAccess("add", "not-cached@1.0.0");
+    expect(splitErrLines(err)).toContain(`error: cannot write files to cache directory "${ctx.cache}": EACCES`);
+    expect({ linked: await exists(ctx.installed("native")), ran: await ctx.ran(), exitCode }).toEqual({
+      linked: false,
+      ran: "",
+      exitCode: 1,
+    });
+  });
+});
 
 // The environment `bun install` built is all a lifecycle script gets. On
 // Windows (and on POSIX without a shell) the script runs through `bun exec`,

@@ -4692,7 +4692,7 @@ pub mod bv2_impl {
 
                             // Failures to watch are intentionally ignored.
                             if !matches!(
-                                this.bun_watcher_mut().unwrap().add_file::<true>(
+                                this.bun_watcher_mut().unwrap().add_file(
                                     fd,
                                     &load.path,
                                     bun_wyhash::hash(load.path.as_ref()) as u32,
@@ -7073,13 +7073,11 @@ pub mod bv2_impl {
                         let dir_fd = parse_result.watcher_data.dir_fd;
                         let hash = bun_wyhash::hash(source_path) as u32;
                         let bun_watcher = this.bun_watcher_mut().unwrap();
-                        // The watcher keeps the path past this bundle; borrow it
-                        // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let added = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(fd, source_path, hash, dir_fd)
-                        } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd)
+                        let added = match Fs::as_interned_path(source_path) {
+                            Some(path) if !cfg!(windows) => {
+                                bun_watcher.add_file_static(fd, path, hash, dir_fd)
+                            }
+                            _ => bun_watcher.add_file(fd, source_path, hash, dir_fd),
                         };
                         adopted = matches!(added, Ok(bun_watcher::FdOwnership::Watcher));
                     }

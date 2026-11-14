@@ -593,6 +593,45 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     expect(log).toEqual(["kept started in the host", "dropped started in the graph", "kept finished"]);
   });
 
+  // A pipe calls the sink's close() and abort() in the context of the code that called pipeTo(), whichever code
+  // ends the source. So a sink of the host's is a host function that the graph calls.
+  test.each(["close", "error"] as const)(
+    "a sink of the host's in a graph's pipe works for that graph; through a snapshot taken in the host, for the host (source.%s())",
+    async end => {
+      const dir = fixture({
+        "pipes.mjs": `export const pipe = (source, sink) => void source.pipeTo(sink).catch(() => {});`,
+      });
+      const asHost = AsyncLocalStorage.snapshot();
+      const log: string[] = [];
+      const work = (entry: string) =>
+        new Promise<void>(resolve => {
+          log.push(entry + " started in the " + (Bun.ModuleGraph.current ? "graph" : "host"));
+          setImmediate(() => setTimeout(() => (log.push(entry + " finished"), resolve()), 1));
+        });
+      const pipes = ["kept", "dropped"].map(entry => {
+        let controller!: ReadableStreamDefaultController;
+        const source = new ReadableStream({ start: c => void (controller = c) });
+        const finish = entry === "kept" ? () => asHost(() => work(entry)) : () => work(entry);
+        return { entry, controller, source, sink: new WritableStream({ close: finish, abort: finish }) };
+      });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(join(dir, "pipes.mjs"));
+      for (const { source, sink } of pipes) graph.run(() => app.pipe(source, sink));
+      graph.dispose();
+      // The host ends each source while its pipe waits in a read.
+      for (const { controller } of pipes)
+        end === "close" ? controller.close() : controller.error(new Error("source error"));
+      await until(() => log.includes("kept finished"));
+      await hostTimerTurns();
+      expect(log).toEqual(["kept started in the host", "dropped started in the graph", "kept finished"]);
+      // The pipe whose sink finished let go of both streams. The other one holds them.
+      expect(pipes.map(({ entry, source, sink }) => ({ entry, locked: [source.locked, sink.locked] }))).toEqual([
+        { entry: "kept", locked: [false, false] },
+        { entry: "dropped", locked: [true, true] },
+      ]);
+    },
+  );
+
   test("what a disposed graph's code opens is closed at once", async () => {
     const dir = fixture({
       "late.mjs": `

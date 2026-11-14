@@ -19,8 +19,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/Microtask.h>
-#include <JavaScriptCore/MicrotaskQueue.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -73,8 +71,7 @@ static void reactToWritableControllerStart(JSC::VM& vm, JSGlobalObject* globalOb
         startPromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSControllerStartFulfilled(), runtime->onWSControllerStartRejected(), jsUndefined(), controller);
         return;
     }
-    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, runtime->onWSControllerStartFulfilled(), globalObject->m_asyncContextData.get()->getInternalField(0), startResult, controller };
-    vm.queueMicrotask(WTF::move(task));
+    queueStreamsMicrotask(globalObject, runtime->onWSControllerStartFulfilled(), startResult, controller);
 }
 
 JSWritableStream* createWritableStream(JSGlobalObject* globalObject, SinkKind kind, JSCell* algorithmContext, JSValue startResult, double highWaterMark, JSObject* sizeAlgorithm)

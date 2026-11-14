@@ -823,10 +823,13 @@ static JSValue requireFromIsolatedModuleCache(Zig::GlobalObject* globalObject, J
     return jsNumber(-1);
 }
 
-static bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(JSC::VM& vm, JSC::JSModuleLoader* loader, const String& specifier)
+static bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const String& specifier)
 {
-    auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, specifier));
+    auto* entry = loader->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), specifier));
     if (!entry || entry->status() < JSC::ModuleRegistryEntry::Status::Fetched)
+        return false;
+    // `bun test` runs a CommonJS import of a test file or preload once the whole load is fetched, when the loader has a module of every data file of the load. require() in such an import goes by whether it had one when the import would have run otherwise (RunnerLoadFetcher.h).
+    if (auto* runnerLoad = globalObject->m_runnerLoad.get(); runnerLoad && runnerLoad->loader() == loader && runnerLoad->hadNoModuleOfDataFile(specifier)) [[unlikely]]
         return false;
     // `bun test` registers a CommonJS import of a test file or preload before its body has run (JSCommonJSModule.cpp, generateDeferredCommonJSModule). Until that record has its exports, require() runs the file itself, as it does while the file is being fetched.
     auto* record = entry->record();
@@ -959,7 +962,7 @@ JSValue fetchCommonJSModule(
             return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, &specifier, specifierWtfString, referrer, fetch, wasModuleMock);
     }
 
-    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, specifierWtfString)) {
+    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(globalObject, loader, specifierWtfString)) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
@@ -992,7 +995,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     if (pluginContents) {
         // The engine refuses what it parses as JavaScript. With a loader of data, the text becomes a module without that.
         THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
-        if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, specifierWtfString))
+        if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(globalObject, loader, specifierWtfString))
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         JSValue cached = requireFromIsolatedModuleCache(globalObject, loader, target, specifierWtfString, typeAttribute, pluginContents);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1245,6 +1248,13 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject* globalObject, uint32
     return deferredExportsSource;
 }
 
+// `bun test`: a file of which require() answers the value that it parses itself until the loader has a module of it. A load that the runner started notes when that is (RunnerLoadFetcher.h).
+static ALWAYS_INLINE void noteDataFileOfRunnerLoad(Zig::GlobalObject* globalObject, Bun::JSModuleGraph* graph, const BunString* specifier)
+{
+    if (auto* runnerLoad = liveRunnerLoad(globalObject, graph)) [[unlikely]]
+        runnerLoad->noteDataFile(specifier->toWTFString(BunString::ZeroCopy));
+}
+
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
@@ -1493,6 +1503,7 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 
+        noteDataFileOfRunnerLoad(globalObject, graph, specifier);
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
@@ -1503,6 +1514,7 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
 
+        noteDataFileOfRunnerLoad(globalObject, graph, specifier);
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
@@ -1511,6 +1523,7 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
 
+        noteDataFileOfRunnerLoad(globalObject, graph, specifier);
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
     }

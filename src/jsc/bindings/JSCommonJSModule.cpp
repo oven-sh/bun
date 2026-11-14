@@ -1762,8 +1762,15 @@ static ALWAYS_INLINE JSC::SourceCode commonJSModuleSourceCodeForLoad(Zig::Global
     BunString loggedKey = Bun::toString(key->tryGetValue().data);
     Bun__logCommonJSProviderKind(&loggedKey, isDeferred);
 #endif
-    if (isDeferred) [[unlikely]]
+    if (isDeferred) [[unlikely]] {
+        // Now is when the module would run if the load did not hold it back: what its require() answers for a data file of the load goes by the modules that the loader has by now.
+        JSC::JSModuleLoader* loader = graph ? graph->loader() : globalObject->moduleLoader();
+        runnerLoad->noteCommonJSSource(key->tryGetValue().data, [&](const WTF::String& dataFile) {
+            auto* fetched = loader->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), dataFile));
+            return fetched && fetched->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
+        });
         return deferredCommonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, moduleObject);
+    }
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
@@ -1987,6 +1994,8 @@ static JSC::SourceCode deferredCommonJSModuleSyntheticSourceCode(const SourceOri
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) mutable -> void {
+                // What require() answers in this run for a data file of the load goes by when the source of the module was made (RunnerLoadFetcher.h).
+                RunnerLoadCommonJSRun run(liveRunnerLoad(uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject), graph.get()), moduleKey.string());
                 generateDeferredCommonJSModule(lexicalGlobalObject, graph.get(), made.get(), WTF::move(source), ignoreESModuleAnnotation, eager.get(), moduleKey, exportNames, exportValues);
                 // Not before: a run that the module's body starts inside the first one answers from `made`.
                 made.clear();

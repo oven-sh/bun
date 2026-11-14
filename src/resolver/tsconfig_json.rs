@@ -276,6 +276,13 @@ impl TSConfigJSON {
         longest_match
     }
 
+    /// `"jsx": "react-jsx"` is `Some(false)`, `"react-jsxdev"` is `Some(true)`. Any other value, or none, is `None`.
+    pub fn jsx_development(&self) -> Option<bool> {
+        self.jsx_flags
+            .contains(JsxField::Development)
+            .then_some(self.jsx.development)
+    }
+
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
 

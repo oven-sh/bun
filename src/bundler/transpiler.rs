@@ -572,6 +572,10 @@ impl<'a> Transpiler<'a> {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                    } else if self.options.leaves_jsx_development_to_tsconfig()
+                        && let Some(development) = tsconfig.jsx_development()
+                    {
+                        self.options.jsx.development = development;
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;

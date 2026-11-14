@@ -5025,6 +5025,184 @@ describe("links of a renamed or removed workspace", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/47656
+// bun.lock records the root's name under `workspaces[""]`. A rename of the root used to leave that
+// entry (and the `<name>@root:` key of a member that depends on the root) at the old name. Nothing
+// installed changes with it, so a frozen install accepts the rename, as it does a workspace's version.
+describe("a renamed root package", () => {
+  async function install(ctx: TestCtx, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  function writeProject(
+    packageDir: string,
+    root: Record<string, unknown>,
+    members: Record<string, Record<string, unknown>>,
+  ) {
+    return Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ version: "0.0.1", private: true, workspaces: ["packages/*"], ...root }),
+      ),
+      ...Object.entries(members).map(([dir, packageJson]) =>
+        write(join(packageDir, "packages", dir, "package.json"), JSON.stringify({ version: "1.0.0", ...packageJson })),
+      ),
+    ]);
+  }
+
+  test.concurrent.each([
+    { lockfile: "bun.lock", saveTextLockfile: true },
+    { lockfile: "bun.lockb", saveTextLockfile: false },
+  ])(
+    "$lockfile takes the new name, and a frozen install accepts the rename",
+    async ({ lockfile, saveTextLockfile }) => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const lockPath = join(packageDir, lockfile);
+      // bun.lockb stores the names as plain bytes, so the same check reads both formats.
+      const lockText = () => file(lockPath).text();
+
+      await verdaccio.writeBunfig(packageDir, { saveTextLockfile });
+      await writeProject(packageDir, { name: "root-before" }, { member: { name: "member" } });
+      expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+      expect(await lockText()).toContain("root-before");
+
+      await writeProject(packageDir, { name: "root-after" }, { member: { name: "member" } });
+      const before = await file(lockPath).bytes();
+      expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+      expect(await file(lockPath).bytes()).toEqual(before);
+
+      expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+      const lock = await lockText();
+      expect(lock).toContain("root-after");
+      expect(lock).not.toContain("root-before");
+      if (saveTextLockfile) {
+        expect(lock).toContain('"name": "root-after"');
+      }
+      const lockBytes = await file(lockPath).bytes();
+
+      expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+      const again = await install(ctx);
+      expect(again).toMatchObject({ err: "", exitCode: 0 });
+      expect(again.out).toContain("(no changes)");
+      expect(await file(lockPath).bytes()).toEqual(lockBytes);
+    },
+  );
+
+  // Bun 1.1.42 and older wrote no root name. Such a lockfile takes the name from package.json.
+  test.concurrent("a lockfile without a root name takes it", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const lockPath = join(packageDir, "bun.lock");
+
+    await writeProject(packageDir, { name: "root-named" }, { member: { name: "member" } });
+    await write(
+      lockPath,
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: {
+          "": {},
+          "packages/member": { name: "member", version: "1.0.0" },
+        },
+        packages: {
+          member: ["member@workspace:packages/member"],
+        },
+      }),
+    );
+    const nameless = await file(lockPath).text();
+
+    const frozen = await install(ctx, "--frozen-lockfile");
+    expect(frozen).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockPath).text()).toBe(nameless);
+
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    const lock = await file(lockPath).text();
+    expect(lock).toContain('"name": "root-named"');
+
+    const again = await install(ctx);
+    expect(again).toMatchObject({ err: "", exitCode: 0 });
+    expect(again.out).toContain("(no changes)");
+    expect(await file(lockPath).text()).toBe(lock);
+  });
+
+  test.concurrent("a removed root name leaves the lockfile, and a new one enters it", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const lockPath = join(packageDir, "bun.lock");
+
+    await writeProject(packageDir, { name: "root-before" }, { member: { name: "member" } });
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    const named = await file(lockPath).text();
+
+    await writeProject(packageDir, {}, { member: { name: "member" } });
+    expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockPath).text()).toBe(named);
+
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    const nameless = await file(lockPath).text();
+    expect(nameless).not.toContain('"name": "root-before"');
+    expect(nameless).toContain('"": {');
+
+    await writeProject(packageDir, { name: "root-again" }, { member: { name: "member" } });
+    expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockPath).text()).toBe(nameless);
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    expect(await file(lockPath).text()).toContain('"name": "root-again"');
+  });
+
+  test.concurrent("a member that depends on the root by name follows the rename", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const lockPath = join(packageDir, "bun.lock");
+
+    await writeProject(
+      packageDir,
+      { name: "root-before", bin: { "root-bin": "index.js" } },
+      { member: { name: "member", dependencies: { "root-before": "workspace:*" } } },
+    );
+    await write(join(packageDir, "index.js"), "module.exports = 42;\n");
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    expect(await file(lockPath).text()).toContain(
+      '"root-before": ["root-before@root:", { "bin": { "root-bin": "index.js" } }],',
+    );
+
+    // The member is renamed in the same step, so the lockfile is rewritten even without the root
+    // rename being detected.
+    await writeProject(
+      packageDir,
+      { name: "root-after", bin: { "root-bin": "index.js" } },
+      { member: { name: "member-after", dependencies: { "root-after": "workspace:*" } } },
+    );
+    expect(await install(ctx)).toMatchObject({ exitCode: 0 });
+    const lock = await file(lockPath).text();
+    expect(lock).toContain('"name": "root-after"');
+    expect(lock).toContain('"root-after": ["root-after@root:", { "bin": { "root-bin": "index.js" } }],');
+    expect(lock).not.toContain("root-before");
+    expect(lock).not.toContain('"member"');
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require("root-after"))`],
+      cwd: join(packageDir, "packages", "member"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    expect(await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited])).toEqual(["42\n", "", 0]);
+
+    expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockPath).text()).toBe(lock);
+  });
+});
+
 // #39357: `bun install` must identify the project root by the path it was
 // invoked through. It used to realpath the root package.json fd, so workspace
 // discovery and lockfile keys were computed against a different root than

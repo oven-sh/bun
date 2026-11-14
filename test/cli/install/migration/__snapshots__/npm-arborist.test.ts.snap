@@ -1196,6 +1196,7 @@ bun install --frozen-lockfile exit code: 0
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "audit-omit",
       "devDependencies": {
         "tap": "^13.1.11",
       },
@@ -2734,6 +2735,7 @@ bun install --frozen-lockfile exit code: 0
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "carbonium",
       "devDependencies": {
         "@typescript-eslint/eslint-plugin": "^3.10.1",
         "@typescript-eslint/parser": "^3.10.1",
@@ -3747,6 +3749,7 @@ bun install --frozen-lockfile exit code: 1
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "engine-platform-test",
       "dependencies": {
         "@bonkydog/test": "^1.4.0",
         "lodash": "^4.17.20",
@@ -3807,6 +3810,7 @@ bun install --frozen-lockfile exit code: 0
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "root",
       "dependencies": {
         "j": "file:../i/j",
         "o": "file:../m/node_modules/n/o",
@@ -3872,6 +3876,7 @@ bun install --frozen-lockfile exit code: 0
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "link-dep-lifecycle-scripts",
       "dependencies": {
         "a": "file:./a",
       },
@@ -3949,7 +3954,7 @@ bun install --frozen-lockfile exit code: 1
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "optional-dep-postinstall-fail",
+      "name": "optional-dep-allinstall-fail",
       "optionalDependencies": {
         "@isaacs/testing-fail-postinstall": "^1.0.0",
       },
@@ -3972,7 +3977,7 @@ bun install --frozen-lockfile exit code: 1
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "optional-dep-postinstall-fail",
+      "name": "optional-dep-install-fail",
       "optionalDependencies": {
         "@isaacs/testing-fail-postinstall": "^1.0.0",
       },
@@ -4018,7 +4023,7 @@ bun install --frozen-lockfile exit code: 1
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "optional-dep-postinstall-fail",
+      "name": "optional-dep-preinstall-fail",
       "optionalDependencies": {
         "@isaacs/testing-fail-postinstall": "^1.0.0",
       },
@@ -4041,6 +4046,7 @@ bun install --frozen-lockfile exit code: 1
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "engine-platform-test",
       "dependencies": {
         "@bonkydog/test": "^1.4.0",
         "lodash": "^4.17.20",
@@ -4222,7 +4228,9 @@ bun install --frozen-lockfile exit code: 1
   "lockfileVersion": 2,
   "configVersion": 0,
   "workspaces": {
-    "": {},
+    "": {
+      "name": "prune-actual",
+    },
   },
   "packages": {}
 }
@@ -4578,7 +4586,9 @@ bun install --frozen-lockfile exit code: 1
   "lockfileVersion": 2,
   "configVersion": 0,
   "workspaces": {
-    "": {},
+    "": {
+      "name": "workspaces-add-new-dep",
+    },
     "a": {
       "name": "a",
       "version": "1.0.0",
@@ -4693,6 +4703,7 @@ bun install --frozen-lockfile exit code: 0
   "configVersion": 0,
   "workspaces": {
     "": {
+      "name": "workspaces-non-simplistic",
       "devDependencies": {
         "abbrev": "^1.0.0",
       },

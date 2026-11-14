@@ -610,6 +610,11 @@ declare module "bun:test" {
     /**
      * Change the configuration for the rest of the test file. If a preload script calls it, the change applies to
      * every test file. Vitest's other options are accepted but ignored.
+     *
+     * The five options that clean up before each test apply to every mock and stub. Of the concurrent tests that
+     * follow one another, the first `maxConcurrency` get no cleanup when they start while another is still
+     * running. Every later test, a retry and a repeat get it, and it also applies to what the tests that are
+     * still running made.
      */
     setConfig(config: {
       /** Default timeout in milliseconds for tests registered after this call. `0` and `Infinity` mean no timeout. */

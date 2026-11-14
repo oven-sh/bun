@@ -47,8 +47,12 @@ fn run(global: &JSGlobalObject, reset: Reset) {
     }));
 }
 
-pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {
+/// `resets` is false for a test that starts in its group's first window while another test of the group runs.
+pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool, resets: bool) {
     JSMock__willRunTest(global);
+    if !resets {
+        return;
+    }
     let Some(runner) = Jest::runner() else { return };
     let set = runner.vi_config.resets;
     let configured = runner.test_options.resets_before_each_test;

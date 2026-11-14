@@ -115,7 +115,10 @@ pub(crate) struct Parser<'a> {
     pub(crate) ref_def_labels: bun_collections::StringSet,
 
     // State
-    pub(crate) last_line_has_list_loosening_effect: bool,
+    // `NO_BLANK_LINE`, or the lowest index in `containers` of a list that the empty line before this one can make loose.
+    pub(crate) blank_line_in_list: u32,
+    // How many of the open containers the last blank line has the marker or the indentation of.
+    pub(crate) blank_line_marks: u32,
     pub(crate) last_list_item_starts_with_two_blank_lines: bool,
     // The last header in `block_bytes` is the opener of a list item.
     pub(crate) last_header_opens_list_item: bool,
@@ -150,6 +153,9 @@ pub(crate) struct Parser<'a> {
     // The labels of the footnotes that are defined, normalized.
     pub(crate) footnote_labels: bun_collections::StringSet,
 }
+
+/// `Parser::blank_line_in_list` when the line before is not an empty line in a list item.
+pub(crate) const NO_BLANK_LINE: u32 = u32::MAX;
 
 #[repr(C)]
 pub struct BlockHeader {
@@ -353,7 +359,8 @@ impl<'a> Parser<'a> {
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
             ref_def_labels: bun_collections::StringSet::new(),
-            last_line_has_list_loosening_effect: false,
+            blank_line_in_list: NO_BLANK_LINE,
+            blank_line_marks: 0,
             last_list_item_starts_with_two_blank_lines: false,
             last_header_opens_list_item: false,
             last_line_is_only_a_task_mark: false,

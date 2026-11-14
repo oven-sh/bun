@@ -636,6 +636,33 @@ Received: Instance {
     );
   });
 
+  test("a getter under an index key that throws leaves the accessor too", () => {
+    let calls = 0;
+    const throws = () => ({
+      before: 1,
+      nested: Object.defineProperty({ named: 2 }, 7, {
+        enumerable: true,
+        get() {
+          calls++;
+          throw new Error("from the getter");
+        },
+      }),
+    });
+    expect(throws()).toMatchInlineSnapshot(`
+      {
+        "before": 1,
+        "nested": {
+          "7": [native code],
+          "named": 2,
+        },
+      }
+    `);
+    expect(messageOf(() => expect(throws()).toEqual<object>({}))).toBe(
+      'expect(received).toEqual(expected)\n\n- {}\n+ {\n+   "before": 1,\n+   "nested": {\n+     "7": [native code],\n+     "named": 2,\n+   },\n+ }\n\n- Expected  - 1\n+ Received  + 7\n',
+    );
+    expect(calls).toBe(2);
+  });
+
   test("console.log() and Bun.inspect() do not call it", () => {
     expect(
       Bun.inspect({
@@ -2262,6 +2289,41 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("is asked about each value, and not about the accessor that a getter that throws leaves", async () => {
+    using dir = tempDir("snapshot-serializer-accessor", {
+      "a.test.js": `
+          const asked = [];
+          expect.addSnapshotSerializer({
+            test(value) {
+              asked.push(typeof value);
+              return value?.currency !== undefined;
+            },
+            serialize: value => value.amount + " " + value.currency,
+          });
+          test("t", () => {
+            const throws = { get() { throw new Error("not ready"); }, enumerable: true };
+            const values = { bigint: 5n, price: { amount: 5, currency: "EUR" }, string: "text", symbol: Symbol("value") };
+            const value = Object.defineProperties(values, { named: throws, 7: throws, [Symbol("accessor")]: throws });
+            expect(value).toMatchInlineSnapshot(\`
+              {
+                "7": [native code],
+                [Symbol(accessor)]: [native code],
+                "bigint": 5n,
+                "named": [native code],
+                "price": 5 EUR,
+                "string": "text",
+                "symbol": Symbol(value),
+              }
+            \`);
+            expect(asked).toEqual(["object", "bigint", "object", "string", "symbol"]);
+          });
+        `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "true" });
+    expect({ pass, stderr: pass === 1 ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("what it refuses, and what a serializer may not do", async () => {
     using dir = tempDir("snapshot-serializer-errors", {
       "a.test.js": `
@@ -2416,6 +2478,87 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
     });
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+  });
+
+  // Bun 1.3.13, 1.4.2, 1.4.3 and 1.4.4 wrote this text: null for an accessor under an index key. Never update it with a newer Bun.
+  // 4294967294 is the last index key. "01" and Symbol("5") are not index keys, and 9 is not enumerable.
+  const olderBunIndexAccessors = `{
+  "0": null,
+  "01": [native code],
+  "4294967294": null,
+  "4294967295": [native code],
+  [Symbol(5)]: [native code],
+  "7": null,
+  "8": null,
+  "9": null,
+  "a": 1,
+  "named": [native code],
+}`;
+  const indexAccessors = `
+    const value = () => {
+      const o = { a: 1, get named() { return 1; } };
+      Object.defineProperty(o, 0, { get() { throw new Error("not ready"); }, enumerable: true });
+      Object.defineProperty(o, 7, { get() { return "seven"; }, enumerable: true });
+      Object.defineProperty(o, 8, { set(v) {}, enumerable: true });
+      Object.defineProperty(o, 9, { get() { return 9; }, set(v) {} });
+      Object.defineProperty(o, 4294967294, { get() { return 1; }, enumerable: true });
+      Object.defineProperty(o, 4294967295, { get() { return 1; }, enumerable: true });
+      Object.defineProperty(o, "01", { get() { return 1; }, enumerable: true });
+      Object.defineProperty(o, Symbol("5"), { get() { return 1; }, enumerable: true });
+      return o;
+    };
+  `;
+
+  test("passes when it is what an older Bun wrote for an accessor under an index key", async () => {
+    const { log, stderr, exitCode } = await logOf({
+      "a.test.js": `
+          ${indexAccessors}
+          test("in a file", () => { expect(value()).toMatchSnapshot(); });
+          test("inline", () => { expect(value()).toMatchInlineSnapshot(\`\n${olderBunIndexAccessors}\n\`); });
+          test("but for one line", () => {
+            const accessor = ${JSON.stringify(olderBunIndexAccessors.replace('"7": null', '"7": [native code]'))};
+            expect(() => expect(value()).toMatchInlineSnapshot("\\n" + accessor + "\\n")).toThrow("expect(received).toMatchInlineSnapshot(expected)");
+          });
+        `,
+      "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${olderBunIndexAccessors}\n\`;\n`,
+    });
+    expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+  });
+
+  test("what an older Bun wrote for an accessor under an index key stays as it is, and --update-snapshots rewrites it once", async () => {
+    const snapshot = (printed: string) => headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`;
+    using dir = tempDir("snapshot-older-bun-index-accessors", {
+      "a.test.js": `${indexAccessors}\ntest("in a file", () => { expect(value()).toMatchSnapshot(); });`,
+      "__snapshots__/a.test.js.snap": snapshot(olderBunIndexAccessors),
+    });
+    const snap = () => readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8");
+    for (const CI of ["true", "false"]) {
+      const { exitCode } = await runTests(String(dir), { CI });
+      expect(snap()).toBe(snapshot(olderBunIndexAccessors));
+      expect(exitCode).toBe(0);
+    }
+
+    const first = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const updated = snap();
+    // The getter under 0 throws, so its accessor is left. The others print what they return.
+    expect(updated).toBe(
+      snapshot(`{
+  "0": [native code],
+  "01": 1,
+  "4294967294": 1,
+  "4294967295": 1,
+  [Symbol(5)]: 1,
+  "7": "seven",
+  "8": undefined,
+  "a": 1,
+  "named": 1,
+}`),
+    );
+    const second = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    expect(snap()).toBe(updated);
+    const read = await runTests(String(dir), { CI: "true" });
+    expect(snap()).toBe(updated);
+    expect([first.exitCode, second.exitCode, read.exitCode]).toEqual([0, 0, 0]);
   });
 
   test("passes when it is what an older Bun wrote for a mock function or a class that native code makes", async () => {

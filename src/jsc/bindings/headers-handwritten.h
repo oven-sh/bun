@@ -470,6 +470,52 @@ struct DeepMatchState {
         recorded.append(patternOfValue);
         recordedNames.append(name);
     }
+
+    // False if this (value, pattern) pair already matched or is still being compared (a cycle). Both are in `gcBuffer` already.
+    bool markSeen(JSC::JSValue value, JSC::JSValue pattern)
+    {
+        std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue> pair { JSC::JSValue::encode(value), JSC::JSValue::encode(pattern) };
+        if (!seen.insert(pair).second)
+            return false;
+        if (openTrials) [[unlikely]]
+            seenInTrials.append(pair);
+        return true;
+    }
+
+    // One try of a Set member or a Map entry against a candidate. A try that fails takes back what it put in `seen`, `gcBuffer` and the records.
+    unsigned openTrials { 0 };
+    WTF::Vector<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seenInTrials;
+
+    struct Trial {
+        DeepMatchState& state;
+        size_t seenBegin;
+        size_t gcBegin;
+        size_t recordsBegin;
+        bool matched { false };
+
+        Trial(DeepMatchState& state)
+            : state(state)
+            , seenBegin(state.seenInTrials.size())
+            , gcBegin(state.gcBuffer.size())
+            , recordsBegin(state.recordedNames.size())
+        {
+            state.openTrials++;
+        }
+
+        ~Trial()
+        {
+            if (!matched) {
+                for (size_t i = state.seenInTrials.size(); i-- > seenBegin;)
+                    state.seen.erase(state.seenInTrials[i]);
+                state.seenInTrials.shrink(seenBegin);
+                state.gcBuffer.shrink(gcBegin);
+                state.recorded.shrink(recordsBegin * 4);
+                state.recordedNames.shrink(recordsBegin);
+            }
+            if (!--state.openTrials)
+                state.seenInTrials.shrink(0);
+        }
+    };
 };
 }
 

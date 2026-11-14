@@ -25,13 +25,17 @@ public:
     JSC::JSModuleLoader* loader() const { return m_loader; }
     const WTF::String& rootKey() const { return m_rootKey; }
 
-    // `key` is what GlobalObject::moduleLoaderFetch() is asked for.
-    void noteFetch(const WTF::String& key)
+    // `key` is what GlobalObject::moduleLoaderFetch() is asked for. `mayBeCommonJS`: the import has no type attribute.
+    void noteFetch(const WTF::String& key, bool mayBeCommonJS)
     {
-        if (key != m_rootKey)
-            m_keys.add(key);
+        if (key == m_rootKey)
+            return;
+        m_keys.add(key);
+        if (mayBeCommonJS)
+            m_commonJSKeys.add(key);
     }
-    bool holds(const WTF::String& key) const { return m_keys.contains(key); }
+    // False for a key that the load fetched only with a type attribute (`with { type: "text" }`): the loader keeps an entry per key and type, so the module of that file is fetched by whichever load imports it.
+    bool holdsCommonJS(const WTF::String& key) const { return m_commonJSKeys.contains(key); }
     const WTF::UncheckedKeyHashSet<WTF::String>& keys() const { return m_keys; }
 
     // Null before endRunnerLoadWhenSettled() and once the load is dropped.
@@ -44,6 +48,7 @@ public:
         m_loader = nullptr;
         m_rootKey = WTF::String();
         m_keys.clear();
+        m_commonJSKeys.clear();
         m_promise.clear();
     }
 
@@ -57,6 +62,7 @@ private:
     JSC::JSModuleLoader* m_loader;
     WTF::String m_rootKey;
     WTF::UncheckedKeyHashSet<WTF::String> m_keys;
+    WTF::UncheckedKeyHashSet<WTF::String> m_commonJSKeys;
     // Weak, so a load that never settles doesn't keep its global object alive.
     JSC::Weak<JSC::JSPromise> m_promise;
 };

@@ -1754,7 +1754,7 @@ extern "C" void Bun__logCommonJSProviderKind(const BunString* key, bool deferred
 static ALWAYS_INLINE JSC::SourceCode commonJSModuleSourceCodeForLoad(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSCommonJSModule* moduleObject, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL)
 {
     auto* runnerLoad = liveRunnerLoad(globalObject, graph);
-    bool isDeferred = runnerLoad && runnerLoad->holds(key->tryGetValue().data);
+    bool isDeferred = runnerLoad && runnerLoad->holdsCommonJS(key->tryGetValue().data);
 #ifdef BUN_DEBUG
     BunString loggedKey = Bun::toString(key->tryGetValue().data);
     Bun__logCommonJSProviderKind(&loggedKey, isDeferred);

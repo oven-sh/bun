@@ -4513,7 +4513,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // Only `bun test` loads with a fetcher: a test file or preload and its static imports. The key is noted before the fetch, which can make the source of a CommonJS module in this call.
     if (fetcher) [[unlikely]] {
         if (auto* runnerLoad = Bun::liveRunnerLoad(static_cast<Zig::GlobalObject*>(globalObject), graph); runnerLoad == fetcher.get())
-            runnerLoad->noteFetch(moduleKey);
+            runnerLoad->noteFetch(moduleKey, typeAttributeString.isEmpty());
     }
 
     // require(esm) needs the entire dependency graph to load without yielding

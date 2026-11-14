@@ -13,6 +13,13 @@ export function asyncIterator(this: Console) {
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
 
+  // A "\r" ending a line is part of the line terminator, on every platform.
+  // Unlike node:readline, a lone "\r" mid-line does not start a new line.
+  function decodeLine(chunk: Uint8Array, start: number, end: number) {
+    if (end > start && chunk[end - 1] === 0x0d /* \r */) end--;
+    return decoder.decode(chunk.subarray(start, end));
+  }
+
   async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
     var deferredError: Error | undefined;
@@ -22,10 +29,13 @@ export function asyncIterator(this: Console) {
         i = indexOf(actualChunk, last);
 
         while (i !== -1) {
-          yield decoder.decode(actualChunk.subarray(last, i));
+          yield decodeLine(actualChunk, last, i);
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
+
+        // Whatever trails the last "\n" is not a line yet.
+        pendingChunk = last < actualChunk.length ? actualChunk.subarray(last) : undefined;
 
         for (idx++; idx < value_len; idx++) {
           actualChunk = value[idx];
@@ -35,21 +45,15 @@ export function asyncIterator(this: Console) {
           }
 
           last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
           while (i !== -1) {
-            yield decoder.decode(
-              actualChunk.subarray(
-                last,
-                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
-              ),
-            );
+            yield decodeLine(actualChunk, last, i);
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
           i = -1;
 
-          pendingChunk = actualChunk.subarray(last);
+          pendingChunk = last < actualChunk.length ? actualChunk.subarray(last) : undefined;
         }
         actualChunk = undefined!;
       }
@@ -63,8 +67,12 @@ export function asyncIterator(this: Console) {
         }
 
         if (done) {
-          if (pendingChunk) {
-            yield decoder.decode(pendingChunk);
+          // A trailing newline ends the last line, it does not start an empty
+          // one. Only a non-empty remainder is a line of its own.
+          const remainder = pendingChunk;
+          if (remainder !== undefined) {
+            pendingChunk = undefined;
+            yield decodeLine(remainder, 0, remainder.length);
           }
           return;
         }
@@ -78,23 +86,17 @@ export function asyncIterator(this: Console) {
           }
 
           last = 0;
-          // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
           while (i !== -1) {
             // This yield may end the function, in that case we need to be able to recover state
             // if the iterator was fired up again.
-            yield decoder.decode(
-              actualChunk.subarray(
-                last,
-                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
-              ),
-            );
+            yield decodeLine(actualChunk, last, i);
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
           i = -1;
 
-          pendingChunk = actualChunk.subarray(last);
+          pendingChunk = last < actualChunk.length ? actualChunk.subarray(last) : undefined;
         }
         actualChunk = undefined!;
       }

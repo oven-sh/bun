@@ -1,11 +1,12 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { exists, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { autoInstallTempDir, bunExe, bunEnv as env, readdirSorted } from "harness";
 import { join } from "path";
 
 it.concurrent("should download dependency to run local file", async () => {
-  const run_dir = tmpdirSync();
+  using dir = autoInstallTempDir("bun-run-dir", {});
+  const run_dir = String(dir);
   await writeFile(
     join(run_dir, "test.js"),
     `
@@ -65,7 +66,8 @@ console.log(minify("print(6 * 7)").code);
 });
 
 it.concurrent("should download dependencies to run local file", async () => {
-  const run_dir = tmpdirSync();
+  using dir = autoInstallTempDir("bun-run-dir", {});
+  const run_dir = String(dir);
   const filePath = join(import.meta.dir, "baz-0.0.3.tgz").replace(/\\/g, "\\\\");
   await writeFile(
     join(run_dir, "test.js"),
@@ -147,7 +149,9 @@ for (const entry of await decompress(Buffer.from(buffer))) {
 });
 
 it.concurrent("should not crash when downloading a non-existent module, issue#4240", async () => {
-  const run_dir = tmpdirSync();
+  using registry = Bun.serve({ port: 0, fetch: () => new Response("{}", { status: 404 }) });
+  using dir = autoInstallTempDir("bun-run-dir", {});
+  const run_dir = String(dir);
   await writeFile(
     join(run_dir, "test.js"),
     `
@@ -162,6 +166,7 @@ import { prueba } from "pruebadfasdfasdkafasdyuif.js";
     stderr: "pipe",
     env: {
       ...env,
+      BUN_CONFIG_REGISTRY: registry.url.href,
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });

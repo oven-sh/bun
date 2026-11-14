@@ -65,12 +65,8 @@ use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
-    /// Per-thread `MiniEventLoop` singleton — published by
-    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
-    pub(crate) loop_: *const MiniEventLoop,
-    /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
-    /// can `SocketGroup::init` without naming MiniEventLoop.
-    pub(crate) uws_loop: *mut uws::Loop,
+    /// The uSockets loop of the HTTP thread, for `wakeup()`.
+    uws_loop: *const uws::Loop,
     pub(crate) http_context: NewHttpContext<false>,
     pub(crate) https_context: NewHttpContext<true>,
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
@@ -137,13 +133,12 @@ pub struct HttpThread {
 }
 
 impl HttpThread {
-    /// `loop_`/`uws_loop` are filled in by
+    /// `uws_loop` is filled in by
     /// `on_start` on the spawned thread; `timer` is started on the calling
     /// thread.
     fn new() -> Self {
         Self {
-            loop_: core::ptr::null(),
-            uws_loop: core::ptr::null_mut(),
+            uws_loop: core::ptr::null(),
             http_context: NewHttpContext::<false> {
                 ref_count: Cell::new(1),
                 pending_sockets: crate::http_context::LazyPool::new(),
@@ -240,14 +235,14 @@ pub struct LibdeflateState {
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
-    /// Mutable access to the libdeflate decompressor handle.
+    /// The libdeflate decompressor handle.
     ///
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
-            .as_deref_mut()
+            .as_deref()
             .expect("set in HttpThread::deflater()")
     }
 }
@@ -320,25 +315,6 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
 }
 
 impl HttpThread {
-    /// Raw uSockets loop for `SocketGroup::init`. Split from `loop_` so
-    /// HTTPContext doesn't need to name the higher-tier MiniEventLoop type.
-    #[inline]
-    pub(crate) fn uws_loop(&self) -> *mut uws::Loop {
-        self.uws_loop
-    }
-
-    /// The live uSockets event loop.
-    ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. HTTP-thread-only
-    /// at every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead.
-    #[inline]
-    fn uws_loop_ref(&self) -> &uws::Loop {
-        // SAFETY: see INVARIANT above.
-        unsafe { &*self.uws_loop }
-    }
-
     /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
     /// overflows only after ~584 years of process uptime.
     #[inline]
@@ -1183,9 +1159,9 @@ use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`
-// for `loop_.loop_.{tick,inc,dec,num_polls}` (`on_start` calls
+// (`on_start` calls
 // `mini_event_loop::init_global` and drives the thread's event loop). The
-// wakeup path above still uses the raw `*mut uws::Loop` directly.
+// wakeup path above still uses the raw `*const uws::Loop` directly.
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {
@@ -1213,7 +1189,7 @@ mod _event_loop_draft {
         // Initialize the global (with timer
         // started on the calling thread) BEFORE spawning, so `on_start`'s
         // `crate::http_thread_mut()` finds `Some(..)` and can fill in
-        // `loop_`/`uws_loop`/contexts.
+        // `uws_loop`/contexts.
         // SAFETY: `init_once` runs under `Once`; no other thread reads
         // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
         unsafe {
@@ -1275,14 +1251,7 @@ mod _event_loop_draft {
         // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
         // panics with `Parent loop not set - pointer is null`, which aborts
         // the process — `bun install` SIGABRT on the first uncached lookup.
-        let loop_ = mini_event_loop::init_global(None, None);
-        // `init_global` returns the heap-allocated thread-local singleton (never
-        // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
-        // a stable field via `&self`, so a `ParentRef` shared deref suffices.
-        let uws_loop = bun_ptr::ParentRef::from(
-            NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
-        )
-        .loop_ptr();
+        let loop_ = mini_event_loop::init_global(None);
 
         #[cfg(windows)]
         {
@@ -1301,8 +1270,7 @@ mod _event_loop_draft {
         }
 
         let thread = crate::http_thread_mut();
-        thread.loop_ = loop_;
-        thread.uws_loop = uws_loop;
+        thread.uws_loop = loop_.loop_;
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
         // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
@@ -1327,15 +1295,15 @@ mod _event_loop_draft {
             // none).
             thread.lazy_https_init = Some(opts);
         }
-        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
+        // Release: publishes `uws_loop` to cross-thread `wakeup()`
         // readers (which Acquire-load `has_awoken`).
         thread.has_awoken.store(true, Ordering::Release);
-        thread.process_events();
+        thread.process_events(loop_);
     }
 
     impl HttpThread {
-        fn process_events(&mut self) -> ! {
-            let uws_loop = self.uws_loop_ref();
+        fn process_events(&mut self, loop_: &MiniEventLoop) -> ! {
+            let uws_loop = loop_.loop_;
             #[cfg(unix)]
             {
                 uws_loop.num_polls.set(uws_loop.num_polls.get().max(2));
@@ -1365,19 +1333,13 @@ mod _event_loop_draft {
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
-                let uws_loop = self.uws_loop_ref();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
                 // Run the deferred-free thunk (`Store::process_deferred_frees`)
                 // like `MiniEventLoop::tick_once` does after its raw tick; the
                 // FilePoll hive slots freed during this tick are reclaimed here.
-                // SAFETY: `loop_` was born `*mut` (`init_global`), so `cast_mut`
-                // keeps its provenance; it is HTTP-thread-only and disjoint from
-                // the C `us_loop_t` behind `uws_loop`, and no other `&`/`&mut`
-                // to this `MiniEventLoop` is live here (`uws_loop` re-derived
-                // per iteration, last used above).
-                unsafe { (*self.loop_.cast_mut()).on_after_event_loop() };
+                loop_.on_after_event_loop();
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {

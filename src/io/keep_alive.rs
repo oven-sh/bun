@@ -5,6 +5,8 @@
 //! external users go through `bun_io::KeepAlive` and only touch the
 //! identical-signature methods).
 
+use core::cell::Cell;
+
 use crate::EventLoopCtx;
 use crate::posix_event_loop::js_vm_ctx;
 
@@ -12,7 +14,7 @@ use crate::posix_event_loop::js_vm_ctx;
 /// event loop alive. This is not reference counted — only Active / Inactive.
 #[derive(Default)]
 pub struct KeepAlive {
-    status: Status,
+    status: Cell<Status>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -26,13 +28,13 @@ enum Status {
 impl KeepAlive {
     #[inline]
     pub fn is_active(&self) -> bool {
-        self.status == Status::Active
+        self.status.get() == Status::Active
     }
 
     /// Make calling ref() on this poll into a no-op.
-    pub fn disable(&mut self) {
+    pub fn disable(&self) {
         self.unref(js_vm_ctx());
-        self.status = Status::Done;
+        self.status.set(Status::Done);
     }
 
     pub fn init() -> KeepAlive {
@@ -40,11 +42,11 @@ impl KeepAlive {
     }
 
     /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Active {
+    pub fn unref(&self, event_loop_ctx: EventLoopCtx) {
+        if self.status.get() != Status::Active {
             return;
         }
-        self.status = Status::Inactive;
+        self.status.set(Status::Inactive);
         #[cfg(not(windows))]
         event_loop_ctx.loop_unref();
         #[cfg(windows)]
@@ -52,11 +54,11 @@ impl KeepAlive {
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Active {
+    pub fn unref_on_next_tick(&self, event_loop_ctx: EventLoopCtx) {
+        if self.status.get() != Status::Active {
             return;
         }
-        self.status = Status::Inactive;
+        self.status.set(Status::Inactive);
         // vm.pending_unref_counter +|= 1;
         #[cfg(not(windows))]
         event_loop_ctx.increment_pending_unref_counter();
@@ -65,11 +67,11 @@ impl KeepAlive {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Inactive {
+    pub fn ref_(&self, event_loop_ctx: EventLoopCtx) {
+        if self.status.get() != Status::Inactive {
             return;
         }
-        self.status = Status::Active;
+        self.status.set(Status::Active);
         event_loop_ctx.loop_ref();
     }
 
@@ -78,7 +80,7 @@ impl KeepAlive {
     /// Raw-identifier alias of [`KeepAlive::ref_`]. Callers use both
     /// spellings; this keeps them source-compatible.
     #[inline]
-    pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
+    pub fn r#ref(&self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)
     }
 }

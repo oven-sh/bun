@@ -1325,37 +1325,33 @@ fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
 /// `fd` reads the file at `path` from here on, from the same offset, if it still is what `is_meant` asks for when that is open.
 #[cfg(not(windows))]
 fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
-    use bun_sys::FdExt as _;
-    let opened = bun_sys::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
-    let reopened = (|| {
-        let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
-        bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
-        if !is_meant() {
-            return Ok(false);
+    let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    let opened = file.fd();
+    let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
+    bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
+    if !is_meant() {
+        return Ok(false);
+    }
+    // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // For Android, libc has the number of the call alone.
+        let (from, to) = (opened.native(), fd.native());
+        // SAFETY: both are descriptors of this process.
+        let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
+        match moved {
+            -1 => Err(bun_sys::Error::from_code(
+                bun_sys::E::EIO,
+                bun_sys::Tag::dup,
+            )),
+            _ => Ok(true),
         }
-        // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // For Android, libc has the number of the call alone.
-            let (from, to) = (opened.native(), fd.native());
-            // SAFETY: both are descriptors of this process.
-            let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
-            match moved {
-                -1 => Err(bun_sys::Error::from_code(
-                    bun_sys::E::EIO,
-                    bun_sys::Tag::dup,
-                )),
-                _ => Ok(true),
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            bun_sys::dup2(opened, fd)?;
-            bun_sys::set_close_on_exec(fd).map(|()| true)
-        }
-    })();
-    opened.close();
-    reopened
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        bun_sys::dup2(opened, fd)?;
+        bun_sys::set_close_on_exec(fd).map(|()| true)
+    }
 }
 
 impl StandaloneModuleGraph {

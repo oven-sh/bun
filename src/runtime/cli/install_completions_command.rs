@@ -5,7 +5,7 @@ use bun_core::{Global, Output, env_var};
 use bun_core::{note, print_errorln};
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
-use bun_sys::{self, E, File};
+use bun_sys::{self, E, Fd, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
@@ -173,8 +173,8 @@ impl InstallCompletionsCommand {
     }
 
     /// Exits, unless the write fails on something else than a closed pipe.
-    fn write_and_exit(stdout: &File, completions: &[u8]) -> Result<(), crate::Error> {
-        match stdout.write_all(completions) {
+    fn write_and_exit(stdout: Fd, completions: &[u8]) -> Result<(), crate::Error> {
+        match File::borrow(&stdout).write_all(completions) {
             Err(err) if err.get_errno() != E::EPIPE => Err(err.into()),
             _ => Global::exit(0),
         }
@@ -186,7 +186,7 @@ impl InstallCompletionsCommand {
 
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
-        let stdout = File::stdout();
+        let stdout = Fd::stdout();
 
         let shell = env_var::SHELL
             .platform_get()
@@ -196,10 +196,10 @@ impl InstallCompletionsCommand {
             Ok(len) => len,
             Err(_) => {
                 // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
+                if fail_exit_code == 1 && !bun_sys::isatty(stdout) {
                     let completions = shell.completions();
                     if !completions.is_empty() {
-                        return Self::write_and_exit(&stdout, completions);
+                        return Self::write_and_exit(stdout, completions);
                     }
                 }
 
@@ -238,10 +238,8 @@ impl InstallCompletionsCommand {
                 Shell::Bash => b"bun.completion.bash",
             };
 
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
-                && !bun_sys::isatty(stdout.handle)
-            {
-                return Self::write_and_exit(&stdout, shell.completions());
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) && !bun_sys::isatty(stdout) {
+                return Self::write_and_exit(stdout, shell.completions());
             }
 
             let mut completions_dir: &[u8];

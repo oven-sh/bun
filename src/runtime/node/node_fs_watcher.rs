@@ -45,7 +45,7 @@ use super::win_watcher as path_watcher;
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct FSWatcher {
     /// JS-thread uses only.
-    ctx: *mut VirtualMachine,
+    ctx: bun_ptr::BackRef<VirtualMachine>,
     /// How the (process-wide) watcher thread delivers event batches to the
     /// VM while this watcher is attached (POSIX; on Windows libuv delivers fs
     /// events on the JS thread). Weak: `detach()` — close, the VM's stop
@@ -60,7 +60,7 @@ pub(crate) struct FSWatcher {
     signal: JsCell<Option<AbortSignalRef>>,
     persistent: Cell<bool>,
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
     js_this: JsCell<JsRef>,
@@ -88,21 +88,6 @@ bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
 });
 
 impl FSWatcher {
-    /// JS thread only (Windows delivers fs events on the loop thread).
-    #[cfg(windows)]
-    #[inline]
-    fn vm(&self) -> &mut VirtualMachine {
-        // SAFETY: `ctx` is the live per-thread VM (set in `init`); every caller
-        // is on its JS thread.
-        unsafe { &mut *self.ctx }
-    }
-
-    #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
-        unsafe { VirtualMachine::event_loop_ctx(self.ctx) }
-    }
-
     /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
     /// task; the queue takes ownership unless the VM has been torn down, in
     /// which case the caller gets it back.
@@ -441,12 +426,11 @@ impl FSWatchTaskWindows {
             event: Event::Abort,
         }));
 
-        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` →
-        // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
+        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF).
         // Ownership of `task` transfers to the queue (drained on the same thread).
         ctx.expect("FSWatchTask.ctx unset")
-            .vm()
-            .event_loop_mut()
+            .ctx
+            .event_loop()
             .enqueue_task(Task::init(task));
     }
 
@@ -578,10 +562,8 @@ impl FSWatcher {
             ctx: this.current_task.get().ctx,
             event,
         }));
-        // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
-        // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
-        // queue.
-        this.vm().event_loop_mut().enqueue_task(Task::init(task));
+        // Ownership of `task` transfers to the queue.
+        this.ctx.event_loop().enqueue_task(Task::init(task));
     }
 
     #[cfg(windows)]
@@ -745,8 +727,8 @@ impl FSWatcher {
         // R-2: deref as shared; mutation goes through `Cell`/`JsCell`.
         let this_ref = unsafe { &*this };
         if this_ref.persistent.get() {
-            let vm_ctx = this_ref.vm_ctx();
-            this_ref.poll_ref.with_mut(|r| r.ref_(vm_ctx));
+            let vm_ctx = this_ref.ctx.loop_ctx();
+            this_ref.poll_ref.ref_(vm_ctx);
         }
 
         // SAFETY: the GC wrapper takes over the ref `this` was created with.
@@ -818,7 +800,7 @@ impl FSWatcher {
                 ];
                 // Reported here rather than returned: the watcher still closes
                 // (and emits 'close') below whatever the listener did.
-                global_this.bun_vm().event_loop_mut().run_callback(
+                global_this.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     listener,
                     &global_this,
@@ -849,7 +831,7 @@ impl FSWatcher {
                 let err_js = err.to_js(&global_object);
                 let args = [EventType::Error.to_js(&global_object), err_js];
                 // As `emit_abort`: reported here so the close below still runs.
-                global_object.bun_vm().event_loop_mut().run_callback(
+                global_object.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     listener,
                     &global_object,
@@ -923,7 +905,7 @@ fn emit_js<const EVENT_TYPE: EventType>(
     filename: JSValue,
 ) {
     let args = [EVENT_TYPE.to_js(global_object), filename];
-    global_object.bun_vm().event_loop_mut().run_callback(
+    global_object.bun_vm().event_loop().run_callback(
         bun_event_loop::ContextId::NONE,
         listener,
         global_object,
@@ -936,16 +918,16 @@ impl FSWatcher {
     pub(crate) fn r#ref(&self) {
         if !self.closed.get() && !self.persistent.get() {
             self.persistent.set(true);
-            let vm_ctx = self.vm_ctx();
-            self.poll_ref.with_mut(|r| r.ref_(vm_ctx));
+            let vm_ctx = self.ctx.loop_ctx();
+            self.poll_ref.ref_(vm_ctx);
         }
     }
 
     pub(crate) fn unref(&self) {
         if self.persistent.get() {
             self.persistent.set(false);
-            let vm_ctx = self.vm_ctx();
-            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
+            let vm_ctx = self.ctx.loop_ctx();
+            self.poll_ref.unref(vm_ctx);
         }
     }
 
@@ -993,7 +975,7 @@ impl FSWatcher {
                     // the watcher, and a throwing 'close' listener is uncaught in
                     // Node too (it emits on the next tick).
                     let global = self.global_this;
-                    global.bun_vm().event_loop_mut().run_callback(
+                    global.bun_vm().event_loop().run_callback(
                         bun_event_loop::ContextId::NONE,
                         listener,
                         &global,
@@ -1038,8 +1020,8 @@ impl FSWatcher {
 
         if self.persistent.get() {
             self.persistent.set(false);
-            let vm_ctx = self.vm_ctx();
-            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
+            let vm_ctx = self.ctx.loop_ctx();
+            self.poll_ref.unref(vm_ctx);
         }
 
         self.abort_handle.unfollow();
@@ -1081,13 +1063,10 @@ impl FSWatcher {
         joined_buf[joined_len] = 0;
         let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
 
-        let vm = args.global_this.bun_vm_ptr();
-        // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor —
-        // single deref site so the four uses below stay safe.
         let vm_ref = args.global_this.bun_vm();
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
-            ctx: vm,
+            ctx: bun_ptr::BackRef::new(vm_ref),
             #[cfg(not(windows))]
             handle: vm_ref.handle(),
             #[cfg(not(windows))]
@@ -1105,7 +1084,7 @@ impl FSWatcher {
             encoding: args.encoding,
             closed: Cell::new(false),
             verbose: args.verbose,
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             ref_count: ThreadSafeRefCount::init(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         }));

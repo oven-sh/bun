@@ -20,9 +20,7 @@ use crate::jsc_hooks::timer_all;
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &Loop) {
-    if let Some(vm_ptr) = VirtualMachine::get_or_null() {
-        // SAFETY: single JS thread; `timer_all()` returns the live per-thread
-        // `All` (non-null after init), and `vm_ptr` is this thread's live VM.
-        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_, &*vm_ptr) };
+    if let Some(vm) = VirtualMachine::get_or_null() {
+        timer_all().update_date_header_timer_if_necessary(loop_, vm);
     }
 }

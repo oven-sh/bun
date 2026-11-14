@@ -381,7 +381,7 @@ impl PackageManager {
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
-        // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
+        // owning `CStringList` by value so its `K=V\0` strings outlive
         // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.create_null_delimited_env_map()?;
 

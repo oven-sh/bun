@@ -772,15 +772,15 @@ class WASI {
     };
     const CPUTIME_START = Bun.nanoseconds();
     const timeOrigin = Math.trunc(performance.timeOrigin * 1e6);
-    const now = (clockId: number) => {
+    const now = (clockId: number, nanoseconds = Bun.nanoseconds()) => {
       switch (clockId) {
         case WASI_CLOCK_MONOTONIC:
-          return Bun.nanoseconds();
+          return nanoseconds;
         case WASI_CLOCK_REALTIME:
-          return Bun.nanoseconds() + timeOrigin;
+          return nanoseconds + timeOrigin;
         case WASI_CLOCK_PROCESS_CPUTIME_ID:
         case WASI_CLOCK_THREAD_CPUTIME_ID:
-          return Bun.nanoseconds() - CPUTIME_START;
+          return nanoseconds - CPUTIME_START;
         default:
           return null;
       }
@@ -1541,8 +1541,15 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       poll_oneoff: (sin: number, sout: number, nsubscriptions: number, neventsPtr: number) => {
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2534-L2537
+        if (nsubscriptions == 0) {
+          return WASI_EINVAL;
+        }
         const startNs = BigInt(bindings.hrtime());
-        let nevents = 0;
+        // One clock read for all subscriptions, so that equal absolute deadlines tie and the first one wins.
+        const nanoseconds = Bun.nanoseconds();
+        const events: { userdata: bigint; error: number; type: number }[] = [];
+        let earliestClockEvent = -1;
         let waitTimeNs = BigInt(0);
         let fd = -1;
         let fd_type = "read";
@@ -1570,26 +1577,24 @@ class WASI {
               if (!absolute) {
                 fd_timeout_ms = timeout / BigInt(1e6);
               }
-              let e = WASI_ESUCCESS;
-              const t = now(clockid);
+              const t = now(clockid, nanoseconds);
               if (t == null) {
-                e = WASI_EINVAL;
+                events.push({ userdata, error: WASI_EINVAL, type });
               } else {
                 const tNS = BigInt(t);
                 const end = absolute ? timeout : tNS + timeout;
+                // A past absolute deadline fires at once. uvwasi wraps it to a wait of centuries (uvwasi.c#L2559).
                 const waitNs = end - tNS;
-                if (waitNs > waitTimeNs) {
+                // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2564-L2568
+                if (earliestClockEvent === -1 || waitNs < waitTimeNs) {
+                  if (earliestClockEvent !== -1) {
+                    events.splice(earliestClockEvent, 1);
+                  }
+                  earliestClockEvent = events.length;
+                  events.push({ userdata, error: WASI_ESUCCESS, type });
                   waitTimeNs = waitNs;
                 }
               }
-              this.view.setBigUint64(sout, userdata, true);
-              sout += 8;
-              this.view.setUint16(sout, e, true);
-              sout += 2;
-              this.view.setUint8(sout, WASI_EVENTTYPE_CLOCK);
-              sout += 1;
-              sout += 5;
-              nevents += 1;
               break;
             }
             case WASI_EVENTTYPE_FD_READ:
@@ -1598,14 +1603,7 @@ class WASI {
               fd_type = type == WASI_EVENTTYPE_FD_READ ? "read" : "write";
               sin += 4;
               sin += 28;
-              this.view.setBigUint64(sout, userdata, true);
-              sout += 8;
-              this.view.setUint16(sout, WASI_ENOSYS, true);
-              sout += 2;
-              this.view.setUint8(sout, type);
-              sout += 1;
-              sout += 5;
-              nevents += 1;
+              events.push({ userdata, error: WASI_ENOSYS, type });
               if (fd == WASI_STDIN_FILENO && WASI_EVENTTYPE_FD_READ == type) {
                 this.shortPause();
               }
@@ -1624,8 +1622,17 @@ class WASI {
           }
           last_sin = sin;
         }
-        this.view.setUint32(neventsPtr, nevents, true);
-        if (nevents == 2 && fd >= 0) {
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/wasi_serdes.c#L117-L127
+        for (const { userdata, error, type } of events) {
+          this.view.setBigUint64(sout, userdata, true);
+          this.view.setUint16(sout + 8, error, true);
+          this.view.setUint8(sout + 10, type);
+          this.view.setBigUint64(sout + 16, BigInt(0), true);
+          this.view.setUint16(sout + 24, 0, true);
+          sout += 32;
+        }
+        this.view.setUint32(neventsPtr, events.length, true);
+        if (nsubscriptions == 2 && fd >= 0) {
           const r = this.wasiImport.sock_pollSocket(fd, fd_type, fd_timeout_ms);
           if (r != WASI_ENOSYS) {
             return r;

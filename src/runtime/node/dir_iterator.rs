@@ -285,28 +285,15 @@ mod platform {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
                 if self.index >= filled.len() {
-                    // glibc doesn't expose getdents64; go straight to the
-                    // raw syscall.
-                    // SAFETY: buf is valid for 8192 bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        libc::syscall(
-                            libc::SYS_getdents64,
-                            self.dir.native() as libc::c_long,
-                            self.buf.as_mut_ptr(),
-                            self.buf.len(),
-                        )
-                    };
-                    if rc < 0 {
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdents64,
-                        ));
-                    }
-                    if rc == 0 {
+                    // SAFETY: buf is writable for its whole length.
+                    let n = unsafe {
+                        sys::getdents64(self.dir, self.buf.as_mut_ptr(), self.buf.len())
+                    }?;
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                     continue 'start_over;
                 }
                 let Some(record) = dirent::parse::<dirent::Native>(filled, self.index) else {

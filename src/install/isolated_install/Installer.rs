@@ -30,7 +30,6 @@ use crate::package_install::{
     BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
     rename_staging_into_place,
 };
-use crate::package_manager_real::Command;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::{Do, Enable};
 use crate::postinstall_optimizer;
@@ -93,7 +92,6 @@ pub struct Installer<'a> {
 
     /// BACKREF, never null; not `&'a mut`: the tasks on the thread pool all read through it.
     pub(crate) manager: *mut PackageManager,
-    pub(crate) command_ctx: Command::Context<'a>,
 
     pub(crate) store: &'a Store,
 
@@ -1539,30 +1537,33 @@ impl<'a> Installer<'a> {
 
     /// Returns the name of the entry's folder in the cache. It's empty for a tarball whose
     /// integrity isn't known yet.
-    pub(crate) fn cached_folder_name(
+    pub(crate) fn cached_folder_name<'b>(
         &self,
+        buf: &'b mut [u8],
         entry_id: StoreEntryId,
         patch_hash: Option<u64>,
-    ) -> &'static ZStr {
+    ) -> &'b ZStr {
         let manager = self.manager();
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
-            ResolutionTag::Npm => directories::cached_npm_package_folder_name(
+            ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
                 manager,
+                buf,
                 self.pkg_name(entry_id),
                 pkg_res.npm().version,
                 patch_hash,
             ),
             ResolutionTag::Git => {
-                directories::cached_git_folder_name(manager, pkg_res.git(), patch_hash)
+                directories::cached_git_folder_name(manager, buf, pkg_res.git(), patch_hash)
             }
             ResolutionTag::Github => {
-                directories::cached_github_folder_name(manager, pkg_res.github(), patch_hash)
+                directories::cached_github_folder_name(manager, buf, pkg_res.github(), patch_hash)
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let pkg_id = self.store.ids(entry_id).pkg_id;
                 directories::cached_tarball_folder_name(
                     manager,
+                    buf,
                     &self.lockfile().packages.items_meta()[pkg_id as usize].integrity,
                     pkg_res,
                     patch_hash,
@@ -1693,11 +1694,14 @@ impl<'a> Installer<'a> {
     /// Task thread. True: the entry had no directory before.
     fn link_cached_package(&self, entry_id: StoreEntryId) -> TaskResult<bool> {
         let patch_info = self.package_patch_info(self.store.ids(entry_id).pkg_id)?;
-        let subpath = self.cached_folder_name(entry_id, patch_info.contents_hash());
+        let subpath = AutoRelPath::from(self.cached_folder_name(
+            &mut **paths::path_buffer_pool::get(),
+            entry_id,
+            patch_info.contents_hash(),
+        ))
+        .assume_ok();
         #[cfg(target_os = "macos")]
-        let mut subpath = AutoRelPath::from(subpath).assume_ok();
-        #[cfg(not(target_os = "macos"))]
-        let subpath = AutoRelPath::from(subpath).assume_ok();
+        let mut subpath = subpath;
 
         // SAFETY: idempotent cache-dir initialization (once-init internally). The
         // `&mut PackageManager` does not outlive this statement; no `&PackageManager` is live on

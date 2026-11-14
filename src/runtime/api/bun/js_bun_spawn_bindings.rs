@@ -1,13 +1,13 @@
 use core::cell::Cell;
-use core::ffi::{CStr, c_char};
+use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
+use bun_core::{CStrList, CStrRef, String as BunString, ZStr, strings};
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
-use bun_core::{String as BunString, ZStr, strings};
 use bun_io::max_buf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::spawn_sync_event_loop::TickState;
@@ -26,7 +26,7 @@ use bun_sys::{self as sys, SignalCode};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader;
@@ -77,11 +77,14 @@ unsafe extern "C" {
 }
 
 struct Argv0Result {
-    /// Was arena-owned `[:0]const u8`; caller stashes in its `Vec<ZBox>` backing
-    /// store so the pointer outlives `spawn_process`.
     argv0: ZBox,
-    /// Was arena-owned `[:0]u8`; caller stashes in its `Vec<ZBox>` backing store.
     arg0: ZBox,
+}
+
+struct Argv {
+    /// The file to run.
+    argv0: ZBox,
+    args: Vec<ZBox>,
 }
 
 // This is split into a separate function to conserve stack space.
@@ -90,7 +93,7 @@ fn get_argv0(
     global_this: &JSGlobalObject,
     path: &[u8],
     cwd: &[u8],
-    pretend_argv0: Option<&CStr>,
+    pretend_argv0: Option<ZBox>,
     first_cmd: JSValue,
 ) -> JsResult<Argv0Result> {
     let arg0 = first_cmd.to_utf8(global_this)?;
@@ -143,28 +146,18 @@ fn get_argv0(
 
     Ok(Argv0Result {
         argv0: actual_argv0,
-        arg0: if let Some(p) = pretend_argv0 {
-            ZBox::from_bytes(p.to_bytes())
-        } else {
-            ZBox::from_bytes(arg0.slice())
-        },
+        arg0: pretend_argv0.unwrap_or_else(|| ZBox::from_bytes(arg0.slice())),
     })
 }
 
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
-///
-/// `storage` receives ownership of every NUL-terminated string whose pointer is
-/// pushed into `argv` / `argv0`; the caller's `Vec<ZBox>`
-/// is dropped after `spawn_process` returns.
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,
     path: &[u8],
     cwd: &[u8],
-    argv0: &mut Option<*const c_char>,
-    argv: &mut Vec<CStrPtr>,
-    storage: &mut Vec<ZBox>,
-) -> JsResult<()> {
+    pretend_argv0: Option<ZBox>,
+) -> JsResult<Argv> {
     if args.is_empty_or_undefined_or_null() {
         return Err(
             global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
@@ -181,17 +174,13 @@ fn get_argv(
         return Err(global_this.throw_invalid_arguments(format_args!("cmd array is too large")));
     }
 
-    // + 1 for argv0
-    // + 1 for null terminator
-    *argv = Vec::with_capacity(cmds_array.len as usize + 2);
-    storage.reserve(cmds_array.len as usize + 2);
+    let mut argv = Vec::with_capacity(cmds_array.len as usize);
 
     let argv0_result = get_argv0(
         global_this,
         path,
         cwd,
-        // SAFETY: argv0 was produced by to_owned_slice_z above; NUL-terminated and outlives this call.
-        argv0.map(|p| unsafe { bun_core::ffi::cstr(p) }),
+        pretend_argv0,
         cmds_array.next()?.unwrap(),
     )?;
 
@@ -213,12 +202,7 @@ fn get_argv(
             .throw());
     }
 
-    *argv0 = Some(argv0_result.argv0.as_ptr());
-    argv.push(argv0_result.arg0.as_ptr());
-    // Transfer ownership to the caller's backing store so the pointers above
-    // stay valid past `spawn_process`.
-    storage.push(argv0_result.argv0);
-    storage.push(argv0_result.arg0);
+    argv.push(argv0_result.arg0);
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
@@ -251,17 +235,14 @@ fn get_argv(
                 )
                 .throw());
         }
-        argv.push(owned.as_ptr());
-        storage.push(owned);
+        argv.push(owned);
         arg_index += 1;
     }
 
-    if argv.is_empty() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
-        );
-    }
-    Ok(())
+    Ok(Argv {
+        argv0: argv0_result.argv0,
+        args: argv,
+    })
 }
 
 /// Bun.spawn() calls this.
@@ -374,13 +355,7 @@ fn spawn_maybe_sync(
     }
 
     // PERF: argv/env strings are allocated per-iteration; profile if hot.
-    // Backing store for every NUL-terminated string whose `*const c_char` is
-    // pushed into `argv` / `argv0` / `env_array` below. This `Vec`
-    // drops after `spawn_process` returns, freeing all argv/env allocations.
-    let mut cstr_storage: Vec<ZBox> = Vec::new();
-
-    let mut override_env = false;
-    let mut env_array: Vec<CStrPtr> = Vec::new();
+    let mut env_override: Option<Vec<ZBox>> = None;
     let jsc_vm: &jsc::VirtualMachineRef = cx.vm();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
@@ -398,7 +373,7 @@ fn spawn_maybe_sync(
     // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
     let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
-    let mut argv: Vec<CStrPtr> = Vec::new();
+    let argv: Argv;
     let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
@@ -407,7 +382,6 @@ fn spawn_maybe_sync(
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
     #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
-    let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
     let mut uid: Option<u32> = None;
@@ -452,6 +426,7 @@ fn spawn_maybe_sync(
                 .throw_invalid_arguments(format_args!("cmd must be an array")));
         }
 
+        let mut argv0: Option<ZBox> = None;
         if args.is_object() {
             if let Some(argv0_) = args.get_truthy(cx.global(), "argv0")? {
                 let argv0_str = argv0_.to_bun_string(cx.global())?;
@@ -469,8 +444,7 @@ fn spawn_maybe_sync(
                             )
                             .throw());
                     }
-                    argv0 = Some(owned.as_ptr());
-                    cstr_storage.push(owned);
+                    argv0 = Some(owned);
                 }
             }
 
@@ -596,30 +570,16 @@ fn spawn_maybe_sync(
                         .throw_invalid_arguments(format_args!("env must be an object")));
                 };
 
-                override_env = true;
-                // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                let mut new_path: &[u8] = b"";
                 // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
                 // centralised non-null-ZST deref proof.
-                append_envp_from_js(
-                    cx.global(),
+                let (object, lines) = (
                     JSObject::opaque_ref(object),
-                    &mut env_array,
-                    &mut new_path,
-                    &mut cstr_storage,
-                )?;
-                path = new_path;
+                    env_override.insert(Vec::new()),
+                );
+                path = append_envp_from_js(cx.global(), object, lines)?;
             }
 
-            get_argv(
-                cx.global(),
-                cmd_value,
-                path,
-                cwd,
-                &mut argv0,
-                &mut argv,
-                &mut cstr_storage,
-            )?;
+            argv = get_argv(cx.global(), cmd_value, path, cwd, argv0)?;
 
             if let Some(stdio_val) = args.get(cx.global(), "stdio")? {
                 if !stdio_val.is_empty_or_undefined_or_null() {
@@ -909,45 +869,24 @@ fn spawn_maybe_sync(
                 }
             }
         } else {
-            get_argv(
-                cx.global(),
-                cmd_value,
-                path,
-                cwd,
-                &mut argv0,
-                &mut argv,
-                &mut cstr_storage,
-            )?;
+            argv = get_argv(cx.global(), cmd_value, path, cwd, argv0)?;
         }
     }
 
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
-    // Owns the `K=V\0` storage when inheriting the parent env; the struct
-    // lives until spawn returns.
-    let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
-    if !override_env && env_array.is_empty() {
-        // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
-        // (per-VM DotEnv loader, valid for VM lifetime; centralised
-        // single-unsafe deref). `.map` is its `&'a mut Map` slot.
-        let envmap = match jsc_vm
-            .transpiler
-            .get()
-            .env_mut()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(m) => m,
-            Err(_) => return Err(cx.global().throw_out_of_memory()),
-        };
-        // Note: `as_slice()` *includes* the trailing null, so strip it; the
-        // common tail below re-appends one after the optional NODE_CHANNEL_*
-        // entries.
-        let entries = envmap.as_slice();
-        env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
-        inherited_env_storage = Some(envmap);
-    }
-    let _ = &inherited_env_storage;
+    let inherited_env;
+    let mut env_array = match &env_override {
+        Some(lines) => borrow_c_strings(lines),
+        None => {
+            inherited_env = (jsc_vm.env_loader().map.create_null_delimited_env_map())
+                .map_err(|_| cx.global().throw_out_of_memory())?;
+            let entries = inherited_env.entries();
+            let mut env_array = Vec::with_capacity(entries.len() + 3);
+            env_array.extend_from_slice(entries);
+            env_array
+        }
+    };
 
     // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -971,9 +910,6 @@ fn spawn_maybe_sync(
             // And then one fd is assigned specifically and only for IPC. If the user dont specify it, we add one (default: 3).
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-            if let Err(_err) = env_array.try_reserve(3) {
-                return Err(cx.global().throw_out_of_memory());
-            }
             let ipc_fd: i32 = 'brk: {
                 if ipc_channel == -1 {
                     // If the user didn't specify an IPC channel, we need to add one
@@ -1005,17 +941,14 @@ fn spawn_maybe_sync(
                     Err(_) => return Err(cx.global().throw_out_of_memory()),
                 }
             };
-            env_array.push(pipe_env.as_ptr().cast::<c_char>());
+            env_array.push(Some(pipe_env.into()));
 
-            env_array.push(match ipc_mode {
-                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json".as_ptr(),
-                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced".as_ptr(),
-            });
+            env_array.push(Some(CStrRef::from(match ipc_mode {
+                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json",
+                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced",
+            })));
         }
     }
-
-    env_array.push(core::ptr::null());
-    argv.push(core::ptr::null());
 
     if is_sync {
         for (i, io) in stdio.iter_mut().enumerate() {
@@ -1114,7 +1047,7 @@ fn spawn_maybe_sync(
             }
             core::mem::take(&mut extra_fds).into_boxed_slice()
         },
-        argv0,
+        argv0: Some(argv.argv0.as_zstr().into()),
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
@@ -1141,22 +1074,16 @@ fn spawn_maybe_sync(
     };
 
     crate::node::fs::note_process_start();
-    // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
-    // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
+    let mut spawned = match spawn::spawn_process(
+        &spawn_options,
+        CStrList::terminate(&mut borrow_c_strings(&argv.args)),
+        Some(CStrList::terminate(&mut env_array)),
+    ) {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
         {
-            let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `cstr_storage`).
-                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
-            } else {
-                ZStr::EMPTY
-            };
+            let display_path: &ZStr = &argv.args[0];
             let mut systemerror = sys::Error::from_code(
                 if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
@@ -1197,13 +1124,7 @@ fn spawn_maybe_sync(
                     | sys::Errno::EPERM
                     | sys::Errno::EISDIR
                     | sys::Errno::ENOTDIR) => {
-                        let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                            // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `cstr_storage`).
-                            ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
-                        } else {
-                            ZStr::EMPTY
-                        };
+                        let display_path: &ZStr = &argv.args[0];
                         if !display_path.as_bytes().is_empty() {
                             let mut systemerror = err.with_path(display_path).to_system_error();
                             if errno == sys::Errno::ENOENT {
@@ -1924,16 +1845,19 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
-/// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
-/// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
-/// `Vec<ZBox>` is dropped after `spawn_process` returns.
-fn append_envp_from_js(
+/// With room for the terminator and for the two variables of an IPC channel.
+fn borrow_c_strings(strings: &[ZBox]) -> Vec<Option<CStrRef<'_>>> {
+    let mut list = Vec::with_capacity(strings.len() + 3);
+    list.extend(strings.iter().map(|string| Some(string.as_zstr().into())));
+    list
+}
+
+/// Returns `$PATH`, which is empty if the object has none.
+fn append_envp_from_js<'a>(
     global_this: &JSGlobalObject,
     object: &JSObject,
-    envp: &mut Vec<CStrPtr>,
-    path: &mut &[u8],
-    storage: &mut Vec<ZBox>,
-) -> JsResult<()> {
+    lines: &'a mut Vec<ZBox>,
+) -> JsResult<&'a [u8]> {
     let object_iter = JSPropertyIterator::init(
         global_this,
         object,
@@ -1944,14 +1868,8 @@ fn append_envp_from_js(
     )?;
     // drops at scope exit (was `defer object_iter.deinit()`).
 
-    envp.reserve_exact(
-        (object_iter.len +
-            // +1 incase there's IPC
-            // +1 for null terminator
-            2)
-        .saturating_sub(envp.len()),
-    );
-    storage.reserve(object_iter.len);
+    lines.reserve_exact(object_iter.len);
+    let mut path_line = None;
     while let Some((key, value)) = object_iter.next()? {
         if value.is_undefined() {
             continue;
@@ -2003,16 +1921,12 @@ fn append_envp_from_js(
             &line_bytes[..key_end] == b"PATH"
         };
         if is_path_key && key_end < line_bytes.len() {
-            // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
-            // outlives every read of `*path`), and `ZBox` is heap-backed so the
-            // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
+            path_line = Some(lines.len());
         }
 
-        envp.push(line.as_ptr());
-        storage.push(line);
+        lines.push(line);
     }
-    Ok(())
+    Ok(path_line.map_or(b"", |line| &lines[line].as_bytes()[b"PATH=".len()..]))
 }
 
 /// `cgroup` option: a cgroup directory the child starts inside.

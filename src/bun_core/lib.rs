@@ -16,6 +16,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod c_str_list;
 pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
@@ -25,6 +26,7 @@ pub mod thread_id;
 pub mod tty;
 pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.

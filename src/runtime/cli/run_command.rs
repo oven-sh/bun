@@ -1059,6 +1059,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
+        vm.worker_preloads.set(ctx.preloads.clone());
+        vm.worker_eval_preloads
+            .set(std::mem::take(&mut ctx.worker_eval_preloads));
+        vm.worker_preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.worker_preload_require_count
+            .set(ctx.worker_preload_require_count);
+        vm.worker_eval_mode.set(ctx.worker_eval_mode);
+        vm.preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.preload_require_count
+            .set(ctx.worker_preload_require_count);
         vm.preload.set(std::mem::take(&mut ctx.preloads));
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
@@ -1262,6 +1274,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
         }
 
+        vm.worker_preloads.set(ctx.preloads.clone());
+        vm.worker_eval_preloads
+            .set(std::mem::take(&mut ctx.worker_eval_preloads));
+        vm.worker_preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.worker_preload_require_count
+            .set(ctx.worker_preload_require_count);
+        vm.worker_eval_mode.set(ctx.worker_eval_mode);
+        vm.preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.preload_require_count
+            .set(ctx.worker_preload_require_count);
         vm.preload.set(std::mem::take(&mut ctx.preloads));
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap

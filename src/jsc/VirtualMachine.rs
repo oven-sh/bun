@@ -228,6 +228,17 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
+    pub preload_require_start: Cell<usize>,
+    pub preload_require_count: Cell<usize>,
+    /// Effective execArgv preloads retained after this VM runs them, so child
+    /// workers can inherit the same startup contract.
+    pub worker_preloads: JsCell<Vec<Box<[u8]>>>,
+    /// The require-style subset of `worker_preloads` that Node also applies
+    /// before eval Worker source.
+    pub worker_eval_preloads: JsCell<Vec<Box<[u8]>>>,
+    pub worker_preload_require_start: Cell<usize>,
+    pub worker_preload_require_count: Cell<usize>,
+    pub worker_eval_mode: Cell<bun_options_types::context::WorkerEvalMode>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
@@ -2733,15 +2744,14 @@ extern crate alloc;
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// Where a flag is that is the process's, which a Worker cannot be given
-    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
-    pub invalid: Option<usize>,
+    /// First process-only flag a Worker cannot accept (`ERR_WORKER_INVALID_EXEC_ARGV`).
+    pub invalid: Option<bun_core::ZBox>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -5756,6 +5766,8 @@ impl VirtualMachine {
             drop(core::mem::take(&mut (*this).module_loader));
 
             drop((*this).preload.take());
+            drop((*this).worker_preloads.take());
+            drop((*this).worker_eval_preloads.take());
 
             (*this).transpiler.as_mut().deinit();
 

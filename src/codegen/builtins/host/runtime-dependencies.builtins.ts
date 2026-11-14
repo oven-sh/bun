@@ -794,6 +794,7 @@ const nativeCalls = [
         file: inBindings("webcore/JSWorker.cpp"),
         caller: "JSWorkerDOMConstructor::construct",
         onBehalfOf: startedWorkers,
+        times: 2,
         calls: environmentObjectMade(listedWithValues),
       },
       // vi.stubEnv stores into the object. Whoever sees it has read one of the names above.

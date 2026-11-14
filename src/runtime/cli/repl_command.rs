@@ -80,6 +80,18 @@ impl ReplCommand {
             ..Default::default()
         })?;
 
+        vm.worker_preloads.set(ctx.preloads.clone());
+        vm.worker_eval_preloads
+            .set(core::mem::take(&mut ctx.worker_eval_preloads));
+        vm.worker_preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.worker_preload_require_count
+            .set(ctx.worker_preload_require_count);
+        vm.worker_eval_mode.set(ctx.worker_eval_mode);
+        vm.preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.preload_require_count
+            .set(ctx.worker_preload_require_count);
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);
 

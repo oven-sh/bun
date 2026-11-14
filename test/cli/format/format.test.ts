@@ -1480,6 +1480,239 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // A member chain of three or more groups goes on one line if that fits, and otherwise each group gets its own
+  // line. An object that doesn't fit breaks, and one that's broken in the source stays broken, which counts as the
+  // chain's last group breaking. So Prettier 3.9.9 prints
+  //
+  //   abc
+  //     .b()
+  //     .c({
+  //
+  // the first time and `abc.b().c({` from then on (oven-sh/bun#48747, Prettier's own issue-17239.ts fixture). `bun fmt`
+  // prints the latter right away, in both flavors.
+  describe("a member chain whose last group has an object that breaks", () => {
+    const props = "firstProperty, secondProperty, thirdProperty, fourthProperty, fifthProperty, sixthProperty";
+    const broken = (indent = "") =>
+      `{\n${props
+        .split(", ")
+        .map(it => `${indent}  ${it},\n`)
+        .join("")}${indent}}`;
+    const flavors = [
+      ["Prettier", {}],
+      ["oxfmt", { ".oxfmtrc.json": `{ "printWidth": 80 }` }],
+    ] as const;
+    type Row = [extension: string, text: string, printed: string, flavor?: "Prettier"];
+
+    /** Formats the texts, then formats the output again. oxfmt doesn't support Flow. */
+    async function printedTwice(flavor: string, config: Record<string, string>, args: string[], all: Row[]) {
+      const rows = all.filter(row => flavor === "Prettier" || (row[0] !== "js" && row[3] === undefined));
+      const names = rows.map(([extension], index) => `${index}.${extension}`);
+      const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
+      const quiet = ["--log-level=warn", ...args];
+      const first = await format({ ...config, ...texts }, quiet, { reads: names });
+      const second = await format({ ...config, ...(first.files as Record<string, string>) }, quiet, { reads: names });
+      const expected = Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed]));
+      expect([first.stderr, second.stderr, first.exitCode, second.exitCode]).toEqual(["", "", 0, 0]);
+      return { first: first.files, second: second.files, expected };
+    }
+
+    // What both tools print on their second pass.
+    const oneLine: Row[] = [
+      ["ts", `abc.b().c({ ${props} });\n`, `abc.b().c(${broken()});\n`],
+      ["ts", `abc.b().c().d({ ${props} });\n`, `abc.b().c().d(${broken()});\n`],
+      // An object in an earlier group that fits doesn't count.
+      ["ts", `abc.b({ a }).c({ ${props} });\n`, `abc.b({ a }).c(${broken()});\n`],
+      ["ts", `abc?.b()?.c({ ${props} });\n`, `abc?.b()?.c(${broken()});\n`],
+      ["ts", `new Foo().b().c({ ${props} });\n`, `new Foo().b().c(${broken()});\n`],
+      ["ts", `abc.b()[key]({ ${props} });\n`, `abc.b()[key](${broken()});\n`],
+      // Wherever the object is in the last group.
+      ["ts", `abc.b().c((x) => ({ ${props} }));\n`, `abc.b().c((x) => (${broken()}));\n`],
+      ["ts", `abc.b().c([{ ${props} }]);\n`, `abc.b().c([\n  ${broken("  ")},\n]);\n`],
+      ["ts", `abc.b().c({ a: 1 }, { ${props} });\n`, `abc.b().c(\n  { a: 1 },\n  ${broken("  ")},\n);\n`],
+      // An argument beside the object that can't stay broken doesn't count.
+      ["ts", `abc.b().c(() => {}, { ${props} });\n`, `abc.b().c(() => {}, ${broken()});\n`],
+      ["ts", `abc.b().c("{", { ${props} });\n`, `abc.b().c("{", ${broken()});\n`],
+      ["ts", `abc.b().c({ ${props} } as Foo);\n`, `abc.b().c(${broken()} as Foo);\n`],
+      ["ts", `abc.b().c(x.y().z({ ${props} }));\n`, `abc.b().c(\n  x.y().z(${broken("  ")}),\n);\n`],
+      ["ts", `abc.b().c(x.y(1).z({ ${props} }));\n`, `abc.b().c(\n  x.y(1).z(${broken("  ")}),\n);\n`],
+      // A chain in an earlier group whose last group has the object: its head stays on one line.
+      [
+        "ts",
+        `abc.b(x.y().z({ ${props} })).c({ ${props} });\n`,
+        `abc\n  .b(\n    x.y().z(${broken("    ")}),\n  )\n  .c(${broken("  ")});\n`,
+      ],
+      // An empty line before the tail is dropped, which also counts as the last group breaking. oxfmt keeps it.
+      ["ts", `abc\n\n  .b()\n  .c({ ${props} });\n`, `abc.b().c(${broken()});\n`, "Prettier"],
+      ["ts", `abc.b().then((x) => foo({ ${props} }));\n`, `abc.b().then((x) =>\n  foo(${broken("  ")}),\n);\n`],
+      [
+        "ts",
+        `model = types.model({ something: mxSomething }).volatile<[foo]>((self) => ({ loading: false, savingStatus: "idle", undoDisabled: false, aiFocused: false, online: true }));\n`,
+        `model = types.model({ something: mxSomething }).volatile<[foo]>((self) => ({\n  loading: false,\n  savingStatus: "idle",\n  undoDisabled: false,\n  aiFocused: false,\n  online: true,\n}));\n`,
+      ],
+      // An object type, a mapped type, a Flow object type.
+      [
+        "ts",
+        `abc.b().c<{ firstProperty: number; secondProperty: number; thirdProperty: number; fourth: number }>();\n`,
+        `abc.b().c<{\n  firstProperty: number;\n  secondProperty: number;\n  thirdProperty: number;\n  fourth: number;\n}>();\n`,
+      ],
+      [
+        "ts",
+        `abc.b().c<{ [Kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk in Tttttttttttttttttttttt]: Vvvvvvvvvvvvvvvvvvvvvvv }>();\n`,
+        `abc.b().c<{\n  [\n    Kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk in Tttttttttttttttttttttt\n  ]: Vvvvvvvvvvvvvvvvvvvvvvv;\n}>();\n`,
+      ],
+      [
+        "js",
+        `// @flow\nabc.b().c<{ firstProperty: number, secondProperty: number, thirdProperty: number, fourth: number }>();\n`,
+        `// @flow\nabc.b().c<{\n  firstProperty: number,\n  secondProperty: number,\n  thirdProperty: number,\n  fourth: number,\n}>();\n`,
+      ],
+      // The last group breaks either way, because of the function's body, and still the one-line head only fits
+      // once the object type is broken.
+      [
+        "ts",
+        `test.skipIf(!builtin && head === closeDelimitedHead).each<Pick<BodyCase, "how" | "act" | "socketError"> & { request: string[]; other: number }>([1])("is truncated by $how", async ({ request, ...row }) => { x; });\n`,
+        `test.skipIf(!builtin && head === closeDelimitedHead).each<\n  Pick<BodyCase, "how" | "act" | "socketError"> & {\n    request: string[];\n    other: number;\n  }\n>([1])("is truncated by $how", async ({ request, ...row }) => {\n  x;\n});\n`,
+      ],
+      // Wherever the chain is.
+      ["ts", `const x = abc.b().c({ ${props} });\n`, `const x = abc.b().c(${broken()});\n`],
+      ["ts", `x = abc.b().c({ ${props} });\n`, `x = abc.b().c(${broken()});\n`],
+      [
+        "ts",
+        `function f() { return abc.b().c({ ${props} }); }\n`,
+        `function f() {\n  return abc.b().c(${broken("  ")});\n}\n`,
+      ],
+      ["ts", `foo(abc.b().c({ ${props} }));\n`, `foo(\n  abc.b().c(${broken("  ")}),\n);\n`],
+      ["ts", `foo(x.y().z({ ${props} })).a().b();\n`, `foo(\n  x.y().z(${broken("  ")}),\n)\n  .a()\n  .b();\n`],
+      [
+        "tsx",
+        `const a = <A b={abc.b().c({ ${props} })} />;\n`,
+        `const a = (\n  <A\n    b={abc.b().c(${broken("    ")})}\n  />\n);\n`,
+      ],
+      // In the only parameter of a function whose return type has an object type, the other layout that's tried.
+      [
+        "ts",
+        `function f(x = abc.b().c({ aaaa: 1, b: 2, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 3 })): Foo<{ a: 1 }> {}\n`,
+        `function f(\n  x = abc.b().c({\n    aaaa: 1,\n    b: 2,\n    xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 3,\n  }),\n): Foo<{ a: 1 }> {}\n`,
+      ],
+    ];
+    test.each(flavors)("stays on one line before the object: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, [], oneLine);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    test("at another width, with another quote", async () => {
+      const rows: Row[] = [
+        [
+          "ts",
+          `abc.b().c({ ${props}, seventhProperty: "idle", eighthProperty: "busy" });\n`,
+          `abc.b().c(${broken().replace("}", "  seventhProperty: 'idle',\n  eighthProperty: 'busy',\n}")});\n`,
+        ],
+      ];
+      const args = ["--print-width=100", "--single-quote"];
+      const { first, second, expected } = await printedTwice("Prettier", {}, args, rows);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    // What both tools print on every pass.
+    const expanded: Row[] = [
+      // A function argument before the last call: the groups break once the last one does.
+      ["ts", `abc.b(() => 1).c({ ${props} });\n`, `abc\n  .b(() => 1)\n  .c(${broken("  ")});\n`],
+      // An object that breaks in an earlier group, alone or before one in the last group.
+      ["ts", `abc.b({ ${props} }).c();\n`, `abc\n  .b(${broken("  ")})\n  .c();\n`],
+      ["ts", `abc.b({ ${props} }).c({ ${props} });\n`, `abc\n  .b(${broken("  ")})\n  .c(${broken("  ")});\n`],
+      // A chain in an earlier group whose own earlier group has the object breaks too.
+      [
+        "ts",
+        `abc.b(x.y({ ${props} }).z()).c({ ${props} });\n`,
+        `abc\n  .b(\n    x\n      .y(${broken("      ")})\n      .z(),\n  )\n  .c(${broken("  ")});\n`,
+      ],
+      // The chain doesn't fit on one line even before the object.
+      [
+        "ts",
+        `abc.b().c(veryLongArgumentNameNumberOneThatGoesOnAndOn, anotherVeryLongArgumentNameNumberTwo, { ${props} });\n`,
+        `abc\n  .b()\n  .c(\n    veryLongArgumentNameNumberOneThatGoesOnAndOn,\n    anotherVeryLongArgumentNameNumberTwo,\n    ${broken("    ")},\n  );\n`,
+      ],
+      // An object in a template never breaks.
+      ["ts", `abc.b().c(\`\${{ ${props} }}\`);\n`, `abc\n  .b()\n  .c(\n    \`\${{ ${props} }}\`,\n  );\n`],
+    ];
+    test.each(flavors)("gets a line per group otherwise: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, [], expanded);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    test("gets a line per group with objectWrap: collapse, where nothing stays broken", async () => {
+      const rows: Row[] = [["ts", `abc.b().c({ ${props} });\n`, `abc\n  .b()\n  .c(${broken("  ")});\n`]];
+      const args = ["--object-wrap=collapse"];
+      const { first, second, expected } = await printedTwice("Prettier", {}, args, rows);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    // An object that breaks beside the argument that's grouped puts every argument on its own line the next time, a
+    // broken return type of the grouped function does the same, a chain inside the last group whose earlier group
+    // breaks puts every group of that chain on its own line, and an element whose opening breaks puts its children
+    // on their own lines. Those are other layouts of the call, of the inner chain or of the element, not of the
+    // chain's head, so they still take two passes, as with the tools.
+    test("still takes two passes when the object is beside a grouped argument", async () => {
+      const rows: [string, string, string][] = [
+        [
+          `abc.b().c({ ${props} }, () => {});\n`,
+          `abc\n  .b()\n  .c(\n    ${broken("    ")},\n    () => {},\n  );\n`,
+          `abc.b().c(\n  ${broken("  ")},\n  () => {},\n);\n`,
+        ],
+        [
+          `abc.b().c(foo({ ${props} }, () => {}));\n`,
+          `abc\n  .b()\n  .c(\n    foo(\n      ${broken("      ")},\n      () => {},\n    ),\n  );\n`,
+          `abc.b().c(\n  foo(\n    ${broken("    ")},\n    () => {},\n  ),\n);\n`,
+        ],
+        [
+          `abc.b().c(x as import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { with: { type: "json", other: "value" } }), () => {});\n`,
+          `abc\n  .b()\n  .c(\n    x as import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {\n      with: { type: "json", other: "value" },\n    }),\n    () => {},\n  );\n`,
+          `abc.b().c(\n  x as import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {\n    with: { type: "json", other: "value" },\n  }),\n  () => {},\n);\n`,
+        ],
+        [
+          `abc.b().c((options: { firstProperty: number; secondProperty: number; thirdProperty: number }, callback) => { x; });\n`,
+          `abc\n  .b()\n  .c(\n    (\n      options: {\n        firstProperty: number;\n        secondProperty: number;\n        thirdProperty: number;\n      },\n      callback,\n    ) => {\n      x;\n    },\n  );\n`,
+          `abc.b().c(\n  (\n    options: {\n      firstProperty: number;\n      secondProperty: number;\n      thirdProperty: number;\n    },\n    callback,\n  ) => {\n    x;\n  },\n);\n`,
+        ],
+        [
+          `abc.b().c(<T extends { firstLongProperty: string; secondLongProperty: string; thirdLong: string }>(x: T) => { x; });\n`,
+          `abc\n  .b()\n  .c(\n    <\n      T extends {\n        firstLongProperty: string;\n        secondLongProperty: string;\n        thirdLong: string;\n      },\n    >(\n      x: T,\n    ) => {\n      x;\n    },\n  );\n`,
+          `abc.b().c(\n  <\n    T extends {\n      firstLongProperty: string;\n      secondLongProperty: string;\n      thirdLong: string;\n    },\n  >(\n    x: T,\n  ) => {\n    x;\n  },\n);\n`,
+        ],
+        [
+          `abc.b().c(async ({ id, token }: Props): Promise<{ id: number; name: string; email: string; ok: boolean }> => { return x; });\n`,
+          `abc\n  .b()\n  .c(\n    async ({\n      id,\n      token,\n    }: Props): Promise<{\n      id: number;\n      name: string;\n      email: string;\n      ok: boolean;\n    }> => {\n      return x;\n    },\n  );\n`,
+          `abc.b().c(\n  async ({\n    id,\n    token,\n  }: Props): Promise<{\n    id: number;\n    name: string;\n    email: string;\n    ok: boolean;\n  }> => {\n    return x;\n  },\n);\n`,
+        ],
+        [
+          `abc.b().c(x.y().z({ ${props} }).w());\n`,
+          `abc\n  .b()\n  .c(\n    x\n      .y()\n      .z(${broken("      ")})\n      .w(),\n  );\n`,
+          `abc.b().c(\n  x\n    .y()\n    .z(${broken("    ")})\n    .w(),\n);\n`,
+        ],
+        [
+          `wrapper.setProps({}).contains(<Foo bar={{ aaaaaaaa: 1, bbbbbbbbb: 2, ccccccccc: 3, ddddddddd: 4, eeeeeeeee: 5, fffffffff: 6, ggggggggg: 7 }}>Hello world</Foo>);\n`,
+          `wrapper\n  .setProps({})\n  .contains(\n    <Foo\n      bar={{\n        aaaaaaaa: 1,\n        bbbbbbbbb: 2,\n        ccccccccc: 3,\n        ddddddddd: 4,\n        eeeeeeeee: 5,\n        fffffffff: 6,\n        ggggggggg: 7,\n      }}\n    >\n      Hello world\n    </Foo>,\n  );\n`,
+          `wrapper.setProps({}).contains(\n  <Foo\n    bar={{\n      aaaaaaaa: 1,\n      bbbbbbbbb: 2,\n      ccccccccc: 3,\n      ddddddddd: 4,\n      eeeeeeeee: 5,\n      fffffffff: 6,\n      ggggggggg: 7,\n    }}\n  >\n    Hello world\n  </Foo>,\n);\n`,
+        ],
+        [
+          `abc.b().c(x.y(() => 1).z({ ${props} }));\n`,
+          `abc\n  .b()\n  .c(\n    x\n      .y(() => 1)\n      .z(${broken("      ")}),\n  );\n`,
+          `abc.b().c(\n  x\n    .y(() => 1)\n    .z(${broken("    ")}),\n);\n`,
+        ],
+      ];
+      const names = rows.map((_, index) => `${index}.tsx`);
+      const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+      const first = await format(texts, ["--log-level=warn"], { reads: names });
+      expect(first.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+      const second = await format(first.files as Record<string, string>, ["--log-level=warn"], { reads: names });
+      expect(second.files).toEqual(Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed])));
+      expect([first.stderr, second.stderr, first.exitCode, second.exitCode]).toEqual(["", "", 0, 0]);
+    });
+  });
+
   test("copies a comment inside code under `prettier-ignore` once, along with the code", async () => {
     const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
     const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });

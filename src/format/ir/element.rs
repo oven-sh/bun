@@ -63,6 +63,9 @@ pub(crate) struct Skip {
     pub(crate) flat: Flat,
     /// The cached result of `Storage::will_break` for them.
     pub(crate) will_break: bool,
+    /// They contain a [`GroupMode::StaysExpanded`] group, so `will_break` may be true when the output is formatted
+    /// again.
+    pub(crate) stays_expanded: bool,
 }
 
 impl Skip {
@@ -72,6 +75,7 @@ impl Skip {
             len,
             flat: Flat::default(),
             will_break: false,
+            stays_expanded: false,
         }
     }
 }
@@ -308,6 +312,16 @@ pub(crate) enum Fallback {
     ///
     /// When expanded, the flattest variant has a line break before the first such group.
     FlattestIfStable,
+    /// The most expanded variant, unless a [`GroupMode::StaysExpanded`] group in the last interned content of the
+    /// flattest variant breaks in it. In that case it's the flattest variant, printed flat with that group and those
+    /// around it broken, if it fits up to the first line break in them. Otherwise it's the most expanded variant with
+    /// them broken. Use it for two variants where the writer picks the first if that content `will_break()`, as long
+    /// as it fits, because that's what `will_break()` returns when the output is formatted again.
+    MostExpandedIfStable,
+    /// The most expanded variant, and that one without measuring while a group in the flattest variant is forced to
+    /// break by a fallback around it. Use it where the writer picks the most expanded variant outright once a group
+    /// `will_break()`.
+    MostExpandedIfForced,
 }
 
 impl BestFitting {

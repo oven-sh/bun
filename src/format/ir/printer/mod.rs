@@ -213,6 +213,12 @@ struct BeforeTry {
     /// The ones that were being printed when a try was aborted, innermost first. Trying each one separately would abort
     /// the same way, because from its first line break on, its output doesn't depend on what's before it on the line.
     unstable: Vec<u32>,
+    /// The start tags of the groups open in the variant being tried, outermost first.
+    open_groups: Vec<u32>,
+    /// The start tags of the groups that were open around [`Printer::expanded_group`] when it aborted a try. They
+    /// break in the variant printed instead, as they will when the output is formatted again, even where they hold
+    /// the group through interned content and so don't contain its index.
+    holders: Vec<u32>,
 }
 
 struct Printer<'d> {
@@ -266,7 +272,12 @@ pub(crate) fn print(
     buffers.suffix_indentions.clear();
     buffers.line_suffixes.clear();
     buffers.group_modes.clear();
-    buffers.before_try.unstable.clear();
+    // An error can end a print before its try state is taken back.
+    let before = &mut buffers.before_try;
+    before.unstable.clear();
+    before.inner.clear();
+    before.open_groups.clear();
+    before.holders.clear();
     buffers.marks = [None; 2];
     let start = out.len();
     let mut printer = Printer {
@@ -410,6 +421,23 @@ impl<'d> Printer<'d> {
         flat.flags.has(FlatFlags::MEASURED)
             && (!flat.flags.has(FlatFlags::HAS_LINE_SUFFIX_BOUNDARY)
                 || self.buffers.line_suffixes.is_empty())
+            // The measurements don't know that a group is forced to break.
+            && !self.has_expanded_group()
+    }
+
+    /// True while a variant is printed instead of one that a try aborted. See [`Printer::try_expanded`].
+    #[inline]
+    pub(super) fn has_expanded_group(&self) -> bool {
+        self.expanded_group != u32::MAX
+    }
+
+    /// True if the group whose start tag is at `start` is [`Printer::expanded_group`] or holds it, so that it breaks
+    /// in the variant printed instead of the one that the try of aborted.
+    #[inline]
+    pub(super) fn is_forced(&self, start: u32, group: &Group) -> bool {
+        self.has_expanded_group()
+            && ((self.expanded_group >= start && self.expanded_group < group.end())
+                || self.buffers.before_try.holders.contains(&start))
     }
 
     // ───────────────────────────── indentation ─────────────────────────────
@@ -487,6 +515,10 @@ impl<'d> Printer<'d> {
                     } else {
                         self.insert_group_mode(*id, PrintMode::Expanded);
                         self.push(FrameKind::Group, PrintMode::Expanded);
+                        if self.is_trying {
+                            // Its end tag pops this. It holds nothing but its line break.
+                            self.buffers.before_try.open_groups.push(u32::MAX);
+                        }
                         self.print_next(REST_OF_INDENTED_LINE_GROUP);
                     }
                 }
@@ -501,7 +533,9 @@ impl<'d> Printer<'d> {
                 FormatElement::Interned(content) => self.print_next(*content),
                 FormatElement::Tag(tag) => match tag {
                     Tag::StartGroup(group) => {
-                        let group_mode = if !group.mode().is_flat() {
+                        let start = self.elements.at().saturating_sub(1);
+                        let group_mode = if !group.mode().is_flat() || self.is_forced(start, group)
+                        {
                             self.measured_group_fits = true;
                             PrintMode::Expanded
                         } else if self.mode.is_flat() && self.measured_group_fits {
@@ -512,12 +546,10 @@ impl<'d> Printer<'d> {
                             if let Some(id) = group.id() {
                                 self.insert_group_mode(id, PrintMode::Flat);
                             }
-                            let has_expanded_group = self.expanded_group < group.end()
-                                && self.expanded_group >= self.elements.at().saturating_sub(1);
-                            if !has_expanded_group && self.group_fits(group)? {
+                            if self.group_fits(group)? {
                                 PrintMode::Flat
                             } else if self.is_trying && group.mode() == GroupMode::StaysExpanded {
-                                self.expanded_group = self.elements.at().saturating_sub(1);
+                                self.expanded_group = start;
                                 return Err(PrintError::StaysExpanded);
                             } else {
                                 PrintMode::Expanded
@@ -538,9 +570,17 @@ impl<'d> Printer<'d> {
                             self.print_flat(content)?;
                         } else {
                             self.push(FrameKind::Group, group_mode);
+                            if self.is_trying {
+                                self.buffers.before_try.open_groups.push(start);
+                            }
                         }
                     }
-                    Tag::EndGroup => self.pop(FrameKind::Group)?,
+                    Tag::EndGroup => {
+                        self.pop(FrameKind::Group)?;
+                        if self.is_trying {
+                            self.buffers.before_try.open_groups.pop();
+                        }
+                    }
                     Tag::StartFill => self.print_fill_entries()?,
                     Tag::EndFill => self.pop(FrameKind::Fill)?,
                     Tag::StartEntry => {
@@ -796,6 +836,14 @@ impl<'d> Printer<'d> {
             return Err(PrintError::InvalidDocument);
         };
 
+        if best_fitting.fallback == Fallback::MostExpandedIfForced
+            && self.has_expanded_group()
+            && flatter
+                .first()
+                .is_some_and(|&flattest| self.is_in_interned(flattest, self.expanded_group, false))
+        {
+            return self.print_variant(most_expanded, PrintMode::Expanded);
+        }
         if mode.is_flat() && self.measured_group_fits {
             return self.print_variant(*flatter.first().unwrap_or(&most_expanded), mode);
         }
@@ -815,6 +863,9 @@ impl<'d> Printer<'d> {
         match (best_fitting.fallback, flatter.first()) {
             (Fallback::FlattestIfStable, Some(&flattest)) => {
                 self.print_flattest_if_stable(best_fitting.first, flattest, most_expanded)
+            }
+            (Fallback::MostExpandedIfStable, Some(&flattest)) => {
+                self.print_most_expanded_if_stable(best_fitting.first, flattest, most_expanded)
             }
             _ => self.print_variant(most_expanded, PrintMode::Expanded),
         }
@@ -844,19 +895,85 @@ impl<'d> Printer<'d> {
         {
             return self.print_variant(most_expanded, PrintMode::Expanded);
         }
-        let (unstable, expanded_group) =
-            (self.buffers.before_try.unstable.len(), self.expanded_group);
+        let before = &self.buffers.before_try;
+        let (unstable, holders, expanded_group) = (
+            before.unstable.len(),
+            before.holders.len(),
+            self.expanded_group,
+        );
         if self.try_expanded(flattest)? {
             return Ok(());
         }
         self.print_variant(most_expanded, PrintMode::Expanded)?;
-        self.buffers.before_try.unstable.truncate(unstable);
+        let before = &mut self.buffers.before_try;
+        before.unstable.truncate(unstable);
+        before.holders.truncate(holders);
         self.expanded_group = expanded_group;
         Ok(())
     }
 
+    /// `id` is the [`BestFitting::first`].
+    #[inline(never)]
+    fn print_most_expanded_if_stable(
+        &mut self,
+        id: u32,
+        flattest: Interned,
+        most_expanded: Interned,
+    ) -> PrintResult<()> {
+        // No nested try. A group that would abort this one aborts the outer try.
+        if self.is_trying {
+            self.buffers.before_try.inner.push(id);
+            self.print_variant(most_expanded, PrintMode::Expanded)?;
+            self.buffers.before_try.inner.pop();
+            return Ok(());
+        }
+        let before = &mut self.buffers.before_try;
+        let was_aborted = before.unstable.pop_if(|it| *it == id).is_some();
+        let (unstable, holders, expanded_group) = (
+            before.unstable.len(),
+            before.holders.len(),
+            self.expanded_group,
+        );
+        if !was_aborted && self.try_expanded(most_expanded)? {
+            return Ok(());
+        }
+        // The group that broke, and those around it, break in whichever variant is printed now.
+        if self.is_in_interned(flattest, self.expanded_group, true)
+            && self.variant_fits(flattest)?
+        {
+            self.print_variant(flattest, PrintMode::Flat)?;
+        } else {
+            self.print_variant(most_expanded, PrintMode::Expanded)?;
+        }
+        let before = &mut self.buffers.before_try;
+        before.unstable.truncate(unstable);
+        before.holders.truncate(holders);
+        self.expanded_group = expanded_group;
+        Ok(())
+    }
+
+    /// True if `index` is in the interned content that `variant` is made of: in any of it, or only in the last.
+    fn is_in_interned(&self, variant: Interned, index: u32, only_last: bool) -> bool {
+        let mut elements = Elements::new(Run::of(variant), self.pool);
+        let mut is_in_last = false;
+        while let Some(element) = elements.next() {
+            match element {
+                FormatElement::Skip(skip) => elements.skip(skip.len),
+                FormatElement::Interned(it) => {
+                    is_in_last = index >= it.start && index < it.start.saturating_add(it.len);
+                    if is_in_last && !only_last {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        is_in_last
+    }
+
     /// Prints `variant` expanded. If a [`GroupMode::StaysExpanded`] group breaks in it, this restores the printer's
-    /// state and returns false.
+    /// state and returns false. That group is then [`Printer::expanded_group`], and the groups that were open around
+    /// it are in `before_try.holders`.
     #[inline(never)]
     fn try_expanded(&mut self, variant: Interned) -> PrintResult<bool> {
         let out_len = self.out.len();
@@ -878,6 +995,7 @@ impl<'d> Printer<'d> {
         before.line_suffixes.clone_from(&buffers.line_suffixes);
         before.noted_groups.clear();
         before.inner.clear();
+        before.open_groups.clear();
 
         self.is_trying = true;
         let result = self.print_variant(variant, PrintMode::Expanded);
@@ -910,6 +1028,7 @@ impl<'d> Printer<'d> {
             }
         }
         before.unstable.extend(before.inner.drain(..).rev());
+        before.holders.append(&mut before.open_groups);
         Ok(false)
     }
 

@@ -574,6 +574,7 @@ namespace Bun {
 bool waitsForMicrotasksThatBeganWithoutAsyncContextTracking();
 void didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(JSC::VM&, Zig::GlobalObject*);
 void updateOnEachMicrotaskTick(JSC::VM&);
+void drainNewNextTickQueue(JSC::VM&, Zig::GlobalObject*);
 }
 
 static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
@@ -588,6 +589,15 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
     if (!drainsNextTickQueue)
         return;
     if (auto queue = globalObject->m_nextTickQueue.get())
+        queue->drain(vm, globalObject);
+}
+
+// Ends the wait early: the ticks queued so far run now. For a CommonJS import that `bun test` runs in the microtask that links its graph, not in the one of its own fetch (JSCommonJSModule.cpp, generateDeferredCommonJSModule).
+void Bun::drainNewNextTickQueue(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    if (!std::exchange(newNextTickQueueWaitsForMicrotaskToEnd, false))
+        return;
+    if (auto queue = globalObject->m_nextTickQueue.get(); queue && !queue->isEmpty())
         queue->drain(vm, globalObject);
 }
 

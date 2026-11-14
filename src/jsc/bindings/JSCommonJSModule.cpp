@@ -1750,6 +1750,9 @@ static JSC::SourceCode deferredCommonJSModuleSyntheticSourceCode(const SourceOri
 extern "C" void Bun__logCommonJSProviderKind(const BunString* key, bool deferred);
 #endif
 
+// ZigGlobalObject.cpp
+void drainNewNextTickQueue(JSC::VM&, Zig::GlobalObject*);
+
 // `key` is what the loader fetched. Under `bun test`, a static import of the test file or preload being loaded runs once that whole graph has loaded.
 static ALWAYS_INLINE JSC::SourceCode commonJSModuleSourceCodeForLoad(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSCommonJSModule* moduleObject, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL)
 {
@@ -1948,6 +1951,8 @@ static void generateDeferredCommonJSModule(JSC::JSGlobalObject* lexicalGlobalObj
     if (record && (!record->inherits<SyntheticModuleRecord>() || record->moduleEnvironmentMayBeNull()))
         record = nullptr;
 
+    // A run started inside the body of another such module is a part of that body.
+    bool mayMakeTickQueue = !globalObject->isRunningDeferredCommonJSModule && !globalObject->m_nextTickQueue;
     {
         SetForScope isRunning(globalObject->isRunningDeferredCommonJSModule, true);
         if (ran) {
@@ -1956,6 +1961,9 @@ static void generateDeferredCommonJSModule(JSC::JSGlobalObject* lexicalGlobalObj
         } else {
             eager.generate(lexicalGlobalObject, moduleKey, exportNames, exportValues);
         }
+        // The module made the realm's tick queue: its ticks run behind it, as they do when the microtask of a fetch that runs a module ends (ZigGlobalObject.cpp, checkIfNextTickWasCalledDuringMicrotask).
+        if (mayMakeTickQueue && globalObject->m_nextTickQueue && !scope.exception()) [[unlikely]]
+            drainNewNextTickQueue(vm, globalObject);
     }
     // The record keeps what its generator threw for every later link, so the loader forgets it and the next import fetches the file again.
     if (auto* exception = scope.exception(); exception && record && !vm.isTerminationException(exception)) [[unlikely]] {

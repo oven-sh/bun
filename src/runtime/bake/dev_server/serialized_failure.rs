@@ -114,7 +114,7 @@ impl Packed {
 
 const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 
-/// Stored in `dev.bundling_failures` keyed by its `OwnerPacked`.
+/// Stored in `Graphs::bundling_failures` keyed by its `OwnerPacked`.
 ///
 /// PERF: `data` is an owned `Box<[u8]>`, so `Clone` deep-copies between
 /// `bundling_failures` and the `failures_added`/`failures_removed` lists —

@@ -17,28 +17,6 @@ use crate::webcore::{
     Request, Response, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
 };
 
-/// Q: Why is this needed?
-/// A: The dev server needs to attach its own callback when the request is
-///    aborted.
-///
-/// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
-/// A: It can't, because that is *already* called by the RequestContext, setting
-///    the callback and the user data context pointer.
-///
-///    If it did, it would *overwrite* the user data context pointer (this
-///    is what it did before), causing segfaults.
-pub(crate) struct AdditionalOnAbortCallback {
-    pub cb: fn(*mut c_void),
-    pub(crate) data: NonNull<c_void>,
-    pub(crate) deref_fn: fn(*mut c_void),
-}
-
-impl AdditionalOnAbortCallback {
-    pub(crate) fn deref(&self) {
-        (self.deref_fn)(self.data.as_ptr());
-    }
-}
-
 // NOTE (transport selection): the response/request handle types vary with
 // `(ssl_enabled, http3)`. Stable Rust cannot drive an associated type from a
 // const-generic `bool` without specialization, and an early `Transport`
@@ -183,7 +161,8 @@ pub(crate) struct RequestContext<const SSL_ENABLED: bool, const DEBUG_MODE: bool
     /// `Cell::get`/`set` instead of raw `*mut bool` deref.
     pub(crate) defer_deinit_until_callback_completes: Cell<Option<DeferDeinitFlag>>,
 
-    pub(crate) additional_on_abort: JsCell<Option<AdditionalOnAbortCallback>>,
+    /// The dev server's record of this request. The response has room for one abort handler only.
+    pub(crate) deferred_request: Cell<Option<crate::bake::dev_server::deferred_request::Handle>>,
 
     /// The error and default status that `error()` returned a pending promise for.
     deferred_error: JsCell<Option<(bun_jsc::strong::Optional, u16)>>,
@@ -909,10 +888,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         self.request_body_take_unref();
 
-        if let Some(cb) = self.additional_on_abort.replace(None) {
-            cb.deref();
-        }
-
         if let Some(server) = self.server.take() {
             server.release_request_context(self.as_ctx_ptr());
             server.on_request_complete();
@@ -1433,7 +1408,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
                 pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
-                additional_on_abort: JsCell::new(None),
+                deferred_request: Cell::new(None),
                 deferred_error: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
             });
@@ -1486,10 +1461,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         debug_assert!(!this.flags.aborted());
         // mark request as aborted
         this.flags.set_aborted(true);
-        let abort = this.additional_on_abort.replace(None);
-        if let Some(abort) = abort {
-            (abort.cb)(abort.data.as_ptr());
-            abort.deref();
+        if let Some(deferred) = this.deferred_request.take() {
+            deferred.on_abort();
         }
 
         this.detach_response();
@@ -1650,8 +1623,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     fn on_file_stream_abort(ctx: *mut c_void, resp: uws::AnyResponse) {
-        // Route through the real onAbort so flags.aborted, request.signal,
-        // and additional_on_abort fire exactly as they did pre-consolidation.
         Self::on_abort(ctx.cast::<Self>(), resp);
     }
 

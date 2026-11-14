@@ -470,6 +470,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "paste",
  "rustc-hash",
+ "scopeguard",
  "smallvec",
 ]
 

@@ -2758,6 +2758,182 @@ export const after = { a: 1 };
     });
   });
 
+  // Whitespace and then one whole JSON value or keyword is that value: `K= false` is the boolean.
+  describe("define with whitespace before the value", () => {
+    // What `\s` matches.
+    const whitespace = [
+      ..." \t\n\v\f\r\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
+    ];
+    const print = text => new Bun.Transpiler({ define: { K: text } }).transformSync("x(K);").trim();
+    const valueOf = text => {
+      let value;
+      new Function("x", print(text))(argument => (value = argument));
+      return value;
+    };
+
+    // Each keyword, and values of each kind that is read as JSON.
+    it.each([
+      ["false", "x(false);"],
+      ["true", "x(true);"],
+      ["null", "x(null);"],
+      ["undefined", "x(undefined);"],
+      ["0", "x(0);"],
+      ["9", "x(9);"],
+      ["-1", "x(-1);"],
+      ["- 1", "x(-1);"],
+      [".5", "x(0.5);"],
+      ["1e3", "x(1000);"],
+      ["0x10", "x(16);"],
+      ['"s"', 'x("s");'],
+      ["'s'", 'x("s");'],
+      ["{}", "x({});"],
+      ['{"a":1,}', "x({ a: 1 });"],
+      ["[1]", "x([1]);"],
+      ["[1, 2,]", "x([1, 2]);"],
+    ])("%j with each kind of whitespace around it", (value, output) => {
+      const texts = [
+        value,
+        ...whitespace.map(space => space + value),
+        ...whitespace.map(space => space + value + space),
+        `\n  ${value}\n`,
+      ];
+      expect(Object.fromEntries(texts.map(text => [JSON.stringify(text), print(text)]))).toEqual(
+        Object.fromEntries(texts.map(text => [JSON.stringify(text), output])),
+      );
+    });
+
+    // Each value beside texts that begin like it. Those are the strings that they are without this rule.
+    it("a text behind whitespace that is not one whole value stays a string", () => {
+      const kept = text => [text, text];
+      const texts = [
+        [" false", false],
+        ["\ttrue\n", true],
+        [" null", null],
+        [" undefined", undefined],
+        ...[" false x", " falsy", " true-ish", " true;", " null,", " undefined x", " false true"].map(kept),
+        [" 1", 1],
+        [" -1", -1],
+        [" .5", 0.5],
+        ...[" 1.2.3", " 2026-11-07", " 127.0.0.1", " 1px", " 10%", " 1/2", " 12abc", " 1n", " 1e", " 0x", " 1..2"].map(
+          kept,
+        ),
+        ...[" 7 days", " 1 2", " 1,2", " 12:30", " 1 // c", " -abc", " -", " ."].map(kept),
+        [' "s"', "s"],
+        ...[' "', ' "unclosed', ' 1"', ' "a" + "b"', ' "a" "b"'].map(kept),
+        [" [1]", [1]],
+        [' {"a":[1]}', { a: [1] }],
+        ['\n{\n  "a": [1]\n}\n', { a: [1] }],
+        ...[" [", " {", " [1", " {a:1}", " [1] x", " {} x", ' {"a":1} {"b":2}'].map(kept),
+        ...[" production", " a.b.c", " NaN", " two words", " http://x/y", " (1)", " a+b", " /* c */ false"].map(kept),
+        ...["\n  key: value\n  other: 1\n", "\n  1. Step one\n  2. Step two\n"].map(kept),
+        ...[" ", "\t", "\n\n"].map(kept),
+        // A backslash is read as it is with nothing before the whitespace.
+        [" \\u0066alse", " false"],
+        [" false\\", " false"],
+        [' \\"s\\"', ' "s"'],
+        // Not whitespace.
+        ...["\u0085false", "\u200bfalse", "\u180efalse"].map(kept),
+      ];
+      expect(texts.map(([text]) => [text, valueOf(text)])).toEqual(texts);
+    });
+
+    // The other doors to the define table. Each gets two values, and three texts that stay strings.
+    const values = [false, 41, " 7 days", " 1.2.3", " production"];
+    const program = `console.log(JSON.stringify([OFF, COUNT, DAYS, VERSION, NAME]));`;
+    const defines = (separator, flag = "--define") =>
+      ["OFF", " false", "COUNT", "\t41", "DAYS", " 7 days", "VERSION", " 1.2.3", "NAME", " production"].flatMap(
+        (text, i, all) => (i % 2 ? [] : [flag, text + separator + all[i + 1]]),
+      );
+
+    it("Bun.build({ define })", async () => {
+      using dir = tempDir("define-whitespace-api", { "in.js": program });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "in.js")],
+        define: { OFF: " false", COUNT: "\t41", DAYS: " 7 days", VERSION: " 1.2.3", NAME: " production" },
+      });
+      const output = await result.outputs[0].text();
+      expect(output.slice(output.indexOf("console.log"))).toBe(
+        `console.log(JSON.stringify([false, 41, " 7 days", " 1.2.3", " production"]));\n`,
+      );
+    });
+
+    it.concurrent.each([
+      ["bun --define K= V", [...defines("="), "in.js"], {}],
+      ["bun -d 'K: V'", [...defines(":", "-d"), "in.js"], {}],
+      [
+        "bunfig.toml [define]",
+        ["in.js"],
+        {
+          "bunfig.toml": `[define]\nOFF = " false"\nCOUNT = "\\t41"\nDAYS = " 7 days"\nVERSION = " 1.2.3"\nNAME = " production"\n`,
+        },
+      ],
+      ["a Worker", [...defines("="), "main.js"], { "main.js": `new Worker(new URL("in.js", import.meta.url).href);` }],
+    ])("%s", async (_, args, files) => {
+      using dir = tempDir("define-whitespace-run", { "in.js": program, ...files });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(values) + "\n", stderr: "", exitCode: 0 });
+    });
+
+    it.concurrent("bun build --define", async () => {
+      using dir = tempDir("define-whitespace-build", { "in.js": program });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...defines("="), "in.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `// in.js\nconsole.log(JSON.stringify([false, 41, " 7 days", " 1.2.3", " production"]));\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The parser ends at its stack limit before it can tell if the text is one whole value. Behind whitespace
+    // that is the error that it is with nothing before the text, and not a string.
+    it.concurrent("a text nested too deep behind whitespace is an error, closed or not", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            // An 18 MB stack holds about 100,000 levels of a nest that does not close.
+            const open = Buffer.alloc(1_000_000, "[").toString();
+            const closed = Buffer.alloc(100_000, "[").toString() + Buffer.alloc(100_000, "]").toString();
+            const read = text => {
+              try {
+                new Bun.Transpiler({ define: { K: text } });
+                return "a value";
+              } catch (error) {
+                return error.message;
+              }
+            };
+            console.log(JSON.stringify([closed, " " + closed, open, " " + open].map(read)));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const message = "JSON document is too deeply nested";
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([message, message, message, message]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   it("Array.prototype as external is an empty array", () => {
     const transform = external => new Bun.Transpiler({ external }).transformSync('import "a"; 1');
     expect(transform(Array.prototype)).toBe(transform([]));

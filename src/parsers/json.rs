@@ -610,7 +610,69 @@ pub fn parse_env_json(
                 }
                 _ => {}
             }
+            // Whitespace starts with one of these bytes.
+            if (contents[0] <= b' ' || contents[0] >= 0x80)
+                && let Some(value) = whole_value_after_whitespace(source, log, bump)?
+            {
+                return Ok(value);
+            }
             parse_auto_quoted_string(source, log, bump)
+        }
+    }
+}
+
+/// The value of a text that is whitespace and then one whole keyword or JSON value, or `None`.
+#[cold]
+fn whole_value_after_whitespace(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> crate::Result<Option<Expr>> {
+    let contents: &[u8] = &source.contents;
+    let token = bun_core::strings::trim_js_whitespace_start(contents);
+    if token.len() == contents.len() || token.is_empty() {
+        return Ok(None);
+    }
+
+    let keyword = match bun_core::strings::trim_js_whitespace_end(token) {
+        b"true" => Some(js_ast::expr::Data::EBoolean(E::Boolean { value: true })),
+        b"false" => Some(js_ast::expr::Data::EBoolean(E::Boolean { value: false })),
+        b"null" => Some(js_ast::expr::Data::ENull(E::Null {})),
+        b"undefined" => Some(js_ast::expr::Data::EUndefined(E::Undefined {})),
+        _ => None,
+    };
+    if let Some(data) = keyword {
+        return Ok(Some(Expr {
+            loc: bun_ast::Loc { start: 0 },
+            data,
+        }));
+    }
+
+    let leads_json = match token[0] {
+        b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => true,
+        b'-' | b'.' => leads_a_number(token),
+        _ => false,
+    };
+    if !leads_json {
+        return Ok(None);
+    }
+    // JSON is UTF-8, and `parse_classic` does not check the bytes of a string.
+    if !bun_core::strings::is_valid_utf8(contents) {
+        return Ok(None);
+    }
+
+    let mut attempt = bun_ast::Log::init();
+    attempt.level = log.level;
+    match parse_classic(source, &mut attempt, bump, DOTENV_JSON_OPTS, true) {
+        Ok(parsed) => {
+            attempt.append_to(log);
+            Ok(Some(parsed.root))
+        }
+        // Not one whole value: what the attempt logged is dropped with it.
+        Err(crate::Error::SyntaxError | crate::Error::ParserError) => Ok(None),
+        Err(err) => {
+            attempt.append_to(log);
+            Err(err)
         }
     }
 }

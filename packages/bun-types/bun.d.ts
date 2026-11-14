@@ -11126,9 +11126,13 @@ declare module "bun" {
 
     /**
      * Creates a cookie from an attributes object
+     *
+     * The object needs a `name`. The constructor throws a `TypeError` if the object has no
+     * `name` property or an empty `name`. An object with no `value` property makes a cookie
+     * with an empty value.
      * @param cookieObject - The cookie's name, value, and attributes
      */
-    constructor(cookieObject?: CookieInit);
+    constructor(cookieObject: CookieInit);
 
     /**
      * The name of the cookie
@@ -11273,7 +11277,14 @@ declare module "bun" {
     /**
      * Adds or updates a cookie in the map using a cookie options object.
      *
-     * @param options - Cookie options including name and value
+     * The object needs a `name`. This method throws a `TypeError` if the object has no
+     * `name` property or an empty `name`.
+     *
+     * An object with no `value` property, or with an empty `value`, adds a `Set-Cookie`
+     * header with an empty value. The map then treats that name as absent: `get()` returns
+     * `null` and `has()` returns `false`.
+     *
+     * @param options - The cookie's name, value, and attributes
      */
     set(options: CookieInit): void;
 

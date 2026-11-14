@@ -665,7 +665,8 @@ function connectionListenerHTTP1(server, socket, options) {
   function onHttp1SocketDrain() {
     resumeFallbackReadsOnDrain(socket);
     // Node's socketOnDrain then emits 'drain' on the response that waits for it.
-    socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
+    // The response in flight can be one of a native listener, whose handle has none of the methods called here and below: a CONNECT behind it was handed off, and the socket given to emit("connection").
+    socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained?.();
   }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
@@ -674,17 +675,17 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.once("finish", () => {
     const inflight = socket._httpMessage;
     // An ended socket emits no 'drain', and all that the response wrote is out: the write callbacks that wait succeed.
-    inflight?.[kHttp1ResponseHandle]?.socketEnded(() => inflight._callPendingCallbacks());
+    inflight?.[kHttp1ResponseHandle]?.socketEnded?.(() => inflight._callPendingCallbacks());
   });
   // Prepended: like Node's 'finish' after a failed last write, a draining response finishes (and detaches) before the other 'close' listeners run.
   socket.prependOnceListener("close", () => {
-    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
+    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed?.();
   });
   socket.once("close", () => {
     connections.delete(socket);
     const inflight = socket._httpMessage;
     // The write callbacks that still wait fail, before the response's 'close', as in Node.
-    inflight?.[kHttp1ResponseHandle]?.socketEnded(() =>
+    inflight?.[kHttp1ResponseHandle]?.socketEnded?.(() =>
       failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
     );
     // Like the native socket's close path (Node's socketOnClose ->

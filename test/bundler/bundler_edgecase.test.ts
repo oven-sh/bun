@@ -218,6 +218,196 @@ describe("bundler", () => {
       NODE_ENV: "production",
     },
   });
+  // `import.meta.env` does not exist in a browser, so the bundler folds the
+  // Vite-style keys to constants for the browser target, the same way a
+  // `Bun.serve` HTML route does. The mode follows `process.env.NODE_ENV`.
+  itBundled("edgecase/ImportMetaEnvBrowserDefaultDevelopment", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.PROD);
+        capture(import.meta.env.MODE);
+        capture(import.meta.env.SSR);
+        capture(import.meta.env.STATIC);
+      `,
+    },
+    target: "browser",
+    capture: ["true", "false", '"development"', "false", "false"],
+    env: {
+      NODE_ENV: undefined,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("import.meta.env");
+    },
+  });
+  itBundled("edgecase/ImportMetaEnvBrowserProduction", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.PROD);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "browser",
+    production: true,
+    // `--production` minifies syntax, so the booleans print as `!1` and `!0`.
+    capture: ["!1", "!0", '"production"'],
+    env: {
+      NODE_ENV: undefined,
+    },
+  });
+  itBundled("edgecase/ImportMetaEnvBrowserNodeEnvProduction", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.PROD);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "browser",
+    capture: ["false", "true", '"production"'],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
+  itBundled("edgecase/ImportMetaEnvBrowserUserDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.PROD);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "browser",
+    define: {
+      "import.meta.env.DEV": "true",
+      "import.meta.env.MODE": '"staging"',
+    },
+    capture: ["true", "true", '"staging"'],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
+  // A user `process.env.NODE_ENV` define selects the mode for `BUN_ENV` and
+  // `import.meta.env` too, in every spelling the define parser accepts.
+  for (const [name, value] of [
+    ["DoubleQuoted", '"production"'],
+    ["SingleQuoted", "'production'"],
+    ["EscapedQuoted", '\\"production\\"'],
+  ] as const) {
+    itBundled(`edgecase/ImportMetaEnvBrowserNodeEnvDefine${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.BUN_ENV);
+          capture(import.meta.env.DEV);
+          capture(import.meta.env.PROD);
+          capture(import.meta.env.MODE);
+        `,
+      },
+      target: "browser",
+      define: {
+        "process.env.NODE_ENV": value,
+      },
+      capture: ['"production"', '"production"', "false", "true", '"production"'],
+      env: {
+        NODE_ENV: "development",
+      },
+    });
+  }
+  // A define for the whole `import.meta.env` object carries its own keys.
+  itBundled("edgecase/ImportMetaEnvBrowserObjectDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(import.meta.env.MODE, import.meta.env.DEV);
+      `,
+    },
+    target: "browser",
+    define: {
+      "import.meta.env": '{"MODE":"staging","DEV":false}',
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(
+        'console.log({ MODE: "staging", DEV: false }.MODE, { MODE: "staging", DEV: false }.DEV);',
+      );
+    },
+  });
+  // With `--env inline` the inlined `NODE_ENV` wins over a user define for
+  // `process.env.NODE_ENV`, so the mode keys follow the inlined value.
+  itBundled("edgecase/ImportMetaEnvBrowserInlinedNodeEnvWins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.BUN_ENV);
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.PROD);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "browser",
+    dotenv: "inline",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    capture: ['"development"', '"development"', "true", "false", '"development"'],
+    env: {
+      NODE_ENV: "development",
+      BUN_ENV: undefined,
+    },
+  });
+  // The CLI `--env disable` skips every default define. The JS API
+  // `env: "disable"` only skips the `.env` inlining and keeps the defaults,
+  // the same split `process.browser` and `process.env.NODE_ENV` have.
+  itBundled("edgecase/ImportMetaEnvBrowserEnvDisable", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(process.browser);
+      `,
+    },
+    target: "browser",
+    dotenv: "disable",
+    backend: "cli",
+    capture: ["import.meta.env.DEV", "process.browser"],
+  });
+  itBundled("edgecase/ImportMetaEnvBrowserEnvDisableApi", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(process.browser);
+      `,
+    },
+    target: "browser",
+    dotenv: "disable",
+    backend: "api",
+    capture: ["true", "true"],
+  });
+  itBundled("edgecase/ImportMetaEnvBunTargetKeepsAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "bun",
+    capture: ["import.meta.env.DEV", "import.meta.env.MODE"],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
+  itBundled("edgecase/ImportMetaEnvNodeTargetKeepsAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "node",
+    capture: ["import.meta.env.DEV", "import.meta.env.MODE"],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
   itBundled("edgecase/NodeEnvOptionalChaining", {
     // Matching `process?.env?.NODE_ENV` against the `process.env.NODE_ENV`
     // define would also match `Symbol?.for` etc. as side-effect-free; esbuild

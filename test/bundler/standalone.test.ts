@@ -466,6 +466,33 @@ body { color: blue; }`,
     expect(exitCode).toBe(0);
   });
 
+  // The main transpiler of a `--compile` build targets bun. The browser
+  // chunk comes from a client transpiler cloned from it, whose define table
+  // is rebuilt for the browser.
+  test("CLI --compile --target=browser folds import.meta.env and process.browser", async () => {
+    using dir = tempDir("compile-browser-import-meta-env", {
+      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
+      "app.js": `console.log(import.meta.env.DEV, import.meta.env.PROD, import.meta.env.MODE, process.browser);`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", "--production", "./index.html", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const html = await Bun.file(`${dir}/out/index.html`).text();
+    expect(html).not.toContain("import.meta.env");
+    expect(html).toContain('console.log(!1,!0,"production",!0)');
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("malformed HTML without closing tags still inlines JS and CSS", async () => {
     // This tests the cold fallback path when no </head>, </body>, or </html> tags exist.
     // The document is just a fragment - the loader must still inject both CSS and JS.

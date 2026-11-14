@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -71,6 +72,33 @@ describe("$.braces", () => {
       ["p{q,{r,}{s,}}t", ["pqt", "prst", "prt", "pst", "pt"]],
     ])("%s", (pattern, expected) => {
       expect($.braces(pattern)).toEqual(expected);
+    });
+  });
+
+  test.skipIf(!isASAN || isWindows)("long text in a nested group does not leak", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // Out of the module loader's stack, whose leaks are suppressed.
+          await new Promise(resolve => setImmediate(resolve));
+          console.log(Bun.$.braces("{a,{a text that is too long to be inline,b}}").join());
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "a,a text that is too long to be inline,b\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 

@@ -416,6 +416,10 @@ This also works when the mocked module is part of an import cycle. The modules t
 
 If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
+If that module has already begun to run, and waits for the mock at a top-level `await import()`, there is no copy. The factory gets the module itself, and the module runs once. Its `const`, `let` and `class` exports have no value until the factory returns, and reading one of them before that throws a `ReferenceError`. A `function` declaration can be called at once. A value that the mock reads later, inside one of its functions, is set by then. The import statements of a file with a hoisted call wait in this way too, because `bun test` runs them one at a time.
+
+A module that waits for the mock in a way that `bun test` cannot follow, such as through `Promise.race()`, still makes the test file fail with `never finished loading`.
+
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
 
 ### Getters and Missing Exports
@@ -804,6 +808,7 @@ test("lazy import", async () => {
 - If a module that is imported with a static import calls `vi.mock()` for a module that is waiting for an import with an async factory, the original still runs, and assigns its `const`, `let` and `class` exports. A module that reads one of those while it loads gets the original. What it reads later is the mock, and so are the `function` exports all along.
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
+- If a factory loads a module that waits for the factory's mock at a top-level `await import()`, the module runs once and the factory gets it before its exports are set. A `const`, `let` or `class` export then throws a `ReferenceError` in Bun, and reads as `undefined` in Vitest 5.1. Before Vitest 5.1 the test file does not finish loading.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.

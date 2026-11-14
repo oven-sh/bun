@@ -1978,12 +1978,41 @@ static JSC::JSPromise* thenWithContext(Zig::GlobalObject* globalObject, JSC::JSP
     return derived;
 }
 
-static bool addHoistingNote(JSC::VM& vm, JSValue error)
+// A factory gets a module that waits for the factory's own mock before the exports of that module are set. See promisesSettledByHostReaction().
+static String waitingModuleThatExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& name)
 {
+    auto& vm = JSC::getVM(globalObject);
+    RefPtr<AtomStringImpl> exported = AtomStringImpl::lookUp(name.impl());
+    if (!exported)
+        return {};
+    for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+        if (running.mock.get() != mock)
+            continue;
+        for (const String& key : running.importChain) {
+            auto* entry = Bun::testFileModuleLoader(globalObject)->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, key), JSC::ScriptFetchParameters::Type::JavaScript);
+            auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+            if (record && record->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && record->exportEntries().contains(exported.get()))
+                return key;
+        }
+    }
+    return {};
+}
+
+// Returns whether the error is a read of a variable that has no value yet.
+static bool addNoteToUninitializedVariableError(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSValue error)
+{
+    auto& vm = JSC::getVM(globalObject);
     String message = messageOfUninitializedVariableError(vm, error);
     if (message.isNull())
         return false;
-    uncheckedDowncast<JSC::ErrorInstance>(error)->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(message, "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted()."_s)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    String note = mock->isHoisted() ? String("\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted()."_s) : String();
+    size_t start = message.find('\'');
+    size_t end = start == notFound ? notFound : message.find('\'', start + 1);
+    String waiting = end == notFound ? String() : waitingModuleThatExports(globalObject, mock, message.substring(start + 1, end - start - 1));
+    if (!waiting.isNull())
+        note = makeString("\nnote: \""_s, waiting, "\" waits for this mock, so the factory gets it before its exports are set. Read them after the factory returns, or export a function declaration."_s);
+    if (!note.isNull())
+        uncheckedDowncast<JSC::ErrorInstance>(error)->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(message, note)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
     return true;
 }
 
@@ -2245,7 +2274,7 @@ void JSModuleMock::didFail(Zig::GlobalObject* globalObject, JSValue error)
 #endif
     state = State::NotCalled;
     result.clear();
-    readUninitializedVariable = isHoisted() && addHoistingNote(globalObject->vm(), error);
+    readUninitializedVariable = addNoteToUninitializedVariableError(globalObject, this, error) && isHoisted();
 #if ENABLE(AOT)
     // In `bun test` a load of the mock itself leaves no entry if the factory fails.
     if (auto file = moduleRequestedByLoad ? Bun::compiledModuleForPath(specifier->tryGetValue().data) : std::nullopt; file && file->index() == *moduleRequestedByLoad) {

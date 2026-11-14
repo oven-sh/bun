@@ -7506,3 +7506,223 @@ test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a v
   expect(stderr).toContain(" 4 pass\n 0 fail");
   expect(exitCode).toBe(0);
 });
+
+// The module waits for the mock, and the factory of the mock waits for the module. Neither can end first, so the factory's import()
+// gets the module as it is, as an import statement in a cycle does. bun test hoists vi.mock() and turns the other imports of such a
+// file into `await import()`, so an import statement beside a hoisted call waits in the same way.
+describe.concurrent("a factory that imports a module which waits for the factory's mock", () => {
+  const waits = (how: string) => `
+    ${how}
+    globalThis.runs = (globalThis.runs ?? 0) + 1;
+    export const seen = name;
+    export function make() { return "made"; }
+  `;
+  const factoryImports = (load: string) => `
+    import { expect, test, vi } from "bun:test";
+    import * as helper from "./helper.js";
+    vi.mock("./dep.js", async () => {
+      const inFactory = (globalThis.inFactory = await ${load});
+      globalThis.made = inFactory.make();
+      return { name: "mock" };
+    });
+    test("the factory and the test file have one module", async () => {
+      const dep = await import("./dep.js");
+      expect([helper.seen, dep.name, globalThis.made, globalThis.inFactory === helper, globalThis.runs]).toEqual(["mock", "mock", "made", true, 1]);
+    });
+  `;
+  const files = (how: string, load = `import("./helper.js")`) => ({
+    "dep.js": `export const name = "real";`,
+    "other.js": `export const other = "other";`,
+    "helper.js": waits(how),
+    "factory.test.js": factoryImports(load),
+  });
+  const hoistedBesideImport = `import { vi } from "bun:test"; import { name } from "./dep.js"; vi.mock("./other.js", () => ({ other: "mock" }));`;
+
+  test.each([
+    ["an import statement beside a hoisted vi.mock()", hoistedBesideImport],
+    ["an import statement beside vi.hoisted()", `import { vi } from "bun:test"; import { name } from "./dep.js"; vi.hoisted(() => 1);`],
+    ["await import()", `const { name } = await import("./dep.js");`],
+    ["a .then() of import()", `const name = await import("./dep.js").then(dep => dep.name);`],
+    ["Promise.all() of import()", `const [{ name }] = await Promise.all([import("./dep.js")]);`],
+    ["an async function that awaits import()", `const name = await (async () => (await import("./dep.js")).name)();`],
+    ["for await over import()", `let name; for await (const dep of [import("./dep.js")]) name = dep.name;`],
+  ])("the module waits at %s: it runs once, and the factory gets it before its exports are set", async (_, how) => {
+    await expectFixturesToPass(files(how), 1);
+  });
+
+  test.each([
+    ["vi.importActual()", [`vi.importActual("./helper.js")`]],
+    ["import() under --isolate", [`import("./helper.js")`, "--isolate"]],
+  ])("the factory loads the module with %s", async (_, [load, ...args]) => {
+    await expectFixturesToPass(files(hoistedBesideImport, load), 1, args);
+  });
+
+  test.each([
+    [
+      "a module that re-exports it",
+      { "barrel.js": `export * from "./helper.js";` },
+      `import("./barrel.js")`,
+      `[helper.seen, dep.name, globalThis.made, globalThis.inFactory.make === helper.make, globalThis.runs]`,
+    ],
+    [
+      "a statement of a module between them",
+      {
+        "helper.js": waits(`import { vi } from "bun:test"; import { name } from "./mid.js"; vi.mock("./other.js", () => ({ other: "mock" }));`),
+        "mid.js": `export { name } from "./dep.js";`,
+      },
+      `import("./helper.js")`,
+      `[helper.seen, dep.name, globalThis.made, globalThis.inFactory === helper, globalThis.runs]`,
+    ],
+    [
+      "a second module that waits for the first",
+      {
+        "helper.js": waits(`import { vi } from "bun:test"; import { name } from "./inner.js"; vi.mock("./other.js", () => ({ other: "mock" }));`),
+        "inner.js": `import { vi } from "bun:test"; import { name as inner } from "./dep.js"; vi.hoisted(() => 1); export const name = inner;`,
+      },
+      `import("./helper.js")`,
+      `[helper.seen, dep.name, globalThis.made, globalThis.inFactory === helper, globalThis.runs]`,
+    ],
+  ])("the wait goes through %s", async (_, more, load, values) => {
+    await expectFixturesToPass(
+      {
+        ...files(hoistedBesideImport, load),
+        ...more,
+        "factory.test.js": factoryImports(load).replace(
+          `[helper.seen, dep.name, globalThis.made, globalThis.inFactory === helper, globalThis.runs]`,
+          values,
+        ),
+      },
+      1,
+    );
+  });
+
+  test.each([["vi.doMock()"], ["mock.module()"], ["jest.doMock()"]])(
+    "the wait begins inside a test, after %s, while a server listens",
+    async mockIt => {
+      await expectFixturesToPass(
+        {
+          ...files(`const { name } = await import("./dep.js");`),
+          "factory.test.js": `
+            import { expect, jest, mock, test, vi } from "bun:test";
+            test("the factory and the test have one module", async () => {
+              await using server = Bun.serve({ port: 0, fetch: () => new Response("") });
+              ${mockIt.slice(0, -2)}("./dep.js", async () => {
+                const inFactory = (globalThis.inFactory = await import("./helper.js"));
+                globalThis.made = inFactory.make();
+                return { name: "mock" };
+              });
+              const helper = await import("./helper.js");
+              expect([helper.seen, globalThis.made, globalThis.inFactory === helper, globalThis.runs]).toEqual(["mock", "made", true, 1]);
+            });
+          `,
+        },
+        1,
+      );
+    },
+  );
+
+  test("a const of the module that the factory reads at once is not set yet, and the error names the module", async () => {
+    using dir = tempDir("mock-module", {
+      ...files(hoistedBesideImport),
+      "factory.test.js": `
+        import { test, vi } from "bun:test";
+        import "./helper.js";
+        vi.mock("./dep.js", async () => ({ name: "mock of " + (await import("./helper.js")).seen }));
+        test("is not reached", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "test"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("ReferenceError: Cannot access 'seen' before initialization.");
+    expect(stderr).toContain(`helper.js" waits for this mock, so the factory gets it before its exports are set.`);
+    expect(stderr).not.toContain("are hoisted above");
+    expect(stderr).not.toContain("never finished loading");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// What must stay as it is: nothing in these waits for the factory, or the factory does not wait.
+describe.concurrent("a factory that imports a module which does not wait for the factory", () => {
+  test("a module whose import() of the path began before the mock was made stays the one instance", async () => {
+    await expectFixturesToPass(
+      {
+        "db.js": `globalThis.dbRuns = (globalThis.dbRuns ?? 0) + 1; export const query = id => "real:" + id;`,
+        "logger.js": `export const log = () => "real log";`,
+        "service.js": `
+          import { vi } from "bun:test";
+          import { query } from "./db.js";
+          vi.mock("./logger.js", () => ({ log: () => "mock log" }));
+          globalThis.serviceRuns = (globalThis.serviceRuns ?? 0) + 1;
+          export const registry = new Set();
+          export const find = id => query(id);
+        `,
+        "setup.js": `
+          import { vi } from "bun:test";
+          import { query } from "./db.js";
+          vi.mock("./db.js", async () => {
+            const service = await import("./service.js");
+            service.registry.add("registered by the factory");
+            return { query: id => "mock:" + id };
+          });
+          export const setupQuery = query;
+        `,
+        "service.test.js": `
+          import { expect, test } from "bun:test";
+          import { registry, find } from "./service.js";
+          import { setupQuery } from "./setup.js";
+          test("what the factory registers in the service is what the test reads", () => {
+            expect([setupQuery(1), find(1), [...registry], globalThis.serviceRuns, globalThis.dbRuns]).toEqual(["real:1", "real:1", ["registered by the factory"], 1, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test.each([
+    ["keeps the promise of its import()", `export const later = import("./dep.js"); const name = "no wait";`, ["no wait", "mock", true, 1]],
+    ["imports the mocked module in a function", `export const load = () => import("./dep.js"); const name = "no wait";`, ["no wait", "mock", true, 1]],
+  ])("a module that %s is the one instance", async (_, how, values) => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const name = "real";`,
+        "helper.js": `${how} globalThis.runs = (globalThis.runs ?? 0) + 1; export const seen = name;`,
+        "factory.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as helper from "./helper.js";
+          vi.mock("./dep.js", async () => {
+            globalThis.inFactory = await import("./helper.js");
+            return { name: "mock" };
+          });
+          test("the factory waited for the module", async () => {
+            const dep = await import("./dep.js");
+            expect([helper.seen, dep.name, globalThis.inFactory === helper, globalThis.runs]).toEqual(${JSON.stringify(values)});
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("a factory that does not await its import() of a module that waits gets the module once it has run", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const name = "real";`,
+        "helper.js": `const { name } = await import("./dep.js"); globalThis.runs = (globalThis.runs ?? 0) + 1; export const seen = name;`,
+        "factory.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as helper from "./helper.js";
+          vi.mock("./dep.js", () => {
+            globalThis.inFactory = import("./helper.js");
+            return { name: "mock" };
+          });
+          test("the promise of the factory's import() is for the one module", async () => {
+            const inFactory = await globalThis.inFactory;
+            expect([helper.seen, inFactory.seen, inFactory === helper, globalThis.runs]).toEqual(["mock", "mock", true, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+});

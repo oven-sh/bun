@@ -137,8 +137,7 @@ function generateGraph(seed: number): Graph {
       for (const use of uses) src += use + ";\n";
       if (chance(0.2)) {
         const t = 1 + int(n - 1);
-        if (t !== i)
-          src += `later(() => import("./f${t}.ts").then(m => read("f${i}~import${t}", () => m.get${t}())));\n`;
+        src += `later(() => import("./f${t}.ts").then(m => read("f${i}~import${t}", () => m.get${t}())));\n`;
       }
       src += `note("f${i}:done");\n`;
     }

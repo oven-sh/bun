@@ -723,6 +723,27 @@ describe("bundler", () => {
       run: { stdout: "entry ran\nentry entry" },
     });
 
+    // A file that calls `import()` on itself loads its own chunk: the module that already ran, not a second copy.
+    itBundled("compile/splitting/ImportOfItself", {
+      backend: "cli",
+      compile: true,
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import { viaLib } from "./lib.ts";
+          export const who = "entry";
+          console.log("entry ran");
+          Promise.all([import("./entry.ts"), viaLib]).then(([entry, lib]) => console.log(entry.who, lib.who));
+        `,
+        "/lib.ts": /* js */ `
+          export const who = "lib";
+          console.log("lib ran");
+          export const viaLib = import("./lib.ts");
+        `,
+      },
+      run: { stdout: "lib ran\nentry ran\nentry lib" },
+    });
+
     itBundled("compile/splitting/ImportMainEntryPointFromOtherEntryPoint", {
       backend: "cli",
       compile: true,

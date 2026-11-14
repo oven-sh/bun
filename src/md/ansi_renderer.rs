@@ -555,6 +555,8 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
+        // Before the span opens, so that its style and link do not cover the indent.
+        self.begin_line();
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -696,6 +698,7 @@ impl<'a> AnsiRenderer<'a> {
                 // Render raw HTML dimmed. Close with the targeted dim-off
                 // (\x1b[22m) rather than a full reset, then reapply any
                 // outer span/link styles.
+                self.begin_line();
                 self.write_styled(ansi_b::DIM, b"");
                 self.write_content(content);
                 self.write_styled(b"\x1b[22m", b"");
@@ -750,25 +753,23 @@ impl<'a> AnsiRenderer<'a> {
     /// Emit a chunk to output, wrapping at word boundaries when the column
     /// exceeds `theme.columns`.
     fn write_wrapped(&mut self, data: &[u8]) {
+        // `begin_line()` spelled out (cheaper than a call behind a test). Nothing to draw does not begin a line.
+        if self.last_was_newline && !data.is_empty() {
+            self.write_pending_indent();
+        }
         if self.theme.columns == 0 {
             // No-wrap path: still emit the indent after each embedded
             // newline so continuation lines inside blockquotes / list
             // items keep their `│ ` / hanging prefix.
-            let mut start: usize = 0;
-            let mut i: usize = 0;
-            while i < data.len() {
-                if data[i] == b'\n' {
-                    self.write_raw(&data[start..i + 1]);
-                    self.col = 0;
-                    self.last_was_newline = true;
-                    self.write_indent();
-                    start = i + 1;
-                }
-                i += 1;
+            let mut rest = data;
+            while let Some(newline) = strings::index_of_char_usize(rest, b'\n') {
+                self.write_raw(&rest[..newline]);
+                rest = &rest[newline + 1..];
+                self.break_line(rest);
             }
-            if start < data.len() {
-                self.write_raw(&data[start..]);
-                self.update_col_from_text(&data[start..]);
+            if !rest.is_empty() {
+                self.write_raw(rest);
+                self.update_col_from_text(rest);
             }
             return;
         }
@@ -778,26 +779,16 @@ impl<'a> AnsiRenderer<'a> {
         while i < data.len() {
             let c = data[i];
             if c == b'\n' {
-                self.write_raw(b"\n");
-                self.last_was_newline = true;
-                self.col = 0;
                 i += 1;
-                // Always re-emit the indent after a newline, even when
-                // this is the final byte of `data` — a hard break
-                // (`text(.br)`) arrives as a lone "\n" and the next
-                // text() call starts at col=0 with no indent pushed.
-                self.write_indent();
+                self.break_line(&data[i..]);
                 continue;
             }
             if c == b' ' && self.col >= max {
-                self.write_raw(b"\n");
-                self.last_was_newline = true;
-                self.col = 0;
-                self.write_indent();
                 i += 1;
                 while i < data.len() && data[i] == b' ' {
                     i += 1;
                 }
+                self.break_line(&data[i..]);
                 continue;
             }
             let mut j = i;
@@ -866,10 +857,7 @@ impl<'a> AnsiRenderer<'a> {
                     && self.col > indent
                     && next_word_width <= next_avail as usize
                 {
-                    self.write_raw(b"\n");
-                    self.last_was_newline = true;
-                    self.col = 0;
-                    self.write_indent();
+                    self.break_line(&data[k..]);
                 } else {
                     self.soft_break = Some(SoftBreak {
                         at: self.out.list.len(),
@@ -947,10 +935,12 @@ impl<'a> AnsiRenderer<'a> {
     /// both the escape prefix and the text through the active buffer so
     /// spans inside cells/headings flush correctly.
     fn write_styled(&mut self, prefix: &[u8], text_: &[u8]) {
-        let in_main_flow = !self.in_cell
-            && self.heading_level == 0
-            && !self.in_code_block
-            && self.image_depth == 0;
+        let in_main_flow = self.in_main_flow();
+
+        // `begin_line()` spelled out as in `write_wrapped`. An escape alone begins no line: nothing may follow it.
+        if self.last_was_newline && !text_.is_empty() {
+            self.write_pending_indent();
+        }
 
         // Pre-wrap before opening the style: an atomic span (`.code`,
         // `.latexmath`, link href fallback) is emitted in one piece via
@@ -1115,9 +1105,9 @@ impl<'a> AnsiRenderer<'a> {
         if text_.is_empty() {
             return;
         }
+        self.begin_line();
         self.emit_inline(text_);
-        if !self.in_cell && self.heading_level == 0 && !self.in_code_block && self.image_depth == 0
-        {
+        if self.in_main_flow() {
             self.col += u32::try_from(visible_width(text_)).expect("int cast");
             self.last_was_newline = false;
         }
@@ -1215,12 +1205,48 @@ impl<'a> AnsiRenderer<'a> {
         (quote_bars, other_indent)
     }
 
+    /// Inline writes go to `out`, not to the buffer of a cell, heading, code block or image alt.
+    fn in_main_flow(&self) -> bool {
+        !self.in_cell && self.heading_level == 0 && !self.in_code_block && self.image_depth == 0
+    }
+
+    /// Writes the indent of a line before its first inline content. A line break writes none.
+    #[inline]
+    fn begin_line(&mut self) {
+        if self.last_was_newline {
+            self.write_pending_indent();
+        }
+    }
+
+    /// Out of line, so that `begin_line` costs each inline write one test.
+    #[cold]
+    fn write_pending_indent(&mut self) {
+        if self.in_main_flow() {
+            self.write_indent();
+        }
+    }
+
+    /// Ends a line of inline content. The next line gets its indent now only if `rest` follows.
+    #[inline(never)] // Inlined, its test is on the path of every word in `write_wrapped`.
+    fn break_line(&mut self, rest: &[u8]) {
+        self.write_raw(b"\n");
+        self.col = 0;
+        if !rest.is_empty() {
+            self.write_indent();
+        }
+    }
+
     fn write_indent(&mut self) {
         // writeIndent is called at the start of every content line, so
         // this is the right place to clear the "blank line just emitted"
         // flag ensureBlankLine uses for dedup.
         self.blank_emitted = false;
         let (quote_bars, other_indent) = self.indent_counts();
+        if quote_bars + other_indent == 0 {
+            return;
+        }
+        // A line with an indent is not empty: `ensure_newline` ends it and `begin_line` adds none.
+        self.last_was_newline = false;
         let bar: &[u8] = if self.theme.colors {
             "│ ".as_bytes()
         } else {
@@ -2030,9 +2056,6 @@ impl<'a> AnsiRenderer<'a> {
         self.write_raw(b"\n");
         self.col = 0;
         self.last_was_newline = true;
-        // Re-emit the active block indent so text that follows the image
-        // inside a blockquote / list item keeps its `│ ` / hanging prefix.
-        self.write_indent();
     }
 
     /// Emit a Kitty Graphics Protocol transmit-and-display sequence with
@@ -2046,7 +2069,6 @@ impl<'a> AnsiRenderer<'a> {
         self.write_raw(b"\n");
         self.col = 0;
         self.last_was_newline = true;
-        self.write_indent();
     }
 }
 

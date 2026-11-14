@@ -983,28 +983,106 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_signal None;
     };
 
-    // We do this 2nd to last instead of last so that if it's a FormData
-    // object, we can still insert the boundary.
-    //
-    // We must always get the Body before the Headers That way, we can set
-    // the Content-Type header from the Blob if no Content-Type header is
-    // set in the Headers
-    //
-    // which is important for FormData.
-    // https://github.com/oven-sh/bun/issues/2264
-    //
     // body: BodyInit | null | undefined;
     //
-    let mut body = 'extract_body: {
+    // A by-reference body is extracted after `headers` is read and converted.
+    let init_body: Option<JSValue> = 'brk: {
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(
-                        &ctx.js_thread(context),
-                        body__,
-                    )?);
+                    break 'brk Some(body__);
                 }
             }
+        }
+
+        if let Some(req) = request_init_object {
+            if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
+                if !body__.is_undefined() {
+                    break 'brk Some(body__);
+                }
+            }
+        }
+
+        break 'brk None;
+    };
+
+    let eager_body = match init_body {
+        Some(body__) if !BodyValue::is_extracted_by_reference(body__) => {
+            Some(HTTPRequestBody::from_js(&ctx.js_thread(context), body__)?)
+        }
+        _ => None,
+    };
+
+    // HTTPRequestBody::from_js() throws without returning Err; see Blob::from_dom_form_data
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
+
+    // headers: Headers | undefined;
+    //
+    // Holds the +1 from `create_from_js` until the headers are applied.
+    let mut created_headers: Option<HeadersRef> = None;
+    // Roots a borrowed `Headers` wrapper across the body extraction, which can run JS.
+    let mut headers_guard: Option<jsc::EnsureStillAlive> = None;
+    let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
+        let init_headers: Option<JSValue> = 'init: {
+            if let Some(options) = options_object {
+                if let Some(headers_value) =
+                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
+                {
+                    if !headers_value.is_undefined() {
+                        break 'init Some(headers_value);
+                    }
+                }
+            }
+
+            if let Some(req) = request_ref!() {
+                if let Some(head) = req.get_fetch_headers_unless_empty() {
+                    break 'brk Some(head.as_ptr());
+                }
+                break 'brk None;
+            }
+
+            if let Some(options) = request_init_object {
+                if let Some(headers_value) =
+                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
+                {
+                    if !headers_value.is_undefined() {
+                        break 'init Some(headers_value);
+                    }
+                }
+            }
+
+            break 'init None;
+        };
+
+        let Some(headers_value) = init_headers else {
+            break 'brk None;
+        };
+
+        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
+                break 'brk None;
+            }
+            headers_guard = Some(jsc::EnsureStillAlive(headers_value));
+            break 'brk Some(headers__.as_ptr());
+        }
+
+        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+            break 'brk Some(created_headers.insert(headers__).as_ptr());
+        }
+
+        break 'brk None;
+    };
+
+    let mut body = 'extract_body: {
+        if eager_body.is_some() {
+            break 'extract_body eager_body;
+        }
+
+        if let Some(body__) = init_body {
+            break 'extract_body Some(HTTPRequestBody::from_js(&ctx.js_thread(context), body__)?);
         }
 
         if let Some(req) = request_ref!() {
@@ -1072,17 +1150,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             ));
         }
 
-        if let Some(req) = request_init_object {
-            if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
-                if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(
-                        &ctx.js_thread(context),
-                        body__,
-                    )?);
-                }
-            }
-        }
-
         break 'extract_body None;
     }
     .unwrap_or_default();
@@ -1092,94 +1159,32 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Err(jsc::JsError::Thrown);
     }
 
-    // headers: Headers | undefined;
-    headers = 'extract_headers: {
-        // Holds the +1 from `create_from_js` until this block exits.
-        let mut created_headers: Option<HeadersRef> = None;
-
-        let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
-            if let Some(options) = options_object {
-                if let Some(headers_value) =
-                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
-                {
-                    if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
-                        }
-
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
-                    }
-                }
+    // A Blob or FormData Content-Type is applied after the body is extracted (#2264).
+    if let Some(headers_) = fetch_headers {
+        // `headers_` points to a live FetchHeaders (either JS-owned or
+        // refcounted via `created_headers` above). `FetchHeaders` is
+        // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
+        let headers_ref = bun_opaque::opaque_deref_mut(headers_);
+        if url.is_s3() {
+            if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
+                range = Some(range_.to_owned_slice_z());
             }
+        }
 
-            if let Some(req) = request_ref!() {
-                if let Some(head) = req.get_fetch_headers_unless_empty() {
-                    break 'brk Some(head.as_ptr());
-                }
-                break 'brk None;
+        if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
+            if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
+                upgraded_connection = true;
             }
+        }
 
-            if let Some(options) = request_init_object {
-                if let Some(headers_value) =
-                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
-                {
-                    if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
-                        }
-
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
-                    }
-                }
-            }
-
-            break 'extract_headers headers;
-        };
-
-        let result = if let Some(headers_) = fetch_headers {
-            // `headers_` points to a live FetchHeaders (either JS-owned or
-            // refcounted via `created_headers` above). `FetchHeaders` is
-            // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
-            let headers_ref = bun_opaque::opaque_deref_mut(headers_);
-            if url.is_s3() {
-                if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
-                    range = Some(range_.to_owned_slice_z());
-                }
-            }
-
-            if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
-                    upgraded_connection = true;
-                }
-            }
-
-            Some(from_fetch_headers(
-                global_this,
-                Some(headers_ref),
-                any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-            )?)
-        } else {
-            headers
-        };
-
-        break 'extract_headers result;
-    };
+        headers = Some(from_fetch_headers(
+            global_this,
+            Some(headers_ref),
+            any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
+        )?);
+    }
+    drop(headers_guard);
+    drop(created_headers);
 
     if proxy.is_some() && !unix_socket_path.is_empty() {
         let err = ctx.to_type_error(

@@ -1055,6 +1055,10 @@ impl Request {
         let values_to_try =
             &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
+        // A by-reference `body`, extracted after the other members and the URL check.
+        let mut body_init: Option<JSValue> = None;
+        let mut keepalive_with_stream_body = false;
+
         for &value in values_to_try {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
@@ -1182,33 +1186,33 @@ impl Request {
                 match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(cx.global(), "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(cx
-                                        .global()
-                                        .throw_type_error(format_args!("keepalive"))));
+                        if BodyValue::is_extracted_by_reference(body_) {
+                            body_init = Some(body_);
+                            // `keepalive: true` with a stream body throws "keepalive" (as Node).
+                            if crate::webcore::ReadableStream::is_readable_stream(body_) {
+                                match value.get(cx.global(), "keepalive") {
+                                    Ok(Some(keepalive)) => {
+                                        keepalive_with_stream_body = keepalive.to_boolean();
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => bail!(Err(e)),
                                 }
-                                Ok(_) => {}
+                            }
+                        } else {
+                            match BodyValue::from_js(cx.global(), body_) {
+                                Ok(v) => {
+                                    *req.body_value_mut() = v;
+                                }
                                 Err(e) => bail!(Err(e)),
                             }
-                        }
-                        match BodyValue::from_js(cx.global(), body_) {
-                            Ok(v) => {
-                                *req.body_value_mut() = v;
+                            // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
+                            if cx.global().has_exception() {
+                                bail!(Err(JsError::Thrown));
                             }
-                            Err(e) => bail!(Err(e)),
                         }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
-                }
-
-                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
-                if cx.global().has_exception() {
-                    bail!(Err(JsError::Thrown));
                 }
             }
 
@@ -1378,6 +1382,22 @@ impl Request {
         // decrement it to be perfectly balanced.
 
         req.url.set(href);
+
+        if let Some(body_) = body_init {
+            if keepalive_with_stream_body {
+                bail!(Err(cx.global().throw_type_error(format_args!("keepalive"))));
+            }
+            match BodyValue::from_js(cx.global(), body_) {
+                Ok(v) => {
+                    *req.body_value_mut() = v;
+                }
+                Err(e) => bail!(Err(e)),
+            }
+            // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
+            if cx.global().has_exception() {
+                bail!(Err(JsError::Thrown));
+            }
+        }
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

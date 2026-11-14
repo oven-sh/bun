@@ -4290,3 +4290,100 @@ it("verbose fetch logging escapes control characters coming from the peer", asyn
   expect(stderr).not.toMatch(/[\x80-\x9f]/);
   expect(exitCode).toBe(0);
 });
+
+// fetch() reads and converts init.headers before it extracts a body that is read by reference
+// (URLSearchParams, FormData, a typed array), so a `headers` getter that mutates the body object is
+// part of the body (#48468).
+describe("fetch() extracts a by-reference body after init.headers is read", () => {
+  async function echo(fn: (url: string) => Promise<Response>) {
+    using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(await req.text()),
+    });
+    return await (await fn(server.url.href)).text();
+  }
+
+  it("reads init.headers before it extracts a URLSearchParams body", async () => {
+    const params = new URLSearchParams("a=1");
+    const text = await echo(url =>
+      fetch(url, {
+        method: "POST",
+        body: params,
+        get headers() {
+          params.append("b", "2");
+          return {};
+        },
+      }),
+    );
+    expect(text).toBe("a=1&b=2");
+  });
+
+  it("reads init.headers before it extracts the body of an init object input", async () => {
+    const params = new URLSearchParams("a=1");
+    const text = await echo(url =>
+      fetch({
+        url,
+        method: "POST",
+        body: params,
+        get headers() {
+          params.append("b", "2");
+          return {};
+        },
+      } as unknown as Request),
+    );
+    expect(text).toBe("a=1&b=2");
+  });
+
+  it("converts an object body to a string when `body` is read", async () => {
+    let value = "a=1";
+    const order: string[] = [];
+    const text = await echo(url =>
+      fetch(url, {
+        method: "POST",
+        get body() {
+          order.push("body");
+          return { toString: () => value } as unknown as BodyInit;
+        },
+        get headers() {
+          order.push("headers");
+          value = "mutated";
+          return {};
+        },
+      }),
+    );
+    expect(order).toEqual(["body", "headers"]);
+    expect(text).toBe("a=1");
+  });
+
+  it("keeps a Headers object from a getter alive while the body is extracted", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(`${req.headers.get("x-test")}:${await req.text()}`),
+    });
+    for (let i = 0; i < 16; i++) {
+      const response = await fetch(server.url, {
+        method: "POST",
+        get headers() {
+          return new Headers({ "x-test": "1" });
+        },
+        body: [
+          {
+            toString() {
+              Bun.gc(true);
+              return "a=1";
+            },
+          },
+        ] as unknown as BodyInit,
+      });
+      expect(await response.text()).toBe("1:a=1");
+    }
+  });
+
+  it("an invalid header rejects before a locked stream body is checked", async () => {
+    const stream = new ReadableStream();
+    stream.getReader();
+    await expect(
+      fetch("http://127.0.0.1:1/", { method: "POST", body: stream, headers: { "a b": "1" } }),
+    ).rejects.toThrow("Invalid header name: 'a b'");
+  });
+});

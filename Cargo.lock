@@ -1484,7 +1484,6 @@ name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_core_macros",
 ]

@@ -39,11 +39,7 @@ pub struct ServerEntryPoint {
 // auto-generated `Drop`, so no explicit impl is needed.
 
 impl ServerEntryPoint {
-    /// `bun:main` imports the namespace of the entry point and does nothing more. When it has
-    /// evaluated, `moduleLoaderEvaluate` looks in that namespace for a server to start
-    /// (`Bun::evaluateEntryPointWrapper` in `BunCompiledEntryPoint.cpp`). It knows the module by
-    /// this text, so the last line makes the text of each load another one: the `bun:main` of a
-    /// load that a `--hot` reload replaced is not the `bun:main` of the new load.
+    /// `bun:main` only imports the entry point. `isEntryPointWrapperOfThisLoad` knows it by this text, which is new for each load.
     pub fn generate(entry: &mut ServerEntryPoint, path_to_use: &[u8]) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the

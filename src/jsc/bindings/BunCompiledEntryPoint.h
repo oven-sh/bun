@@ -13,9 +13,7 @@ extern "C" bool Bun__VM__shouldLookForServerBehindBunMain(void*);
 
 namespace Bun {
 
-// When the entry point has evaluated, the host looks at its exports for a server to start: `export default { fetch }`.
-// An entry point that is not compiled is the one import of the module `bun:main`. moduleLoaderEvaluate() evaluates that module
-// with evaluateEntryPointWrapper(), which then looks.
+// moduleLoaderEvaluate() evaluates `bun:main`, which imports the entry point, with evaluateEntryPointWrapper(): that looks for a server (`export default { fetch }`).
 bool isEntryPointWrapperOfThisLoad(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
 JSC::JSValue evaluateEntryPointWrapper(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue moduleRecord, RefPtr<JSC::ScriptFetcher>&&, JSC::JSValue sentValue, JSC::JSValue resumeMode);
 

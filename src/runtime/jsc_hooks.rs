@@ -750,8 +750,7 @@ fn generate_entry_point(_vm: &VirtualMachine, entry_path: &[u8]) -> bool {
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, entry_path).is_ok()
 }
 
-/// BunCompiledEntryPoint.cpp. The text of the `bun:main` that `generate_entry_point` made last on
-/// this thread, empty before the first one. Borrowed until the next one.
+/// BunCompiledEntryPoint.cpp. The text of the `bun:main` that this thread generated last. Borrowed until the next one.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__entryPointWrapperSource(
     _vm: &VirtualMachine,

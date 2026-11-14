@@ -149,8 +149,7 @@ pub enum MainEntryPoint {
     Bake,
 }
 
-/// Who looks at the exports of the entry for a server to start (`export default { fetch }`), once
-/// the entry has evaluated.
+/// Who looks for a server in the exports of the entry (`export default { fetch }`), once it has evaluated.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ServerLook {
     /// Nobody: the look is done, or this kind of entry gets none.

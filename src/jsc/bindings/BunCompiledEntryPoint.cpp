@@ -152,9 +152,7 @@ static void lookForServer(Zig::GlobalObject* globalObject, JSValue entryNamespac
         addNoteOfLook(globalObject, exception, "looked for a server in"_s);
 }
 
-// `bun:main` is known by its key and by its text. The text names the entry point and the load that it is for: a module of node:vm
-// with the identifier `bun:main` has another text, and so has the `bun:main` that a `--hot` reload replaced. A ShadowRealm and a
-// Bun.ModuleGraph load the same text with a loader of their own.
+// The text of `bun:main` names the entry point and the load. A ShadowRealm and a Bun.ModuleGraph load that text with a loader of their own.
 bool isEntryPointWrapperOfThisLoad(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecordValue)
 {
     auto& vm = JSC::getVM(globalObject);

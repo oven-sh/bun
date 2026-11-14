@@ -94,6 +94,33 @@ describe("parse shell", () => {
         },
       ],
     });
+
+    expect(JSON.parse(parse`echo a$? $$`)).toEqual({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: [
+                  { simple: { Text: "echo" } },
+                  {
+                    compound: {
+                      atoms: [{ Text: "a" }, { special_param: "$?" }],
+                      brace_expansion_hint: false,
+                      glob_hint: false,
+                    },
+                  },
+                  { simple: { special_param: "$$" } },
+                ],
+                redirect: redirect({}),
+                redirect_file: null,
+              },
+            },
+          ],
+        },
+      ],
+    });
   });
 
   test("compound atom", () => {

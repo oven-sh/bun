@@ -21,6 +21,36 @@ describe.concurrent("run-shell", () => {
     expect(stdout).toEqual("wah\n");
   });
 
+  test("a shell script expands $? and $$", async () => {
+    using dir = tempDir("run-shell-special-params", {
+      "status.sh": 'false\necho $? "$?"\necho $$\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "status.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `1 1\n${proc.pid}\n`, stderr: "", exitCode: 0 });
+  });
+
+  test("bun run --shell=bun expands $? in a package.json script", async () => {
+    using dir = tempDir("run-shell-special-params", {
+      "package.json": JSON.stringify({ name: "special-params", scripts: { status: "false; echo $?" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "--silent", "status"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+  });
+
   test("invalid syntax reports the error correctly", async () => {
     const dir = tmpdirSync("bun-shell-test-error");
     mkdirSync(dir, { recursive: true });

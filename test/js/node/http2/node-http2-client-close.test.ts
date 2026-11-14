@@ -10,12 +10,14 @@
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
+import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import { Duplex } from "node:stream";
 import { describe, test } from "node:test";
 
-const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
+const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_ENHANCE_YOUR_CALM } =
+  http2.constants;
 
 // Raw h2c server: replies 200 + one DATA frame and never sends END_STREAM, so the only way the
 // stream ends is via the client's close(code). With `reset`, it replies RST_STREAM alone.
@@ -507,6 +509,144 @@ describe("closing a request before its invalid headers are rejected keeps rstCod
           server.close();
         }
       });
+    }
+  }
+});
+
+describe("respond() after close(code)", () => {
+  for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_REFUSED_STREAM]) {
+    for (const [when, wait] of [
+      ["in the same turn", null],
+      ["one microtask later", () => Promise.resolve()],
+    ] as const) {
+      // One microtask after close(NO_ERROR), a stream that has no request body is destroyed.
+      if (code === NGHTTP2_NO_ERROR && wait !== null) continue;
+      test(`close(${code}), respond() ${when} throws, and the client gets no 'response'`, async () => {
+        const server = http2.createServer();
+        const { promise: responded, resolve: respond } = Promise.withResolvers<string>();
+        server.on("stream", async stream => {
+          stream.on("error", () => {});
+          stream.close(code);
+          if (wait !== null) await wait();
+          try {
+            stream.respond({ ":status": 200 });
+            stream.end("ok");
+            respond("respond() returned");
+          } catch (error) {
+            respond("respond() threw " + (error as NodeJS.ErrnoException).code);
+          }
+        });
+        const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+        try {
+          const events: string[] = [];
+          const { promise: closed, resolve } = Promise.withResolvers<void>();
+          const req = client.request({ ":path": "/" }, { endStream: true });
+          req.on("response", headers => events.push("response " + headers[":status"]));
+          req.on("error", error => events.push("error:" + (error as NodeJS.ErrnoException).code));
+          req.on("close", () => {
+            events.push("close:" + req.rstCode);
+            resolve();
+          });
+          req.resume();
+          await closed;
+          const isError = code !== NGHTTP2_NO_ERROR && code !== NGHTTP2_CANCEL;
+          assert.deepStrictEqual(
+            { server: await responded, client: events },
+            {
+              server: "respond() threw ERR_HTTP2_INVALID_STREAM",
+              client: isError ? ["error:ERR_HTTP2_STREAM_ERROR", `close:${code}`] : [`close:${code}`],
+            },
+          );
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      });
+    }
+  }
+
+  // What a request gets, and what its server stream emits, for one way to answer a stream that is closed.
+  async function answerClosedStream(answer: (stream: http2.ServerHttp2Stream, events: string[]) => void) {
+    const server = http2.createServer();
+    const { promise: serverClosed, resolve: onServerClose } = Promise.withResolvers<string[]>();
+    server.on("stream", stream => {
+      const events: string[] = [];
+      stream.on("error", error => events.push("error:" + (error as NodeJS.ErrnoException).code));
+      stream.on("close", () => onServerClose([...events, "close:" + stream.rstCode]));
+      answer(stream, events);
+    });
+    const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+    try {
+      const events: string[] = [];
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      const req = client.request({ ":path": "/" }, { endStream: true });
+      req.on("response", headers => events.push("response " + headers[":status"]));
+      req.on("error", error => events.push("error:" + (error as NodeJS.ErrnoException).code));
+      req.on("close", () => {
+        events.push("close:" + req.rstCode);
+        resolve();
+      });
+      req.resume();
+      await closed;
+      return { server: await serverClosed, client: events };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  for (const method of ["respondWithFD", "respondWithFile"] as const) {
+    test(`close(code), ${method}() in the same turn throws, and the client gets no 'response'`, async () => {
+      const fd = fs.openSync(import.meta.filename, "r");
+      try {
+        const result = await answerClosedStream((stream, events) => {
+          stream.close(NGHTTP2_CANCEL);
+          try {
+            if (method === "respondWithFD") stream.respondWithFD(fd);
+            else stream.respondWithFile(import.meta.filename);
+            events.push("returned");
+          } catch (error) {
+            events.push("threw " + (error as NodeJS.ErrnoException).code);
+          }
+        });
+        assert.deepStrictEqual(result, { server: ["threw ERR_HTTP2_INVALID_STREAM", "close:8"], client: ["close:8"] });
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
+    // Node starts to read the file when the statCheck returns. Node 26 can crash when the stream closes before that
+    // read is done (SIGSEGV in the callback of FileHandle::ReadStart()), so these cases run on Bun only.
+    for (const [how, run, server, client] of [
+      ["closes the stream with CANCEL", stream => stream.close(NGHTTP2_CANCEL), ["close:8"], ["close:8"]],
+      [
+        "closes the stream with INTERNAL_ERROR",
+        stream => stream.close(NGHTTP2_INTERNAL_ERROR),
+        ["error:ERR_HTTP2_STREAM_ERROR", "close:2"],
+        ["error:ERR_HTTP2_STREAM_ERROR", "close:2"],
+      ],
+      ["destroys the stream", stream => stream.destroy(), ["close:0"], ["close:0"]],
+    ] as [string, (stream: http2.ServerHttp2Stream) => void, string[], string[]][]) {
+      test(
+        `a statCheck of ${method}() that ${how} cancels the response and raises nothing more`,
+        { skip: typeof Bun === "undefined" },
+        async () => {
+          const fd = fs.openSync(import.meta.filename, "r");
+          try {
+            const result = await answerClosedStream((stream, events) => {
+              const options = {
+                statCheck: () => run(stream),
+                onError: (error: NodeJS.ErrnoException) => void events.push("onError:" + error.code),
+              };
+              if (method === "respondWithFD") stream.respondWithFD(fd, {}, options);
+              else stream.respondWithFile(import.meta.filename, {}, options);
+            });
+            assert.deepStrictEqual(result, { server, client });
+          } finally {
+            fs.closeSync(fd);
+          }
+        },
+      );
     }
   }
 });

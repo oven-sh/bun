@@ -421,5 +421,10 @@
             "defines": ["IMPORT_MISSING_FROM_HOST"],
             "win_delay_load_hook": "false",
         },
+        {
+            "target_name": "test_env_finalizers",
+            "sources": ["test_env_finalizers.cpp"],
+            "defines": ["NAPI_VERSION=10"],
+        },
     ]
 }

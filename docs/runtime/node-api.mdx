@@ -5,6 +5,8 @@ description: Use Bun's Node-API module to build native add-ons to Node.js
 
 Node-API is an interface for building native add-ons to Node.js. Bun implements this interface from scratch, so most existing Node-API extensions work with Bun out of the box.
 
+Bun runs finalizers registered with `napi_create_external` and `napi_add_finalizer` during environment cleanup, even if their JavaScript values remain reachable. Cleanup runs when a Worker exits or is terminated, and on natural main-thread exit. Explicit main-thread `process.exit()` skips environment cleanup, matching Node.js.
+
 As in Node.js, you can `require()` `.node` files (Node-API modules) directly.
 
 ```js

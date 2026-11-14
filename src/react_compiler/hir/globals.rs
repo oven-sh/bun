@@ -2174,7 +2174,8 @@ fn build_typed_globals(
         shapes,
         Vec::new(),
         FunctionSignatureBuilder {
-            rest_param: Some(Effect::Read),
+            // Not in upstream, which has `Effect::Read`: the array holds its arguments.
+            rest_param: Some(Effect::Capture),
             return_type: Type::Object {
                 shape_id: Some(BUILT_IN_ARRAY_ID),
             },

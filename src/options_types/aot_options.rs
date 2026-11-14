@@ -91,7 +91,7 @@ pub struct AotOptions {
     pub discards_first_visits: bool,
     /// `--aot-testing=LowersInParts`: a JavaScript file that nobody checks is lowered in parts, however small it is, as a large one always is.
     pub lowers_small_files_in_parts: bool,
-    /// `--aot-testing=Passes=<n>`: the program is checked and lowered in that many passes, with a new checker for each, however small it is, as a large one is in two.
+    /// `--aot-testing=Passes=<n>`: the program is checked and lowered in that many passes, with a new checker for each, however small it is, as a large one is in two. The cuts fall where the bytes of the files are about evenly divided, and a cut that falls nowhere is not made: `BUN_JSC_logAOTPhaseTimes` says where each was made.
     pub lowering_passes: Option<NonZeroUsize>,
     /// `--aot-testing=CheckOrder=<odd number>`: the order in which the checker's threads take the files. 1: as always. 4294967295: the last file first. Any other number: a fixed permutation. The program and its type errors are the same.
     pub check_order: u32,

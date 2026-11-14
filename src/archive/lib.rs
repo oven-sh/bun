@@ -35,7 +35,7 @@ pub fn os_path<'a>(
     buf: &'a mut Vec<OSPathChar>,
 ) -> Result<&'a [OSPathChar], AllocError> {
     buf.clear();
-    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf).map_err(|_| AllocError)?;
+    bun_tar::compose::to_utf16(entry, buf).map_err(|_| AllocError)?;
     Ok(buf)
 }
 

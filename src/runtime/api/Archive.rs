@@ -1429,10 +1429,7 @@ pub(crate) mod testing {
                         entry.mtime(),
                     );
                     let mut wide = Vec::new();
-                    if options.windows
-                        && tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), &mut wide)
-                            .is_ok()
-                    {
+                    if options.windows && tar::compose::to_utf16(entry, &mut wide).is_ok() {
                         // A name that is not UTF-8 has one unit for each byte.
                         let name = if entry.path_is_utf8() {
                             String::from_utf16_lossy(&wide).into_bytes()

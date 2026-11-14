@@ -62,6 +62,8 @@ pub enum Error {
     TooManyLayers,
     #[error("truncated gzip input")]
     TruncatedGzip,
+    #[error("gzip input is followed by other data")]
+    DataBehindGzip,
     #[error("gzip decompression failed")]
     GzipDecompressionFailed,
     #[error("GZip compression failed")]

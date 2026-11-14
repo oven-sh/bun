@@ -128,8 +128,4 @@ impl Subshell {
         }
         Yield::Next(this)
     }
-
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("Subshell {} deinit", this);
-    }
 }

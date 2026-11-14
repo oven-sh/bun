@@ -150,15 +150,12 @@ pub(crate) fn to_js_from_multipart_data(
                     }
                 }
 
-                let result = wrap.form.append_blob(
+                wrap.form.append_blob(
                     wrap.global,
                     &key,
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
-                );
-                // `append_blob` dupes the content type; release this stack-local.
-                blob.detach();
-                result
+                )
             } else {
                 // "UTF-8 decode without BOM" skips BOM handling, so a leading U+FEFF is data.
                 let value = EncodedSlice::utf8(value_str);

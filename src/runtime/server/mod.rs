@@ -776,8 +776,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Computed once in `init()` (stable heap address) — just load it.
         let any_server_packed = self.any_server_packed;
 
-        let mut node_http_response: *mut NodeHTTPResponse = core::ptr::null_mut();
-        let mut is_async = false;
+        let mut node_http_response = None;
 
         let on_request_ffi = if SSL {
             ffi::NodeHTTPServer__onRequest_https
@@ -797,7 +796,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
-        if node_http_response.is_null() {
+        let Some(nhr) = node_http_response else {
             // The request never reached the handler: an exception (in practice
             // a termination request landing in the header conversion) unwound
             // before the response object existed. Nothing adopted the response;
@@ -809,9 +808,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Balances `on_pending_request` above.
             self.on_request_complete();
             return;
-        }
-        // SAFETY: `on_request_ffi` wrote it and took the ref that `deref()` below drops. Shared: its state is `Cell` / `JsCell`.
-        let nhr = unsafe { &*node_http_response };
+        };
         nhr.flags
             .set(nhr.flags.get().difference(NhrFlags::IN_LISTENER));
 
@@ -861,27 +858,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         let _ = global.handle_rejected_promises();
                         let over = NhrFlags::REQUEST_HAS_COMPLETED | NhrFlags::SOCKET_CLOSED;
                         if nhr.flags.get().intersects(over) {
-                            strong_promise.deinit();
                             break 'brk HttpResult::Success;
                         }
 
                         let strong_self = nhr.get_this_value();
                         if strong_self.is_empty_or_undefined_or_null() {
-                            strong_promise.deinit();
                             break 'brk HttpResult::Success;
                         }
 
-                        nhr.promise.set(core::mem::replace(
-                            &mut strong_promise,
-                            jsc::StrongOptional::empty(),
-                        ));
+                        nhr.promise
+                            .set(Some((core::mem::take(&mut strong_promise), nhr.clone())));
                         result.then2(
                             global,
                             strong_self,
                             crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
                             crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onReject,
                         );
-                        is_async = true;
 
                         break 'brk HttpResult::Pending;
                     }
@@ -918,14 +910,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        // Cleanup, hoisted out of scopeguards (no early
-        // returns above). Reverse-decl order: strong_promise, drain, deref.
-        strong_promise.deinit();
+        drop(strong_promise);
         if needs_to_drain {
             vm.drain_microtasks();
-        }
-        if !is_async {
-            nhr.deref();
         }
     }
 
@@ -2625,7 +2612,7 @@ impl_server_pools!(
 // ─── FFI ─────────────────────────────────────────────────────────────────────
 mod ffi {
     use super::*;
-    // `*mut *mut NodeHTTPResponse` is an out-param: C++ writes back the
+    // `node_response_ptr` is an out-param: C++ writes back the
     // Rust-allocated pointer (via `NodeHTTPResponse__createForJS`) without ever
     // dereferencing the struct itself. The ctypes lint fires because the struct
     // has Rust-layout fields (Vec, Cell, …); irrelevant for an opaque handle.
@@ -2646,7 +2633,7 @@ mod ffi {
         /// taken), and invokes `callback(req, res)`. The plain-HTTP and HTTPS
         /// monomorphizations differ only in the `Response<SSL>` opaque type.
         ///
-        /// `&JSGlobalObject` / `&mut *mut _` discharge the deref'd-param
+        /// `&JSGlobalObject` / `&mut Option<_>` discharge the deref'd-param
         /// preconditions; `request`/`response` are opaque uws
         /// handles (module-private — sole caller passes live pointers).
         pub(super) safe fn NodeHTTPServer__onRequest_http(
@@ -2656,7 +2643,7 @@ mod ffi {
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(false).Response
-            node_response_ptr: &mut *mut NodeHTTPResponse,
+            node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
         ) -> jsc::JSValue;
 
         pub(super) safe fn NodeHTTPServer__onRequest_https(
@@ -2666,7 +2653,7 @@ mod ffi {
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(true).Response
-            node_response_ptr: &mut *mut NodeHTTPResponse,
+            node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
         ) -> jsc::JSValue;
     }
 }

@@ -3808,12 +3808,7 @@ fn write_file_with_empty_source_to_destination(
     destination_blob: &Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
-    // SAFETY: null-checked by caller
-    let destination_store = destination_blob
-        .store()
-        .expect("infallible: store present")
-        .clone();
-    let _detach = scopeguard::guard(destination_blob, |blob| blob.detach());
+    let destination_store = destination_blob.store().expect("infallible: store present");
 
     match &destination_store.data {
         store::Data::File(file) => {
@@ -4299,14 +4294,6 @@ pub(crate) fn write_file_internal(
         }
     }
 
-    let input_store: Option<RefPtr<Store>> = if let PathOrBlob::Blob(ref b) = *path_or_blob {
-        b.store.get().clone()
-    } else {
-        None
-    };
-    // RefPtr<Store> clone+drop keeps the store alive for the duration of this call.
-    let _input_store_hold = input_store;
-
     let destination: Option<&PathOrFileDescriptor> = match &*path_or_blob {
         PathOrBlob::Path(path) => Some(path),
         PathOrBlob::Blob(blob) => match blob.store.get().as_ref().map(|store| &store.data) {
@@ -4469,7 +4456,6 @@ pub(crate) fn write_file_internal(
             });
             if let Some(readable) = existing {
                 if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
-                    destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
             }
@@ -4481,7 +4467,6 @@ pub(crate) fn write_file_internal(
                 BodyValue::Error(_) => BodyTag::Error,
                 BodyValue::Locked(locked) if !locked.has_consumer() => BodyTag::Locked,
                 BodyValue::Locked(_) | BodyValue::Used => {
-                    destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
                 _ => BodyTag::Use,
@@ -4499,7 +4484,6 @@ pub(crate) fn write_file_internal(
                         };
                         err_ref.to_js(cx.global())
                     };
-                    destination_blob.detach();
                     // SAFETY: exclusive borrow scoped to the call; no other
                     // borrow of the body value is live.
                     let _ = unsafe { (*body_value).use_() };
@@ -4527,7 +4511,6 @@ pub(crate) fn write_file_internal(
                         });
                         if let Some(readable) = readable_opt {
                             if readable.is_disturbed(cx.global()) {
-                                destination_blob.detach();
                                 return Err(cx.global().throw_invalid_arguments(format_args!(
                                     "ReadableStream has already been used"
                                 )));
@@ -4553,7 +4536,6 @@ pub(crate) fn write_file_internal(
                                 core::ptr::null_mut(),
                             )?));
                         }
-                        destination_blob.detach();
                         return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream has already been used"
                         )));
@@ -4600,7 +4582,6 @@ pub(crate) fn write_file_internal(
                             BodyValue::Locked(_) => {}
                             BodyValue::Error(err) => {
                                 let err_js = err.to_js(cx.global());
-                                destination_blob.detach();
                                 // SAFETY: `err` is not used after `to_js`, so this is the only
                                 // live borrow of the value.
                                 let _ = unsafe { (*body_value).use_() };
@@ -4667,7 +4648,6 @@ pub(crate) fn write_file_internal(
 
         if let Some(readable) = ReadableStream::from_js_direct(data) {
             if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
-                destination_blob.detach();
                 return Ok(body_used_rejection(cx.global()));
             }
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
@@ -4677,10 +4657,6 @@ pub(crate) fn write_file_internal(
     };
     // Detach the source blob on scope exit.
     let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
-
-    let destination_store = destination_blob.store.get().clone();
-    // RefPtr<Store> clone+drop keeps the destination store alive across the call.
-    let _dest_hold = destination_store;
 
     write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
 }
@@ -6075,20 +6051,7 @@ impl Any {
     }
 
     pub(crate) fn detach(&mut self) {
-        match self {
-            Any::Blob(b) => {
-                b.detach();
-                *self = Any::Blob(Blob::default());
-            }
-            Any::InternalBlob(ib) => {
-                ib.bytes.clear();
-                ib.bytes.shrink_to_fit();
-                *self = Any::Blob(Blob::default());
-            }
-            Any::WTFStringImpl(_) => {
-                *self = Any::Blob(Blob::default());
-            }
-        }
+        *self = Any::Blob(Blob::default());
     }
 }
 

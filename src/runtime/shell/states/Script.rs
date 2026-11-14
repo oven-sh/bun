@@ -123,10 +123,6 @@ impl Script {
         Self::next(interp, this)
     }
 
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("Script {} deinit", this);
-    }
-
     // ── AST helpers ────────────────────────────────────────────────────────
 
     #[inline]

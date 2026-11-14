@@ -490,9 +490,3 @@ impl StaticRoute {
         true
     }
 }
-
-impl Drop for StaticRoute {
-    fn drop(&mut self) {
-        self.blob.detach();
-    }
-}

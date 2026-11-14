@@ -47,6 +47,35 @@ declare module "bun" {
     enableAutoPipelining?: boolean;
   }
 
+  namespace __internal {
+    /**
+     * The reply of `zrange`, `zrevrange`, `zrangebyscore` and `zrevrangebyscore`, computed from their options.
+     * Redis replies with `[member, score]` pairs when `WITHSCORES` is among the options, in any position and
+     * letter case, and with members otherwise. An option typed `string` or `any` is not known to be `WITHSCORES`,
+     * so it leaves the reply typed as members.
+     */
+    type RedisZRangeReply<Options extends readonly unknown[]> = Options extends readonly [infer Option, ...infer Rest]
+      ? RedisZRangeReplyAfter<Option, Rest>
+      : Options extends readonly [...infer Rest, infer Option]
+        ? RedisZRangeReplyAfter<Option, Rest>
+        : string[];
+
+    /** Pairs when `Option` is `WITHSCORES`. Otherwise the other options, `Rest`, decide. */
+    type RedisZRangeReplyAfter<Option, Rest extends readonly unknown[]> = Option extends string
+      ? Uppercase<Option> extends "WITHSCORES"
+        ? [string, number][]
+        : RedisZRangeReply<Rest>
+      : RedisZRangeReply<Rest>;
+
+    /**
+     * The option list of those four methods: the constraint of their `const Options` type parameter. It is a
+     * union of tuple types and not `readonly Option[]`, because TypeScript checks a tuple option by option. With
+     * the array type, one option typed `any` makes it accept every other option. The tuples are `readonly`
+     * because TypeScript 5.0 to 5.2 infer no literal types when the constraint is mutable.
+     */
+    type RedisZRangeOptions<Option> = readonly [] | readonly [Option, ...Option[]] | readonly [...Option[], Option];
+  }
+
   export namespace RedisClient {
     type KeyLike = string | ArrayBufferView | Blob;
     type StringPubSubListener = (message: string, channel: string) => void;
@@ -695,7 +724,7 @@ declare module "bun" {
      * @param key The hash key
      * @param count The number of fields to return
      * @param withValues Literal "WITHVALUES" to include values
-     * @returns Promise that resolves with an array of alternating field names and values
+     * @returns Promise that resolves with an array of [field, value] pairs
      */
     hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<[string, string][]>;
 
@@ -1629,12 +1658,12 @@ declare module "bun" {
      * @param start The starting index
      * @param stop The stopping index
      * @param withscores Return members with their scores
-     * @returns Promise that resolves with an array of [member, score, member, score, ...]
+     * @returns Promise that resolves with an array of [member, score] pairs
      *
      * @example
      * ```ts
      * const results = await redis.zrange("myzset", 0, -1, "WITHSCORES");
-     * // Returns ["member1", "1.5", "member2", "2.5", ...]
+     * // Returns [["member1", 1.5], ["member2", 2.5], ...]
      * ```
      */
     zrange(
@@ -1693,7 +1722,10 @@ declare module "bun" {
      * @param start The starting value (index, score, or lex depending on options)
      * @param stop The stopping value
      * @param options Additional options (BYSCORE, BYLEX, REV, LIMIT offset count, WITHSCORES)
-     * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
      *
      * @example
      * ```ts
@@ -1703,6 +1735,26 @@ declare module "bun" {
      * // Get members in reverse order with scores
      * const reversed = await redis.zrange("myzset", "0", "-1", "REV", "WITHSCORES");
      * ```
+     */
+    zrange<const Options extends __internal.RedisZRangeOptions<string | number> = []>(
+      key: RedisClient.KeyLike,
+      start: string | number,
+      stop: string | number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return a range of members in a sorted set with various options
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for a call through
+     * `redis[reverse ? "zrevrange" : "zrange"]`.
+     *
+     * @param key The sorted set key
+     * @param start The starting value (index, score, or lex depending on options)
+     * @param stop The stopping value
+     * @param options Additional options (BYSCORE, BYLEX, REV, LIMIT offset count, WITHSCORES)
+     * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
      */
     zrange(
       key: RedisClient.KeyLike,
@@ -1761,12 +1813,12 @@ declare module "bun" {
      * @param start The starting index
      * @param stop The stopping index
      * @param withscores Return members with their scores
-     * @returns Promise that resolves with an array of [member, score, member, score, ...] in reverse order
+     * @returns Promise that resolves with an array of [member, score] pairs in reverse order
      *
      * @example
      * ```ts
      * const results = await redis.zrevrange("myzset", 0, -1, "WITHSCORES");
-     * // Returns ["member3", "3.5", "member2", "2.5", "member1", "1.5", ...]
+     * // Returns [["member3", 3.5], ["member2", 2.5], ["member1", 1.5], ...]
      * ```
      */
     zrevrange(
@@ -1778,6 +1830,29 @@ declare module "bun" {
 
     /**
      * Return a range of members in a sorted set with options, ordered from high to low
+     *
+     * @param key The sorted set key
+     * @param start The starting index
+     * @param stop The stopping index
+     * @param options Additional options (WITHSCORES)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
+     */
+    zrevrange<const Options extends __internal.RedisZRangeOptions<string> = []>(
+      key: RedisClient.KeyLike,
+      start: number,
+      stop: number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return a range of members in a sorted set with options, ordered from high to low
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for a call through
+     * `redis[reverse ? "zrevrange" : "zrange"]`.
      *
      * @param key The sorted set key
      * @param start The starting index
@@ -2208,13 +2283,13 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param withscores The "WITHSCORES" keyword to return scores along with members
-     * @returns Promise that resolves with array of [member, score, member, score, ...]
+     * @returns Promise that resolves with array of [member, score] pairs
      *
      * @example
      * ```ts
      * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
      * const result = await redis.zrangebyscore("myzset", 1, 2, "WITHSCORES");
-     * // Returns: ["one", "1", "two", "2"]
+     * // Returns: [["one", 1], ["two", 2]]
      * ```
      */
     zrangebyscore(
@@ -2258,7 +2333,7 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param options Additional options (WITHSCORES, LIMIT offset count)
-     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     * @returns Promise that resolves with array of [member, score] pairs
      */
     zrangebyscore(
       key: RedisClient.KeyLike,
@@ -2275,7 +2350,7 @@ declare module "bun" {
      * @param min Minimum score
      * @param max Maximum score
      * @param options Additional options (WITHSCORES, LIMIT offset count)
-     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     * @returns Promise that resolves with array of [member, score] pairs
      */
     zrangebyscore(
       key: RedisClient.KeyLike,
@@ -2290,6 +2365,29 @@ declare module "bun" {
 
     /**
      * Return members in a sorted set with scores within a given range, with various options
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
+     */
+    zrangebyscore<const Options extends __internal.RedisZRangeOptions<string | number> = []>(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with various options
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for
+     * `redis.zrangebyscore.call(redis, ...)`.
      *
      * @param key The sorted set key
      * @param min Minimum score
@@ -2336,13 +2434,13 @@ declare module "bun" {
      * @param max Maximum score
      * @param min Minimum score
      * @param withscores The "WITHSCORES" keyword to return scores along with members
-     * @returns Promise that resolves with array of [member, score, member, score, ...]
+     * @returns Promise that resolves with array of [member, score] pairs
      *
      * @example
      * ```ts
      * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
      * const result = await redis.zrevrangebyscore("myzset", 2, 1, "WITHSCORES");
-     * // Returns: ["two", "2", "one", "1"]
+     * // Returns: [["two", 2], ["one", 1]]
      * ```
      */
     zrevrangebyscore(
@@ -2374,6 +2472,29 @@ declare module "bun" {
 
     /**
      * Return members in a sorted set with scores within a given range, ordered from high to low, with options
+     *
+     * @param key The sorted set key
+     * @param max Maximum score
+     * @param min Minimum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with an array of members, or with an array of [member, score] pairs when
+     * "WITHSCORES" is among the options. The return type follows the options that have a string literal type.
+     * An option typed `string` or `any` counts as not "WITHSCORES", for example a `let` variable or an array
+     * literal that is spread into the call without `as const`. A literal between two spread arrays is not read.
+     */
+    zrevrangebyscore<const Options extends __internal.RedisZRangeOptions<string | number> = []>(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      ...options: Options
+    ): Promise<__internal.RedisZRangeReply<Options>>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, ordered from high to low, with options
+     *
+     * The fallback for the overload above: the same call, with the return type fixed to an array of members.
+     * TypeScript takes it when it cannot use the overload above, for example for
+     * `redis.zrevrangebyscore.call(redis, ...)`.
      *
      * @param key The sorted set key
      * @param max Maximum score
@@ -2445,7 +2566,7 @@ declare module "bun" {
      * console.log(count2); // 2
      *
      * // Store in reverse order with limit
-     * const count3 = await redis.zrangestore("dest3", "source", "0", "-1", "REV", "LIMIT", "0", "2");
+     * const count3 = await redis.zrangestore("dest3", "source", "3", "1", "BYSCORE", "REV", "LIMIT", "0", "2");
      * console.log(count3); // 2
      * ```
      */
@@ -2944,7 +3065,7 @@ declare module "bun" {
      * await redis.send("ZADD", ["zset1", "1", "one", "2", "two", "3", "three"]);
      * await redis.send("ZADD", ["zset2", "1", "one", "2", "two"]);
      * const diff = await redis.zdiff(2, "zset1", "zset2", "WITHSCORES");
-     * console.log(diff); // ["three", "3"]
+     * console.log(diff); // [["three", 3]]
      * ```
      */
     zdiff(
@@ -3024,15 +3145,15 @@ declare module "bun" {
      *
      * // With scores (sum by default)
      * const result2 = await redis.zinter(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["b", "3", "c", "5"] (b: 2+1=3, c: 3+2=5)
+     * // Returns: [["b", 3], ["c", 5]] (b: 2+1=3, c: 3+2=5)
      *
      * // With weights
      * const result3 = await redis.zinter(2, "zset1", "zset2", "WEIGHTS", "2", "3", "WITHSCORES");
-     * // Returns: ["b", "7", "c", "12"] (b: 2*2+1*3=7, c: 3*2+2*3=12)
+     * // Returns: [["b", 7], ["c", 12]] (b: 2*2+1*3=7, c: 3*2+2*3=12)
      *
      * // With MIN aggregation
      * const result4 = await redis.zinter(2, "zset1", "zset2", "AGGREGATE", "MIN", "WITHSCORES");
-     * // Returns: ["b", "1", "c", "2"] (minimum scores)
+     * // Returns: [["b", 1], ["c", 2]] (minimum scores)
      * ```
      */
     zinter(
@@ -3069,15 +3190,15 @@ declare module "bun" {
      *
      * // With scores (sum by default)
      * const result2 = await redis.zinter(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["b", "3", "c", "5"] (b: 2+1=3, c: 3+2=5)
+     * // Returns: [["b", 3], ["c", 5]] (b: 2+1=3, c: 3+2=5)
      *
      * // With weights
      * const result3 = await redis.zinter(2, "zset1", "zset2", "WEIGHTS", "2", "3", "WITHSCORES");
-     * // Returns: ["b", "7", "c", "12"] (b: 2*2+1*3=7, c: 3*2+2*3=12)
+     * // Returns: [["b", 7], ["c", 12]] (b: 2*2+1*3=7, c: 3*2+2*3=12)
      *
      * // With MIN aggregation
      * const result4 = await redis.zinter(2, "zset1", "zset2", "AGGREGATE", "MIN", "WITHSCORES");
-     * // Returns: ["b", "1", "c", "2"] (minimum scores)
+     * // Returns: [["b", 1], ["c", 2]] (minimum scores)
      * ```
      */
     zinter(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
@@ -3181,11 +3302,11 @@ declare module "bun" {
      *
      * // Basic union
      * const members1 = await redis.zunion(2, "zset1", "zset2");
-     * // Returns: ["a", "b", "c", "d"]
+     * // Returns: ["a", "b", "d", "c"]
      *
      * // With weights
      * const members2 = await redis.zunion(2, "zset1", "zset2", "WEIGHTS", "2", "3");
-     * // Returns: ["a", "b", "c", "d"] with calculated scores
+     * // Returns: ["a", "b", "d", "c"] with calculated scores
      *
      * // With MIN aggregation
      * const members3 = await redis.zunion(2, "zset1", "zset2", "AGGREGATE", "MIN");
@@ -3193,7 +3314,7 @@ declare module "bun" {
      *
      * // With scores
      * const withScores = await redis.zunion(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["a", "1", "b", "2", "c", "3", "d", "6"] (alternating member and score)
+     * // Returns: [["a", 1], ["b", 6], ["d", 6], ["c", 8]]
      * ```
      */
     zunion(
@@ -3223,11 +3344,11 @@ declare module "bun" {
      *
      * // Basic union
      * const members1 = await redis.zunion(2, "zset1", "zset2");
-     * // Returns: ["a", "b", "c", "d"]
+     * // Returns: ["a", "b", "d", "c"]
      *
      * // With weights
      * const members2 = await redis.zunion(2, "zset1", "zset2", "WEIGHTS", "2", "3");
-     * // Returns: ["a", "b", "c", "d"] with calculated scores
+     * // Returns: ["a", "b", "d", "c"] with calculated scores
      *
      * // With MIN aggregation
      * const members3 = await redis.zunion(2, "zset1", "zset2", "AGGREGATE", "MIN");
@@ -3235,7 +3356,7 @@ declare module "bun" {
      *
      * // With scores
      * const withScores = await redis.zunion(2, "zset1", "zset2", "WITHSCORES");
-     * // Returns: ["a", "1", "b", "2", "c", "3", "d", "6"] (alternating member and score)
+     * // Returns: [["a", 1], ["b", 6], ["d", 6], ["c", 8]]
      * ```
      */
     zunion(numkeys: number, ...args: (string | number)[]): Promise<string[]>;

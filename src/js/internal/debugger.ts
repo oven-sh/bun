@@ -408,8 +408,7 @@ class Debugger {
     }
 
     if (protocol === "ws+unix:") {
-      // Bun.serve() takes an empty `unix` for none and listens on a TCP port, where #fetch checks
-      // neither the Host header nor the path of a unix URL.
+      // Bun.serve() ignores an empty `unix` and listens on a TCP port.
       if (!pathname) {
         throw new TypeError(
           `'ws+unix://${this.#url!.host}' has no unix socket path (expected a URL like 'ws+unix:///tmp/bun.sock')`,

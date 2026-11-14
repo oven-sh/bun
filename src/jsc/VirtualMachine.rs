@@ -265,9 +265,11 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: Cell<bool>,
 
     pub is_shutting_down: Cell<bool>,
-    /// Set once `on_exit()` is past `RareData::cleanup_hooks`, run or not
-    /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
-    /// pushed after this (a finalizer deferred from the final collection) would only leak.
+    /// Whether [`teardown`](Self::teardown) follows the `on_exit()` that runs, or that ran last.
+    teardown_follows_exit: Cell<bool>,
+    /// `on_exit()` has begun and [`run_queued_addon_callbacks`](Self::run_queued_addon_callbacks) is ahead of it.
+    will_run_queued_addon_callbacks: Cell<bool>,
+    /// `on_exit()` is past `RareData::cleanup_hooks`, run or not, and `teardown` is not walking what `NapiEnv::cleanup` held back: a finalizer that an addon queues now does not run.
     pub(crate) has_run_cleanup_hooks: Cell<bool>,
     pub is_main_thread: Cell<bool>,
     pub exit_handler: ExitHandler,
@@ -2221,6 +2223,14 @@ impl VirtualMachine {
     }
 
     pub fn on_exit(&self) {
+        self.run_exit(self.should_destruct_main_thread_on_exit());
+    }
+
+    /// `on_exit()` for a caller that says whether it runs [`teardown`](Self::teardown) next.
+    fn run_exit(&self, teardown_follows: bool) {
+        self.teardown_follows_exit.set(teardown_follows);
+        self.will_run_queued_addon_callbacks.set(teardown_follows);
+
         // Decide once whether the exit sequence may run script. It can be
         // entered with an exception pending: `process.exit()` from inside a
         // throwing/catching callback (an ordinary exception — cleared here, as
@@ -2263,6 +2273,9 @@ impl VirtualMachine {
         // Node-API env teardown below refuses every `NAPI_PREAMBLE` call.
         self.handle.stop();
 
+        if self.will_run_queued_addon_callbacks.get() {
+            self.run_queued_addon_callbacks();
+        }
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
         }
@@ -2286,6 +2299,37 @@ impl VirtualMachine {
         !self.is_main_thread()
             || !self.exit_handler.requested.get()
             || self.should_destruct_main_thread_on_exit()
+    }
+
+    /// Whether [`teardown`](Self::teardown) follows the `on_exit()` that runs, or that ran last.
+    pub fn exit_runs_teardown(&self) -> bool {
+        self.teardown_follows_exit.get()
+    }
+
+    /// Whether a finalizer that an addon queues now runs in [`run_queued_addon_callbacks`](Self::run_queued_addon_callbacks), before the cleanup hooks.
+    pub fn will_run_queued_addon_callbacks(&self) -> bool {
+        self.will_run_queued_addon_callbacks.get()
+    }
+
+    /// Node runs an addon's queued finalizers, async work completions and `uv_close` callbacks before its cleanup hooks (`CleanupHandles()`, https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1323-L1344). Here the loops release them.
+    fn run_queued_addon_callbacks(&self) {
+        use bun_event_loop::task_tag;
+        // Only the tags whose `release_unrun` runs the addon's callback. A threadsafe function delivers its own queue (`NapiEnv::cleanup`), and a release of `uv_async_send` or `uv_queue_work` runs none.
+        const TAGS: [bun_event_loop::TaskTag; 3] = [
+            task_tag::NapiFinalizerTask,
+            task_tag::NapiAsyncWork,
+            task_tag::UvHandleClose,
+        ];
+        debug_assert!(!self.script_allowed());
+        let has_hooks =
+            (self.rare_data.get()).is_some_and(|rare| !rare.cleanup_hooks.get().is_empty());
+        if has_hooks {
+            while self.regular_event_loop.release_queued_tasks_tagged(&TAGS)
+                + self.macro_event_loop.release_queued_tasks_tagged(&TAGS)
+                != 0
+            {}
+        }
+        self.will_run_queued_addon_callbacks.set(false);
     }
 
     /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more (an env's
@@ -2320,6 +2364,7 @@ impl VirtualMachine {
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(Self::get_mut_ptr(), Teardown::MainThreadExit) };
         } else {
+            debug_assert!(!self.exit_runs_teardown());
             self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code.get()))
@@ -2336,7 +2381,7 @@ impl VirtualMachine {
         // SAFETY: fn contract.
         let vm = unsafe { &*this };
         vm.is_shutting_down.set(true);
-        vm.on_exit();
+        vm.run_exit(true);
         let exit_code = vm.exit_handler.exit_code.get();
         // SAFETY: fn contract.
         unsafe { Self::teardown(this, Teardown::Worker) };
@@ -2409,6 +2454,7 @@ impl VirtualMachine {
     pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
         // SAFETY: per fn contract — sole owner on the owning thread.
         let vm = unsafe { &*this };
+        debug_assert!(vm.exit_runs_teardown() || !vm.has_run_cleanup_hooks.get());
         let hooks = runtime_hooks();
 
         // ---- A. no more script; stop phase ------------------------------------
@@ -2489,12 +2535,14 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             let _ = unsafe { Self::stop_phase_sweep(this, kind) };
         });
-        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
+        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool or for a `complete()` that had not run. The walk also runs what they queue.
         if let Some(rare) = vm.rare_data.get() {
             let held_back = rare.cleanup_hooks_after_teardown_wait.take();
             rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));
         }
+        vm.has_run_cleanup_hooks.set(false);
         vm.run_cleanup_hooks();
+        vm.has_run_cleanup_hooks.set(true);
         vm.stop_import_watcher();
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own

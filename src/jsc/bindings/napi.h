@@ -31,6 +31,9 @@
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
 extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
+extern "C" void Bun__napi_threadsafe_function_deliver_queued(void* tsfn);
+// Whether the teardown of the env's VM, which runs the completions that are still queued, follows this exit.
+extern "C" bool Bun__napi_teardown_follows_exit(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -215,6 +218,9 @@ public:
         // error path escalates to napi_fatal_error. See #30286.
         clearExceptionsBetweenFinalizers();
 
+        // Node delivers the queued calls of a threadsafe function on the last turn of its loop, before the env's cleanup hooks.
+        deliverThreadSafeFunctionCalls();
+
         while (!m_cleanupHooks.empty()) {
             drain();
         }
@@ -241,10 +247,18 @@ public:
 
         // An execute() that is still running can use what a finalizer frees. The VM's teardown waits for the thread
         // pool, so the finalizers run after that wait. Node settles its thread pool requests before them too.
-        if (m_asyncWorkOnThreadPool.load()) {
+        // A complete() that has not run reads what they free too, and the teardown runs it during that wait.
+        if (m_asyncWorkOnThreadPool.load() || (m_asyncWorkAwaitingComplete && Bun__napi_teardown_follows_exit(this))) {
             Bun__napi_run_finalizers_after_teardown_wait(this);
             return;
         }
+        runFinalizers();
+    }
+
+    // For the finalizers that cleanup() held: the VM's teardown has waited for the thread pool and has released its queue.
+    void runFinalizersAfterTeardownWait()
+    {
+        ASSERT(!m_asyncWorkOnThreadPool.load() && !m_asyncWorkAwaitingComplete);
         runFinalizers();
     }
 
@@ -291,9 +305,15 @@ public:
     }
 
     // JS thread, when async work goes to the thread pool.
-    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
+    void asyncWorkEnteredThreadPool()
+    {
+        m_asyncWorkOnThreadPool++;
+        m_asyncWorkAwaitingComplete++;
+    }
     // Pool thread, once execute() has returned or the work was cancelled.
     void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
+    // JS thread, once complete() has returned.
+    void asyncWorkCompleted() { m_asyncWorkAwaitingComplete--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -314,6 +334,18 @@ public:
     {
         WTF::Locker locker { m_threadSafeFunctionsLock };
         m_threadSafeFunctions.remove(tsfn);
+    }
+
+    void deliverThreadSafeFunctionCalls()
+    {
+        WTF::Vector<void*> tsfns;
+        {
+            WTF::Locker locker { m_threadSafeFunctionsLock };
+            tsfns = WTF::copyToVector(m_threadSafeFunctions);
+        }
+        for (void* tsfn : tsfns) {
+            Bun__napi_threadsafe_function_deliver_queued(tsfn);
+        }
     }
 
     void abortThreadSafeFunctions()
@@ -528,7 +560,7 @@ public:
     inline bool mustDeferFinalizers() const
     {
         // The deferred path (NapiFinalizerTask::schedule) is responsible for the
-        // shutdown case: once is_shutting_down() it either pushes a cleanup hook
+        // shutdown case: it queues the task while on_exit() still releases the queue, then it either pushes a cleanup hook
         // (if those haven't run yet) or drops the task (if they have). Running a
         // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
         // never safe — by then on_exit() has already run cleanup hooks (including
@@ -676,6 +708,8 @@ private:
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
     std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
+    // Async work from its schedule() until its complete() has returned. JS thread only.
+    unsigned m_asyncWorkAwaitingComplete { 0 };
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined

@@ -1105,9 +1105,9 @@ unsafe fn ref_state(handle: *mut UvHandle, function: &'static [u8]) -> *mut RefS
 
 /// `uv_close` posts the handle as a task.
 impl Taskable for UvHandle {
-    const TAG: TaskTag = task_tag::UvHandleClose;
+    const TAG: TaskTag = task_tag::UvHandleClose; // `VirtualMachine::run_queued_addon_callbacks` relies on this release running the callback.
     /// Still runs `close_cb` because that's where the addon frees the handle. Any JS
-    /// it tries to run is refused.
+    /// it tries to run through Node-API is refused.
     unsafe fn release_unrun(this: *mut Self) {
         // On `Err` the exception is still pending, and the release dispatcher handles it.
         // SAFETY: fn contract.

@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 368
+      "excluded": 369
     }
   },
   "dirs": [
@@ -610,6 +610,7 @@
     "js/workerd/html-rewriter-leak.test.ts",
     "js/workerd/html-rewriter.test.js",
     "napi/napi-finalizer-delete-ref.test.ts",
+    "napi/napi-finalizer-order.test.ts",
     "napi/napi-value-ffi.test.ts",
     "napi/napi.test.ts",
     "napi/uv_stub.test.ts",

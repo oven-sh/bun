@@ -83,6 +83,8 @@ impl Binary {
             me.currently_executing = None;
             if me.left.is_none() && !stop {
                 me.left = Some(exit_code);
+                // For the right operand to read. The parent stores the right operand's own status.
+                me.base.shell_mut().last_exit_code = exit_code;
             } else {
                 me.right = Some(exit_code);
             }

@@ -27,22 +27,19 @@ pub enum FolderResolution {
 
 pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
-    pub version: dependency::Version,
+    pub workspace: &'a semver::String,
 }
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Caller constructs this formatter only when
-        // `self.version.tag == .workspace`.
-        let workspace = self.version.workspace();
         let str_to_use = self
             .manager
             .lockfile
             .workspace_paths
             .get(&semver::string::Builder::string_hash(
-                self.manager.lockfile.str(workspace),
+                self.manager.lockfile.str(self.workspace),
             ))
-            .unwrap_or(workspace);
+            .unwrap_or(self.workspace);
 
         let search_path = self.manager.lockfile.str(str_to_use);
 

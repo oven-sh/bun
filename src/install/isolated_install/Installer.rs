@@ -2394,7 +2394,6 @@ impl<'a> Installer<'a> {
         global: bool,
     ) -> crate::Result<()> {
         let lockfile = self.lockfile();
-        let package_name = strings::StringOrTinyString::init(package_name);
 
         let replacement = self
             .maybe_replace_node_modules_path(pkg_id)
@@ -2404,10 +2403,7 @@ impl<'a> Installer<'a> {
                 if let Some(linked) = &self.linked {
                     linked.resolve(&mut path);
                 }
-                Ok::<_, sys::Error>((
-                    path,
-                    strings::StringOrTinyString::init(self.pkg_name(entry_id)),
-                ))
+                Ok::<_, sys::Error>((path, self.pkg_name(entry_id)))
             })
             .transpose()?;
         // A bin link to a replacement package points outside the workspace's `node_modules`. If
@@ -2419,10 +2415,9 @@ impl<'a> Installer<'a> {
             }
             links.is_behind_link.get_or_insert(false);
         }
-        // Aliases `node_modules_path` without a replacement: the Linker field is a raw pointer.
         let (target_node_modules_path, target_package_name) = match &replacement {
-            Some((path, name)) => (core::ptr::from_ref(path), *name),
-            None => (&raw const links.node_modules_path, package_name),
+            Some((path, name)) => (Some(path), *name),
+            None => (None, package_name),
         };
         let mut bin_linker = bin_real::Linker {
             bin: lockfile.packages.items_bin()[pkg_id as usize],
@@ -2435,19 +2430,18 @@ impl<'a> Installer<'a> {
             target_node_modules_path,
             node_modules_path: &mut links.node_modules_path,
             abs_target_buf: &mut *links.abs_target_buf,
-            abs_dest_buf: &mut *links.abs_dest_buf,
             rel_buf: &mut *links.rel_buf,
             is_behind_link: links.is_behind_link,
             err: None,
             skipped_due_to_missing_bin: false,
         };
 
-        bin_linker.link(global);
+        bin_linker.link(global, &mut *links.abs_dest_buf);
 
         if replacement.is_some()
             && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
         {
-            bin_linker.target_node_modules_path = bin_linker.node_modules_path;
+            bin_linker.target_node_modules_path = None;
             bin_linker.target_package_name = package_name;
             bin_linker.err = None;
             bin_linker.skipped_due_to_missing_bin = false;
@@ -2455,12 +2449,12 @@ impl<'a> Installer<'a> {
             if self.manager().options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
-                    bstr::BStr::new(package_name.slice()),
-                    bstr::BStr::new(target_package_name.slice()),
+                    bstr::BStr::new(package_name),
+                    bstr::BStr::new(target_package_name),
                 );
             }
 
-            bin_linker.link(global);
+            bin_linker.link(global, &mut *links.abs_dest_buf);
         }
 
         links.is_behind_link = bin_linker.is_behind_link;

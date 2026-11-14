@@ -6995,22 +6995,17 @@ pub(crate) fn open_file_at_windows_nt_path(
 
         return match windows::Win32Error::from_nt_status(rc) {
             windows::Win32Error::SUCCESS => {
+                let file = File::from_fd(Fd::from_system(result));
                 if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     // SAFETY: FFI; result is a valid handle.
                     if unsafe { w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END) }
                         == 0
                     {
-                        // NtCreateFile succeeded — close the live HANDLE before
-                        // bailing so this error path doesn't leak it.
-                        // SAFETY: FFI; `result` is the just-created handle.
-                        unsafe {
-                            w::CloseHandle(result);
-                        }
                         return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                     }
                 }
-                Ok(Fd::from_system(result))
+                Ok(file.into_raw())
             }
             // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
             code => Err(Error::from_win32(code, Tag::open)),
@@ -7215,6 +7210,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
+        use std::os::windows::io::{HandleOrInvalid, OwnedHandle};
         // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
         // SAFETY: path is NUL-terminated UTF-16.
@@ -7243,8 +7239,8 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             }
             // Name surrogate (or no tag available): follow it by opening the target.
             // SAFETY: path is NUL-terminated; null security/template handles.
-            let rc = unsafe {
-                w::CreateFileW(
+            let target = unsafe {
+                HandleOrInvalid::from_raw_handle(w::CreateFileW(
                     path.as_ptr(),
                     0,
                     0,
@@ -7252,16 +7248,9 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                     w::OPEN_EXISTING,
                     w::FILE_FLAG_BACKUP_SEMANTICS,
                     core::ptr::null_mut(),
-                )
+                ))
             };
-            if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-                return false;
-            }
-            // SAFETY: rc is a valid handle from CreateFileW.
-            unsafe {
-                let _ = w::CloseHandle(rc);
-            }
-            return true;
+            return OwnedHandle::try_from(target).is_ok();
         }
         true
     }

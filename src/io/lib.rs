@@ -61,6 +61,7 @@ pub mod parent_death_watchdog;
 pub mod parent_death_watchdog {
     use core::ffi::c_void;
     use core::sync::atomic::{AtomicBool, Ordering};
+    use std::os::windows::io::{AsRawHandle as _, HandleOrNull, IntoRawHandle as _, OwnedHandle};
 
     use bun_sys::windows;
 
@@ -126,24 +127,15 @@ pub mod parent_death_watchdog {
         if JOB_ASSIGNED.swap(true, Ordering::Relaxed) {
             return;
         }
-        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
-        unsafe {
-            let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
-            if !job.is_null() {
-                let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
-                    bun_core::ffi::zeroed();
-                jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
-                if windows::SetInformationJobObject(
-                    job,
-                    windows::JobObjectExtendedLimitInformation,
-                    core::ptr::from_mut(&mut jeli).cast(),
-                    core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                ) == 0
-                    || windows::AssignProcessToJobObject(job, windows::GetCurrentProcess()) == 0
-                {
-                    windows::CloseHandle(job);
-                }
-            }
+        let Some(job) = windows::create_kill_on_close_job() else {
+            return;
+        };
+        // SAFETY: `job` is open; the other is this process's pseudo-handle.
+        if unsafe {
+            windows::AssignProcessToJobObject(job.as_raw_handle(), windows::GetCurrentProcess())
+        } != 0
+        {
+            let _ = job.into_raw_handle();
         }
     }
 
@@ -163,25 +155,23 @@ pub mod parent_death_watchdog {
         // SAFETY: Win32 FFI; by-value args, failure → NULL. SYNCHRONIZE for
         // the wait, PROCESS_QUERY_LIMITED_INFORMATION for `GetProcessTimes`.
         let parent = unsafe {
-            windows::OpenProcess(
+            HandleOrNull::from_raw_handle(windows::OpenProcess(
                 windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION,
                 0,
                 ppid,
-            )
+            ))
         };
-        if parent.is_null() {
+        let Ok(parent) = OwnedHandle::try_from(parent) else {
             if windows::GetLastError() == ERROR_INVALID_PARAMETER {
                 windows::kernel32::ExitProcess(EXIT_CODE as u32);
             }
             return;
-        }
+        };
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
         // just opened an unrelated process. A real creator's creation time is
         // no later than ours; a reused PID's is strictly later.
-        if !is_original_parent(parent) {
-            // SAFETY: `parent` is a valid handle we just opened.
-            unsafe { windows::CloseHandle(parent) };
+        if !is_original_parent(parent.as_raw_handle()) {
             windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
         let mut wait: windows::HANDLE = core::ptr::null_mut();
@@ -191,16 +181,15 @@ pub mod parent_death_watchdog {
         if unsafe {
             windows::RegisterWaitForSingleObject(
                 &raw mut wait,
-                parent,
+                parent.as_raw_handle(),
                 on_parent_exit_cb,
                 core::ptr::null_mut(),
                 windows::INFINITE,
                 windows::WT_EXECUTEONLYONCE,
             )
-        } == 0
+        } != 0
         {
-            // SAFETY: `parent` is a valid handle we just opened.
-            unsafe { windows::CloseHandle(parent) };
+            let _ = parent.into_raw_handle();
         }
     }
 

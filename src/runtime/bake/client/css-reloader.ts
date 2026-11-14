@@ -173,12 +173,14 @@ export function editCssContent(id: string, newContent: string) {
   if (!entry) return;
   let sheet = entry.sheet;
   if (!entry.sheet) {
-    sheet = entry.sheet = new CSSStyleSheet();
+    // A page with no </head> has its link tags outside <head>, where the observer does not see them.
+    const link = entry.link ?? document.querySelector<HTMLLinkElement>(`link[href="/_bun/asset/${id}.css"]`);
+    sheet = entry.sheet = new CSSStyleSheet({ media: link?.media });
     sheet.replace(newContent);
     document.adoptedStyleSheets.push(sheet);
 
     // Disable the link tag if it exists
-    const linkSheet = entry.link?.sheet;
+    const linkSheet = link?.sheet;
     if (linkSheet) linkSheet.disabled = true;
     return false;
   }

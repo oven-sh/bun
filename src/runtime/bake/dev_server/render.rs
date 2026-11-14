@@ -307,7 +307,13 @@ impl DevServer {
         )?;
         // Run tracing
         client_graph.reset();
-        client_graph.trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
+        let media_links = &html.media_links;
+        let media_tags = if media_links.is_empty() {
+            client_graph.trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
+            Vec::new()
+        } else {
+            client_graph.trace_css_of_html_route(html.bundled_file, media_links, &mut gts)?
+        };
 
         let css_ids: &[u64] = &client_graph.current_css_files;
 
@@ -315,7 +321,10 @@ impl DevServer {
             + ("<link rel=\"stylesheet\" href=\"".len()
                 + ASSET_PREFIX.len()
                 + "/0000000000000000.css\">".len())
-                * css_ids.len()
+                * (css_ids.len() + media_tags.len())
+            + (media_tags.iter())
+                .map(|tag| " media=\"\"".len() + media_links[tag.link].media.len())
+                .sum::<usize>()
             + "<script type=\"module\" crossorigin src=\"\" data-bun-dev-server-script></script>"
                 .len()
             + CLIENT_PREFIX.len()
@@ -329,13 +338,29 @@ impl DevServer {
 
         // Insert all link tags before "</head>"
         let mut hex_buf = [0u8; 16];
-        for name in css_ids {
-            array.extend_from_slice(b"<link rel=\"stylesheet\" href=\"");
+        let mut write_link = |array: &mut Vec<u8>, asset: u64, media: Option<&[u8]>| {
+            array.extend_from_slice(b"<link rel=\"stylesheet\"");
+            if let Some(media) = media {
+                array.extend_from_slice(b" media=\"");
+                array.extend_from_slice(media);
+                array.extend_from_slice(b"\"");
+            }
+            array.extend_from_slice(b" href=\"");
             array.extend_from_slice(ASSET_PREFIX.as_bytes());
             array.extend_from_slice(b"/");
-            let n = bun_core::fmt::bytes_to_hex_lower(&name.to_ne_bytes(), &mut hex_buf);
+            let n = bun_core::fmt::bytes_to_hex_lower(&asset.to_ne_bytes(), &mut hex_buf);
             array.extend_from_slice(&hex_buf[..n]);
             array.extend_from_slice(b".css\">");
+        };
+        let mut media_tags = media_tags.iter().peekable();
+        for n in 0..=css_ids.len() {
+            while let Some(tag) = media_tags.next_if(|tag| tag.before == n) {
+                let link = &media_links[tag.link];
+                write_link(&mut array, link.asset, Some(&link.media));
+            }
+            if let Some(&asset) = css_ids.get(n) {
+                write_link(&mut array, asset, None);
+            }
         }
 
         array.extend_from_slice(b"<script type=\"module\" crossorigin src=\"");

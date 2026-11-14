@@ -460,4 +460,72 @@ describe("Bun.serve HTML manifest", () => {
     `);
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/18526
+  it("serves the stylesheet of a link with media under that media", async () => {
+    await using dir = tempDir("serve-html-link-media", {
+      "server.ts": `
+        import index from "./index.html";
+
+        using server = Bun.serve({
+          port: 0,
+          routes: {
+            "/": index,
+          },
+          fetch() {
+            return new Response("not found", { status: 404 });
+          },
+        });
+
+        const page = await (await fetch(server.url)).text();
+        for (const [tag, href] of page.matchAll(/<link\\b[^>]*\\bhref="([^"]+)"[^>]*>/g)) {
+          const css = await fetch(new URL(href, server.url));
+          console.log(tag.replace(href, "[url]"), css.status, JSON.stringify(await css.text()));
+        }
+      `,
+      "index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./screen.css">
+    <link rel="stylesheet" href="./print.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "screen.css": `body { color: red; }`,
+      "print.css": `body { color: black; }`,
+    });
+
+    await using buildProc = Bun.spawn({
+      cmd: [bunExe(), "build", "server.ts", "--outdir", "dist", "--target", "bun", "--minify"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([
+      buildProc.stdout.text(),
+      buildProc.stderr.text(),
+      buildProc.exited,
+    ]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "server.js"],
+      cwd: join(dir, "dist"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "<link rel="stylesheet" crossorigin href="[url]"> 200 "body{color:red}@media print{body{color:#000}}\\n"
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
 });

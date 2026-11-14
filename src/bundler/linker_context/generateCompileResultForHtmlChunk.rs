@@ -9,7 +9,8 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, conditions_of_link_media};
+use crate::bake_types::{HtmlMediaLink, css_asset_id};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -86,6 +87,15 @@ struct HTMLLoader<'a> {
     end_tag_indices: EndTagIndices,
     added_head_tags: bool,
     added_body_script: bool,
+    /// Dev server: the stylesheet links that this pass removed from a page with an `HTML_LINK_MEDIA` link.
+    stylesheet_links: Option<Vec<StylesheetLink>>,
+}
+
+/// A `<link>` that applies the stylesheet that the dev server serves as `asset`.
+struct StylesheetLink {
+    asset: u64,
+    /// `None`: for every medium.
+    media: Option<String>,
 }
 
 /// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
@@ -163,6 +173,9 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
+                if import_record.kind == ImportKind::At {
+                    self.note_stylesheet_link(element, import_record);
+                }
                 element.remove();
             } else {
                 set_attribute(element, url_attribute, import_record.path.pretty);
@@ -220,6 +233,58 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 type EndTagHandlerFn = fn(*mut (), &mut EndTag<'_>) -> HandlerResult;
 
 impl<'a> HTMLLoader<'a> {
+    fn note_stylesheet_link(&mut self, link: &Element<'_, '_>, record: &ImportRecord) {
+        let Some(stylesheet_links) = &mut self.stylesheet_links else {
+            return;
+        };
+        if (record.flags).contains(ImportRecordFlags::HTML_LINK_PRELOAD) {
+            return;
+        }
+        let sources = self.linker.parse_graph().input_files.items_source();
+        let asset = css_asset_id(if record.source_index.is_valid() {
+            &sources[record.source_index.get() as usize].path
+        } else {
+            // The dev server does not load again a stylesheet that did not change.
+            &record.path
+        });
+        let media = (record.flags.contains(ImportRecordFlags::HTML_LINK_MEDIA))
+            .then(|| link.get_attribute("media"))
+            .flatten()
+            .filter(|media| {
+                matches!(
+                    conditions_of_link_media(media, &bun_alloc::Arena::new()),
+                    Ok(Some(_))
+                )
+            });
+        stylesheet_links.push(StylesheetLink { asset, media });
+    }
+
+    /// The stylesheets that the removed links load only under a `media` condition.
+    fn media_links(&self) -> Box<[HtmlMediaLink]> {
+        let links = self.stylesheet_links.as_deref().unwrap_or_default();
+        let mut media_links: Vec<HtmlMediaLink> = Vec::new();
+        for (i, link) in links.iter().enumerate() {
+            let Some(media) = &link.media else { continue };
+            let is_same = |other: &StylesheetLink| other.asset == link.asset;
+            let is_repeated = (links[..i].iter()).any(|it| is_same(it) && it.media == link.media);
+            let applies_for_every_medium = links.iter().any(|it| is_same(it) && it.media.is_none());
+            if is_repeated || applies_for_every_medium {
+                continue;
+            }
+            let media = strings::replace_owned(media.as_bytes(), b"\"", b"&quot;");
+            match (media_links.iter_mut()).find(|of_asset| of_asset.asset == link.asset) {
+                Some(of_asset) => {
+                    of_asset.media = [&of_asset.media, &b", "[..], &media].concat().into()
+                }
+                None => media_links.push(HtmlMediaLink {
+                    asset: link.asset,
+                    media: media.into(),
+                }),
+            }
+        }
+        media_links.into_boxed_slice()
+    }
+
     /// Arranges for `handler(self, end_tag)` to run when `element`'s end tag
     /// is reached. Returns `true` (stop the rewriter) if `element` cannot
     /// have an end tag.
@@ -403,6 +468,10 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         },
         added_head_tags: false,
         added_body_script: false,
+        stylesheet_links: (has_dev_server
+            && (records.iter())
+                .any(|record| (record.flags).contains(ImportRecordFlags::HTML_LINK_MEDIA)))
+        .then(Vec::new),
     };
 
     HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
@@ -455,9 +524,11 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         }
     };
 
+    let media_links = html_loader.media_links();
     CompileResult::Html {
         code: html_loader.output.into_boxed_slice(),
         source_index,
         script_injection_offset,
+        media_links,
     }
 }

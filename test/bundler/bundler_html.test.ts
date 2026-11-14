@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1129,6 +1130,731 @@ body {
         entry: `@media print{@layer a;}` + rest,
       });
     },
+  });
+
+  // The `<link>` tags of the page that Bun wrote, and the CSS file of the page.
+  const linksAndStylesheetOf = (api: { readFile(path: string): string }, page: string) => {
+    const html = api.readFile("out/" + page);
+    return {
+      links: html.match(/<link\b[^>]*>/g)!.map(tag => tag.replace(/-[a-z0-9]{8}\./, "-[hash].")),
+      css: api.readFile("out/" + html.match(/ crossorigin href="(.*?\.css)"/)![1]),
+    };
+  };
+
+  // https://github.com/oven-sh/bun/issues/18526
+  itBundled("html/LinkWithMedia", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <title>Imprimé ☕</title>
+    <link rel="stylesheet" href="./screen.css">
+    <link rel="stylesheet" type="text/css" href="./print.css" media="print" />
+  </head>
+  <body><script type="module" src="./app.js"></script></body>
+</html>`,
+      "/screen.css": `body { color: red }`,
+      "/print.css": `body { color: black }`,
+      "/app.js": `console.log(1)`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // The page still has one CSS file. The rules of print.css are in it, under the media of their link.
+      expect(linksAndStylesheetOf(api, "index.html")).toEqual({
+        links: [`<link rel="stylesheet" crossorigin href="./index-[hash].css">`],
+        css: `body{color:red}@media print{body{color:#000}}\n`,
+      });
+    },
+  });
+
+  // A stylesheet with `media` stays between the stylesheets that the page loads before it and after it.
+  itBundled("html/LinksWithMediaKeepTheCascadeOrder", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css">
+    <link rel="stylesheet" href="https://cdn.example.com/framework.css" media="print">
+    <link rel="stylesheet" href="./print.css" media="print">
+    <script type="module" src="./app.js"></script>
+    <link rel="stylesheet" href="./b.css">
+  </head>
+  <body>
+    <link rel="stylesheet" as="style" href="./narrow.css" media="screen and (max-width: 600px), (orientation: portrait)">
+    <link rel="stylesheet" href="./c.css">
+  </body>
+</html>`,
+      "/a.css": `.a { color: red }`,
+      // The media of the link also applies to what its stylesheet imports.
+      "/print.css": `@import "./print-base.css";\n.print { color: black }`,
+      "/print-base.css": `.print-base { color: black }`,
+      "/from-script.css": `.from-script { color: red }`,
+      "/b.css": `.b { color: red }`,
+      "/narrow.css": `.narrow { color: red }`,
+      "/c.css": `.c { color: red }`,
+      "/app.js": `import "./from-script.css";\nimport "./a.css";`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(linksAndStylesheetOf(api, "index.html")).toEqual({
+        // Bun does not bundle the first link, so it stays as it is.
+        links: [
+          `<link rel="stylesheet" href="https://cdn.example.com/framework.css" media="print">`,
+          `<link rel="stylesheet" crossorigin href="./index-[hash].css">`,
+        ],
+        css:
+          `.a{color:red}` +
+          `@media print{.print-base{color:#000}}@media print{.print{color:#000}}` +
+          `.from-script{color:red}.b{color:red}` +
+          `@media screen and (max-width:600px),(orientation:portrait){.narrow{color:red}}` +
+          `.c{color:red}\n`,
+      });
+    },
+  });
+
+  // A stylesheet that the page also loads with no `media`, after its link, applies for every medium.
+  itBundled("html/StylesheetLinkedWithMediaAndLoadedWithout", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/two-media.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./theme.css" media="print">
+    <link rel="stylesheet" href="./theme.css" media="(orientation: portrait)">
+  </head>
+  <body></body>
+</html>`,
+      "/script-last.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./theme.css" media="print">
+    <link rel="stylesheet" href="./other.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body></body>
+</html>`,
+      "/script-first.html": `<!doctype html>
+<html>
+  <head>
+    <script type="module" src="./app.js"></script>
+    <link rel="stylesheet" href="./other.css">
+    <link rel="stylesheet" href="./theme.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/link-last.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./theme.css" media="print">
+    <link rel="stylesheet" href="./other.css">
+    <link rel="stylesheet" href="./theme.css">
+  </head>
+  <body></body>
+</html>`,
+      "/theme.css": `.theme { color: red }`,
+      "/other.css": `.other { color: red }`,
+      "/app.js": `import "./theme.css";`,
+    },
+    entryPoints: ["/two-media.html", "/script-last.html", "/script-first.html", "/link-last.html"],
+    onAfterBundle(api) {
+      expect({
+        twoMedia: stylesheetOf(api, "two-media.html"),
+        scriptLast: stylesheetOf(api, "script-last.html"),
+        scriptFirst: stylesheetOf(api, "script-first.html"),
+        linkLast: stylesheetOf(api, "link-last.html"),
+      }).toEqual({
+        twoMedia: `@media print{.theme{color:red}}@media (orientation:portrait){.theme{color:red}}\n`,
+        scriptLast: `.other{color:red}.theme{color:red}\n`,
+        // In print the link loads theme.css again, after other.css.
+        scriptFirst: `.theme{color:red}.other{color:red}@media print{.theme{color:red}}\n`,
+        linkLast: `.other{color:red}.theme{color:red}\n`,
+      });
+    },
+  });
+
+  // On a page with a link under `media`, each link applies its stylesheet at its own place, as in a browser.
+  // So the CSS of the page is that of one stylesheet with an "@import" for each link.
+  {
+    const pages = {
+      "x@print s x s": `.x{color:red}.s{color:red}\n`,
+      "x@print s x": `.s{color:red}.x{color:red}\n`,
+      "x@print s s x": `.s{color:red}.x{color:red}\n`,
+      "x@print x s": `.x{color:red}.s{color:red}\n`,
+      "x s x@print s": `.x{color:red}@media print{.x{color:red}}.s{color:red}\n`,
+      "x@print s x@print s": `@media print{.x{color:red}}.s{color:red}\n`,
+    };
+    const linksOf = (page: string) => page.split(" ").map(link => link.split("@"));
+    itBundled("html/EachLinkOnPageWithMediaAppliesAtItsPlace", {
+      outdir: "out/",
+      minifyWhitespace: true,
+      files: {
+        ...Object.fromEntries(
+          Object.keys(pages).flatMap((page, i) => [
+            [
+              `/page${i}.html`,
+              `<!doctype html><html><head>` +
+                linksOf(page)
+                  .map(
+                    ([file, media]) =>
+                      `<link rel="stylesheet" href="./${file}.css"${media ? ` media="${media}"` : ""}>`,
+                  )
+                  .join("") +
+                `</head><body></body></html>`,
+            ],
+            [
+              `/imports${i}.css`,
+              linksOf(page)
+                .map(([file, media]) => `@import "./${file}.css" ${media ?? ""};`)
+                .join("\n"),
+            ],
+          ]),
+        ),
+        "/x.css": `.x { color: red }`,
+        "/s.css": `.s { color: red }`,
+      },
+      entryPoints: Object.keys(pages).flatMap((_, i) => [`/page${i}.html`, `/imports${i}.css`]),
+      onAfterBundle(api) {
+        const built = Object.keys(pages).map((page, i) => [
+          page,
+          stylesheetOf(api, `page${i}.html`),
+          api.readFile(`out/imports${i}.css`),
+        ]);
+        expect(built).toEqual(Object.entries(pages).map(([page, css]) => [page, css, css]));
+      },
+    });
+  }
+
+  // Each of these links applies its stylesheet for every medium, as it does without `media`. Bun warns about none.
+  itBundled("html/LinksWithMediaThatStayUnconditional", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    bundleWarnings: {},
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./empty.css" media="">
+    <link rel="stylesheet" href="./all.css" media=" ALL ">
+    <link rel="stylesheet" href="./all-comma.css" media="all,">
+    <link rel="stylesheet" href="./comment.css" media="/**/">
+    <link rel="stylesheet" href="./first-of-two.css" media="all" media="print">
+    <link rel="stylesheet" href="./onload.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="./disabled.css" media="print" disabled>
+    <link rel="stylesheet" href="./id.css" media="print" id="async">
+    <link rel="stylesheet" href="./class.css" media="print" class="async">
+    <link rel="stylesheet" href="./data.css" media="print" data-beasties-media="all">
+    <link rel="stylesheet" href="./title.css" media="print" title="Print">
+    <link rel="stylesheet" href="./unknown.css" media="print" async-css>
+    <link rel="preload" as="style" href="./preload.css" media="print">
+    <link rel="preload" rel="stylesheet" as="style" href="./first-rel.css" media="print">
+    <link rel="stylesheet" href="./notes.txt" media="print">
+    <link rel="stylesheet" href="./module.js" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/empty.css": `.empty { color: red }`,
+      "/all.css": `.all { color: red }`,
+      "/all-comma.css": `.all-comma { color: red }`,
+      "/comment.css": `.comment { color: red }`,
+      "/first-of-two.css": `.first-of-two { color: red }`,
+      "/onload.css": `.onload { color: red }`,
+      "/disabled.css": `.disabled { color: red }`,
+      "/id.css": `.id { color: red }`,
+      "/class.css": `.class { color: red }`,
+      "/data.css": `.data { color: red }`,
+      "/title.css": `.title { color: red }`,
+      "/unknown.css": `.unknown { color: red }`,
+      "/preload.css": `.preload { color: red }`,
+      "/first-rel.css": `.first-rel { color: red }`,
+      "/notes.txt": `not a stylesheet`,
+      "/module.js": `import "./from-module.css";`,
+      "/from-module.css": `.from-module { color: red }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(linksAndStylesheetOf(api, "index.html")).toEqual({
+        links: [
+          `<link rel="stylesheet" href="./notes.txt" media="print">`,
+          `<link rel="stylesheet" crossorigin href="./index-[hash].css">`,
+        ],
+        css:
+          `.empty{color:red}.all{color:red}.all-comma{color:red}.comment{color:red}.first-of-two{color:red}` +
+          `.onload{color:red}.disabled{color:red}` +
+          `.id{color:red}.class{color:red}.data{color:red}.title{color:red}.unknown{color:red}` +
+          `.preload{color:red}.first-rel{color:red}.from-module{color:red}\n`,
+      });
+    },
+  });
+
+  // The browser reads these links as stylesheet links with a `media`, and so does Bun.
+  itBundled("html/LinkFormsWithMedia", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    bundleWarnings: {},
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link REL="StyleSheet" HREF="./upper.css" MEDIA="Print">
+    <link rel="stylesheet" rel="alternate" href="./first-rel.css" media="print">
+    <link rel="preload stylesheet" as="style" href="./tokens.css" media="screen">
+    <link rel="stylesheet" as="style" href="./two-rows.css" media="print">
+    <link rel="stylesheet" href="./first-media.css" media="print" media="all">
+    <link rel="stylesheet" href="./list.css" media="print,">
+    <link rel="stylesheet" type="text/css" crossorigin="anonymous" integrity="sha384-AAAA" referrerpolicy="no-referrer" fetchpriority="low" blocking="render" hreflang="en" charset="utf-8" nonce="AAAA" href="./loading.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/upper.css": `.upper { color: red }`,
+      "/first-rel.css": `.first-rel { color: red }`,
+      "/tokens.css": `.tokens { color: red }`,
+      "/two-rows.css": `.two-rows { color: red }`,
+      "/first-media.css": `.first-media { color: red }`,
+      "/list.css": `.list { color: red }`,
+      "/loading.css": `.loading { color: red }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(stylesheetOf(api, "index.html")).toBe(
+        `@media print{.upper{color:red}}@media print{.first-rel{color:red}}@media screen{.tokens{color:red}}` +
+          `@media print{.two-rows{color:red}}@media print{.first-media{color:red}}@media print{.list{color:red}}` +
+          `@media print{.loading{color:red}}\n`,
+      );
+    },
+  });
+
+  const cannotParse = (media: string) => `Bun cannot parse the media query list "${media}" of this <link>`;
+
+  // Bun warns about a `media` that it cannot parse. The page then builds as it does without that `media`.
+  itBundled("html/LinksWithMediaThatBunCannotParse", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    bundleWarnings: {
+      "/rejected.html": [
+        cannotParse("print and"),
+        cannotParse("(width &gt;= 600px)"),
+        cannotParse("screen,,print"),
+        cannotParse(",print"),
+      ],
+      "/preload-first.html": [cannotParse("print and")],
+      "/loaded-twice.html": [cannotParse(",")],
+      // A stylesheet link with `as="style"` is one link, with one warning.
+      "/two-rows.html": [cannotParse("print and")],
+    },
+    files: {
+      "/rejected.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" media="print and">
+    <link rel="stylesheet" href="./b.css" media="(width &gt;= 600px)">
+    <link rel="stylesheet" href="./c.css" media="screen,,print">
+    <link rel="stylesheet" href="./d.css" media=",print">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body></body>
+</html>`,
+      "/preload-first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./a.css">
+    <link rel="stylesheet" href="./b.css">
+    <link rel="stylesheet" href="./a.css" media="print and">
+  </head>
+  <body></body>
+</html>`,
+      "/loaded-twice.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css">
+    <link rel="stylesheet" href="./b.css">
+    <link rel="stylesheet" href="./a.css" media=",">
+  </head>
+  <body></body>
+</html>`,
+      "/two-rows.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" as="style" href="./a.css" media="print and">
+  </head>
+  <body></body>
+</html>`,
+      "/a.css": `.a { color: red }`,
+      "/b.css": `.b { color: red }`,
+      "/c.css": `.c { color: red }`,
+      "/d.css": `.d { color: red }`,
+      "/app.js": `import "./a.css";`,
+    },
+    entryPoints: ["/rejected.html", "/preload-first.html", "/loaded-twice.html", "/two-rows.html"],
+    onAfterBundle(api) {
+      expect({
+        rejected: stylesheetOf(api, "rejected.html"),
+        preloadFirst: stylesheetOf(api, "preload-first.html"),
+        loadedTwice: stylesheetOf(api, "loaded-twice.html"),
+        twoRows: stylesheetOf(api, "two-rows.html"),
+      }).toEqual({
+        rejected: `.a{color:red}.b{color:red}.c{color:red}.d{color:red}\n`,
+        preloadFirst: `.a{color:red}.b{color:red}\n`,
+        loadedTwice: `.a{color:red}.b{color:red}\n`,
+        twoRows: `.a{color:red}\n`,
+      });
+    },
+  });
+
+  // A page whose link has a `media` that gives no condition shares the CSS file of the same page without it.
+  itBundled("html/LinkWithMediaThatGivesNoConditionSharesCssFile", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    chunkNaming: "[hash].[ext]",
+    bundleWarnings: {
+      "/rejected.html": [cannotParse(",")],
+    },
+    files: {
+      "/plain.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css">
+  </head>
+  <body></body>
+</html>`,
+      "/rejected.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" media=",">
+  </head>
+  <body></body>
+</html>`,
+      "/always.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" media="all,">
+  </head>
+  <body></body>
+</html>`,
+      "/a.css": `.a { color: red }`,
+    },
+    entryPoints: ["/plain.html", "/rejected.html", "/always.html"],
+    onAfterBundle(api) {
+      const [plain, rejected, always] = ["plain", "rejected", "always"].map(
+        page => api.readFile(`out/${page}.html`).match(/href="(.*?\.css)"/)![1],
+      );
+      expect({ rejected, always, css: api.readFile("out/" + plain) }).toEqual({
+        rejected: plain,
+        always: plain,
+        css: `.a{color:red}\n`,
+      });
+    },
+  });
+
+  // A preload of a stylesheet does not apply it. The link with `media` does.
+  itBundled("html/PreloadOfStylesheetLinkedWithMedia", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./print.css">
+    <link rel="stylesheet" href="./screen.css">
+    <link rel="stylesheet" href="./print.css" media="print">
+    <link rel="preload" as="style" href="./print.css">
+  </head>
+  <body></body>
+</html>`,
+      // This preload becomes a stylesheet link when it has loaded, so it applies print.css for every medium.
+      "/onload.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./print.css" onload="this.rel='stylesheet'">
+    <link rel="stylesheet" href="./screen.css">
+    <link rel="stylesheet" href="./print.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/screen.css": `.screen { color: red }`,
+      "/print.css": `.print { color: black }`,
+    },
+    entryPoints: ["/index.html", "/onload.html"],
+    onAfterBundle(api) {
+      expect({ index: stylesheetOf(api, "index.html"), onload: stylesheetOf(api, "onload.html") }).toEqual({
+        index: `.screen{color:red}@media print{.print{color:#000}}\n`,
+        onload: `.print{color:#000}.screen{color:red}@media print{.print{color:#000}}\n`,
+      });
+    },
+  });
+
+  // The script of the page imports the page. That must not load the stylesheet of the link a second time.
+  itBundled("html/LinkWithMediaOnPageThatItsScriptImports", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    target: "browser",
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./print.css" media="print">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body></body>
+</html>`,
+      "/print.css": `.print { color: black }`,
+      "/app.js": `import "./index.html";\nimport "./from-script.css";`,
+      "/from-script.css": `.from-script { color: red }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(stylesheetOf(api, "index.html")).toBe(`@media print{.print{color:#000}}.from-script{color:red}\n`);
+    },
+  });
+
+  // Pages that load the same stylesheets under the same media share one CSS file.
+  itBundled("html/PagesThatLinkOneStylesheetWithMedia", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/first.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./shared.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/second.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./shared.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/third.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./shared.css" media="screen">
+  </head>
+  <body></body>
+</html>`,
+      "/fourth.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./shared.css">
+  </head>
+  <body></body>
+</html>`,
+      "/shared.css": `.shared { color: red }`,
+    },
+    entryPoints: ["/first.html", "/second.html", "/third.html", "/fourth.html"],
+    onAfterBundle(api) {
+      const [first, second, third, fourth] = ["first", "second", "third", "fourth"].map(
+        page => api.readFile(`out/${page}.html`).match(/href="(.*?\.css)"/)![1],
+      );
+      expect({
+        first: api.readFile("out/" + first),
+        third: api.readFile("out/" + third),
+        fourth: api.readFile("out/" + fourth),
+      }).toEqual({
+        first: `@media print{.shared{color:red}}\n`,
+        third: `@media screen{.shared{color:red}}\n`,
+        fourth: `.shared{color:red}\n`,
+      });
+      expect(second).toBe(first);
+      expect(new Set([first, third, fourth]).size).toBe(3);
+    },
+  });
+
+  // A document with no <head>, and a name for the CSS file that has no hash and no page name in it.
+  itBundled("html/LinkWithMediaInDocumentWithoutHead", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    chunkNaming: "static.[ext]",
+    files: {
+      "/index.html": `<link rel="stylesheet" href="./print.css" media="print"><p>text</p>`,
+      "/print.css": `.print { color: black }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect({ html: api.readFile("out/index.html"), css: api.readFile("out/static.css") }).toEqual({
+        html: `<p>text</p><link rel="stylesheet" crossorigin href="./static.css"><script type="module" crossorigin src="./static.js"></script>\n`,
+        css: `@media print{.print{color:#000}}\n`,
+      });
+    },
+  });
+
+  // A plugin loads each stylesheet. The link still gives its `media` to what the plugin returns.
+  itBundled("html/LinkWithMediaToStylesheetFromPlugin", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./screen.css">
+    <link rel="stylesheet" href="virtual:print" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/screen.css": `.screen { color: red }`,
+    },
+    entryPoints: ["/index.html"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual:print$/ }, () => ({ path: "print", namespace: "virtual" }));
+      builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+        contents: `.print { color: black }`,
+        loader: "css",
+      }));
+      builder.onLoad({ filter: /screen\.css$/ }, async ({ path }) => ({
+        contents: (await Bun.file(path).text()) + `.from-plugin { color: blue }`,
+        loader: "css",
+      }));
+    },
+    onAfterBundle(api) {
+      expect(stylesheetOf(api, "index.html")).toBe(
+        `.screen{color:red}.from-plugin{color:#00f}@media print{.print{color:#000}}\n`,
+      );
+    },
+  });
+
+  // The `media` of the link is the first condition of each "@import" in its stylesheet. An external
+  // "@import" with a condition of its own then nests in a "data:" stylesheet, as it does under a conditional "@import".
+  itBundled("html/ExternalImportInStylesheetLinkedWithMedia", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./print.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/print.css": `@import url("https://fonts.example.com/css?family=X");
+@import url("https://fonts.example.com/css?family=Y") screen;
+.print { color: black }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(stylesheetOf(api, "index.html")).toBe(
+        `@import "https://fonts.example.com/css?family=X" print;` +
+          `@import "data:text/css,@import \\"https://fonts.example.com/css?family=Y\\" screen;" print;` +
+          `@media print{.print{color:#000}}\n`,
+      );
+    },
+  });
+
+  // A CSS entry point and the page that links the same file with `media` do not print the same CSS.
+  itBundled("html/LinkWithMediaAndCssEntryPointProduction", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/page.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./s.css" media="print">
+  </head>
+  <body></body>
+</html>`,
+      "/s.css": `.s { color: green }`,
+    },
+    entryPoints: ["/page.html", "/s.css"],
+    onAfterBundle(api) {
+      expect({ page: stylesheetOf(api, "page.html"), entry: api.readFile("out/s.css") }).toEqual({
+        page: `@media print{.s{color:green}}\n`,
+        entry: `.s{color:green}\n`,
+      });
+    },
+  });
+
+  // The `media` of a link reads as the media of an "@import" does. What "@import" rejects, the link reports.
+  {
+    const sameAsImport = [
+      "PRINT",
+      "Only Screen",
+      "not print",
+      "(width >= 600px)",
+      "(400px < width < 700px)",
+      "not (400px <= width <= 700px)",
+      "(height > 50vh)",
+      "screen and (min-width: 600px),\n      print and (orientation: landscape)",
+      "print,",
+    ];
+    const rejected = ["only", "not", "print and", "screen and(min-width:1px)", ", print", "print; screen"];
+    const page = (media: string) => `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./x.css" media="${media}">
+  </head>
+  <body></body>
+</html>`;
+    itBundled("html/LinkMediaReadsAsImportMedia", {
+      outdir: "out/",
+      minifyWhitespace: true,
+      bundleWarnings: Object.fromEntries(rejected.map((media, i) => [`/rejected${i}.html`, [cannotParse(media)]])),
+      files: {
+        "/x.css": `.x { color: red }`,
+        ...Object.fromEntries(
+          sameAsImport.flatMap((media, i) => [
+            [`/link${i}.html`, page(media)],
+            [`/import${i}.css`, `@import "./x.css" ${media};`],
+          ]),
+        ),
+        ...Object.fromEntries(rejected.map((media, i) => [`/rejected${i}.html`, page(media)])),
+      },
+      entryPoints: [
+        ...sameAsImport.flatMap((_, i) => [`/link${i}.html`, `/import${i}.css`]),
+        ...rejected.map((_, i) => `/rejected${i}.html`),
+      ],
+      onAfterBundle(api) {
+        for (const [i, media] of sameAsImport.entries()) {
+          const css = stylesheetOf(api, `link${i}.html`);
+          expect({ media, css }).toEqual({ media, css: api.readFile(`out/import${i}.css`) });
+          expect(css).toStartWith("@media ");
+        }
+        expect(rejected.map((_, i) => stylesheetOf(api, `rejected${i}.html`))).toEqual(
+          rejected.map(() => `.x{color:red}\n`),
+        );
+      },
+    });
+  }
+
+  // The import record of a link with `media` keeps the place of its tag for the linker, and an error shows that place.
+  // A stylesheet link with `as="style"` is one import, with one error.
+  test("html/UnresolvedLinkWithMedia", async () => {
+    using dir = tempDir("html-unresolved-link-media", {
+      "index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./missing.css">
+    <link rel="stylesheet" href="./missing-print.css" media="print">
+    <link rel="stylesheet" as="style" href="./missing-with-as.css">
+  </head>
+  <body></body>
+</html>`,
+    });
+    const result = await Bun.build({ entrypoints: [`${dir}/index.html`], throw: false });
+    expect({
+      success: result.success,
+      logs: result.logs.map(({ message, position }) => ({
+        message,
+        line: position?.line,
+        column: position?.column,
+        lineText: position?.lineText,
+      })),
+    }).toEqual({
+      success: false,
+      logs: [
+        { message: `Could not resolve: "./missing.css"`, line: -1, column: -1, lineText: "" },
+        {
+          message: `Could not resolve: "./missing-print.css"`,
+          line: 5,
+          column: 5,
+          lineText: `    <link rel="stylesheet" href="./missing-print.css" media="print">`,
+        },
+        { message: `Could not resolve: "./missing-with-as.css"`, line: -1, column: -1, lineText: "" },
+      ],
+    });
   });
 
   // Test manifest.json is copied as an asset and link href is rewritten

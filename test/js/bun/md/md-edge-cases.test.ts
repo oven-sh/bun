@@ -386,6 +386,44 @@ code
     }).toThrow("callback error");
   });
 
+  // The parser reports fenced code with events of its own, and indented code with those of every block.
+  describe.each([
+    ["fenced code with a language", "p1\n\n```js\nx\n```\n\np2\n", [{ language: "js" }]],
+    ["fenced code without a language", "p1\n\n```\nx\n```\n\np2\n", []],
+    ["indented code", "p1\n\n    x\n\np2\n", []],
+  ])("render() of %s", (_, markdown, meta) => {
+    test("a code callback that throws ends the render with its error", () => {
+      const calls: unknown[][] = [];
+      expect(() =>
+        Markdown.render(markdown, {
+          paragraph: (children: string) => (calls.push(["paragraph", children]), children),
+          code: (...args: unknown[]) => {
+            calls.push(["code", ...args]);
+            throw new Error("code callback error");
+          },
+        }),
+      ).toThrow("code callback error");
+      expect(calls).toEqual([
+        ["paragraph", "p1"],
+        ["code", "x\n", ...meta],
+      ]);
+    });
+
+    test("a text callback that throws in the code keeps the code callback from running", () => {
+      const calls: string[] = [];
+      expect(() =>
+        Markdown.render(markdown, {
+          code: () => (calls.push("code"), ""),
+          text: (text: string) => {
+            if (text === "x") throw new Error("text callback error");
+            return text;
+          },
+        }),
+      ).toThrow("text callback error");
+      expect(calls).toEqual([]);
+    });
+  });
+
   test("react() component override that throws propagates during render", () => {
     // Component overrides are used as element types, so they throw during
     // renderToString, not during Markdown.react() itself.
@@ -1105,6 +1143,26 @@ describe("pathological nesting through render()", () => {
   });
 });
 
+// The spec files next to this one, each with the options that its examples are for.
+const specCorpus = [
+  ["spec.txt", { headings: { ids: true } }],
+  ["spec-gfm.txt", {}],
+  ["spec-tables.txt", {}],
+  ["spec-strikethrough.txt", {}],
+  ["spec-tasklists.txt", {}],
+  ["spec-permissive-autolinks.txt", { autolinks: true }],
+  ["regressions.txt", {}],
+] as const;
+
+function specExamples(file: string): string[] {
+  const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+  const examples: string[] = [];
+  for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+    examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+  }
+  return examples;
+}
+
 // ============================================================================
 // render() oracle. `Bun.markdown.react()` builds its element tree with a
 // separate renderer, so folding that tree with the same callbacks states
@@ -1225,15 +1283,6 @@ describe("render() agrees with a fold over the react() tree", () => {
     return meta === undefined ? cb(children) : cb(children, meta);
   }
 
-  function specExamples(file: string): string[] {
-    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
-    const examples: string[] = [];
-    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
-      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
-    }
-    return examples;
-  }
-
   const callbackSets = [
     names,
     [],
@@ -1243,15 +1292,7 @@ describe("render() agrees with a fold over the react() tree", () => {
 
   // One test per 100 examples keeps each test near a second on a debug build.
   const chunkSize = 100;
-  for (const [file, options] of [
-    ["spec.txt", { headings: { ids: true } }],
-    ["spec-gfm.txt", {}],
-    ["spec-tables.txt", {}],
-    ["spec-strikethrough.txt", {}],
-    ["spec-tasklists.txt", {}],
-    ["spec-permissive-autolinks.txt", { autolinks: true }],
-    ["regressions.txt", {}],
-  ] as const) {
+  for (const [file, options] of specCorpus) {
     const examples = specExamples(file);
     test(`${file} has examples`, () => {
       expect(examples.length).toBeGreaterThan(0);
@@ -1274,6 +1315,130 @@ describe("render() agrees with a fold over the react() tree", () => {
       });
     }
   }
+});
+
+// ============================================================================
+// A byte order mark before the document. `fs.readFileSync` keeps the mark that
+// an editor on Windows writes. It is not a part of the document: every
+// renderer gives what it gives for the document without it. html() read the
+// language of a fenced code block right, and the other renderers read it three
+// bytes too early ("```js" for "js", "```" for none).
+// ============================================================================
+
+describe("a byte order mark before the document", () => {
+  const mark = "\uFEFF";
+
+  // A callback for every element that writes down what it is given.
+  const everyCallback = new Proxy(
+    {},
+    {
+      get: (_, name) => (children: string, meta?: unknown) =>
+        `\x01${String(name)}${JSON.stringify(meta) ?? ""}\x02${children}\x03`,
+    },
+  );
+
+  // One test per 100 examples keeps each test under a second on a debug build.
+  const chunkSize = 100;
+  for (const [file, options] of specCorpus) {
+    const examples = specExamples(file);
+    const react = { ...options, reactVersion: 18 };
+    for (let start = 0; start < examples.length; start += chunkSize) {
+      const chunk = examples.slice(start, start + chunkSize);
+      test(`changes nothing for ${file} examples ${start + 1}-${start + chunk.length}`, () => {
+        const mismatches: unknown[] = [];
+        for (const markdown of chunk) {
+          const marked = mark + markdown;
+          const differs = [
+            Markdown.html(marked, options) !== Markdown.html(markdown, options) && "html",
+            Markdown.render(marked, everyCallback, options) !== Markdown.render(markdown, everyCallback, options) &&
+              "render",
+            !Bun.deepEquals(Markdown.react(marked, undefined, react), Markdown.react(markdown, undefined, react)) &&
+              "react",
+            Markdown.ansi(marked) !== Markdown.ansi(markdown) && "ansi",
+          ].filter(Boolean);
+          if (differs.length > 0 && mismatches.length < 5) mismatches.push({ markdown, differs });
+        }
+        expect(mismatches).toEqual([]);
+      });
+    }
+  }
+
+  // The language that each renderer gives for every code block. null: none.
+  function languages(input: string | Buffer) {
+    const html = Array.from(
+      Markdown.html(input).matchAll(/<pre><code(?: class="language-([^"]*)")?>/g),
+      match => match[1] ?? null,
+    );
+    const render: (string | null)[] = [];
+    Markdown.render(input, {
+      code: (_children: string, meta?: { language: string }) => (render.push(meta?.language ?? null), ""),
+    });
+    const react: (string | null)[] = [];
+    (function walk(node: any) {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node == null || typeof node !== "object") return;
+      if (node.type === "pre") react.push(node.props.language ?? null);
+      walk(node.props.children);
+    })(Markdown.react(input));
+    return { html, render, react };
+  }
+
+  describe.each([
+    ["a tilde and a backtick fence", "~~~js\nlet a = 1;\n~~~\n\n```ts\nlet b = 2;\n```\n", ["js", "ts"]],
+    ["fences without an info string", "```\nplain\n```\n\n~~~\nplain\n~~~\n", [null, null]],
+    ["blanks before the info string", "``` js\na\n```\n\n```   js\nb\n```\n\n```\tjs\nc\n```\n", ["js", "js", "js"]],
+    ["more words in the info string", '```js title="a.js"\na\n```\n', ["js"]],
+    ["a long fence", "`````js\na\n`````\n", ["js"]],
+    ["a fence in a block quote", "> ```js\n> a\n> ```\n", ["js"]],
+    ["a fence in a list item", "- ```js\n  a\n  ```\n", ["js"]],
+    ["CRLF line ends", "```js\r\na\r\n```\r\n", ["js"]],
+    ["a fence that the document ends in", "```js", ["js"]],
+    ["indented code", "    a\n", [null]],
+  ])("%s", (_, markdown, expected) => {
+    const every = { html: expected, render: expected, react: expected };
+
+    test("has its language in a string", () => {
+      expect(languages(mark + markdown)).toEqual(every);
+    });
+
+    test("has its language in a Buffer", () => {
+      expect(languages(Buffer.from(mark + markdown))).toEqual(every);
+    });
+
+    test("is colored by ansi() as without the mark", () => {
+      expect(Markdown.ansi(mark + markdown, { colors: true })).toBe(Markdown.ansi(markdown, { colors: true }));
+    });
+  });
+
+  // The fence behind the second mark is text. The last line opens a fence.
+  test("is skipped only once", () => {
+    expect(languages(mark + mark + "```js\na\n```\n")).toEqual({ html: [null], render: [null], react: [null] });
+  });
+
+  // The parser decides about the mark when it starts. A callback getter runs before that.
+  test("that a getter writes into the input", () => {
+    const input = () => Buffer.from("   ```js\na\n```\n");
+    const bytes = Buffer.from(mark);
+
+    const rendered = input();
+    expect(
+      Markdown.render(rendered, {
+        get code() {
+          rendered.set(bytes);
+          return (_children: string, meta?: { language: string }) => String(meta?.language);
+        },
+      }),
+    ).toBe("js");
+
+    const parsed = input();
+    const tree: any = Markdown.react(parsed, {
+      get pre() {
+        parsed.set(bytes);
+        return undefined;
+      },
+    });
+    expect(tree.props.children.map((element: any) => element.props.language)).toEqual(["js"]);
+  });
 });
 
 // ============================================================================

@@ -6,7 +6,9 @@ use crate::RenderOptions;
 use crate::helpers;
 use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::types;
-use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
+use crate::types::{
+    BlockType, FencedCode, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
+};
 use bun_collections::ByteSet;
 
 /// The bytes of a URL that are written as they are.
@@ -15,13 +17,11 @@ static URL_SAFE: ByteSet = ByteSet::of(b"-._~:/?#@!$()*+,;=%")
     .with_range(b'a', b'z')
     .with_range(b'0', b'9');
 
-pub(crate) struct HtmlRenderer<'src> {
+pub(crate) struct HtmlRenderer {
     pub out: OutputBuffer,
     // allocator dropped — non-AST crate uses global mimalloc
-    pub src_text: &'src [u8],
     pub image_nesting_level: u32,
-    // Owned (rather than `&'src [u8]` borrowing parser content) so the
-    // RendererImpl trait does not entangle SpanDetail's lifetime with 'src.
+    // Owned: `SpanDetail::title` is valid only for the duration of `enter_span`.
     pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
     pub autolink_headings: bool,
@@ -29,14 +29,13 @@ pub(crate) struct HtmlRenderer<'src> {
     pub heading_tracker: helpers::HeadingIdTracker,
 }
 
-impl<'src> HtmlRenderer<'src> {
-    pub(crate) fn init(src_text: &'src [u8], render_opts: RenderOptions) -> HtmlRenderer<'src> {
+impl HtmlRenderer {
+    pub(crate) fn init(render_opts: RenderOptions) -> HtmlRenderer {
         HtmlRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
                 oom: false,
             },
-            src_text,
             image_nesting_level: 0,
             saved_img_title: Box::default(),
             tag_filter: render_opts.tag_filter,
@@ -64,7 +63,7 @@ impl<'src> HtmlRenderer<'src> {
     // Block rendering
     // ========================================
 
-    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    fn enter_block(&mut self, block_type: BlockType, data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
@@ -122,29 +121,7 @@ impl<'src> HtmlRenderer<'src> {
                     self.write(tag);
                 }
             }
-            BlockType::Code => {
-                self.ensure_newline();
-                self.write(b"<pre><code");
-                if flags & types::BLOCK_FENCED_CODE != 0 {
-                    let info_beg = data as usize;
-                    // Find end of language token (first word of info string)
-                    let mut lang_end = info_beg;
-                    while lang_end < self.src_text.len()
-                        && !helpers::is_blank(self.src_text[lang_end])
-                        && !helpers::is_newline(self.src_text[lang_end])
-                    {
-                        lang_end += 1;
-                    }
-                    if lang_end > info_beg {
-                        self.write(b" class=\"language-");
-                        // Capture the slice before the &mut self call.
-                        let src_text = self.src_text;
-                        self.write_with_entity_decoding(&src_text[info_beg..lang_end]);
-                        self.write(b"\"");
-                    }
-                }
-                self.write(b">");
-            }
+            BlockType::Code => self.enter_code(b""),
             BlockType::Html => self.ensure_newline(),
             BlockType::P => {
                 self.ensure_newline();
@@ -173,6 +150,17 @@ impl<'src> HtmlRenderer<'src> {
                 self.write(b">");
             }
         }
+    }
+
+    fn enter_code(&mut self, language: &[u8]) {
+        self.ensure_newline();
+        self.write(b"<pre><code");
+        if !language.is_empty() {
+            self.write(b" class=\"language-");
+            self.write_with_entity_decoding(language);
+            self.write(b"\"");
+        }
+        self.write(b">");
     }
 
     fn leave_block(&mut self, block_type: BlockType, data: u32) {
@@ -607,9 +595,13 @@ impl<'src> HtmlRenderer<'src> {
 // Static helpers
 // ========================================
 
-impl RendererImpl for HtmlRenderer<'_> {
-    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
-        HtmlRenderer::enter_block(self, block_type, data, flags);
+impl RendererImpl for HtmlRenderer {
+    fn enter_block(&mut self, block_type: BlockType, data: u32, _flags: u32) -> JsResult<()> {
+        HtmlRenderer::enter_block(self, block_type, data);
+        Ok(())
+    }
+    fn enter_fenced_code(&mut self, code: FencedCode<'_>) -> JsResult<()> {
+        self.enter_code(code.language());
         Ok(())
     }
     fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {

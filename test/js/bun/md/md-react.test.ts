@@ -6,7 +6,7 @@ const Markdown = Bun.markdown;
 
 /** renderToString the Fragment returned by Markdown.react.
  *  Uses reactVersion: 18 since the project has react-dom@18 installed. */
-function reactRender(md: string, components?: any, opts?: any): string {
+function reactRender(md: string | Buffer, components?: any, opts?: any): string {
   return renderToString(Markdown.react(md, components, { reactVersion: 18, ...opts }));
 }
 
@@ -20,7 +20,7 @@ describe("Bun.markdown.react", () => {
   const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
 
   /** Helper: get the children array from the Fragment returned by react() */
-  function children(md: string, components?: any, opts?: any): any[] {
+  function children(md: string | Buffer, components?: any, opts?: any): any[] {
     return (Markdown.react(md, components, opts).props as { children: any[] }).children;
   }
 
@@ -132,6 +132,33 @@ describe("Bun.markdown.react", () => {
     expect(pre.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(pre.type).toBe("pre");
     expect(pre.props.language).toBe("ts");
+  });
+
+  // `fs.readFileSync` keeps the byte order mark that an editor on Windows writes.
+  describe.each([
+    ["string", (md: string) => md],
+    ["Buffer", (md: string) => Buffer.from(md)],
+  ])("code block in a %s that starts with a byte order mark", (_, input) => {
+    const md = input("\uFEFF# Title\n\n~~~js\nlet a = 1;\n~~~\n\n```\nplain\n```\n\n    indented\n");
+
+    test.each([18, 19])("has the language of its info string with reactVersion %d", reactVersion => {
+      const pres = children(md, undefined, { reactVersion }).filter(el => el.type === "pre");
+      expect(pres.map(pre => pre.props)).toEqual([
+        { language: "js", children: ["let a = 1;", "\n"] },
+        { children: ["plain", "\n"] },
+        { children: ["indented", "\n"] },
+      ]);
+    });
+
+    test("gives the language to a custom component", () => {
+      const languages: unknown[] = [];
+      function Code({ language, children }: any) {
+        languages.push(language);
+        return React.createElement("pre", null, ...children);
+      }
+      reactRender(md, { pre: Code });
+      expect(languages).toEqual(["js", undefined, undefined]);
+    });
   });
 
   test("hr is void element", () => {

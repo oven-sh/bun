@@ -368,9 +368,16 @@ impl Parser<'_> {
                 continue;
             }
 
-            // Skip paragraph blocks consumed entirely by ref defs
-            if flags & types::BLOCK_REF_DEF_ONLY != 0 {
-                continue;
+            // One test for the two, so that a block that is neither pays for one.
+            if flags & (types::BLOCK_REF_DEF_ONLY | types::BLOCK_FENCED_CODE) != 0 {
+                // Skip paragraph blocks consumed entirely by ref defs
+                if flags & types::BLOCK_REF_DEF_ONLY != 0 {
+                    continue;
+                }
+                if !self.track {
+                    self.process_fenced_code(&block_lines, data, flags)?;
+                    continue;
+                }
             }
 
             // Determine if we're in a tight list (md4c approach: check innermost container)

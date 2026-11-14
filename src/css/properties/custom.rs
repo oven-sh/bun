@@ -1479,13 +1479,11 @@ fn try_parse_color_token(f: &[u8], state: &ParserState, input: &mut Parser) -> O
 }
 
 /// Whether a token that starts with this byte can read as part of a color printed right before it.
-/// A color can print as a hash or a name. A name or a number continues both, a name before `(` is
-/// a function, and a hash that follows can print as a name itself. Not `_`: Tailwind writes a
-/// blank as `_` inside one `@apply` class.
 const JOINS_A_COLOR: [bool; 256] = {
     let mut table = [false; 256];
     let mut b = 0;
     while b < 256 {
+        // Not `_`: it is a blank in utility-class text, `shadow-[rgba(0,0,0,.5)_0_0_10px]`.
         table[b] = (b as u8).is_ascii_alphanumeric()
             || matches!(b as u8, 0 | b'#' | b'-' | b'\\' | b'(' | 0x80..);
         b += 1;
@@ -1493,8 +1491,7 @@ const JOINS_A_COLOR: [bool; 256] = {
     table
 };
 
-/// Out of line: few colors touch a token, and an inlined push changes the code of the loop for
-/// every other token.
+/// Out of line: few colors touch a token.
 #[cold]
 fn push_blank(tokens: &mut Vec<TokenOrValue>) {
     tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));

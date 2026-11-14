@@ -8517,6 +8517,13 @@ describe("a folded color function next to the token it touches", () => {
     test("--x:rgb(0 0 0)<NUL>", () => {
       declaration("--x:rgb(0 0 0)\0", "--x: #000 \ufffd", "--x:#000 \ufffd");
     });
+
+    // Bun keeps the block of an at-rule it does not model as tokens. A browser reads this one.
+    test("@position-try --a{box-shadow:var(--s),rgba(0,0,0,.2)0 5px}", () => {
+      expect(cssInternals.minifyTest("@position-try --a{box-shadow:var(--s),rgba(0,0,0,.2)0 5px}", "")).toBe(
+        "@position-try --a{box-shadow:var(--s),#0003 0 5px}",
+      );
+    });
   });
 
   describe("gets no blank before what cannot join", () => {
@@ -8528,9 +8535,14 @@ describe("a folded color function next to the token it touches", () => {
       ["--x:rgb(0 0 0)[a]", "--x: #000[a]", "--x:#000[a]"],
       // Not folded: it prints as a function.
       ["--x:hsl(var(--a))inset", "--x: hsl(var(--a))inset", "--x:hsl(var(--a))inset"],
+      // Utility-class text writes a blank as `_`. UnoCSS reads such text from this property.
+      [
+        "--at-apply:shadow-[rgba(0,0,0,0.5)_0_0_10px]",
+        "--at-apply: shadow-[#00000080_0_0_10px]",
+        "--at-apply:shadow-[#00000080_0_0_10px]",
+      ],
     ])("%s", declaration);
 
-    // Tailwind writes a blank as `_`: the class stays one class.
     test("@apply shadow-[rgba(0,0,0,0.5)_0_0_10px]", () => {
       expect(cssInternals.minifyTest("@apply shadow-[rgba(0,0,0,0.5)_0_0_10px];", "")).toBe(
         "@apply shadow-[#00000080_0_0_10px];",
@@ -8540,11 +8552,11 @@ describe("a folded color function next to the token it touches", () => {
 
   test("keeps its @supports copies", () => {
     const targets = { chrome: 80 << 16, firefox: 78 << 16, safari: 14 << 16 };
-    const source = ".c{box-shadow:var(--s),oklch(63.7% .237 25.331)0 5px}";
+    const source = ".c{box-shadow:var(--s),lab(40% 56.6 39)0 5px}";
     expect(cssInternals.minifyTest(source, "", targets)).toBe(
-      ".c{box-shadow:var(--s),#fb2c36 0 5px}" +
-        "@supports (color:color(display-p3 0 0 0)){.c{box-shadow:var(--s),color(display-p3 .903738 .262579 .253307) 0 5px}}" +
-        "@supports (color:lab(0% 0 0)){.c{box-shadow:var(--s),lab(55.4814% 75.0732 48.8527) 0 5px}}",
+      ".c{box-shadow:var(--s),#b32323 0 5px}" +
+        "@supports (color:color(display-p3 0 0 0)){.c{box-shadow:var(--s),color(display-p3 .643308 .192455 .167712) 0 5px}}" +
+        "@supports (color:lab(0% 0 0)){.c{box-shadow:var(--s),lab(40% 56.6 39) 0 5px}}",
     );
   });
 

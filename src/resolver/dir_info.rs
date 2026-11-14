@@ -251,14 +251,12 @@ impl DirInfo {
     /// concurrent resolver with a newer generation rewrites the `DirEntry` in
     /// place under that lock ([`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked)
     /// drops the old `data` map's buckets), so probing the map after the lock
-    /// is released can walk freed buckets. The returned lookup wraps a raw
-    /// pointer into the process-lifetime `EntryStore`, which stays valid after
-    /// the lock is dropped.
+    /// is released can walk freed buckets.
     pub(crate) fn get_entry(
         &self,
         generation: Generation,
         query: &[u8],
-    ) -> Option<fs::EntryLookup> {
+    ) -> Option<&'static fs::Entry> {
         let rfs = &mut fs::FileSystem::instance().fs;
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.

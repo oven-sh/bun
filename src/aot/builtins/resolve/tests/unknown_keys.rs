@@ -29,6 +29,10 @@ const SPELL_WHAT_NO_BINDING_STANDS_FOR: &[(&str, BuiltinId)] = &[
         BuiltinId::ArrayIteratorPrototypeNext,
     ),
     (
+        "const steps = Symbol?.iterator; f[steps];",
+        BuiltinId::ArrayIteratorPrototypeNext,
+    ),
+    (
         "const steps = Symbol.iterator; const { [steps]: taken } = f;",
         BuiltinId::ArrayIteratorPrototypeNext,
     ),
@@ -125,6 +129,9 @@ const KEYS_THAT_NOBODY_KNOWS: &[&str] = &[
     "let i = 0; i++; let taken; ({ [i]: taken } = f);",
     "var steps = Symbol.iterator; f[steps];",
     "var steps = Symbol.iterator; const again = steps; f[again];",
+    "f[globalThis.Symbol?.iterator];",
+    "const steps = globalThis?.Symbol.iterator; f[steps];",
+    "const Marks = globalThis.Symbol; const steps = Marks?.iterator; f[steps];",
     "let i = 0; i = g(); f[i];",
     "let i = 0, j = g(); i = j + 1; j = i + 1; f[i];",
     "for (var k = 0 in g) f[k];",
@@ -299,6 +306,8 @@ fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
         assert_eq!(asked.exports_read, not_asked.exports_read, "{source}");
         let AsksOfText {
             members_read,
+            members_named: _,
+            escaped_objects: _,
             reads_by_unknown_key,
             syntax,
             may_hand_values_to_natives: _,
@@ -308,6 +317,50 @@ fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
             "{source}"
         );
     }
+}
+
+const PROGRAMS_THAT_CHANGE_THE_HOLDER: &[&str] = &[
+    "Object.freeze(Temporal);",
+    "Object.defineProperty(Temporal, 1, { value: 5 });",
+    "Object.defineProperty(Temporal, 'zone', { value: 5 });",
+    "Object.defineProperties(Temporal, { zone: { value: 5 } });",
+    "Object.setPrototypeOf(Temporal, null);",
+    "Temporal.zone = 1;",
+    "Temporal[1] = 1;",
+    "delete Temporal.zone;",
+    "globalThis.Temporal = f();",
+    "globalThis.Temporal ??= f();",
+    "if (!globalThis.Temporal) globalThis.Temporal = f();",
+    "globalThis.Temporal.PlainTime = f();",
+    "const copy = { ...Temporal };",
+    "for (const name in Temporal) f(name);",
+    "f(Temporal);",
+    "Object.freeze(Temporal.PlainTime);",
+    "const { PlainTime } = Temporal; Object.freeze(PlainTime);",
+    "const Times = Temporal; Times.zone = 1;",
+];
+
+#[test]
+fn a_member_of_an_object_that_the_program_changes_asks_for_its_name() {
+    let holds_from = |asks: &AsksOfText| {
+        let uses = RuntimeUses::of_asks(asks, Platforms::LINUX);
+        holds_code_of(&uses, BuiltinId::IteratorFrom)
+    };
+    const CALL: &str = "Temporal.PlainTime.from(a);";
+    let of_call = with_case(PROGRAM, CALL, |case| case.resolved.uses().asks.clone());
+    assert!(!holds_from(&of_call));
+    for source in PROGRAMS_THAT_CHANGE_THE_HOLDER {
+        let mut asks = with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+        assert!(!holds_from(&asks), "{source}");
+        asks.add(&of_call);
+        assert!(holds_from(&asks), "{source}");
+    }
+    let of_other = with_case(PROGRAM, "Object.freeze(Math);", |case| {
+        case.resolved.uses().asks.clone()
+    });
+    let mut asks = of_call;
+    asks.add(&of_other);
+    assert!(!holds_from(&asks));
 }
 
 #[test]

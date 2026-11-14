@@ -3,9 +3,7 @@ use helloworld::greeter_server::{Greeter, GreeterServer};
 use helloworld::{HelloRequest, HelloReply};
 use tokio::net::TcpListener;
 
-pub mod helloworld {
-    tonic::include_proto!("helloworld");
-}
+pub mod helloworld;
 
 #[derive(Default)]
 pub struct MyGreeter {}

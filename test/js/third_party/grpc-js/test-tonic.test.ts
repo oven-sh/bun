@@ -2,27 +2,10 @@ import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { chmod, cp, mkdir, rename, rm } from "fs/promises";
-import { tmpdirSync } from "harness";
+import { cp } from "fs/promises";
+import { isArm64, isLinux, isMacOS, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import path, { join } from "path";
-import unzipper from "unzipper";
-
-const protoVersion = "31.0";
-
-const releases = {
-  "win32_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win32.zip`,
-  "win32_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win64.zip`,
-  "linux_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_32.zip`,
-  "linux_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_64.zip`,
-  "darwin_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-x86_64.zip`,
-  "darwin_arm64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-aarch_64.zip`,
-};
-
-const platform = process.platform;
-const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x86_64" : "x86_32";
-const release = platform + "_" + arch;
-const binPath = join("bin", platform === "win32" ? "protoc.exe" : "protoc");
 
 // Load proto
 const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/tonic-server/proto/helloworld.proto"), {
@@ -36,52 +19,34 @@ const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/t
 type Server = { address: string; kill: () => Promise<void> };
 
 const cargoBin = Bun.which("cargo") as string;
+// Linux and Windows on arm64 have never built this fixture, so the test stays off there.
+const hostBuildsFixture = isMacOS || ((isLinux || isWindows) && !isArm64);
 
-// Stable per-machine cache so persistent CI agents don't re-download protoc and
-// re-compile the entire tonic/tokio dependency tree (~50s) on every run.
+// Stable per-machine cache so persistent CI agents don't re-compile the
+// entire tonic/tokio dependency tree (~50s) on every run.
 const cacheDir = join(tmpdir(), "bun-test-tonic-cache");
 
-async function openProtocZip() {
-  const cachedPath = join(cacheDir, `protoc-${protoVersion}-${release}.zip`);
-  const cached = Bun.file(cachedPath);
-  if (await cached.exists()) {
-    try {
-      return await unzipper.Open.buffer(await cached.bytes());
-    } catch {
-      // An earlier run cached a response that was not the zip. Every later run on this machine would fail on it.
-      await rm(cachedPath, { force: true });
-    }
-  }
-  const response = await fetch(releases[release]);
-  if (!response.ok) {
-    throw new Error(`downloading ${releases[release]} failed: ${response.status} ${response.statusText}`);
-  }
-  const bytes = await response.bytes();
-  // Only bytes that open as a zip are cached.
-  const zip = await unzipper.Open.buffer(bytes);
-  await mkdir(cacheDir, { recursive: true });
-  // Write-then-rename so a concurrent/crashed run never leaves a truncated zip behind.
-  const partial = `${cachedPath}.${process.pid}.tmp`;
-  await Bun.write(partial, bytes);
-  await rename(partial, cachedPath);
-  return zip;
-}
+// The server needs no protoc: src/helloworld.rs is the checked-in output of
+// tonic-build for proto/helloworld.proto, and it records the hash of the .proto
+// it was made from. The client reads the .proto, so a change to it fails here
+// until the module is made again.
+test("the server's generated module is made from the present helloworld.proto", async () => {
+  const fixture = join(import.meta.dir, "fixtures/tonic-server");
+  // A checkout can have CRLF line ends. The hash is of the text with LF.
+  const proto = (await Bun.file(join(fixture, "proto/helloworld.proto")).text()).replaceAll("\r\n", "\n");
+  const generated = await Bun.file(join(fixture, "src/helloworld.rs")).text();
+  expect(generated.match(/^\/\/ sha256 of proto\/helloworld\.proto: (\w+)$/m)?.[1]).toBe(
+    new Bun.CryptoHasher("sha256").update(proto).digest("hex"),
+  );
+});
 
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
   await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
-  const protocZip = await openProtocZip();
-
-  const protocPath = join(tmpDir, "protoc");
-  await mkdir(protocPath, { recursive: true });
-  await protocZip.extract({ path: protocPath });
-  const protocExec = join(protocPath, binPath);
-  await chmod(protocExec, 0o755);
 
   const server = Bun.spawn([cargoBin, "run", "--quiet", path.join(tmpDir, "server")], {
     cwd: tmpDir,
     env: {
-      PROTOC: protocExec,
       PATH: process.env.PATH,
       CARGO_HOME: process.env.CARGO_HOME,
       RUSTUP_HOME: process.env.RUSTUP_HOME,
@@ -132,7 +97,7 @@ async function startServer(): Promise<Server> {
   }
 }
 
-describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
+describe.skipIf(!cargoBin || !hostBuildsFixture)("test tonic server", () => {
   let server: Server;
 
   beforeAll(async () => {

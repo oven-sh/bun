@@ -195,12 +195,16 @@ pub(crate) struct RunContents {
     pub counts: CountsOfScan,
 }
 
+/// The file that a `require` of a name in a folder runs, under the path that the build gives that file.
+pub(crate) type FindRequiredFile<'a> = &'a (dyn Fn(&[u8], &[u8]) -> Option<Vec<u8>> + Sync);
+
 #[derive(Copy, Clone)]
 pub(crate) struct RunInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub options: &'a Options<'a>,
     pub replaced_builtins: &'a [u32],
     pub in_parallel: InParallel<'a>,
+    pub find_required_file: FindRequiredFile<'a>,
 }
 
 impl RunContents {

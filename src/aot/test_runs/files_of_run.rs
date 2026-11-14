@@ -29,7 +29,7 @@ use crate::ir::parallel::{InParallel, map_each};
 use crate::load::contents::load_names::resolve_loads_through_imported_loaders;
 use crate::load::sources::parsed_source;
 use crate::load::{is_in_node_modules, read_file_bytes};
-use crate::options::Options;
+use crate::options::INDEX_FILES;
 use crate::test_run_report::{CodeOutsideRun, say_code_outside_run};
 
 pub(super) fn find_files_loaded_from(
@@ -86,7 +86,8 @@ struct Manifests {
 }
 
 impl Manifests {
-    fn read(&mut self, folder: &[u8], text: &[u8]) {
+    /// A way is a file, under the path that the build gives it: a text as it stands, and the file that a `require` of it finds.
+    fn read(&mut self, folder: &[u8], text: &[u8], input: &RunInput<'_, '_>) {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
         let parse_options = CompileParseOptions {
@@ -140,16 +141,45 @@ impl Manifests {
                 _ => {}
             }
         }
+        ways.retain(|way| !way.is_empty());
         if ways.is_empty() {
-            ways.push(b"index.js");
+            // A `bun compile` without an entry point reads only the manifest of the folder where it is started.
+            let names: &[&[u8]] = match input.options.code.working_directory == folder {
+                true => &INDEX_FILES,
+                false => &[b"index.js"],
+            };
+            (self.ways_into_project).extend(names.iter().map(|name| inside(folder, name)));
         }
+        let files = input.files;
         for way in ways {
-            let way = way.strip_prefix(b"./").unwrap_or(way);
-            self.ways_into_project.insert(inside(folder, way));
+            let named = from_argument(folder, way);
+            let compiled = files.by_path.get(&named);
+            if let Some(file) = compiled.filter(|&file| files.is_compiled(file)) {
+                let name = files.module(file).file_name();
+                let named = if named == name { named } else { name.to_vec() };
+                self.ways_into_project.insert(named);
+                continue;
+            }
+            let found = match (named == folder, way.ends_with(b"/")) {
+                (true, _) => (input.find_required_file)(folder, b"."),
+                (false, true) => {
+                    (input.find_required_file)(folder, &[to_native(&named), b"/"].concat())
+                }
+                (false, false) => (input.find_required_file)(folder, to_native(&named)),
+            };
+            if let Some(found) = found {
+                let found = match files.by_path.get(&found) {
+                    Some(file) => files.module(file).file_name().to_vec(),
+                    None => found,
+                };
+                self.ways_into_project.insert(found);
+            }
+            self.ways_into_project.insert(named);
         }
     }
 
-    fn above_test_files(options: &Options<'_>) -> Manifests {
+    fn above_test_files(input: &RunInput<'_, '_>) -> Manifests {
+        let options = input.options;
         let mut manifests = Manifests::default();
         let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
         for test_file in &options.load.test_files {
@@ -160,7 +190,7 @@ impl Manifests {
                 }
                 let path = inside(folder, b"package.json");
                 if let Some(text) = read_file(&options.load.in_memory_files, &path) {
-                    manifests.read(folder, &text);
+                    manifests.read(folder, &text, input);
                 }
             }
         }
@@ -942,7 +972,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
         referrers: vec![Vec::new(); count],
         is_in_package: vec![false; count],
         is_of_tests: vec![false; count],
-        manifests: Manifests::above_test_files(options),
+        manifests: Manifests::above_test_files(input),
     };
     for index in 0..count {
         let module = files.module(FileId(index as u32));

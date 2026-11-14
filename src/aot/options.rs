@@ -100,6 +100,9 @@ pub struct PathOptions {
 
 pub use crate::module_keys::DEFAULT_LOADERS;
 
+/// The files that `bun compile` takes for the entry point of a folder whose `package.json` names none, in this order.
+pub const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"index.js"];
+
 #[cfg(any(test, feature = "test_support"))]
 pub fn default_loaders() -> Vec<(Vec<u8>, Loader)> {
     DEFAULT_LOADERS

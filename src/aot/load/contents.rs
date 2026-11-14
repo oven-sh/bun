@@ -39,8 +39,8 @@ use crate::module_keys::loader_by_name;
 use crate::options::Options;
 use crate::test_runs::files_of_run::find_whose_files;
 use crate::test_runs::{
-    RunContents, RunInput, WhoseFile, collect_run_contents, fix_places_on_the_way,
-    fix_what_every_run_folds_by, list_names_that_tests_may_add,
+    FindRequiredFile, RunContents, RunInput, WhoseFile, collect_run_contents,
+    fix_places_on_the_way, fix_what_every_run_folds_by, list_names_that_tests_may_add,
 };
 
 #[derive(Default)]
@@ -138,6 +138,7 @@ pub(crate) struct ContentsInput<'a, 's> {
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
     pub in_parallel: InParallel<'a>,
+    pub find_required_file: FindRequiredFile<'a>,
 }
 
 const FILES_LOOKED_AT_IN_A_RUN: usize = 64;
@@ -561,6 +562,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         builtin_names,
         platform,
         in_parallel,
+        find_required_file,
     } = input;
     let is_test_run = options.load.runs_tests && !options.aot.checks_only;
     let run_input = RunInput {
@@ -568,6 +570,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         options,
         replaced_builtins: &[],
         in_parallel,
+        find_required_file,
     };
     let whose_files = is_test_run.then(|| find_whose_files(&run_input));
     let look_input = LookInput {

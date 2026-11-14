@@ -567,7 +567,7 @@ fn finish(
 pub(super) fn request_from_context<'r>(
     ctx: &'r mut ContextData,
     configuration: Configuration,
-    event_loop: &'r mut AnyEventLoop,
+    event_loop: &'r AnyEventLoop,
     product: CompileProduct<'r>,
     root_dir: Fd,
     origin: RequestOrigin,

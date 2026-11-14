@@ -341,7 +341,7 @@ fn auto_close(argv: Vec<Box<[u8]>>) {
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

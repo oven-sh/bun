@@ -558,8 +558,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         };
         ssl_ctx_setup(self.secure.insert(ctx));
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         Ok(())
     }
 
@@ -588,8 +587,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             let ctx = self.secure.insert(

@@ -369,7 +369,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        let _ = self.unregister(vm.platform_event_loop(), force_unregister);
+        let _ = self.unregister(vm.loop_(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);

@@ -282,8 +282,8 @@ impl Default for UsNqDriver {
 }
 
 unsafe extern "C" {
-    fn us_nq_loop_register(loop_: *mut c_void, d: *mut UsNqDriver, owner: *mut c_void);
-    fn us_nq_loop_unregister(loop_: *mut c_void, d: *mut UsNqDriver);
+    fn us_nq_loop_register(loop_: &uws::Loop, d: *mut UsNqDriver, owner: *mut c_void);
+    fn us_nq_loop_unregister(loop_: &uws::Loop, d: *mut UsNqDriver);
 }
 
 impl QuicEndpoint {
@@ -296,7 +296,7 @@ impl QuicEndpoint {
         // list, which `unlink_loop_driver` clears before the endpoint dies.
         unsafe {
             us_nq_loop_register(
-                uws::Loop::get().cast(),
+                uws::Loop::get(),
                 self.nq_driver.as_ptr(),
                 core::ptr::from_ref(self).cast_mut().cast(),
             );
@@ -310,7 +310,7 @@ impl QuicEndpoint {
             return;
         }
         // SAFETY: registered by `link_loop_driver` on this same loop.
-        unsafe { us_nq_loop_unregister(uws::Loop::get().cast(), self.nq_driver.as_ptr()) };
+        unsafe { us_nq_loop_unregister(uws::Loop::get(), self.nq_driver.as_ptr()) };
     }
 
     /// Marks that lsquic has work queued, so the next driver pass runs.

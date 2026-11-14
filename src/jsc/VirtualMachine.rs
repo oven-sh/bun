@@ -218,6 +218,9 @@ pub struct VirtualMachine {
     /// both types are owned by `bun_runtime` (forward dep). Access goes through
     /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: Cell<*mut c_void>,
+    #[cfg(not(windows))]
+    pub event_loop_handle: Cell<Option<&'static uws::ThreadLoop>>,
+    #[cfg(windows)]
     pub event_loop_handle: Cell<Option<*mut PlatformEventLoop>>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
     /// `KeepAlive::unref_on_next_tick` increments it from OTHER threads
@@ -1522,23 +1525,20 @@ impl VirtualMachine {
         self.fs().top_level_dir()
     }
 
-    /// Safe `&uws::Loop` accessor for the per-VM uSockets loop.
-    #[inline(always)]
-    pub fn uws_loop_ref(&self) -> &uws::Loop {
-        // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
-        // the JS thread once `init()` ran; JS thread only (`!Sync`).
-        unsafe { &*self.uws_loop() }
-    }
-
     /// Safe `&PlatformEventLoop` accessor for `event_loop_handle` (the
     /// uws loop on POSIX, libuv loop on Windows). `None` only before
     /// `ensure_waker()` runs.
     #[inline(always)]
     pub(crate) fn platform_loop_opt(&self) -> Option<&PlatformEventLoop> {
-        // SAFETY: when `Some`, `event_loop_handle` was set in `init()` /
-        // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
-        // for the VM lifetime.
-        self.event_loop_handle.get().map(|h| unsafe { &*h })
+        #[cfg(not(windows))]
+        {
+            self.event_loop_handle.get().map(|h| &**h)
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: set to this thread's libuv loop or spawnSync's, which last as long as the VM runs.
+            self.event_loop_handle.get().map(|h| unsafe { &*h })
+        }
     }
 
     /// Read-then-zero `pending_unref_counter`. `swap(0)` so a concurrent
@@ -1645,11 +1645,11 @@ impl VirtualMachine {
     }
 
     /// Per-callback hot path: `drain_microtasks_once` calls
-    /// `uws_loop_ref()` (→ this) every time the microtask queue drains, and
+    /// this every time the microtask queue drains, and
     /// the only call site there is already gated on
     /// `event_loop_handle.is_some()`.
     #[inline(always)]
-    pub fn uws_loop(&self) -> *mut uws::Loop {
+    pub fn uws_loop(&self) -> &'static uws::ThreadLoop {
         #[cfg(unix)]
         {
             debug_assert!(
@@ -2254,10 +2254,8 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
-        // The loop won't tick again, so flush now. Don't use `uws_loop()`: inside spawnSync it
-        // returns a loop that has no uWS LoopData.
-        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
-        unsafe { (*uws::Loop::get()).flush_pending_writes() };
+        // The loop won't tick again, so flush now.
+        uws::Loop::get().flush_pending_writes();
 
         self.is_shutting_down.set(true);
 
@@ -2526,7 +2524,7 @@ impl VirtualMachine {
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        vm.uws_loop_ref().drain_closed_sockets();
+        vm.uws_loop().drain_closed_sockets();
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
@@ -2544,12 +2542,15 @@ impl VirtualMachine {
             if let Some(rare) = vm.rare_data.get() {
                 rare.detach_socket_groups_from_loop();
             }
-            let uws_loop = vm.uws_loop_ref();
+            let uws_loop = vm.uws_loop();
             uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
-            bun_uws::free_thread_loop();
-            teardown_log!("teardown: uSockets loop freed");
-            #[cfg(windows)]
-            bun_sys::windows::libuv::Loop::close_thread_loop();
+            // SAFETY: what was on the loop has been closed, and the thread only frees from here on.
+            unsafe {
+                bun_uws::free_thread_loop();
+                teardown_log!("teardown: uSockets loop freed");
+                #[cfg(windows)]
+                bun_sys::windows::libuv::Loop::close_thread_loop();
+            }
             teardown_log!("teardown: loops closed");
         }
 
@@ -2960,7 +2961,7 @@ pub struct RuntimeHooks {
 
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
-        platform_event_loop_ptr() => (*this).uws_loop(),
+        loop_() => (*this).uws_loop(),
         file_polls_ptr() => (*this).rare_data().file_polls_ptr(),
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         increment_pending_unref_counter() => {
@@ -3334,8 +3335,7 @@ impl VirtualMachine {
         // `uws.Loop.get().internal_loop_data.jsc_vm
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
         // recover the JSC VM via `internal_loop_data`.
-        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
-        let uws_loop = unsafe { &*uws::Loop::get() };
+        let uws_loop = uws::Loop::get();
         uws_loop.internal_loop_data.jsc_vm.set(jsc_vm.cast());
 
         // `ParentDeathWatchdog` install for the main thread.
@@ -4234,7 +4234,7 @@ impl VirtualMachine {
     }
 
     /// Returns this VM's libuv event loop handle (must already be initialized).
-    pub fn uv_loop(&self) -> *mut Async::Loop {
+    pub fn uv_loop(&self) -> Async::LoopRef {
         #[cfg(debug_assertions)]
         {
             return self
@@ -4910,9 +4910,7 @@ impl VirtualMachine {
         // (no `&VM` reborrow).
         vm.jsc_vm
             .set(JSGlobalObject::opaque_ref(new_global).vm_ptr());
-        // SAFETY: per-thread uws loop is live.
-        let uws_loop = unsafe { &*uws::Loop::get() };
-        uws_loop
+        uws::Loop::get()
             .internal_loop_data
             .jsc_vm
             .set(vm.jsc_vm.get().cast());
@@ -6037,8 +6035,7 @@ impl VirtualMachine {
 
     /// One sweep over the sockets a test file opened. What a close handler opens meanwhile stays open.
     fn close_test_file_sockets(&self) {
-        // SAFETY: process-global usockets loop is live.
-        let data = unsafe { &(*uws::Loop::get()).internal_loop_data };
+        let data = &uws::Loop::get().internal_loop_data;
         // The next group is parked in the loop's iterator, which unlinking a group advances past
         // it: a close handler may unlink any group, and its owner then free it. One it links goes
         // to the head, behind the walk.
@@ -6057,8 +6054,7 @@ impl VirtualMachine {
 
     /// A group is linked into the loop while it has a socket.
     fn has_test_file_sockets(&self) -> bool {
-        // SAFETY: process-global usockets loop is live.
-        let mut maybe_group = unsafe { (*uws::Loop::get()).internal_loop_data.head() };
+        let mut maybe_group = uws::Loop::get().internal_loop_data.head();
         while let Some(group) = NonNull::new(maybe_group) {
             if !self.is_test_runner_socket_group(group.as_ptr()) {
                 return true;

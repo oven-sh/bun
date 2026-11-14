@@ -582,7 +582,7 @@ impl Interpreter {
     /// not bumping `standalone_shell` analytics.
     pub(crate) fn init_and_run_from_file(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
@@ -599,7 +599,7 @@ impl Interpreter {
     /// without a diagnostic.
     pub(crate) fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -613,7 +613,7 @@ impl Interpreter {
     /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -662,7 +662,7 @@ impl Interpreter {
         shargs.set_script_ast(script);
 
         // ── init ───────────────────────────────────────────────────────────
-        let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
+        let evtloop = EventLoopHandle::init_mini(mini);
         // Boxed: `run` hands out its address.
         let interp = match Self::init(std::ptr::from_mut(ctx), evtloop, shargs, None, cwd) {
             Ok(i) => Box::new(i),
@@ -683,7 +683,9 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
+        while !interp.flags.get().done() {
+            mini.tick_once(core::ptr::null_mut());
+        }
 
         Ok(interp.exit_code.get().expect("exit_code set by finish()"))
     }

@@ -801,7 +801,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
 }
 
 impl Clone for ConcurrentPoster {

@@ -311,11 +311,11 @@ impl Debugger {
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            this.uws_loop_ref().unref_count(pending_unref);
+                            this.uws_loop().unref_count(pending_unref);
                         }
                     }
 
-                    this.uws_loop_ref()
+                    this.uws_loop()
                         .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {

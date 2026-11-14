@@ -826,7 +826,7 @@ pub(crate) struct GitSubprocess {
 impl GitSubprocess {
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task<'static>>) {
         let cache_dir = manager.get_cache_directory();
-        let event_loop = EventLoopHandle::from_any(&mut manager.event_loop);
+        let event_loop = EventLoopHandle::from_any(&manager.event_loop);
         // SAFETY: a queued git task is live and idle until its runner hands it on.
         let (tag, name) = unsafe {
             let t = task.as_ref();

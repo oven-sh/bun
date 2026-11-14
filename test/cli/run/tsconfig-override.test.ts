@@ -34,8 +34,9 @@ describe("bun run --tsconfig-override", () => {
       `,
     });
 
+    // The fixture has no node_modules: without --no-install, auto-install asks the npm registry for this import.
     await using failProc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(dir, "index.ts")],
+      cmd: [bunExe(), "run", "--no-install", path.join(dir, "index.ts")],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",

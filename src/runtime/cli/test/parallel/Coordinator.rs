@@ -495,7 +495,7 @@ impl<'a> Coordinator<'a> {
         }
         for slot in 0..self.workers.len() {
             let w = &mut self.workers[slot];
-            if w.alive && core::mem::take(&mut w.waits_for_heavy_file_to_end) {
+            if w.can_take_work() && core::mem::take(&mut w.waits_for_heavy_file_to_end) {
                 self.assign_work(slot);
             }
         }
@@ -638,6 +638,10 @@ impl<'a> Coordinator<'a> {
             frame::Kind::Ready => {
                 log_first_time_in_test_run("the first worker is ready");
                 let w = &mut self.workers[slot];
+                if !w.can_take_work() {
+                    // Left as an exit during startup, which is what bounds the respawns.
+                    return;
+                }
                 w.reached_ready = true;
                 w.startup_failures = 0;
                 self.take_highest_of_children(slot);
@@ -747,7 +751,7 @@ impl<'a> Coordinator<'a> {
                 // pre-reap drain; don't dispatch into it (stdin is gone, the
                 // file index would be consumed and skipped). reapWorker()
                 // handles the next dispatch via respawn.
-                if self.workers[slot].alive {
+                if self.workers[slot].can_take_work() {
                     self.assign_work(slot);
                 }
             }

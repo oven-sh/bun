@@ -302,6 +302,11 @@ impl Worker {
         self.exit_status = Some(status);
     }
 
+    /// The end of the channel can arrive ahead of the exit.
+    pub(crate) fn can_take_work(&self) -> bool {
+        self.alive && !self.ipc.done.get()
+    }
+
     pub(crate) fn dispatch(
         &mut self,
         f: &mut Frame,

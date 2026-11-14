@@ -655,6 +655,27 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
         .is_some_and(|first| first.kind == Kind::Paragraph && first.next == NONE)
 }
 
+/// True if `line`, printed at the start of its line right after `definition`, is text to CommonMark, and would be a
+/// block of its own after an empty line: a list that does not start at 1, an empty item, a complete tag. A line that
+/// interrupts a paragraph, `- b`, is a block either way, and a word is text either way.
+pub(crate) fn is_text_behind_definition(definition: &[u8], line: &[u8]) -> bool {
+    let syntax = Syntax::CommonMark {
+        gfm: true,
+        math: false,
+    };
+    let kinds = |text: &[u8]| -> Vec<Kind> {
+        let mut tree = Tree::default();
+        let Some(root) = parse_lines(text, &mut tree, syntax, 0) else {
+            return Vec::new();
+        };
+        tree.children(root)
+            .filter_map(|child| tree.kind(child))
+            .collect()
+    };
+    kinds(&[definition, b"\n", line, b"\n"].concat()) == [Kind::Definition, Kind::Paragraph]
+        && kinds(&[line, b"\n"].concat()) != [Kind::Paragraph]
+}
+
 impl Builder<'_> {
     // ───────────────────────────── positions ─────────────────────────────
 
@@ -1060,17 +1081,8 @@ impl Builder<'_> {
         let Some(first) = lines.first() else {
             return;
         };
-        // At the end of a line, micromark checks if that same line, not the next one, continues without its containers'
-        // markers. So code that starts on the line that ends a container ends with that line.
-        let line_start = self.tree.line_start(first.beg);
-        if lines.len() > 1 && !self.is_for_oxfmt && self.ended.iter().any(|it| it.1 == line_start) {
-            self.indented_code(&lines[..1]);
-            let blank_lines = lines[1..]
-                .iter()
-                .take_while(|line| line.beg >= line.end)
-                .count();
-            return self.indented_code(&lines[1 + blank_lines..]);
-        }
+        // Unlike micromark's, code that starts on the line that ends a container goes on past that line: the empty
+        // line that Prettier prints between the two pieces would be a line of the code.
         let (start, _) = self.indentation_start(first.beg, first.indent + 4);
         // A blank line that is indented enough is part of the code, even at its end.
         let code_column = self.column(first.beg).saturating_sub(first.indent);
@@ -1135,7 +1147,7 @@ impl Builder<'_> {
         let (start, _) = self.indentation_start(first.beg, first.indent);
         let node = self.add_leaf(Kind::Html, start, last.end);
         if let Some(node) = self.tree.get_mut(node) {
-            node.number = u32::from(is_ended_by_text && self.is_for_oxfmt);
+            node.number = u32::from(is_ended_by_text);
         }
         let first_segment = self.segments.len();
         for line in lines {

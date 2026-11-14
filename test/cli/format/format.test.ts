@@ -2037,6 +2037,193 @@ describe.concurrent("bun fmt", () => {
       expect(result.files).toEqual({ "a.md": byPrettier });
     });
 
+    describe("an empty line between two blocks", () => {
+      // The empty line between two blocks, or its absence, can decide where a block ends. Prettier 3.9.9 drops it
+      // after HTML that only an empty line ends (oxfmt 0.72.0 keeps it there), and both add it after a definition and
+      // after a line that continues a list item without its indentation. Prettier adds one inside a chunk of indented
+      // code. Each row has the text, Bun's output as Markdown and as MDX, and Prettier's output.
+      const rows = [
+        ["- <div>\n\n  - b\n", "- <div>\n\n  - b\n", "- <div>\n  - b\n"],
+        ["- <x-y>\n\n  10. b\n", "- <x-y>\n\n  10. b\n", "- <x-y>\n  10. b\n"],
+        ["- - <div>\n\n    - b\n", "- - <div>\n\n    - b\n", "- - <div>\n    - b\n"],
+        ["[a]: /url\n9. c\n", "[a]: /url\n9. c\n", "[a]: /url\n\n9. c\n"],
+        ["[a]: /url\n2.\n", "[a]: /url\n2.\n", "[a]: /url\n\n2.\n"],
+        ["[a]: /url\n-\n", "[a]: /url\n-\n", "[a]: /url\n\n-\n"],
+        ["[a]: /url\n-\n2. c\n", "[a]: /url\n-\n2. c\n", "[a]: /url\n\n- 2. c\n"],
+        ["[a]: /url\n<x-y>\n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
+        ["[a]: /url\n<x-y>\nb\n", "[a]: /url\n<x-y>\nb\n", "[a]: /url\n\n<x-y>\nb\n"],
+        ["-\n\n    a\n    b\n", "-\n\n    a\n    b\n", "-\n\n    a\n\n    b\n"],
+        ["-\n\n    a\n\n\n    b\n", "-\n\n    a\n\n\n    b\n", "-\n\n    a\n\n    b\n"],
+        ["    a\n-\n- b\n", "    a\n\n-\n- b\n", "    a\n\n-\n\n- b\n"],
+        ["    a\n2. b\n3. c\n", "    a\n\n2. b\n3. c\n", "    a\n\n2. b 3. c\n"],
+        ["    a\n2. *b*\n3. c\n", "    a\n\n2. _b_\n3. c\n", "    a\n\n2. _b_ 3. c\n"],
+        ["    a\n-\n  b\n", "    a\n\n- b\n", "    a\n\n-\nb\n"],
+        ["[a]: /url\n<x-y> \n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
+        [">     a\n> 2. b\n> 3. c\n", ">     a\n>\n> 2. b\n> 3. c\n", ">     a\n>\n> 2. b 3. c\n"],
+        ["> [a]:\n> /url\n> 9. c\n", "> [a]: /url\n> 9. c\n", "> [a]: /url\n>\n> 9. c\n"],
+      ] as const;
+
+      test.each(rows)("%j", async (before, after, byPrettier) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": after, "b.mdx": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      // A line that continues a list item without its indentation, `c`, and a setext heading of such lines. As MDX
+      // these print what Prettier prints: remark-parse 8 reads `<b>` as part of the item, and a setext heading as
+      // `## -`. In a block quote the tag is printed with the marker, so `c` keeps Prettier's empty line before it:
+      // without it, `c` would move into the quote on the second run. Each row has the text, Bun's output as Markdown,
+      // and Prettier's.
+      const markdownRows = [
+        ["- a\n<b>\nc\n", "- a\n<b>\nc\n", "- a\n<b>\n\nc\n"],
+        ["- a\n<b>\nc\n- d\n", "- a\n<b>\nc\n- d\n", "- a\n<b>\n\nc\n\n- d\n"],
+        ["- a\n<b>\nc\n---\n", "- a\n<b>\nc\n---\n", "- a\n<b>\n\nc\n---\n"],
+        ["    a\n-\n-\n- b\n", "    a\n\n-\n-\n- b\n", "    a\n\n-\n-\n\n- b\n"],
+        ["    a\n2. b\n3. c\n-\n", "    a\n\n2. b\n3. c\n-\n", "    a\n\n2. b 3. c\n-\n"],
+        // The item's content starts after the two blanks, so `   3. c` is not in it.
+        ["    a\n2.  b\n   3. c\n", "    a\n\n2. b\n3. c\n", "    a\n\n2. b 3. c\n"],
+        [
+          "- x\n\n      a\n  -\n  -\n\n  - b\n",
+          "- x\n\n      a\n\n  -\n  -\n\n  - b\n",
+          "- x\n\n      a\n\n  -\n  -\n  - b\n",
+        ],
+      ] as const;
+
+      test.each(markdownRows)("as Markdown: %j", async (before, after, byPrettier) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("in the oxfmt flavor", async () => {
+        const files = Object.fromEntries(
+          [...rows, ...markdownRows].flatMap(([before, after], i) => [
+            [`${i}.md`, before],
+            [`${i}.formatted.md`, after],
+          ]),
+        );
+        const result = await format(files, ["--flavor=oxfmt"], { reads: Object.keys(files) });
+        const outputs = (i: number) => [result.files[`${i}.md`]!, result.files[`${i}.formatted.md`]!];
+        rows.forEach(([, after], i) => expect(outputs(i)).toEqual([after, after]));
+        // That flavor puts an empty line after indented code, and before a setext heading, so the Markdown-only rows
+        // are compared by what they mean.
+        markdownRows.forEach(([before], i) => {
+          const html = Bun.markdown.html(before);
+          expect(outputs(rows.length + i).map(text => Bun.markdown.html(text))).toEqual([html, html]);
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      // A line that starts with a marker is joined to the line before it, so that it doesn't start a list. After
+      // indented code, the lines of a paragraph that starts with one are items, so they stay. After a definition, a
+      // first line that can't start a paragraph stays a line. Each row has the text, Bun's output with `always` and
+      // `never`, and Prettier's output with `always`.
+      test.each([
+        ["    a\n-\nb\n", "    a\n\n-\nb\n", "    a\n\n- b\n"],
+        ["    a\n2. b\n3. c\n", "    a\n\n2. b\n3. c\n", "    a\n\n2. b 3. c\n"],
+        ["[a]: /url\n-\nb\n", "[a]: /url\n-\nb\n", "[a]: /url\n\n- b\n"],
+        ["[a]: /url\n9. c\n10. d\n", "[a]: /url\n9. c\n10. d\n", "[a]: /url\n\n9. c 10. d\n"],
+        ["[a]: /url\n<x-y> \n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
+      ])("--prose-wrap=always and never: %j", async (before, after, byPrettier) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after };
+        const [always, never] = await Promise.all([
+          format(files, ["--prose-wrap=always"], { reads: Object.keys(files) }),
+          format(files, ["--prose-wrap=never"], { reads: Object.keys(files) }),
+        ]);
+        expect(always.files).toEqual({ "a.md": after, "b.md": after });
+        expect(always.exitCode).toBe(0);
+        expect(never.files).toEqual({ "a.md": after, "b.md": after });
+        expect(never.exitCode).toBe(0);
+      });
+
+      test("--prose-wrap=always joins the lines after the first", async () => {
+        // The first line decides whether the definition and the text are kept together. The rest wraps.
+        const html = (text: string) => Bun.markdown.html(text).replace(/\s+/g, " ");
+        const long = "9. " + "word ".repeat(20).trim();
+        const files = {
+          "a.md": "[a]: /url\n9. c\n10. d\n11. e\n",
+          "b.md": "[a]: /url\n<x-y>\nb\n",
+          "d.md": "[a]: /url\n<x-y>\n2. b\n",
+          // The first line stays whole, so that the next run finds the line break in the same place.
+          "c.md": `[a]: /url\n${long}\n10. d\n`,
+        };
+        const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "a.md": "[a]: /url\n9. c\n10. d 11. e\n",
+          "b.md": "[a]: /url\n<x-y>\nb\n",
+          "c.md": `[a]: /url\n${long}\n10. d\n`,
+          "d.md": "[a]: /url\n<x-y>\n2. b\n",
+        });
+        expect(Object.entries(result.files).map(([name, text]) => html(text!) === html(files[name as "a.md"]))).toEqual(
+          [true, true, true, true],
+        );
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("an empty line that doesn't decide anything is still added or dropped", async () => {
+        const files = {
+          "definition.md": "[a]: /url\nb\n",
+          // Printed at the start of its line, `- b` is a list either way.
+          "indented-item.md": "[a]: /url\n    - b\n",
+          "comment.md": "- a\n\n  <!-- b -->\n\n  - c\n",
+          "other-list.md": "    x\n2. b\n- c\n",
+          "rule.md": "    x\n2. b\n---\n- c\n",
+          // `c` leaves the quote, as with Prettier. Without the empty line it would leave it on the second run.
+          "quote.md": "> a\n<b>\nc\n",
+          // Behind `*`, `b` would be an item of a list that the next run prints with `-`, behind `01.` one that it
+          // prints with `1.`.
+          "star.md": "    a\n*\n  b\n",
+          "zero.md": "    a\n01.\n    b\n",
+        };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "definition.md": "[a]: /url\n\nb\n",
+          "indented-item.md": "[a]: /url\n\n- b\n",
+          "comment.md": "- a\n\n  <!-- b -->\n  - c\n",
+          "other-list.md": "    x\n\n2. b\n\n- c\n",
+          "rule.md": "    x\n\n2. b\n---\n\n- c\n",
+          "quote.md": "> a\n> <b>\n\nc\n",
+          "star.md": "    a\n\n*\nb\n",
+          "zero.md": "    a\n\n01.\nb\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("a line that continues an item is still joined", async () => {
+        // Indented to the item's content, or by a tab, `3. c` is text of the item `b`, so the line break is a space.
+        const files = {
+          "spaces.md": "    a\n2. b\n   3. c\n",
+          "tab.md": "    a\n2. b\n\t3. c\n",
+          "after-marker.md": "    a\n-\n    b\n",
+          "emphasis.md": "    a\n2. *b*\n   3. c\n",
+          "second-line.md": "    a\n2. b\n   c\n   3. d\n",
+          // Two lines behind a marker alone are not put behind it: the second would need the item's indentation.
+          "two-lines.md": "    a\n-\n  b\n  c\n",
+        };
+        const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "spaces.md": "    a\n\n2. b 3. c\n",
+          "tab.md": "    a\n\n2. b 3. c\n",
+          "after-marker.md": "    a\n\n- b\n",
+          "emphasis.md": "    a\n\n2. _b_ 3. c\n",
+          "second-line.md": "    a\n\n2. b c 3. d\n",
+          "two-lines.md": "    a\n\n- b c\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
     describe("a file that starts with a line of four dashes", () => {
       // Front matter is fenced by exactly three dashes, plus signs or dots. Prettier 3.9.9 and oxfmt 0.72.0 treat the
       // first three characters of a longer line as the fence, and what's left of the closing line turns into a list

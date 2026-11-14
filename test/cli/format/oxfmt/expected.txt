@@ -128,6 +128,8 @@ FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 100 }
+FAIL prettier markdown/markdown/list-after-html-block.md { printWidth: 80 }
+FAIL prettier markdown/markdown/list-after-html-block.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "never" }

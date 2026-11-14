@@ -92,6 +92,26 @@ export function Closures({ a, list }: Props) {
   return [sums, make(), make(5), make(5, { twice: 1 }), list.filter(n => n > a).map(n => ({ n }))];
 }
 
+// The compiler moves a default into the body of its function, and the function keeps its `length`.
+export function Defaults({ a, text }: Props = { a: 0, text: "", list: [] }) {
+  "use memo";
+  const add = (n: number, by = a) => n + by;
+  const later = (n: number, by: number = a, suffix = text) => {
+    return () => n + by + suffix;
+  };
+  function counted(n: number, by: number = a, ...more: number[]) {
+    return n + by + more.length;
+  }
+  const methods = {
+    scaled(n: number, by = a) {
+      return n * by;
+    },
+  };
+  const lengths = [Defaults.length, add.length, later.length, counted.length, methods.scaled.length];
+  const sums = [add(1), add(1, 2), later(1)(), later(1, undefined, "!")(), counted(1), counted(1, 2, 3)];
+  return [lengths, sums, methods.scaled(2), methods.scaled(2, 3)];
+}
+
 export function Text({ a, text }: Props) {
   "use memo";
   return [`${text}`, `${a}${text}`, `<${text}>`, text + a, a + text, text.toUpperCase(), `line\nbreak\t${a}`, typeof a, typeof text, String(a)];

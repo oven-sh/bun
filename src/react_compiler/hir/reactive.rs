@@ -30,6 +30,8 @@ pub struct ReactiveFunction {
     pub id: Option<String>,
     pub name_hint: Option<String>,
     pub params: Vec<ParamPattern>,
+    /// Not in upstream: see `HirFunction::first_initializer`.
+    pub first_initializer: Option<u32>,
     pub generator: bool,
     pub is_async: bool,
     pub body: ReactiveBlock,

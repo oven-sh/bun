@@ -490,8 +490,14 @@ fn codegen_reactive_function(
 
     let mut has_rest_arg = false;
     let mut params: Vec<G::Arg> = Vec::with_capacity(func.params.len());
-    for p in &func.params {
-        params.push(convert_parameter(cx, p, &mut has_rest_arg)?);
+    for (index, p) in func.params.iter().enumerate() {
+        let has_initializer = func.first_initializer == Some(index as u32);
+        params.push(convert_parameter(
+            cx,
+            p,
+            has_initializer,
+            &mut has_rest_arg,
+        )?);
     }
 
     let mut body = codegen_block(cx, &func.body)?;
@@ -542,6 +548,7 @@ fn codegen_reactive_function(
 fn convert_parameter(
     cx: &mut Context,
     param: &ParamPattern,
+    has_initializer: bool,
     has_rest: &mut bool,
 ) -> Result<G::Arg, CompilerError> {
     match param {
@@ -549,7 +556,8 @@ fn convert_parameter(
             let (r, loc) = convert_identifier(cx, place.identifier)?;
             Ok(G::Arg {
                 binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, loc),
-                default: None,
+                // Not in upstream: see `HirFunction::first_initializer`. No source has this default (typed_files.rs).
+                default: has_initializer.then(|| Expr::init(E::Undefined {}, Loc::EMPTY)),
                 ..Default::default()
             })
         }

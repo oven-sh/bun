@@ -71,7 +71,9 @@ the porting reference for the AST-boundary files.
    ```
    Snapshots will change if codegen changed upstream — review the diff against
    upstream's new fixture output and update with `bun bd test -u` if it
-   matches.
+   matches. If the compiler now prints something else for the same source,
+   raise `EXPECTED_VERSION` in `src/jsc/RuntimeTranspilerCache.rs`:
+   `bun test --react-compiler` keeps compiled files in that cache.
 
 6. **Update the port marker** to the `UPSTREAM_HEAD` the script printed:
    ```sh

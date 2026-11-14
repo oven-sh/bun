@@ -1319,6 +1319,10 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        #[cfg(unix)]
+        spawn_callback: jsc_vm.event_loop_shared().callback_number(),
+        #[cfg(unix)]
+        spawn_poll: jsc_vm.uws_loop_ref().iteration_number() as u32,
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };

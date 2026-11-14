@@ -138,6 +138,12 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    /// At the spawn: `EventLoop::callback_number`, and how many polls the loop had started (the low bits: the
+    /// count is only compared for equality).
+    #[cfg(unix)]
+    pub(crate) spawn_callback: u32,
+    #[cfg(unix)]
+    pub(crate) spawn_poll: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -1475,6 +1481,48 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
     // safely free the pipes
     // SAFETY: pipe was heap-allocated when created; we are the close callback owner.
     drop(unsafe { bun_core::heap::take(this) });
+}
+
+/// For `node:child_process`: the child has exited, and this loop has started no poll since the spawn in which to
+/// report that. `child.stdin` asks before an EPIPE becomes its 'error', and `kill()` asks before it signals.
+///
+/// A rule of Bun's own, for as long as its loop runs tasks and immediates before the poll that reports an exit.
+/// Node.js polls first (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L460-L474), and this is
+/// not its boundary: quieter when the spawn ran in an I/O callback, or when Node.js runs the asking callback in the
+/// poll that also sees the exit, and louder for a child that has lived through a poll.
+///
+/// False in the callback that spawned. False when the stdin of the child took bytes in this callback (the child was
+/// alive in it), or failed on a write that it had held back (that EPIPE is not of a send that this callback started).
+pub(crate) fn has_exited_before_first_poll(
+    cx: &mut JsScope<'_>,
+    subprocess: &Subprocess<'static>,
+) -> bool {
+    #[cfg(unix)]
+    {
+        let vm = cx.global().bun_vm();
+        let callback = vm.event_loop_shared().callback_number();
+        // The sink is live for as long as the field names it.
+        let stdin_keeps_error = subprocess
+            .weak_file_sink_stdin_ptr
+            .get()
+            .is_some_and(|stdin| {
+                let stdin = bun_ptr::BackRef::from(stdin);
+                stdin.sent_in_callback.get() == callback || stdin.held_write_failed.get()
+            });
+        if vm.uws_loop_ref().iteration_number() as u32 != subprocess.spawn_poll
+            || callback == subprocess.spawn_callback
+            || stdin_keeps_error
+        {
+            return false;
+        }
+        subprocess.process.has_unreported_exit()
+    }
+    // Not wired on Windows: nothing was measured there, so the answer is as before this rule.
+    #[cfg(not(unix))]
+    {
+        let _ = (cx, subprocess);
+        false
+    }
 }
 
 pub(crate) mod testing_apis {

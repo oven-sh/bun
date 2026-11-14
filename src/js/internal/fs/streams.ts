@@ -34,6 +34,8 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
   [kSinkWrite]?: (err?: any) => void;
+  [kStdinOf]?: unknown;
+  [kHasExitedBeforeFirstPoll]?: (subprocess: unknown) => boolean;
 };
 type FD = number;
 
@@ -49,6 +51,9 @@ const kIoDone = Symbol("kIoDone");
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 // The callback of the _write of a child's stdin that its sink has not answered yet.
 const kSinkWrite = Symbol("kSinkWrite");
+// The Subprocess whose stdin the stream is, and the question that child_process hands over to ask about it.
+const kStdinOf = Symbol("kStdinOf");
+const kHasExitedBeforeFirstPoll = Symbol("kHasExitedBeforeFirstPoll");
 const kFs = Symbol("kFs");
 
 const {
@@ -812,9 +817,26 @@ function finalToSink(this: FSStream, cb: (err?: any) => void) {
   afterQueuedJobs(cb, null);
 }
 
+// Whether `err` is the EPIPE of a send to a child that has exited, while the event loop has had no poll since the
+// spawn in which to report that (has_exited_before_first_poll, subprocess.rs). Under node that exit has destroyed
+// the stdin ahead of the callback that sends, and no 'error' follows:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L277-L279
+// Only EPIPE: ECONNRESET is for a send that began while the child had its end open, and node reports that too.
+function takeExitOfChild(stream: FSStream, err: any): boolean {
+  const child = stream[kStdinOf];
+  if (child === undefined) return false;
+  const hasExitedBeforeFirstPoll = stream[kHasExitedBeforeFirstPoll]!;
+  // A stream is destroyed once. It asks no more, and it must not keep the Subprocess.
+  stream[kStdinOf] = stream[kHasExitedBeforeFirstPoll] = undefined;
+  return err?.code === "EPIPE" && hasExitedBeforeFirstPoll(child);
+}
+
 // _destroy of a child's stdin. Before 'finish', node closes the pipe at once and reports no error of the writes that it drops:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L867-L908
 function destroySink(this: FSStream, err: Error | null, cb: (err?: Error | null) => void) {
+  // Asked ahead of sink.end(): the answer reads the sink. With a yes the stream closes with no 'error'. The
+  // callbacks, `errored` and finished() keep the EPIPE, which destroy() has stored.
+  if (takeExitOfChild(this, err)) err = null;
   if (this._writableState!.finished) {
     writeStreamPrototype._destroy.$call(this, err, cb);
     return;
@@ -960,12 +982,20 @@ function writableForFileSink() {
   return w;
 }
 
-function attachFileSink(w: FSStream, fileSink: any) {
+// `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program, and must not name a binding of Bun.spawn.
+function attachFileSink(
+  w: FSStream,
+  fileSink: any,
+  stdinOf: unknown,
+  hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean,
+) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
   $assert(w[kWriteStreamFastPath] === true, "the stream has a sink already");
   w[kWriteStreamFastPath] = fileSink;
+  w[kStdinOf] = stdinOf;
+  w[kHasExitedBeforeFirstPoll] = hasExitedBeforeFirstPoll;
   return w;
 }
 

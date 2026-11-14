@@ -233,6 +233,52 @@ impl Process {
         matches!(self.status, Status::Exited(_) | Status::Signaled(_))
     }
 
+    /// The child has exited and the event loop has yet to report that. Nothing is reaped and nothing changes: the
+    /// loop reports the exit as always.
+    ///
+    /// False for a child that a thread waits for (Linux without a pidfd): that exit arrives as a task, and a
+    /// callback that is queued ahead of the task gets no answer here. False on FreeBSD, which is not wired.
+    #[cfg(unix)]
+    pub fn has_unreported_exit(&self) -> bool {
+        if self.has_exited() {
+            return false;
+        }
+        let Poller::Fd(poll) = &self.poller else {
+            return false;
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // What the poll of the loop watches is the pidfd: readable means that the next poll reports the exit.
+            // SAFETY: the poller holds a live poll.
+            let pidfd = unsafe { poll.as_ref() }.fd;
+            bun_core::is_readable(pidfd) != bun_core::Pollable::NotReady
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = poll;
+            // `proc_pidinfo` finds no process whose exit has begun (`proc_find` fails from then on), and the
+            // descriptors of the child close after that.
+            let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
+            let size = core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>() as c_int;
+            // SAFETY: `info` is writable for `size` bytes.
+            let written = unsafe {
+                bun_sys::c::proc_pidinfo(
+                    self.pid,
+                    bun_sys::c::PROC_PIDTBSDINFO,
+                    0,
+                    core::ptr::from_mut(&mut info).cast(),
+                    size,
+                )
+            };
+            written != size && bun_sys::last_errno() == libc::ESRCH
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        {
+            let _ = poll;
+            false
+        }
+    }
+
     /// Intrusive ref-count helpers. Kept on
     /// `&mut self` to match call-site shape; the actual op is atomic on the
     /// embedded `ThreadSafeRefCount` so the mutable borrow is conservative.

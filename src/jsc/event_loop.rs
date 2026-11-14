@@ -102,6 +102,8 @@ pub struct EventLoop {
     pub uws_loop: Option<NonNull<uws::Loop>>,
 
     pub entered_event_loop_count: isize,
+    /// See [`callback_number`](Self::callback_number).
+    callback_number: u32,
     /// How many times `tasks` was drained. One uws loop iteration drains it several times, so a
     /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
     task_drains: AtomicU64,
@@ -147,6 +149,7 @@ impl Default for EventLoop {
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             uws_loop: None,
             entered_event_loop_count: 0,
+            callback_number: 0,
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
@@ -835,6 +838,19 @@ impl EventLoop {
     /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
+    /// Names the callback of this loop that is running, among those that it runs between two polls: each task has
+    /// its own number, and the immediates of one turn share one. It wraps around.
+    #[inline]
+    pub fn callback_number(&self) -> u32 {
+        self.callback_number
+    }
+
+    /// A task is about to run, or the immediates of a turn are.
+    #[inline]
+    pub fn begin_callback(&mut self) {
+        self.callback_number = self.callback_number.wrapping_add(1);
+    }
+
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
@@ -1148,6 +1164,7 @@ impl EventLoop {
         // `next_immediate_tasks` past the loop into the `.capacity() > 0`
         // recursion check and the trailing `= to_run_now` store, dropping any
         // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
+        self.begin_callback();
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.

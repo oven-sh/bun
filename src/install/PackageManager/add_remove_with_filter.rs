@@ -322,13 +322,13 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
         b""
     };
     // Use the parsed path, not the literal: `file:/../lib` and `file://../lib` both mean `../lib`.
-    let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
-        dependency::Tag::Folder => (file_prefix, request.version.folder().slice(buf)),
-        dependency::Tag::Tarball => match &request.version.tarball().uri {
+    let (prefix, path): (&'static [u8], &[u8]) = match &request.version.value {
+        dependency::Value::Folder(folder) => (file_prefix, folder.slice(buf)),
+        dependency::Value::Tarball(tarball) => match &tarball.uri {
             dependency::URI::Local(path) => (file_prefix, path.slice(buf)),
             dependency::URI::Remote(_) => return None,
         },
-        dependency::Tag::Symlink => (b"link:", literal.strip_prefix(b"link:")?),
+        dependency::Value::Symlink(_) => (b"link:", literal.strip_prefix(b"link:")?),
         _ => return None,
     };
     let is_path = if prefix == b"link:" {

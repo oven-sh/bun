@@ -72,10 +72,10 @@ pub struct CalcPatchHash {
     pub(crate) logger: Log,
 }
 
+/// Of an npm package.
 pub struct EnqueueAfterState {
     pub(crate) pkg_id: PackageID,
     pub(crate) dependency_id: DependencyID,
-    pub(crate) url: Box<[u8]>,
 }
 
 pub struct ApplyPatch {
@@ -319,13 +319,10 @@ impl PatchTask {
         }
 
         if let Some(state) = &calc_hash.state {
-            let url = &state.url;
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
             let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
-            // `Package` is not `Copy`; capture the scalar fields we need
-            // after `determine_preinstall_state` consumes it.
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
             let name_and_version_hash = calc_hash.name_and_version_hash;
@@ -346,35 +343,21 @@ impl PatchTask {
                         crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS,
                     ) => {}
                 PreinstallState::Extract => {
-                    // SAFETY: every `Resolution` `Value` payload is `Copy`
-                    // POD and the union is zero-initialized (see the union
-                    // accessors in resolution.rs), so reading `.npm.version`
-                    // yields initialized bytes even when the active variant
-                    // is not `npm` — possibly stale, never uninit. This arm
-                    // is reachable for non-npm resolutions too (git/github/
-                    // tarball; see the TODO below), which then read garbage
-                    // version bytes into the task id, not UB.
-                    let pkg_npm_version = unsafe {
-                        manager.lockfile.packages.items_resolution()[pkg_id as usize]
-                            .value
-                            .npm
-                            .version
-                    };
-                    let task_id =
-                        TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
+                    let task_id = TaskId::for_npm_package(
+                        manager.lockfile.str(&pkg_name),
+                        pkg.resolution.npm().version,
+                    );
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = dep_behavior.is_required();
-                    let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
                         match package_manager::generate_network_task_for_tarball(
                             manager,
-                            // TODO: not just npm package
                             task_id,
-                            url,
+                            b"",
                             is_required,
                             dep_id,
-                            &pkg_again,
+                            &pkg,
                         ) {
                             // --offline and not cached: already reported / skipped; nothing to patch
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),

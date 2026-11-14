@@ -1,7 +1,21 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
+
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -199,8 +213,8 @@ describe("node:test", () => {
 
   test("should fail the parent when a t.test() that fulfills plan({wait}) throws", async () => {
     const { exitCode, stderr } = await runTests(["24-plan-wait-late-subtest.js"]);
-    // The error message from makeTestFailure — must not be satisfied by the
-    // fixture's own source lines echoed in the failure context.
+    // The message of the subtestsFailed error. The fixture's own source lines,
+    // echoed in the failure context, must not satisfy this.
     expect(stderr).toContain("error: 1 subtest failed");
     expect(stderr).toContain("boom");
     expect({ exitCode, stderr }).toMatchObject({
@@ -343,6 +357,264 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  return { exitCode, stdout, stderr };
+}
+
+// The `error:` lines of 37-failure-output.js. `bun test` prints the value that a test threw.
+const kFailureOutput = [
+  "error: thrown by the test",
+  "error: test failed",
+  "error: plan expected 2 assertions but received 0",
+  "error: test timed out after 5ms",
+  "error: 1 subtest failed",
+  "error: thrown by the child",
+  "error: 1 subtest failed",
+  "error: thrown by the hook",
+  "error: test was expected to fail but passed",
+  "error: cannot set plan more than once",
+  "error: callback invoked multiple times",
+  "error: 1 subtest failed",
+  "error: test timed out after 5ms",
+  "error: 1 subtest failed",
+  "error: hook failed",
+];
+
+// The lines that a fixture prints when the process exits.
+function seenLines(stdout: string) {
+  return stdout.split("\n").filter(line => line.startsWith("SEEN "));
+}
+
+// Each of these tests starts one or two debug+ASAN bun processes, and the tests run at the same time: they get the
+// same headroom as the tests of the largest fixtures above.
+describe.concurrent("context.error", () => {
+  // [fixture, tests that pass on bun, tests and subtests that pass on node]
+  const onBothRuntimes: [string, number, number][] = [
+    ["35-context-error.js", 10, 12],
+    ["35b-failure-without-user-code.js", 3, 3],
+    ["38-expect-failure-validator-input.js", 4, 4],
+  ];
+
+  test.each([...onBothRuntimes, ["35c-values-node-cannot-report.js", 2, 0]])(
+    "%s passes",
+    async (fixture, passes) => {
+      const { exitCode, stderr } = await runTests([fixture]);
+      expect(stderr).toContain(` ${passes} pass`);
+      expect({ exitCode, stderr }).toMatchObject({ exitCode: 0, stderr: expect.stringContaining(" 0 fail") });
+    },
+    30_000,
+  );
+
+  test.skipIf(!referenceNode).each(onBothRuntimes)("%s passes on node", async (fixture, _, passes) => {
+    const { exitCode, stdout } = await runTestsOnNode([fixture]);
+    expect(stdout).toContain(`pass ${passes}`);
+    expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
+  });
+
+  // These two fixtures fail on purpose. Each prints what its hooks or its exit listener saw.
+  const kSubtestRollup = [
+    `SEEN {"passed":false,"code":"ERR_TEST_FAILURE","failureType":"subtestsFailed","message":"1 subtest failed","cause":"1 subtest failed"}`,
+  ];
+  const kTopLevelHooks = [
+    `SEEN {"where":"suite","name":"throws","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"boom","cause":"TypeError: boom"}`,
+    `SEEN {"where":"file","name":"throws","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"boom","cause":"TypeError: boom"}`,
+    `SEEN {"where":"suite","name":"passes","passed":true}`,
+    `SEEN {"where":"file","name":"passes","passed":true}`,
+    `SEEN {"where":"suite","name":"fails as expected","passed":true,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"expected","cause":"Error: expected"}`,
+    `SEEN {"where":"file","name":"fails as expected","passed":true,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"expected","cause":"Error: expected"}`,
+    `SEEN {"where":"suite","name":"times out","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testTimeoutFailure","message":"test timed out after 5ms","cause":"test timed out after 5ms"}`,
+    `SEEN {"where":"file","name":"times out","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testTimeoutFailure","message":"test timed out after 5ms","cause":"test timed out after 5ms"}`,
+  ];
+  const failingOnPurpose: [string, string[]][] = [
+    ["36b-subtest-rollup.js", kSubtestRollup],
+    ["36c-top-level-hooks.js", kTopLevelHooks],
+  ];
+
+  test.each(failingOnPurpose)(
+    "%s: the hooks read node's error",
+    async (fixture, seen) => {
+      const { exitCode, stdout } = await runTests([fixture]);
+      expect({ seen: seenLines(stdout), exitCode }).toEqual({ seen, exitCode: 1 });
+    },
+    30_000,
+  );
+
+  test.skipIf(!referenceNode).each(failingOnPurpose)(
+    "%s: the hooks read the same error on node",
+    async (fixture, seen) => {
+      const { exitCode, stdout } = await runTestsOnNode([fixture]);
+      expect({ seen: seenLines(stdout), exitCode }).toEqual({ seen, exitCode: 1 });
+    },
+  );
+
+  test("bun test prints the thrown value, not the ERR_TEST_FAILURE error", async () => {
+    const { exitCode, stderr } = await runTests(["37-failure-output.js"]);
+    expect(stderr.match(/^error: .*$/gm)).toEqual(kFailureOutput);
+    // The runner throws these two errors into the test. The printed stack has the frame of that call.
+    for (const name of ["plan twice", "callback twice"]) {
+      const report = stderr.slice(0, stderr.indexOf(`(fail) ${name}`));
+      const frames = report.slice(report.lastIndexOf("\nerror: "));
+      expect(frames).toMatch(/\n\s+at .*37-failure-output\.js:\d+:\d+/);
+    }
+    // A hook that times out has the failure type of a hook failure, as context.error has.
+    expect(stderr).toContain(`error: test timed out after 5ms\n failureType: "hookFailed"`);
+    expect(stderr).toContain(" 0 pass");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining(" 11 fail") });
+  }, 30_000);
+
+  test("bun test prints the failure type of a hook for each hook that times out", async () => {
+    const { exitCode, stderr } = await runTests(["37b-hook-timeout-output.js"]);
+    // The after hook of a suite in a test, then the before hook and the after hook of a top-level suite.
+    expect(stderr.match(/^error: test timed out after 5ms\n failureType: "\w+"/gm)).toEqual([
+      `error: test timed out after 5ms\n failureType: "hookFailed"`,
+      `error: test timed out after 5ms\n failureType: "hookFailed"`,
+      `error: test timed out after 5ms\n failureType: "hookFailed"`,
+    ]);
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
+  describe("the error of each test:fail event of run()", () => {
+    // One line for each failed test: name | code | failureType | message | has an own cause | cause
+    async function failedOn(exe: string, fixtures: string[]) {
+      using dir = tempDir("node-test-error-run", {
+        "run.js": `
+          const { run } = require("node:test");
+          const describeValue = value => (value instanceof Error ? value.name + ": " + value.message : value);
+          (async () => {
+            const failed = [];
+            for await (const { type, data } of run({ files: process.argv.slice(2) })) {
+              if (type !== "test:fail" || data.details.type !== "test") continue;
+              const { error } = data.details;
+              const own = Object.prototype.hasOwnProperty.call(error, "cause");
+              failed.push([data.name, error.code, error.failureType, error.message, own, describeValue(error.cause)].join(" | "));
+            }
+            console.log("FAILED " + JSON.stringify(failed.sort()));
+          })();
+        `,
+      });
+      await using proc = spawn({
+        cmd: [exe, join(String(dir), "run.js"), ...fixtures.map(name => join(import.meta.dirname, "fixtures", name))],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = stdout.split("\n").find(line => line.startsWith("FAILED "));
+      const failed: string[] = line === undefined ? [] : JSON.parse(line.slice("FAILED ".length));
+      return { failed, stderr, exitCode };
+    }
+
+    const comparedWithNode = ["35-context-error.js", "36b-subtest-rollup.js"];
+    // run() on bun sends an event as JSON, so a thrown object that is not an Error arrives as an Error.
+    const notCompared = ["throws an object", "throws an object that cannot print itself"];
+    const compared = (failed: string[]) =>
+      failed.filter(row => !notCompared.includes(row.slice(0, row.indexOf(" | "))));
+
+    test("has the code, the failure type and the cause", async () => {
+      const { failed, stderr, exitCode } = await failedOn(bunExe(), comparedWithNode);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(failed).toContain("throws an error | ERR_TEST_FAILURE | testCodeFailure | boom | true | Error: boom");
+      expect(failed).toContain("throws a string | ERR_TEST_FAILURE | testCodeFailure | a string | true | a string");
+      expect(failed).toContain("throws undefined | ERR_TEST_FAILURE | testCodeFailure | undefined | true | ");
+      expect(failed).toContain(
+        "timeout | ERR_TEST_FAILURE | testTimeoutFailure | test timed out after 5ms | true | test timed out after 5ms",
+      );
+      expect(failed).toContain(
+        "parent | ERR_TEST_FAILURE | subtestsFailed | 1 subtest failed | true | 1 subtest failed",
+      );
+    }, 30_000);
+
+    test.skipIf(!referenceNode)(
+      "is the same as on node",
+      async () => {
+        const [bun, node] = await Promise.all([
+          failedOn(bunExe(), comparedWithNode),
+          failedOn(referenceNode!, comparedWithNode),
+        ]);
+        expect({ failed: compared(node.failed), exitCode: node.exitCode }).toEqual({
+          failed: compared(bun.failed),
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
+
+    test("a thrown symbol does not stop the report", async () => {
+      const { failed, stderr, exitCode } = await failedOn(bunExe(), ["35c-values-node-cannot-report.js"]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(failed).toContain(
+        "throws a symbol | ERR_TEST_FAILURE | testCodeFailure | Symbol(a symbol) | true | Error: Symbol(a symbol)",
+      );
+    }, 30_000);
+
+    // The parent of run() makes the error of a file that exits with a failure, and of a file that it cancels.
+    async function fileErrorsOn(exe: string, cases: ("fails" | "cancelled")[]) {
+      using dir = tempDir("node-test-error-run-file", {
+        "throws-at-load.js": `require("node:test"); throw new Error("thrown at load");`,
+        "run.js": `
+          const { run } = require("node:test");
+          const file = require("node:path").join(__dirname, "throws-at-load.js");
+          (async () => {
+            const seen = [];
+            for (const which of process.argv.slice(2)) {
+              const signal = which === "cancelled" ? AbortSignal.abort() : undefined;
+              for await (const { type, data } of run({ files: [file], signal })) {
+                if (type !== "test:fail") continue;
+                const { error } = data.details;
+                const ownCause = Object.prototype.hasOwnProperty.call(error, "cause");
+                const causeIsMessage = error.cause === error.message;
+                seen.push({ code: error.code, failureType: error.failureType, ownCause, causeIsMessage });
+              }
+            }
+            console.log("SEEN " + JSON.stringify(seen));
+          })();
+        `,
+      });
+      await using proc = spawn({
+        cmd: [exe, join(String(dir), "run.js"), ...cases],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = stdout.split("\n").find(line => line.startsWith("SEEN "));
+      return { seen: line === undefined ? [] : JSON.parse(line.slice("SEEN ".length)), stderr, exitCode };
+    }
+
+    test("a file that fails or that is cancelled has its message as the cause", async () => {
+      const { seen, stderr, exitCode } = await fileErrorsOn(bunExe(), ["fails", "cancelled"]);
+      expect({ seen, stderr, exitCode }).toEqual({
+        seen: [
+          { code: "ERR_TEST_FAILURE", failureType: "testCodeFailure", ownCause: true, causeIsMessage: true },
+          { code: "ERR_TEST_FAILURE", failureType: "cancelledByParent", ownCause: true, causeIsMessage: true },
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    }, 30_000);
+
+    test.skipIf(!referenceNode)(
+      "a file that fails has its message as the cause on node",
+      async () => {
+        const { seen, exitCode } = await fileErrorsOn(referenceNode!, ["fails"]);
+        expect({ seen, exitCode }).toEqual({
+          seen: [{ code: "ERR_TEST_FAILURE", failureType: "testCodeFailure", ownCause: true, causeIsMessage: true }],
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
+  });
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

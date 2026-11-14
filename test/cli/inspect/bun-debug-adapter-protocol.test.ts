@@ -296,6 +296,8 @@ describe("mappings", () => {
       // Also when the source starts with it, or is absolute and not in it.
       ["app", ["app/a.ts", "app/b.ts"], "/app/app/b.ts", "/lib/app/b.ts"],
       ["/app", ["/lib/a.ts", "/lib/b.ts"], "/app/lib/b.ts", "/lib/b.ts"],
+      // A URL can be without a scheme.
+      ["//cdn.test/lib", ["a.ts", "b.ts"], "//cdn.test/lib/b.ts", "/cdn.test/lib/b.ts"],
     ])("sourceRoot %j is in front of the sources %j", (sourceRoot, sources, url, other) => {
       const sourceMap = SourceMap(toUrl({ ...map, sourceRoot, sources }));
       expect(sourceMap.generatedLocation({ line: 2, url })).toEqual({ line: 1, column: 0, verified: true });
@@ -308,16 +310,21 @@ describe("mappings", () => {
       [".", ["a.ts", "b.ts"], "/app/b.ts"],
       ["/app", ["/app/a.ts", "/app/b.ts"], "/app/b.ts"],
       ["/app/", ["/app/a.ts", "/app/b.ts"], "/app/b.ts"],
+      ["/app/.", ["/app/a.ts", "/app/b.ts"], "/app/b.ts"],
+      ["/app/src", ["/app/lib/a.ts", "/app/lib/b.ts"], "/app/lib/b.ts"],
+      ["/app/../lib", ["/lib/a.ts", "/lib/b.ts"], "/lib/b.ts"],
+      ["/", ["a.ts", "b.ts"], "/b.ts"],
+      ["/", ["/lib/a.ts", "/lib/b.ts"], "/lib/b.ts"],
       [undefined, ["https://example.test/a.ts", "https://example.test/./b.ts"], "https://example.test/b.ts"],
       ["https://example.test/lib", ["../a.ts", "../b.ts"], "https://example.test/b.ts"],
       ["https://example.test", ["https://example.test/a.ts", "https://example.test/b.ts"], "https://example.test/b.ts"],
-    ])(
-      "with sourceRoot %j, the sources %j have the names that source-map-js gives them",
-      (sourceRoot, sources, url) => {
-        const sourceMap = SourceMap(toUrl({ ...map, sourceRoot, sources }));
-        expect(sourceMap.generatedLocation({ line: 2, url })).toEqual({ line: 1, column: 0, verified: true });
-      },
-    );
+      ["https://example.test", ["a.ts", "b.ts"], "https://example.test/b.ts"],
+      // Not as in source-map-js, which puts the sourceRoot in front of the URL of another host.
+      ["https://example.test", ["https://other.test/a.ts", "https://other.test/b.ts"], "https://other.test/b.ts"],
+    ])("with sourceRoot %j, the sources %j have the names of the files that they are", (sourceRoot, sources, url) => {
+      const sourceMap = SourceMap(toUrl({ ...map, sourceRoot, sources }));
+      expect(sourceMap.generatedLocation({ line: 2, url })).toEqual({ line: 1, column: 0, verified: true });
+    });
 
     test("the first token of a line answers for the code before it when the line before is another source", () => {
       // The first generated line is line 5 of a.ts. Column 4 of the second is line 0 of b.ts.

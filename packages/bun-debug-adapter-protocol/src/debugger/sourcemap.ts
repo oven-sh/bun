@@ -486,22 +486,40 @@ function decodeMappings(mappings: string): Segments {
   return segments;
 }
 
-/** The scheme and the host of a URL. */
-const urlOrigin = /^[a-z][a-z\d+.-]*:\/\/[^/]*/i;
+/** The scheme and the host of a URL. A URL can be without a scheme: `//host/path`. */
+const urlOrigin = /^(?:[a-z][a-z\d+.-]*:)?\/\/[^/]*/i;
+
+/** Removes `.`, `dir/..` and a second `/` from a path, or from the path of a URL. */
+function normalize(name: string): string {
+  const origin = name.match(urlOrigin)?.[0] ?? "";
+  const path = name.slice(origin.length);
+  return origin && !path ? origin : origin + posix.normalize(path);
+}
 
 /**
  * The name of a source, as source-map-js makes it. The `sourceRoot` of the map is prepended,
- * unless it is absolute (a path from `/`, or a URL) and the source is already in it. Then `.`,
- * `dir/..` and a second `/` are removed from the path.
+ * unless both are absolute (a path from `/`, or a URL) and the source is in the root, or in a
+ * folder above the root. `/` alone is not such a folder. One name is not as in source-map-js:
+ * a URL of another host stays as it is, where source-map-js puts the root in front of it.
  */
 function sourceName(sourceRoot: string | null | undefined, source: string): string {
-  const root = sourceRoot?.replace(/\/$/, "");
-  const isInRoot = root && (root.startsWith("/") || urlOrigin.test(root)) && source.startsWith(`${root}/`);
-  if (sourceRoot && !isInRoot) {
-    source = `${sourceRoot}/${source}`;
+  source = normalize(source);
+  if (!sourceRoot) {
+    return source;
   }
-  const origin = source.match(urlOrigin)?.[0] ?? "";
-  return origin + posix.normalize(source.slice(origin.length));
+
+  const root = normalize(sourceRoot);
+  const isAbsolute = (name: string) => name.startsWith("/") || urlOrigin.test(name);
+  if (isAbsolute(root) && isAbsolute(source)) {
+    let folder = root.replace(/\/$/, "");
+    do {
+      if (source.startsWith(`${folder}/`)) {
+        return source;
+      }
+      folder = folder.slice(0, Math.max(folder.lastIndexOf("/"), 0));
+    } while (folder);
+  }
+  return normalize(root.endsWith("/") || source.startsWith("/") ? root + source : `${root}/${source}`);
 }
 
 function lineToLine(line?: number): number {

@@ -1313,11 +1313,13 @@ describe("expect.addEqualityTesters", () => {
       (expect(0) as any).toLendEquals();
     });
 
+    /** Whether a matcher passes. An error that is not the failure of a matcher fails the test. */
     const passes = (assertion: () => unknown) => {
       try {
         assertion();
         return true;
-      } catch {
+      } catch (error) {
+        if (!(error instanceof Error && Bun.stripANSI(error.message).startsWith("expect(received)."))) throw error;
         return false;
       }
     };
@@ -1602,12 +1604,11 @@ describe("expect.addEqualityTesters", () => {
       expect(waiting).toBeInstanceOf(Promise);
       await waiting;
       const failing = expect({ at: 0, after: listedA }).toEqual({ at: settlesLater(), after: listedB });
-      expect(
-        await (failing as any).then(
-          () => "passes",
-          () => "fails",
-        ),
-      ).toBe("fails");
+      const outcome = await (failing as any).then(
+        () => "passed",
+        (error: Error) => Bun.stripANSI(error.message),
+      );
+      expect(outcome).toStartWith("expect(received).toEqual(expected)");
     });
 
     test.each([

@@ -11,8 +11,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 //     through `SerializeTag::Bytes` and adopts the name into `Bytes.stored_name`
 //     (`Box<[u8]>`).
 //   - `Bun.file(path)` is a `Data::File` store; the round-trip goes through
-//     `SerializeTag::File` and adopts the path into `PathLike::String`
-//     (`CowSlice<u8>`, owned arm).
+//     `SerializeTag::File` and adopts the path into `PathLike::Utf8`
+//     (owned).
 test("structuredClone round-trips File (Bytes) and Bun.file (File) names without leaking or double-freeing", async () => {
   using dir = tempDir("blob-name-ownership", {
     "payload.bin": "the file contents",
@@ -30,7 +30,7 @@ test("structuredClone round-trips File (Bytes) and Bun.file (File) names without
       if (c.size !== f.size) throw new Error("bytes size mismatch");
     }
 
-    // Data::File store -> SerializeTag::File -> PathLike::String (CowSlice owned).
+    // Data::File store -> SerializeTag::File -> PathLike::Utf8 (owned).
     for (let i = 0; i < 2000; i++) {
       const f = Bun.file(FILE_PATH);
       const c = structuredClone(f);

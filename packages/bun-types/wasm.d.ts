@@ -51,6 +51,30 @@ declare module "bun" {
       readonly buffer: ArrayBuffer;
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Memory/grow) */
       grow(delta: number): number;
+      /**
+       * Returns the memory as a fixed-length `ArrayBuffer` and makes it the `buffer`
+       * of the memory. The call detaches the resizable buffer. If `buffer` is already
+       * fixed-length, the call returns it and detaches nothing.
+       *
+       * The text above and the declared type are those of a memory that is not
+       * shared. For a shared memory the call returns a fixed-length
+       * `SharedArrayBuffer` and detaches nothing.
+       */
+      toFixedLengthBuffer(): ArrayBuffer;
+      /**
+       * Returns the memory as a resizable `ArrayBuffer` and makes it the `buffer` of
+       * the memory. The call detaches the fixed-length buffer. If `buffer` is already
+       * resizable, the call returns it and detaches nothing.
+       *
+       * `grow()` does not detach a resizable buffer. The `byteLength` of the buffer
+       * follows the size of the memory. `resize()` on the buffer to a larger multiple
+       * of 65536 grows the memory.
+       *
+       * The text above and the declared type are those of a memory that is not
+       * shared. For a shared memory the call returns a growable `SharedArrayBuffer`,
+       * as `buffer` then does, and detaches nothing.
+       */
+      toResizableBuffer(): ArrayBuffer;
     }
 
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module) */

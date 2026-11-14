@@ -1303,11 +1303,10 @@ class ChildProcess extends EventEmitter {
               stream.destroy();
               return stream;
             }
-            const result = require("internal/fs/streams").writableFromFileSink(
-              stdin as $Node.FileSink,
-            ) as unknown as ChildStdinStream;
+            const sink = stdin as $Node.FileSink;
+            const result = require("internal/fs/streams").writableFromFileSink(sink) as unknown as ChildStdinStream;
             result.readable = false;
-            result._handle = new StdioPipeHandle(() => stdin._getFd());
+            result._handle = new StdioPipeHandle(() => sink._getFd());
             // Node's child.stdin is a net.Socket: forward ref/unref to the
             // FileSink, edge-triggered like a Socket. The sink starts ref'd
             // and #spawn's eager-load loop calls ref() on every slot, so a
@@ -1316,14 +1315,14 @@ class ChildProcess extends EventEmitter {
             result.ref = function ref() {
               if (!refed) {
                 refed = true;
-                stdin.ref();
+                sink.ref();
               }
               return this;
             };
             result.unref = function unref() {
               if (refed) {
                 refed = false;
-                stdin.unref();
+                sink.unref();
               }
               return this;
             };

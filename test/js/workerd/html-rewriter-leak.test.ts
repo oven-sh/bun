@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
+import vm from "node:vm";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -333,6 +334,535 @@ describe("an output Response that outlives its rewrite does not keep the pending
     // Unfixed: every one, for as long as `kept` is.
     expect(callbacks.filter(callback => callback.deref() !== undefined).length).toBeLessThan(N / 4);
     expect(kept).toHaveLength(N);
+  });
+});
+
+// `.text()` and the other body readers of a transformed Response whose `.body` was not read
+// waited on a gcProtect()ed promise that only the end of the rewrite released. Nothing but its
+// input keeps a rewrite alive, so a rewrite whose input script dropped before it ended never
+// ended, and the promise stayed a root with all that its reactions reached. The transform now
+// holds the promise in a visited slot, and roots it only to settle it and while a handler is parked.
+describe("a read that waits on the pending output of a rewrite", () => {
+  const encoder = new TextEncoder();
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+  const protectedCount = (type: string) => heapStats().protectedObjectTypeCounts[type] ?? 0;
+  const readers = ["text", "json", "bytes", "arrayBuffer", "blob", "formData"] as const;
+  const formHeaders = { headers: { "content-type": "application/x-www-form-urlencoded" } };
+  // An input that delivers its parts a turn after transform() returned, stays open, and that nothing keeps.
+  const open = (...parts: string[]) =>
+    new Response(
+      new ReadableStream({
+        async start(controller) {
+          await turn();
+          for (const part of parts) controller.enqueue(encoder.encode(part));
+        },
+      }),
+      formHeaders,
+    );
+  // A stream with its controller, for an input that script goes on feeding.
+  const fed = () => {
+    let controller!: ReadableStreamDefaultController;
+    const input = new ReadableStream({ start: c => void (controller = c) });
+    return { controller, input: new Response(input, formHeaders) };
+  };
+  // Collects (bounded) until fewer than `few` of `refs` are left; returns how many are.
+  const left = async (refs: WeakRef<object>[], few: number) => {
+    const count = () => refs.filter(ref => ref.deref() !== undefined).length;
+    // A WeakRef keeps its target until the job that made it ends.
+    for (let i = 0; i < 20 && (i === 0 || count() >= few); i++) {
+      await turn();
+      Bun.gc(true);
+    }
+    return count();
+  };
+  // How a read settles. Taken when the read begins: some of these reject in the call that begins them.
+  const settle = (read: Promise<unknown>) =>
+    read.then(
+      value => "fulfilled: " + value,
+      error => "rejected: " + error.message,
+    );
+  // What each of those gave within a bounded number of collections, or "pending".
+  const outcomes = async (settled: Promise<string>[]) => {
+    let seen: (string | undefined)[] = [];
+    for (let i = 0; i < 100 && seen.filter(Boolean).length < settled.length; i++) {
+      Bun.gc(true);
+      await turn();
+      seen = await Promise.all(settled.map(read => Promise.race([read, Promise.resolve(undefined)])));
+    }
+    return seen.map(outcome => outcome ?? "pending");
+  };
+
+  describe("is not a GC root while the input can never end", () => {
+    const N = 40;
+    // `start(waits, i)` begins one read that `waits` waits for. Unfixed: all N stay, behind N protected promises.
+    const collected = async (start: (waits: { output?: Response }, i: number) => void) => {
+      const waiting: WeakRef<object>[] = [];
+      const before = protectedCount("Promise");
+      (() => {
+        for (let i = 0; i < N; i++) {
+          const waits = {};
+          waiting.push(new WeakRef(waits));
+          start(waits, i);
+        }
+      })();
+      expect(await left(waiting, N / 4)).toBeLessThan(N / 4);
+      expect(protectedCount("Promise") - before).toBeLessThan(N / 4);
+    };
+    const waitFor = (waits: object, read: Promise<unknown>) =>
+      void read.then(
+        () => waits,
+        () => waits,
+      );
+
+    test.each(readers)("%s()", async read => {
+      await collected((waits, i) => {
+        const output = new HTMLRewriter().on("b", { element() {} }).transform(open("<b>x"));
+        // Every other one also reaches the output, and through it its own rewrite.
+        if (i % 2) waits.output = output;
+        waitFor(waits, output[read]());
+      });
+    });
+
+    // A parked handler roots the promise. Once it has resumed, the read waits for input like any other.
+    test("after a handler that parked has resumed", async () => {
+      await collected((waits, i) => {
+        const output = new HTMLRewriter().on("b", { element: () => turn() }).transform(open("<b>x"));
+        if (i % 2) waits.output = output;
+        waitFor(waits, output.text());
+      });
+    });
+
+    describe("when one of the rewrite's own handlers begins it", () => {
+      test("and returns", async () => {
+        await collected(waits => {
+          const output = new HTMLRewriter()
+            .on("b", { element: () => waitFor(waits, output.text()) })
+            .transform(open("<b>x"));
+        });
+      });
+
+      test("then parks and resumes", async () => {
+        await collected(waits => {
+          const output = new HTMLRewriter()
+            .on("b", { element: () => (waitFor(waits, output.text()), turn()) })
+            .transform(open("<b>x"));
+        });
+      });
+
+      test("after it parked, and then resumes", async () => {
+        await collected(waits => {
+          const output = new HTMLRewriter()
+            .on("b", {
+              async element() {
+                await turn();
+                waitFor(waits, output.text());
+              },
+            })
+            .transform(open("<b>x"));
+        });
+      });
+
+      test("as the second handler, once the first has parked and resumed", async () => {
+        await collected(waits => {
+          let calls = 0;
+          const output = new HTMLRewriter()
+            .on("b", { element: () => (++calls === 1 ? turn() : waitFor(waits, output.text())) })
+            .transform(open("<b>x</b><b>y"));
+        });
+      });
+    });
+  });
+
+  // The other half: whatever can still end the rewrite has to find the promise, with the output
+  // Response and the promise itself dropped.
+  describe("is still settled", () => {
+    test("by an input that only script holds, when it ends and when it fails", async () => {
+      const N = 20;
+      const controllers: ReadableStreamDefaultController[] = [];
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (let i = 0; i < N; i++) {
+          const { controller, input } = fed();
+          controllers.push(controller);
+          controller.enqueue(encoder.encode("<b>x"));
+          reads.push(
+            settle(
+              new HTMLRewriter()
+                .on("b", { element: element => void element.setAttribute("n", String(i)) })
+                .transform(input)
+                .text(),
+            ),
+          );
+        }
+      })();
+      for (let i = 0; i < 5; i++) {
+        await turn();
+        Bun.gc(true);
+      }
+      for (const [i, controller] of controllers.entries()) {
+        if (i % 2) {
+          controller.enqueue(encoder.encode("y</b>"));
+          controller.close();
+        } else controller.error(new Error(`input ${i} failed`));
+      }
+
+      expect(await outcomes(reads)).toEqual(
+        controllers.map((_, i) => (i % 2 ? `fulfilled: <b n="${i}">xy</b>` : `rejected: input ${i} failed`)),
+      );
+    });
+
+    test("by a handler that parked and resumed while the read waited", async () => {
+      const { controller, input } = fed();
+      const resumed = Promise.withResolvers<void>();
+      const read = settle(
+        new HTMLRewriter()
+          .on("b", {
+            async element(element) {
+              await turn();
+              element.setAttribute("edited", "yes");
+              resumed.resolve();
+            },
+          })
+          .transform(input)
+          .text(),
+      );
+      controller.enqueue(encoder.encode("<b>x"));
+      await resumed.promise;
+      await turn();
+      Bun.gc(true);
+      controller.enqueue(encoder.encode("y</b>"));
+      controller.close();
+
+      expect(await outcomes([read])).toEqual([`fulfilled: <b edited="yes">xy</b>`]);
+    });
+
+    // The handler parks after the read began: the read has to outlive the transform that held it.
+    test("by the abandonment of a handler that parked after the read began", async () => {
+      const N = 20;
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (let i = 0; i < N; i++) {
+          const { controller, input } = fed();
+          reads.push(
+            settle(
+              new HTMLRewriter()
+                .on("b", { element: () => new Promise<void>(() => {}) })
+                .transform(input)
+                .text(),
+            ),
+          );
+          controller.enqueue(encoder.encode("<b>x"));
+        }
+      })();
+
+      expect(await outcomes(reads)).toEqual(
+        reads.map(() => "rejected: HTMLRewriter content handler returned a Promise that will never settle"),
+      );
+    });
+
+    // The first handler's resume gave the promise back to the transform. The second park takes it again.
+    test("by the abandonment of a second handler, after the first parked and resumed", async () => {
+      const N = 20;
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (let i = 0; i < N; i++) {
+          const { controller, input } = fed();
+          let calls = 0;
+          reads.push(
+            settle(
+              new HTMLRewriter()
+                .on("b", { element: () => (++calls === 1 ? turn() : new Promise<void>(() => {})) })
+                .transform(input)
+                .text(),
+            ),
+          );
+          controller.enqueue(encoder.encode("<b>x</b><b>y</b>"));
+        }
+      })();
+
+      expect(await outcomes(reads)).toEqual(
+        reads.map(() => "rejected: HTMLRewriter content handler returned a Promise that will never settle"),
+      );
+    });
+
+    // A failing rewrite cancels its input, and that `cancel()` is script: the read it begins is settled by the same failure.
+    describe("when the input's cancel() begins it while the rewrite fails", () => {
+      const failing = async (
+        read: (typeof readers)[number],
+        handler: HTMLRewriterTypes.HTMLRewriterElementContentHandlers,
+      ) => {
+        const begun = Promise.withResolvers<string>();
+        let controller!: ReadableStreamDefaultController;
+        const output = new HTMLRewriter().on("b", handler).transform(
+          new Response(
+            new ReadableStream({
+              start: c => void (controller = c),
+              cancel: () => void begun.resolve(settle(output[read]())),
+            }),
+            formHeaders,
+          ),
+        );
+        controller.enqueue(encoder.encode("<b>x</b>"));
+        return { read: (await outcomes([begun.promise]))[0], bodyUsed: output.bodyUsed };
+      };
+      const boom = () => {
+        throw new Error("boom");
+      };
+
+      test.each(readers)("%s(), a handler throws", async read => {
+        expect(await failing(read, { element: boom })).toEqual({ read: "rejected: boom", bodyUsed: true });
+      });
+
+      test("a handler rejects after a turn", async () => {
+        expect(await failing("text", { element: () => turn().then(boom) })).toEqual({
+          read: "rejected: boom",
+          bodyUsed: true,
+        });
+      });
+
+      test("a parked handler is abandoned", async () => {
+        expect(await failing("text", { element: () => new Promise<void>(() => {}) })).toEqual({
+          read: "rejected: HTMLRewriter content handler returned a Promise that will never settle",
+          bodyUsed: true,
+        });
+      });
+    });
+
+    describe("when one of the rewrite's own handlers begins it", () => {
+      const begunBy = (
+        handlers: (begin: () => void) => { element?: () => unknown; end?: () => unknown },
+        ...parts: string[]
+      ) => {
+        const begun = Promise.withResolvers<string>();
+        const { controller, input } = fed();
+        const { element, end } = handlers(() => void begun.resolve(settle(output.text())));
+        const output = new HTMLRewriter()
+          .on("b", { element: element ?? (() => {}) })
+          .onDocument({ end: end ?? (() => {}) })
+          .transform(input);
+        for (const part of parts) controller.enqueue(encoder.encode(part));
+        return { controller, settled: async () => (await outcomes([begun.promise]))[0] };
+      };
+
+      test("and the input then ends", async () => {
+        const { controller, settled } = begunBy(begin => ({ element: begin }), "<b>x");
+        await turn();
+        controller.enqueue(encoder.encode("y</b>"));
+        controller.close();
+        expect(await settled()).toBe("fulfilled: <b>xy</b>");
+      });
+
+      test("in the document's end handler", async () => {
+        const { controller, settled } = begunBy(begin => ({ end: begin }), "<b>x</b>");
+        controller.close();
+        expect(await settled()).toBe("fulfilled: <b>x</b>");
+      });
+
+      test("and then throws", async () => {
+        const { settled } = begunBy(
+          begin => ({
+            element() {
+              begin();
+              throw new Error("boom");
+            },
+          }),
+          "<b>x",
+        );
+        expect(await settled()).toBe("rejected: boom");
+      });
+
+      test("and is then abandoned", async () => {
+        const { settled } = begunBy(begin => ({ element: () => (begin(), new Promise<void>(() => {})) }), "<b>x");
+        expect(await settled()).toBe(
+          "rejected: HTMLRewriter content handler returned a Promise that will never settle",
+        );
+      });
+    });
+
+    // More than the part that transform() takes: the read pulls the rest, to the end, before it returns.
+    test("by a file that the read itself reads to its end", async () => {
+      const html = `<b>${Buffer.alloc(1 << 20, "x").toString()}</b>`;
+      using dir = tempDir("hr-read-file", { "in.html": html });
+      const before = protectedCount("Promise");
+      const read = new HTMLRewriter()
+        .on("b", { element() {} })
+        .transform(new Response(Bun.file(join(String(dir), "in.html"))))
+        .text();
+      Bun.gc(true);
+
+      expect(await read).toBe(html);
+      expect(protectedCount("Promise") - before).toBe(0);
+    });
+
+    test("by a fetch() in flight that nothing else holds", async () => {
+      const rest = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(encoder.encode("<b>he"));
+                await rest.promise;
+                controller.enqueue(encoder.encode("llo</b>"));
+                controller.close();
+              },
+            }),
+          ),
+      });
+      const seen = Promise.withResolvers<void>();
+      const read = fetch(server.url).then(response =>
+        settle(
+          new HTMLRewriter()
+            .on("b", {
+              element(element) {
+                element.setAttribute("seen", "yes");
+                seen.resolve();
+              },
+            })
+            .transform(response)
+            .text(),
+        ),
+      );
+      await seen.promise;
+      for (let i = 0; i < 5; i++) {
+        await turn();
+        Bun.gc(true);
+      }
+      rest.resolve();
+
+      expect(await read).toBe(`fulfilled: <b seen="yes">hello</b>`);
+    });
+  });
+
+  // A `node:vm` timeout is a termination that the VM survives. One that lands while the read
+  // settles left the promise a root: the settle had taken it, and skipped the release.
+  test("is not a GC root after a node:vm timeout cut its settle short", async () => {
+    const numbers = (bytes: number) => Buffer.alloc(bytes, "1,").toString();
+    // transform() pulls a direct stream. The first chunk puts the output over its high-water mark, so the
+    // second waits for the read: json() rewrites it, runs `end`, and settles. The parse is most of that.
+    const rewrite = (kilobytes: number) => {
+      const at = { end: 0 };
+      const output = new HTMLRewriter().onDocument({ end: () => void (at.end = performance.now()) }).transform(
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              controller.write("[" + numbers(64 << 10));
+              controller.write(numbers(kilobytes << 10) + "1]");
+              controller.end();
+            },
+          }),
+        ),
+      );
+      return { at, output };
+    };
+    // Grow the document until the settle takes long enough, twice in a row, for a timeout to land inside it.
+    let kilobytes = 64;
+    let rewritten = 0;
+    let settled = 0;
+    while (settled < 40 && kilobytes < 256 << 10) {
+      kilobytes *= 2;
+      rewritten = 0;
+      settled = Infinity;
+      for (let sample = 0; sample < 2; sample++) {
+        const { at, output } = rewrite(kilobytes);
+        const began = performance.now();
+        const read = output.json();
+        const returned = performance.now();
+        rewritten = Math.max(rewritten, at.end - began);
+        settled = Math.min(settled, returned - at.end);
+        await read;
+      }
+    }
+
+    const before = protectedCount("Promise");
+    const runs: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const cut = ((globalThis as any).rewriteCutShort = { ...rewrite(kilobytes), returned: false });
+      const began = performance.now();
+      try {
+        vm.runInThisContext("rewriteCutShort.output.json(); rewriteCutShort.returned = true;", {
+          timeout: Math.ceil(rewritten + settled / 2),
+        });
+        runs.push("returned");
+      } catch (error: any) {
+        if (error.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw error;
+        // Between the call of `end` and the return of json() there is only the settle.
+        runs.push(`cut short ${cut.returned ? "after" : cut.at.end > began ? "in" : "before"} the settle`);
+      } finally {
+        delete (globalThis as any).rewriteCutShort;
+      }
+    }
+    expect(runs).toContain("cut short in the settle");
+    Bun.gc(true);
+    expect(protectedCount("Promise") - before).toBe(0);
+  });
+
+  // Once `.body` is read the transform holds the stream where it would hold the promise, and the
+  // read goes through that stream: a park or a failure must not take the stream for the promise.
+  test.each([
+    ["parks", () => turn(), "fulfilled: <b>x</b>"],
+    [
+      "throws",
+      () => {
+        throw new Error("boom");
+      },
+      "rejected: boom",
+    ],
+  ] as const)("a read after .body is settled through the stream when a handler %s", async (_, element, outcome) => {
+    const N = 20;
+    const before = protectedCount("ReadableStream");
+    const reads: Promise<string>[] = [];
+    (() => {
+      for (let i = 0; i < N; i++) {
+        const { controller, input } = fed();
+        const output = new HTMLRewriter().on("b", { element }).transform(input);
+        void output.body;
+        reads.push(settle(output.text()));
+        controller.enqueue(encoder.encode("<b>x</b>"));
+        controller.close();
+      }
+    })();
+
+    expect(await outcomes(reads)).toEqual(reads.map(() => outcome));
+    for (let i = 0; i < 20 && protectedCount("ReadableStream") > before; i++) {
+      await turn();
+      Bun.gc(true);
+    }
+    expect(protectedCount("ReadableStream") - before).toBe(0);
+  });
+
+  test("leaves the output used and locked, as a read that is rooted does", async () => {
+    const { controller, input } = fed();
+    const output = new HTMLRewriter().on("b", { element() {} }).transform(input);
+    controller.enqueue(encoder.encode("<b>x"));
+    const read = output.text();
+    const message = (use: () => unknown) =>
+      Promise.resolve()
+        .then(use)
+        .then(
+          () => "no error",
+          error => error.message,
+        );
+
+    expect({
+      bodyUsed: output.bodyUsed,
+      text: await message(() => output.text()),
+      locked: output.body!.locked,
+      getReader: await message(() => output.body!.getReader()),
+      clone: await message(() => output.clone()),
+    }).toEqual({
+      bodyUsed: true,
+      text: "Body already used",
+      locked: true,
+      getReader: "Invalid state: ReadableStream is locked",
+      clone: "Body is disturbed or locked",
+    });
+    controller.enqueue(encoder.encode("y</b>"));
+    controller.close();
+    expect(await read).toBe("<b>xy</b>");
+    expect(output.bodyUsed).toBe(true);
   });
 });
 

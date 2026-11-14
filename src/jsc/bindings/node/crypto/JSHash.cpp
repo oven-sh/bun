@@ -11,7 +11,6 @@
 #include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <openssl/evp.h>
-#include <JavaScriptCore/Error.h>
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 

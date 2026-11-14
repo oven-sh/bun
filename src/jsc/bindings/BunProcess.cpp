@@ -134,14 +134,10 @@ typedef int mode_t;
 #endif
 
 #if defined(__linux__) || defined(__FreeBSD__)
-#include <sys/resource.h>
 #include <sys/time.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #endif
 
 #if defined(__FreeBSD__)
-#include <sys/types.h>
 #include <sys/sysctl.h>
 #include <sys/user.h>
 #endif

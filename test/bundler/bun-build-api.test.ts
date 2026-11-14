@@ -45,6 +45,26 @@ describe("Bun.build", () => {
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
+  test("a file imported by its default type and with { type: 'file' } is one output", async () => {
+    using dir = tempDir("bun-build-api-file-twice", {
+      "entry.ts": `
+        import a from "./data.wasm";
+        import b from "./data.wasm" with { type: "file" };
+        console.log(a, b);
+      `,
+      "data.wasm": "wasm",
+    });
+
+    const build = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], target: "bun" });
+
+    expect(build.outputs.map(output => output.kind)).toEqual(["entry-point", "asset"]);
+    const [, asset] = build.outputs;
+    const name = path.basename(asset.path);
+    expect(await asset.text()).toBe("wasm");
+    // Both imports name it.
+    expect((await build.outputs[0].text()).split(name)).toHaveLength(2 + 1);
+  });
+
   test("bytecode works", async () => {
     const dir = tempDirWithFiles("bun-build-api-bytecode", {
       "package.json": `{}`,

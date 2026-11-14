@@ -4555,23 +4555,40 @@ pub mod bv2_impl {
                     }
                 }
 
-                for (index, template) in templates {
+                let is_executable = self.transpiler.options.compile_mode.is_executable();
+                // The output path of a copied file -> its output file and its module.
+                let mut copied: bun_collections::StringHashMap<(u32, usize)> = Default::default();
+                for (index, mut template) in templates {
                     let loader = loaders[index];
                     {
-                        let source = &mut sources[index];
-
-                        let output_path: Box<[u8]> = {
+                        let content_hash = content_hashes_for_additional_files[index];
+                        let print = |template: &options::PathTemplate| -> Box<[u8]> {
                             let mut v = Vec::new();
-                            template
-                                .print(
-                                    &mut v,
-                                    !self.transpiler.options.compile_mode.is_executable(),
-                                )
-                                .expect("oom");
+                            template.print(&mut v, !is_executable).expect("oom");
                             // Like a chunk's `final_rel_path`: `/`-separated on every platform.
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
+                        let mut output_path = print(&template);
+
+                        // One file under two `with { type }` loaders is two modules of the same bytes.
+                        if let Some(&(output_file, other)) = copied.get(&*output_path)
+                            && content_hashes_for_additional_files[other] == content_hash
+                            && sources[other].path.text == sources[index].path.text
+                        {
+                            // An executable reads the loader of an embedded file when it runs.
+                            if !is_executable || loaders[other] == loader {
+                                additional_files[index]
+                                    .push(crate::AdditionalFile::OutputFile(output_file));
+                                continue;
+                            }
+                            template.placeholder.hash = Some(template.content_hash(!content_hash));
+                            output_path = print(&template);
+                        }
+                        copied
+                            .put(&output_path, (additional_output_files.len() as u32, index))
+                            .expect("oom");
+                        let source = &mut sources[index];
 
                         if opens_output_paths
                             && !template.check_output_path(
@@ -7038,7 +7055,8 @@ pub mod bv2_impl {
                 if html_import == HtmlImport::Manifest {
                     if self.on_load_decides_html_import(&ctx.plugin_answer, path) {
                         html_import = HtmlImport::AfterOnLoad;
-                    } else {
+                    } else if import_record.kind != ImportKind::Dynamic {
+                        // The linker wraps or splits what an `import()` loads, and looks at its kind for that.
                         import_record.kind = ImportKind::HtmlManifest;
                     }
                 }
@@ -7068,7 +7086,9 @@ pub mod bv2_impl {
                 );
                 let resolve_task: &mut ParseTask = self.arena().alloc(resolve_task_val);
 
-                resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
+                resolve_task.known_target = if html_import == HtmlImport::Manifest
+                    || import_record.kind == ImportKind::HtmlManifest
+                {
                     Target::Browser
                 } else {
                     target

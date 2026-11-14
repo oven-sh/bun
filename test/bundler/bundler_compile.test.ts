@@ -458,6 +458,21 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  // Two modules with the same bytes. The executable reads each by its own type.
+  for (const order of ["file-first", "text-first"]) {
+    const imports = [`import path from "./t.txt" with { type: "file" };`, `import text from "./t.txt";`];
+    itBundled(`compile/FileAndTextOfOneFile/${order}`, {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          ${(order === "file-first" ? imports : imports.reverse()).join("\n")}
+          console.log(path.endsWith(".txt"), text, await Bun.file(path).text());
+        `,
+        "/t.txt": "hello world",
+      },
+      run: { stdout: "true hello world hello world" },
+    });
+  }
   // A file imported with { type: "file" } is embedded byte for byte, whatever it begins with and whatever its extension.
   itBundled("compile/EmbeddedFileKeepsItsBytes", {
     compile: true,

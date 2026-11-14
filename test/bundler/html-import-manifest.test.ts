@@ -911,4 +911,27 @@ console.log(typeof url, url.endsWith(".html"));
       expect(readManifests(api, "out/server.js")).toHaveLength(0);
     },
   });
+
+  // Of a page that nothing else imports.
+  for (const splitting of [false, true]) {
+    for (const plugin of [false, true]) {
+      itBundled(`html-import/dynamic-import-only${splitting ? "-splitting" : ""}${plugin ? "-plugin" : ""}`, {
+        outdir: "out/",
+        files: {
+          ...pluginResolvedHtmlFiles,
+          "/server.js": `
+const page = (await import("./page.html")).default;
+console.log(page.index, page.files.length > 0);
+`,
+        },
+        entryPoints: ["/server.js"],
+        target: "bun",
+        splitting,
+        plugins(builder) {
+          if (plugin) builder.onResolve({ filter: /.*/ }, () => undefined);
+        },
+        run: { stdout: "./page.html true" },
+      });
+    }
+  }
 });

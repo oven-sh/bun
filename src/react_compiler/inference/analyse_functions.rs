@@ -124,7 +124,7 @@ where
     }
 
     // deadCodeElimination for inner functions
-    crate::optimization::dead_code_elimination(func, env);
+    crate::optimization::dead_code_elimination_in_nested_function(func, env);
 
     // inferMutationAliasingRanges — returns the externally-visible function effects
     let function_effects =
@@ -223,5 +223,6 @@ fn placeholder_function() -> HirFunction {
         is_async: false,
         directives: AstAlloc::vec(),
         aliasing_effects: None,
+        keeps_unread_reads: false,
     }
 }

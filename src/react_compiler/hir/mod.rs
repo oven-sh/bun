@@ -212,6 +212,8 @@ pub struct HirFunction {
     pub is_async: bool,
     pub directives: HirVec<StoreStr>,
     pub aliasing_effects: Option<HirVec<AliasingEffect>>,
+    /// DeadCodeElimination kept a read of a property that nothing uses in this nested function, or in one that it holds.
+    pub keeps_unread_reads: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -823,5 +823,6 @@ pub(crate) fn placeholder_function() -> HirFunction {
         is_async: false,
         directives: hir_vec![],
         aliasing_effects: None,
+        keeps_unread_reads: false,
     }
 }

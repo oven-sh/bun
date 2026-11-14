@@ -908,18 +908,15 @@ impl WriteFileWaitFromLockedValueTask {
         let global_ref = this.global_this;
         let global_this = global_ref.get();
         let context = global_this.bun_vm().context_of(this.context);
-        let mut file_blob = core::mem::take(&mut this.file_blob);
         match value {
             body::Value::Error(err_ref) => {
                 let err = err_ref.to_js(global_this);
-                file_blob.detach();
                 let _ = value.use_();
                 this.promise
                     .get()
                     .reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
-                file_blob.detach();
                 let _ = value.use_();
                 this.promise.get().reject(
                     global_this,
@@ -938,7 +935,7 @@ impl WriteFileWaitFromLockedValueTask {
                 let new_promise = match blob::write_file_with_source_destination(
                     &global_this.js_thread(context),
                     &mut blob,
-                    &mut file_blob,
+                    &mut this.file_blob,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
                         ..Default::default()
@@ -946,13 +943,10 @@ impl WriteFileWaitFromLockedValueTask {
                 ) {
                     Ok(p) => p,
                     Err(err) => {
-                        file_blob.detach();
                         this.promise.get().reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };
-
-                let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {
                     let promise = this.promise.get();
@@ -970,8 +964,6 @@ impl WriteFileWaitFromLockedValueTask {
             }
             body::Value::Locked(locked) => {
                 // Re-registering for a future callback — `this` stays alive.
-                // Restore the moved-out blob so the next `then()` has its store.
-                this.file_blob = file_blob;
                 locked.on_receive_value = Some(Self::then_wrap);
                 locked.task = Some(bun_core::heap::into_raw_nn(this).cast::<c_void>());
             }

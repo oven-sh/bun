@@ -742,10 +742,6 @@ impl Expansion {
         if let Some(c) = child {
             interp.deinit_node(c);
         }
-        let me = interp.as_expansion_mut(this);
-        me.out.buf.clear();
-        me.out.bounds.clear();
-        me.current_out.clear();
     }
 
     /// Take the expanded output (called by the parent after `child_done`).

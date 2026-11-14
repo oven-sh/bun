@@ -52,6 +52,32 @@ async function runTerminateScenario(
 // binary, so the failure mode needs far more than the default timeout.
 const LEAK_TEST_TIMEOUT = 90_000;
 
+// LSan does not see an fd, so look for it.
+const defineIsOpen = (path: string) => `
+  const { fstatSync, statSync } = require("node:fs");
+  const { ino, dev } = statSync(${JSON.stringify(path)});
+  const isOpen = () => {
+    for (let fd = 3; fd < 256; fd++) {
+      try {
+        const stat = fstatSync(fd);
+        if (stat.ino === ino && stat.dev === dev) return true;
+      } catch {}
+    }
+    return false;
+  };
+`;
+const expectClosedByTerminate = (path: string) => ({
+  beforeTerminate: `
+    ${defineIsOpen(path)}
+    if (!isOpen()) throw new Error("not open while the command runs");
+  `,
+  afterTerminate: `
+    const deadline = Date.now() + 20_000;
+    while (isOpen() && Date.now() < deadline) await Bun.sleep(5);
+    if (isOpen()) throw new Error("still open after terminate()");
+  `,
+});
+
 test.skipIf(!isASAN || isWindows)(
   "worker.terminate() with a live Bun.$ subprocess does not leak its pipe readers",
   async () => {
@@ -112,7 +138,6 @@ test.skipIf(!isASAN || isWindows)(
 test.skipIf(!isASAN || isWindows)(
   "worker.terminate() with a live Bun.$ file redirect does not leak the redirection fd",
   async () => {
-    // `> out.txt` opens an fd on the Cmd that only Cmd::deinit closes. LSan does not see an fd, so look for it.
     await runTerminateScenario(
       `
       const running = Bun.$\`sh -c "echo ok > flag.txt && exec sleep 100" > out.txt\`.nothrow();
@@ -125,27 +150,27 @@ test.skipIf(!isASAN || isWindows)(
       postMessage("ok");
     `,
       {},
-      {
-        beforeTerminate: `
-      const { fstatSync, statSync } = require("node:fs");
-      const { ino, dev } = statSync("out.txt");
-      const isOpen = () => {
-        for (let fd = 3; fd < 256; fd++) {
-          try {
-            const stat = fstatSync(fd);
-            if (stat.ino === ino && stat.dev === dev) return true;
-          } catch {}
-        }
-        return false;
-      };
-      if (!isOpen()) throw new Error("out.txt is not open while the command runs");
+      expectClosedByTerminate("out.txt"),
+    );
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(isWindows)(
+  "worker.terminate() before mv has seen its target directory opened does not leak the fd",
+  async () => {
+    // The thread pool opens the directory. The worker never returns to its event loop to hear of it.
+    await runTerminateScenario(
+      `
+      require("node:fs").mkdirSync("target");
+      ${defineIsOpen("target")}
+      Bun.$\`mv a target\`.nothrow().run();
+      while (!isOpen()) Bun.sleepSync(1);
+      postMessage("ok");
+      while (true);
     `,
-        afterTerminate: `
-      const deadline = Date.now() + 20_000;
-      while (isOpen() && Date.now() < deadline) await Bun.sleep(5);
-      if (isOpen()) throw new Error("out.txt is still open after terminate()");
-    `,
-      },
+      {},
+      expectClosedByTerminate("target"),
     );
   },
   LEAK_TEST_TIMEOUT,

@@ -121,9 +121,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
         if let Some(mut blob) = self.to_any_blob(cx.global()) {
-            let result = blob.to_promise(cx, action);
-            blob.detach();
-            return result;
+            return blob.to_promise(cx, action);
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()

@@ -678,16 +678,8 @@ pub(crate) fn run_task(
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
         task_tag::FSWatchTask => feature_arm!([NodeFs], |watch: FSWatchTask| -> JsResult<()> {
-            // The task is heap-allocated
-            // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
-            // explicit (not `Drop`) so the embedded `current_task` field never
-            // runs it.
-            // SAFETY: tag identifies pointee; paired with heap::alloc in `FSWatchTask::enqueue`.
-            let mut watch = unsafe { bun_core::heap::take(watch) };
-            let ran = watch.run();
-            watch.deinit();
-            ran?;
-            Ok(())
+            // SAFETY: tag identifies pointee; the box that `FSWatcher` queued.
+            unsafe { bun_core::heap::take(watch) }.run()
         })?,
 
         // ── node:fs libuv-request ops (Windows) ──────────────────────────

@@ -364,7 +364,7 @@ impl FilePoll {
         self.deinit_possibly_defer(ctx, false);
     }
 
-    pub(crate) fn deinit_force_unregister(&mut self) {
+    pub fn deinit_force_unregister(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
         self.deinit_possibly_defer(ctx, true);
     }

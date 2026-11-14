@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, nodeExe, tempDir, tls } from "harness";
 import { once } from "node:events";
 import net, { type AddressInfo } from "node:net";
 
@@ -482,6 +482,65 @@ process.on('message', (m, socket) => {
       hasChild: true,
     });
   });
+
+  // The receiver classifies the descriptor like the sender did (node: uv_guess_handle), so a
+  // socket over a pipe arrives as one. kqueue does not report a named FIFO on macOS.
+  test.concurrent.skipIf(isMacOS)(
+    "a net.Socket over a FIFO arrives in the child as a socket that reads the FIFO",
+    async () => {
+      using dir = tempDir("ipc-handle-fifo", {
+        "parent.js": `
+const { fork, execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const net = require('node:net');
+const path = require('node:path').join(__dirname, 'pipe.fifo');
+execFileSync('mkfifo', [path]);
+const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+const wfd = fs.openSync(path, 'w');
+const child = fork('child.js');
+const socket = new net.Socket({ fd: rfd, readable: true, pauseOnCreate: true });
+child.send('socket', socket, err => {
+  if (err) return finish(false, 'send:' + err.message);
+  fs.writeSync(wfd, 'ping');
+  fs.closeSync(wfd);
+});
+child.on('message', m => finish(m.data === 'ping' && m.ended, JSON.stringify(m)));
+
+function finish(ok, detail) {
+  console.log(ok ? 'RESPONSE:' + detail : 'FAILED:' + detail);
+  try { child.kill(); } catch {}
+  process.exit(ok ? 0 : 1);
+}
+`,
+        "child.js": `
+const fs = require('node:fs');
+const net = require('node:net');
+process.on('message', (m, socket) => {
+  if (!(socket instanceof net.Socket)) return process.send({ error: 'handle was ' + typeof socket });
+  const fifo = fs.fstatSync(socket._handle.fd).isFIFO();
+  let data = '';
+  socket.on('data', c => (data += c));
+  socket.on('error', e => process.send({ error: e.code }));
+  socket.on('end', () => process.send({ fifo, data, ended: true }));
+});
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: 'RESPONSE:{"fifo":true,"data":"ping","ended":true}',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test.concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
     using dir = tempDir("ipc-handle-dgram", {

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d7657eff5f59fb1ef913390f6a02dfdd8c71598f0663c923fe792ee2929f11be.
+// Written against that file with the SHA-256 b427cdb6b804546507dce8290c1943ef561a59eb3d885518864aba30d567275a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2066,7 +2066,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       }
       // A terminal is read through tty.ReadStream, as in Node. Write-only wrapping of one (stderr on a terminal) stays.
       if (opts.readable === true && stats.isCharacterDevice()) {
-        throw $ERR_INVALID_FD_TYPE("TTY");
+        throw $ERR_INVALID_FD_TYPE(require("node:tty").isatty(fd) ? "TTY" : "FILE");
       }
     }
   }
@@ -2218,16 +2218,21 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   } else if (
     process.platform !== "win32" &&
     fd !== undefined &&
-    (fd > 2 || opts.readable === true) &&
+    fd > 2 &&
     opts.readable !== false &&
     !this[bunTlsSymbol]
   ) {
     try {
       stats ??= require("node:fs").fstatSync(fd);
     } catch {}
-    // A socket is adopted by uSockets, a pipe or FIFO by a native pipe reader (node: uv_pipe_open). Stdio is adopted only when asked, since other streams share it.
-    if (stats?.isSocket() || stats?.isFIFO()) {
-      Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+    // Node's createHandle: a socket is adopted by uSockets, a pipe or FIFO by a native pipe reader (uv_pipe_open),
+    // and a file or a terminal throws. Stdio is not adopted: process.stdin and process.stdout own it.
+    if (stats !== undefined) {
+      if (stats.isSocket() || stats.isFIFO()) {
+        Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+      } else if (stats.isFile() || stats.isCharacterDevice()) {
+        throw $ERR_INVALID_FD_TYPE(stats.isCharacterDevice() && require("node:tty").isatty(fd) ? "TTY" : "FILE");
+      }
     }
   }
 }

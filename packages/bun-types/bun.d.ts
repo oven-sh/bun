@@ -7853,7 +7853,11 @@ declare module "bun" {
      */
     tls?: TLSOptions | boolean;
     /**
-     * The file descriptor to connect to
+     * An open file descriptor to adopt: a connected socket, or on POSIX a
+     * pipe or FIFO (read with `pipe(2)` semantics, no `tls`). The socket owns
+     * it and closes it with the socket, unless it is stdin, stdout or stderr.
+     * A file or a terminal fails the connect with `ENOTSOCK` and leaves the
+     * descriptor open.
      */
     fd: number;
   }

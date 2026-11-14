@@ -749,13 +749,14 @@ impl<const SSL: bool> NewSocket<SSL> {
                         unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
                     return super::fd_pipe::FdPipe::open(tcp, f, false, false, cx.context());
                 }
-                // A pipe or a FIFO can't be a `us_socket_t`: it is read through an `FdPipe`. `fdIsRawSocket` skips the `fstat`.
+                // A pipe or a FIFO can't be a `us_socket_t`: it is read through an `FdPipe`. Sockets stay on
+                // uSockets: `upgradeTLS` needs a `us_socket_t`, and `end()` is a `shutdown(SHUT_WR)`.
                 #[cfg(unix)]
-                if !SSL && !socket_flags.contains(Flags::RAW_SOCKET_FD) {
+                {
                     let st = sys::fstat(f).map_err(sys::SystemErrno::from)?;
                     match st.st_mode & libc::S_IFMT {
                         libc::S_IFSOCK => {}
-                        libc::S_IFIFO => {
+                        libc::S_IFIFO if !SSL => {
                             // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
                             let tcp = unsafe {
                                 bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>())
@@ -1861,7 +1862,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Closes an `allowHalfOpen: false` socket after the peer's FIN, once `end(data)`'s queued tail is sent.
     fn end_on_peer_fin(&self) {
         if !self.flags.get().contains(Flags::ENDS_ON_PEER_FIN)
-            || !matches!(self.socket.get().socket, uws::InternalSocket::Connected(_))
+            || !matches!(
+                self.socket.get().socket,
+                uws::InternalSocket::Connected(_) | uws::InternalSocket::Transport(_)
+            )
             || self.socket.get().is_closed()
         {
             return;
@@ -3645,8 +3649,6 @@ bitflags::bitflags! {
         const WRITE_ONLY_FD        = 1 << 18;
         /// C++ points at this socket for a node:http connection, or for the `ws` WebSocket made of it, until `Bun__NodeHTTPSocket__onClose`. The ext of the `us_socket_t` is uWS's.
         const HELD_BY_SERVER       = 1 << 19;
-        /// `fdIsRawSocket`: the caller knows the descriptor is a socket, so `do_connect` does not `fstat` it.
-        const RAW_SOCKET_FD        = 1 << 20;
         /// TCP_NODELAY is known to be on, so asking for it again costs no syscall. node:net asks for each connection of an http.Server, and the accept has set it.
         const NO_DELAY = 1 << 30;
         /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.

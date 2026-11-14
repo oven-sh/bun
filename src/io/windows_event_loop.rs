@@ -91,7 +91,7 @@ impl FilePoll {
         self.deinit_with_vm(js_vm_ctx());
     }
 
-    pub(crate) fn deinit_force_unregister(&mut self) {
+    pub fn deinit_force_unregister(&mut self) {
         self.deinit()
     }
 

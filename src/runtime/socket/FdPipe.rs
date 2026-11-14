@@ -87,9 +87,14 @@ impl FdPipe {
         #[cfg(unix)]
         let writable = if readable {
             let status = sys::get_fcntl_flags(fd).map_err(sys::SystemErrno::from)? as i32;
-            // Like `uv_pipe_open`, stdio included: a blocking FIFO could block the reader's `read(2)`
-            // for good, and the flag stays set afterwards, as in node.
-            if (status & libc::O_NONBLOCK) == 0 {
+            // libuv: `uv_read_start` on a handle that `uv_pipe_open` found write-only.
+            if (status & libc::O_ACCMODE) == libc::O_WRONLY {
+                return Err(sys::SystemErrno::ENOTCONN);
+            }
+            // Like `uv_pipe_open`: a blocking FIFO could block the reader's `read(2)` for good.
+            // Stdio shares its open file description with other processes, and nothing puts the
+            // flag back at exit, so it keeps its mode and the reader guards each `read(2)` with a poll.
+            if (status & libc::O_NONBLOCK) == 0 && !fd.is_stdio() {
                 sys::update_nonblocking(fd, true).map_err(sys::SystemErrno::from)?;
             }
             (status & libc::O_ACCMODE) != libc::O_RDONLY
@@ -139,8 +144,9 @@ impl FdPipe {
                 r.set_parent(this.cast::<core::ffi::c_void>());
                 // `close` closes the descriptor itself, before the socket hears of the close.
                 r.flags.remove(PosixFlags::CLOSE_HANDLE);
-                // Without it the reader is a `FileType::Pipe`, whose `read(2)` on macOS is unguarded.
-                r.flags.insert(PosixFlags::NONBLOCKING);
+                if !fd.is_stdio() {
+                    r.flags.insert(PosixFlags::NONBLOCKING);
+                }
                 // Armed by `resume_stream`; a registration now would only be undone in `on_open`.
                 if pause_on_connect {
                     r.flags.insert(PosixFlags::IS_PAUSED);
@@ -177,7 +183,8 @@ impl FdPipe {
     fn wait_until_writable(&self) -> bool {
         use bun_io::posix_event_loop::{FilePoll, Flags, Owner, PollTag};
         // kqueue doesn't reliably report a FIFO's readiness on macOS, and the write could wait forever.
-        if !cfg!(target_os = "linux") {
+        // A descriptor with a reader is non-blocking, so there the wait is the only way the write completes.
+        if !cfg!(target_os = "linux") && self.reader.is_none() {
             return false;
         }
         let ctx = bun_io::js_vm_ctx();
@@ -203,11 +210,9 @@ impl FdPipe {
             return false;
         }
         // The socket's queued bytes are a pending write: like libuv's `uv_write_t`, they hold the
-        // loop open however the socket is ref'd. The write-only pipe never did, and keeps that.
-        if self.reader.is_some() {
-            // SAFETY: as above.
-            unsafe { (*poll).enable_keeping_process_alive(ctx) };
-        }
+        // loop open however the socket is ref'd.
+        // SAFETY: as above.
+        unsafe { (*poll).enable_keeping_process_alive(ctx) };
         true
     }
 
@@ -218,9 +223,7 @@ impl FdPipe {
 
     #[cfg(unix)]
     pub(crate) fn on_poll(&self) {
-        if let Some(poll) = self.poll.get()
-            && self.reader.is_some()
-        {
+        if let Some(poll) = self.poll.get() {
             // A further EAGAIN registers and holds again.
             // SAFETY: this pipe's live hive slot, which the dispatcher passed on as a raw pointer.
             unsafe { (*poll).disable_keeping_process_alive(bun_io::js_vm_ctx()) };
@@ -233,8 +236,10 @@ impl FdPipe {
     #[cfg(unix)]
     fn release_poll(&self) {
         if let Some(poll) = self.poll.take() {
+            // The description can outlive this pipe (stdio, a user's duplicate), and a fired one-shot
+            // entry that stays registered refuses the next registration of the same descriptor number.
             // SAFETY: this pipe's live hive slot, given back here.
-            unsafe { (*poll).deinit() };
+            unsafe { (*poll).deinit_force_unregister() };
         }
         let dup = self.poll_fd.replace(Fd::INVALID);
         if dup != Fd::INVALID {
@@ -357,6 +362,11 @@ impl Transport for FdPipe {
     }
 
     fn write(&self, data: &[u8]) -> (i32, i32) {
+        // libuv's `uv_write` on a handle that is not writable.
+        #[cfg(unix)]
+        if !self.writable {
+            return (0, -super::socket_body::uv_status(sys::SystemErrno::EPIPE));
+        }
         let mut written = 0;
         let mut send_error = 0;
         while written < data.len() {
@@ -377,12 +387,12 @@ impl Transport for FdPipe {
         self.write(data).0
     }
 
-    /// A pipe's peer sees EOF only when the descriptor closes, so a writable end that is also read
-    /// from closes now (from the event loop, like `reject_send`). A read-only end waits for EOF.
+    /// A pipe has no half-close: like libuv's `shutdown` on one, this sends nothing. The read side
+    /// goes on, and the pipe closes (from the event loop, like `reject_send`) once it is done too.
     fn shutdown(&self) {
         self.is_shutdown.set(true);
         #[cfg(unix)]
-        if self.reader.is_some() && (self.writable || self.reader_done.get()) {
+        if self.reader.is_some() && self.reader_done.get() {
             self.enqueue();
         }
     }

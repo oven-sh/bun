@@ -1685,7 +1685,7 @@ function Socket(options?): void {
       }
       // A terminal is read through tty.ReadStream, as in Node. Write-only wrapping of one (stderr on a terminal) stays.
       if (opts.readable === true && stats.isCharacterDevice()) {
-        throw $ERR_INVALID_FD_TYPE("TTY");
+        throw $ERR_INVALID_FD_TYPE(require("node:tty").isatty(fd) ? "TTY" : "FILE");
       }
     }
   }
@@ -1837,16 +1837,21 @@ function Socket(options?): void {
   } else if (
     process.platform !== "win32" &&
     fd !== undefined &&
-    (fd > 2 || opts.readable === true) &&
+    fd > 2 &&
     opts.readable !== false &&
     !this[bunTlsSymbol]
   ) {
     try {
       stats ??= require("node:fs").fstatSync(fd);
     } catch {}
-    // A socket is adopted by uSockets, a pipe or FIFO by a native pipe reader (node: uv_pipe_open). Stdio is adopted only when asked, since other streams share it.
-    if (stats?.isSocket() || stats?.isFIFO()) {
-      Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+    // Node's createHandle: a socket is adopted by uSockets, a pipe or FIFO by a native pipe reader (uv_pipe_open),
+    // and a file or a terminal throws. Stdio is not adopted: process.stdin and process.stdout own it.
+    if (stats !== undefined) {
+      if (stats.isSocket() || stats.isFIFO()) {
+        Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+      } else if (stats.isFile() || stats.isCharacterDevice()) {
+        throw $ERR_INVALID_FD_TYPE(stats.isCharacterDevice() && require("node:tty").isatty(fd) ? "TTY" : "FILE");
+      }
     }
   }
 }

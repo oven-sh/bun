@@ -2775,6 +2775,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // Internal "require()" or "import()"
+                let start = self.writer.written();
                 let has_side_effects = meta.wrapper_ref.is_valid()
                     || meta.exports_ref.is_valid()
                     || meta.was_unwrapped_require
@@ -2852,6 +2853,12 @@ pub(crate) mod __gated_printer {
                     if !meta.exports_ref.is_empty() {
                         self.print_symbol(meta.exports_ref);
                     }
+                }
+
+                // An unused "require()" with no wrapper to call is still an expression
+                if flags.contains(ExprFlag::ExprResultIsUnused) && self.writer.written() == start {
+                    self.print_space_before_identifier();
+                    self.print(b"0");
                 }
 
                 if wrap_comma_operator {
@@ -3742,9 +3749,8 @@ pub(crate) mod __gated_printer {
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
+                    flags &= ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall;
 
-                    // The index target is not directly followed by `of`.
-                    flags.remove(ExprFlag::IsFollowedByOf);
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =
@@ -3779,6 +3785,8 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                         flags.remove(ExprFlag::ForbidIn);
                     }
+                    // The other flags describe this expression, not its operands.
+                    flags &= ExprFlag::ForbidIn;
                     self.print_expr(e.test, Level::Conditional, flags);
                     self.print_space();
                     self.print(b"?");

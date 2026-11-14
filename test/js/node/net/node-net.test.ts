@@ -1058,6 +1058,7 @@ describe("a socket made with a signal", () => {
         "tls.connect() with a negative timeout: threw ERR_OUT_OF_RANGE",
         "tls.connect() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
         "new tls.TLSSocket() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
+        "new tls.TLSSocket() for a server, which reads no session: threw nothing",
         "tls.TLSSocket#setSession() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
         "http2.connect() with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
         "http2.connect() to https with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",

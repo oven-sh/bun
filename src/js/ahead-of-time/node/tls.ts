@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4fe046470d8cadf0a60a09e2ae960a55897f39a7f52923d92a7218645bac45be.
+// Written against that file with the SHA-256 20bf100e5fd74604811bd06262b906ee832cf6f8005c81359bf593667ca6a5d6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -867,7 +867,8 @@ function TLSSocket(this: $Node.TLSSocket, socket?, options?) {
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   const session = options.session;
-  validateSession(session, "options.session");
+  // Node reads the option only for a client: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
+  if (!isServer) validateSession(session, "options.session");
   this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.

@@ -43,6 +43,8 @@ const calls = {
     tls.connect({ host: "127.0.0.1", port: 1, session: 5, signal }),
   "new tls.TLSSocket() with a session that is no buffer": signal =>
     new tls.TLSSocket(undefined, { session: 5, signal }),
+  "new tls.TLSSocket() for a server, which reads no session": signal =>
+    new tls.TLSSocket(undefined, { isServer: true, session: 5, signal }),
   "tls.TLSSocket#setSession() with a session that is no buffer": signal =>
     new tls.TLSSocket(undefined, { signal }).setSession(5),
   "http2.connect() with a localAddress that is not an IP address": signal =>

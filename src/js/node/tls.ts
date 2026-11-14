@@ -727,7 +727,8 @@ function TLSSocket(socket?, options?) {
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   const session = options.session;
-  validateSession(session, "options.session");
+  // Node reads the option only for a client: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
+  if (!isServer) validateSession(session, "options.session");
   this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.

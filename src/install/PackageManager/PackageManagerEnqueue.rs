@@ -32,7 +32,7 @@ use crate::package_manager_real::{
     get_cache_directory, get_temporary_directory, run_tasks,
 };
 use crate::package_manager_task as Task;
-use crate::patch_install::EnqueueAfterState;
+use crate::patch_install::{Callback as PatchTaskCallback, EnqueueAfterState};
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
@@ -807,15 +807,8 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-/// Hands the task to the patch-task fifo as a raw pointer; it is reclaimed once
-/// in `run_tasks` after the thread pool pushes it onto `patch_task_queue`.
 pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
-    if this.patch_task_fifo.writable_length() == 0 {
-        run_tasks::flush_patch_task_queue(this);
-    }
-
-    this.patch_task_fifo
-        .write_item_assume_capacity(bun_core::heap::into_raw(task));
+    this.patch_batch.push(ThreadPool::Batch::from_owned(task));
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
@@ -1718,12 +1711,8 @@ fn enqueue_resolved_task(
         }
         ResolvedPackageTask::PatchTask(patch_task) => {
             let (ready, started) = match patch_task.callback {
-                crate::patch_install::Callback::CalcHash(_) => {
-                    (State::CalcPatchHash, State::CalcingPatchHash)
-                }
-                crate::patch_install::Callback::Apply(_) => {
-                    (State::ApplyPatch, State::ApplyingPatch)
-                }
+                PatchTaskCallback::CalcHash(_) => (State::CalcPatchHash, State::CalcingPatchHash),
+                PatchTaskCallback::Apply(_) => (State::ApplyPatch, State::ApplyingPatch),
             };
             if state == ready {
                 this.set_preinstall_state(package_id, started);

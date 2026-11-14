@@ -70,6 +70,7 @@ public:
     // m_unlinkedCodeBlock if it qualifies, otherwise a fresh compile that replaces it. Null with `error` set if
     // that compile fails.
     JSC::UnlinkedProgramCodeBlock* unlinkedCodeBlockFor(JSC::JSGlobalObject*, JSC::ParserError& error);
+    void adoptUnlinkedCodeBlock(JSC::UnlinkedProgramCodeBlock* block) { m_unlinkedCodeBlock.set(vm(), this, block); }
     JSC::JSValue evaluate(JSC::JSGlobalObject*, NakedPtr<JSC::Exception>& exception);
 
     const JSC::SourceCode& source() const { return m_source; }

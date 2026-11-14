@@ -147,6 +147,28 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     fetcher->owner(vm, script);
     ensureStillAliveHere(importer);
 
+    WTF::Vector<uint8_t>& cachedData = script->cachedData();
+
+    // Like Node, reject an empty cachedData.
+    if (script->options().cachedDataProvided) {
+        // A block decoded from cachedData is what unlinkedCodeBlockFor() returns below, so no parse happens.
+        bool accepted = false;
+        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(cachedData.span())) {
+            JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
+            JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+            JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
+            accepted = unlinkedBlock && unlinkedBlock->codeGenerationMode() == globalObject->defaultCodeGenerationMode();
+            if (accepted) {
+                // A parse records the //# directives on the provider; a decode only keeps them on the block.
+                script->source().provider()->setSourceURLDirective(unlinkedBlock->sourceURLDirective());
+                script->source().provider()->setSourceMappingURLDirective(unlinkedBlock->sourceMappingURLDirective());
+                script->adoptUnlinkedCodeBlock(unlinkedBlock);
+            }
+        }
+        script->cachedDataRejected(accepted ? TriState::False : TriState::True);
+        cachedData = {};
+    }
+
     // Node's vm.Script throws SyntaxError at construction; the REPL's
     // recoverable-error flow (and user code) relies on that.
     JSC::ParserError parseError;
@@ -171,20 +193,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     }
     RETURN_IF_EXCEPTION(scope, {});
 
-    WTF::Vector<uint8_t>& cachedData = script->cachedData();
-
-    // Like Node, reject an empty cachedData.
-    if (script->options().cachedDataProvided) {
-        // Only record whether the bytecode decodes. Each run links the block compiled from source (unlinkedCodeBlockFor).
-        bool accepted = false;
-        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(cachedData.span())) {
-            JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
-            JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-            accepted = !!JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
-        }
-        script->cachedDataRejected(accepted ? TriState::False : TriState::True);
-        cachedData = {};
-    } else if (script->options().produceCachedData)
+    if (!script->options().cachedDataProvided && script->options().produceCachedData)
         script->cacheBytecode();
 
     return JSValue::encode(script);

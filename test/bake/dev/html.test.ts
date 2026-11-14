@@ -160,6 +160,60 @@ devTest("html references a json file that is cached as a module", {
     expect(html).not.toInclude('rel="manifest"');
   },
 });
+devTest("saving a json file that html links as a manifest keeps the link an asset", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head><link rel="manifest" href="./manifest.json"></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `console.log("loaded");`,
+    "manifest.json": `{ "name": "first" }`,
+  },
+  async test(dev) {
+    // The url of the manifest link, and what that url serves.
+    const manifest = async () => {
+      const html = await (await dev.fetch("/")).text();
+      const href = html.match(/<link rel="manifest" href="([^"]*)">/)?.[1];
+      return { href, text: href && (await (await dev.fetch(href)).text()) };
+    };
+    const asset = expect.stringMatching(/^\/_bun\/asset\/.*\.json$/);
+    expect(await manifest()).toEqual({ href: asset, text: `{ "name": "first" }` });
+
+    // A save used to bundle manifest.json with the json loader, and the page lost the asset.
+    await dev.write("manifest.json", `{ "name": "second" }`);
+    expect(await manifest()).toEqual({ href: asset, text: `{ "name": "second" }` });
+  },
+});
+devTest("a json file that one page links and a script of another page imports stays a module on a save", {
+  files: {
+    "linked.html": `
+      <!DOCTYPE html><html><head><link rel="manifest" href="./manifest.json"></head><body>
+      <script type="module" src="linked.ts"></script>
+      </body></html>
+    `,
+    "linked.ts": `console.log("linked");`,
+    "imported.html": emptyHtmlFile({ scripts: ["imported.ts"] }),
+    "imported.ts": `
+      import manifest from "./manifest.json";
+      console.log("name:" + manifest.name);
+    `,
+    "manifest.json": `{ "name": "first" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/imported");
+    await c.expectMessage("name:first");
+    await dev.fetch("/linked").expect.toInclude("<script");
+
+    // The link asks for the file loader and the import for the json loader. The dev server keeps one module for the file.
+    for (const name of ["second", "third", "fourth", "fifth"]) {
+      await c.expectReload(async () => {
+        await dev.write("manifest.json", JSON.stringify({ name }));
+      });
+      await c.expectMessage("name:" + name);
+    }
+  },
+});
 devTest("import then create", {
   files: {
     "index.html": `

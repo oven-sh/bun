@@ -1259,6 +1259,10 @@ fn unsupported_syntax(finding: &Finding, out: &mut Rendered) {
         "The 'eval' function is not supported" => {
             out.relabel("`eval` cannot be analyzed by React Compiler")
         }
+        // `unsupported_implicit_arguments`
+        "Implicit 'arguments' is not supported" => {
+            out.relabel("Implicit 'arguments' is not supported")
+        }
         // `unsupported_with_statement`
         "JavaScript 'with' syntax is not supported" => {
             out.relabel("`with` cannot be analyzed by React Compiler")

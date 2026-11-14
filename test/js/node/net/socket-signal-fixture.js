@@ -91,6 +91,8 @@ const throwers = {
     socket.once("drain", thrower).once("connect", () => {
       while (socket.write(Buffer.alloc(65536)));
     }),
+  "onread: the callback of a write that waits for the peer": (socket, thrower) =>
+    socket.once("connect", () => socket.write(Buffer.alloc(8 * 1024 * 1024), thrower)),
   "tls: a 'connect' listener": (socket, thrower) => socket.once("connect", thrower),
   "tls: a 'session' listener": (socket, thrower) => socket.once("session", thrower),
   "tls: a 'keylog' listener": (socket, thrower) => socket.once("keylog", thrower),
@@ -114,6 +116,8 @@ async function throwOnEachSocket(also) {
     const controller = new AbortController();
     const options = { host: "127.0.0.1", port: server.address().port, signal: controller.signal };
     if (isTls) Object.assign(options, { ca: cert.cert, servername: "localhost" });
+    // A socket with `onread` has handlers of its own.
+    if (name.startsWith("onread: ")) options.onread = { buffer: Buffer.alloc(65536), callback() {} };
     const errors = [];
     let socket;
     await new Promise(resolve => {
@@ -240,6 +244,29 @@ const groups = {
       });
     });
   },
+  // When a 'ready' listener runs, the 'connect' listeners have started the read that the caller asked for, and the handshake
+  // of a TLS socket. So the socket goes on after the throw.
+  "a 'ready' listener that throws on a socket that goes on"() {
+    const isTls = process.argv[3] === "tls";
+    const cert = isTls ? JSON.parse(process.env.TLS_FIXTURE) : undefined;
+    const onConnection = connection => connection.on("error", () => {}).end("from the peer");
+    const server = isTls ? tls.createServer(cert, onConnection) : net.createServer(onConnection);
+    server.listen(0, "127.0.0.1", () => {
+      const options = { host: "127.0.0.1", port: server.address().port, signal: new AbortController().signal };
+      if (isTls) Object.assign(options, { ca: cert.cert, servername: "localhost" });
+      const socket = isTls ? tls.connect(options) : net.connect(options);
+      socket.on("close", hadError => {
+        console.log(`close ${hadError}`);
+        server.close();
+      });
+      // Only the net socket asks for a read before the connection.
+      if (isTls) socket.on("secureConnect", () => socket.on("data", data => console.log(`data: ${data}`)));
+      else socket.on("data", data => console.log(`data: ${data}`));
+      socket.on("ready", () => {
+        throw new Error("a 'ready' listener");
+      });
+    });
+  },
   // The caller made the socket that the TLS socket wraps. The TLS socket's 'connect' listeners run inside its 'connect'.
   async "a listener that throws on a TLS socket over a socket"() {
     const cert = JSON.parse(process.env.TLS_FIXTURE);
@@ -286,38 +313,51 @@ const groups = {
     }
   },
   // The socket under the TLS socket is the caller's, made without a signal. Its 'error' goes on to the TLS socket.
-  // Each row arms `thrower` on the socket under the TLS socket.
+  // Each row makes the TLS socket with `over`, and arms `thrower` on the socket under it.
   async "a listener that throws on the socket under a TLS socket"() {
-    const cert = JSON.parse(process.env.TLS_FIXTURE);
     const rows = {
-      "the socket under a TLS socket: a 'connect' listener": (under, thrower) => under.once("connect", thrower),
-      "the socket under a TLS socket: a 'ready' listener": (under, thrower) => under.once("ready", thrower),
-      "the socket under a TLS socket: the callback of a write before the connection": (under, thrower) =>
-        under.write("", thrower),
-      "the socket under a TLS socket: the listener that makes the TLS socket": undefined,
+      "the socket under a TLS socket: a 'connect' listener": (under, over, thrower) => {
+        over();
+        under.once("connect", thrower);
+      },
+      "the socket under a TLS socket: a 'ready' listener": (under, over, thrower) => {
+        over();
+        under.once("ready", thrower);
+      },
+      "the socket under a TLS socket: the callback of a write before the connection": (under, over, thrower) => {
+        over();
+        under.write("", thrower);
+      },
+      // One tick after net.connect() the socket has started to connect. Its write is in flight when the TLS socket takes it.
+      "the socket under a TLS socket that comes a tick later: the callback of a write that waits for the peer": (
+        under,
+        over,
+        thrower,
+      ) => {
+        under.write(Buffer.alloc(8 * 1024 * 1024), thrower);
+        process.nextTick(over);
+      },
+      "the socket under a TLS socket: the listener that makes the TLS socket": (under, over, thrower) =>
+        under.once("connect", () => {
+          over();
+          thrower();
+        }),
     };
     for (const [name, arm] of Object.entries(rows)) {
-      const server = tls.createServer(cert, connection => connection.on("error", () => {}).resume());
+      // No row waits for the handshake: the peer only reads.
+      const server = net.createServer(connection => connection.on("error", () => {}).resume());
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const under = net.connect({ host: "127.0.0.1", port: server.address().port });
-      const over = () =>
-        tls.connect({ socket: under, ca: cert.cert, servername: "localhost", signal: new AbortController().signal });
       let socket;
+      const over = () => {
+        socket = tls.connect({ socket: under, signal: new AbortController().signal }).resume();
+      };
       await new Promise(resolve => {
-        const thrower = () => {
+        arm(under, over, () => {
           // Two turns of the event loop are past every tick that can report the throw.
           setImmediate(() => setImmediate(resolve));
           throw new Error(name);
-        };
-        if (arm) {
-          socket = over().resume();
-          arm(under, thrower);
-        } else {
-          under.once("connect", () => {
-            socket = over().resume();
-            thrower();
-          });
-        }
+        });
       });
       console.log(`${name}: ${socket.destroyed || under.destroyed ? "destroyed" : "open"}`);
       socket.destroy();

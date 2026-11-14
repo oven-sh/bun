@@ -1081,27 +1081,6 @@ describe("a socket made with a signal", () => {
     });
   });
 
-  // The socket must not handle what the caller's own code throws on it.
-  it.concurrent("what a listener or a callback of the caller throws stays an uncaught exception", async () => {
-    expect(await runFixture("a listener that throws", { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
-      stdout: [
-        "uncaught Error: the callback of net.connect()",
-        "uncaught Error: a 'connect' listener",
-        "uncaught Error: a 'ready' listener",
-        "uncaught Error: the callback of a write before the connection",
-        "uncaught Error: the callback of a write that waits for the peer",
-        "uncaught Error: a 'drain' listener",
-        "uncaught Error: tls: a 'connect' listener",
-        "uncaught Error: tls: a 'session' listener",
-        "uncaught Error: tls: a 'keylog' listener",
-        "uncaught Error: tls: the callback of a write that waits for the peer",
-        "exit code 1",
-      ],
-      stderr: "",
-      exitCode: 1,
-    });
-  });
-
   // The rows of `throwers` in the fixture.
   const throwers = [
     "the callback of net.connect()",
@@ -1110,11 +1089,21 @@ describe("a socket made with a signal", () => {
     "the callback of a write before the connection",
     "the callback of a write that waits for the peer",
     "a 'drain' listener",
+    "onread: the callback of a write that waits for the peer",
     "tls: a 'connect' listener",
     "tls: a 'session' listener",
     "tls: a 'keylog' listener",
     "tls: the callback of a write that waits for the peer",
   ];
+
+  // The socket must not handle what the caller's own code throws on it.
+  it.concurrent("what a listener or a callback of the caller throws stays an uncaught exception", async () => {
+    expect(await runFixture("a listener that throws", { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
+      stdout: [...throwers.map(name => `uncaught Error: ${name}`), "exit code 1"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
 
   // Such a throw is no 'error' of the socket: the listener of the caller does not get it, and the socket stays open.
   it.concurrent("what a listener throws does not reach the 'error' listener of the caller", async () => {
@@ -1168,6 +1157,17 @@ describe("a socket made with a signal", () => {
     });
   });
 
+  // A 'connect' listener of Node.js starts the read that the caller asked for, and another one the handshake of a TLS socket:
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L1078-L1080
+  it.concurrent.each(["net", "tls"])("%s: a socket whose 'ready' listener threw goes on to read", async transport => {
+    const group = "a 'ready' listener that throws on a socket that goes on";
+    expect(await runFixture(group, { TLS_FIXTURE: JSON.stringify(tlsCert) }, transport)).toEqual({
+      stdout: ["uncaught Error: a 'ready' listener", "data: from the peer", "close false", "exit code 1"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
   // Node's handle stops holding the event loop before it reports the end of the peer's data:
   // https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/stream.c#L931-L938
   it.concurrent.each(["net", "tls"])(
@@ -1212,9 +1212,10 @@ describe("a socket made with a signal", () => {
       "the socket under a TLS socket: a 'connect' listener",
       "the socket under a TLS socket: a 'ready' listener",
       "the socket under a TLS socket: the callback of a write before the connection",
+      "the socket under a TLS socket that comes a tick later: the callback of a write that waits for the peer",
       "the socket under a TLS socket: the listener that makes the TLS socket",
     ];
-    expect(await runFixture(group, { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
+    expect(await runFixture(group)).toEqual({
       stdout: [...rows.flatMap(name => [`uncaught Error: ${name}`, `${name}: open`]), "exit code 1"],
       stderr: "",
       exitCode: 1,

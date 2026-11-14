@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f5fec8334354ae806aa54476c27629a37db0f82cef6cc100d439c4ab2e65306d.
+// Written against that file with the SHA-256 50b7ac378d041b3d738e773074e4c242caebc1e2bdac4e79f7b215b9bd054bf8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -770,7 +770,7 @@ function failWriteWith(self: $Node.Socket, er: Error, callback: WriteCallback | 
     // 'close' still fire even when every write had a callback. Only handing
     // the error to a callback that ignores it left the socket alive forever
     // (test-net-stream's server never observed its peer vanish).
-    failWriteCallbackOf(self, callback, er);
+    callback(er);
     if (!self.destroyed && !self._hadError) {
       // _hadError is the cross-path once-guard: the native error dispatch
       // (SocketHandlers.error) can deliver the same failure, and node emits
@@ -882,13 +882,7 @@ function linkUpgraded(self: $Node.TLSSocket, connection: $Node.Socket) {
 function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
   if (self.destroyed || self[kupgraded] !== connection) return;
   self.connecting = false;
-  try {
-    self.emit("connect");
-  } catch (e) {
-    // Under the handlers of `connection`. Unless they report, they give the throw to its 'error', which onUpgradedError passes on to this socket.
-    if (!self[kReportsThrows] || connection[kReportsThrows]) throw e;
-    reportError(e);
-  }
+  self.emit("connect");
 }
 // A net.Socket emits 'end' after its owner's destroy(), which is no EOF from the peer.
 function onUpgradedEnd(connection: $Node.Socket, eof: () => void) {
@@ -1032,7 +1026,7 @@ function reportThrowsUnder(connection: $Node.Socket) {
   const handle = connection._handle;
   const data = handle?.data;
   // Only a handle that its socket dialed has the table of that socket, and `{ self }` for data. An accepted one has its listener's.
-  if (connection.isServer || (data != null && (data as ConnectData).self !== connection)) return;
+  if (data != null && (data as ConnectData).self !== connection) return;
   const handlers = connection[khandlers];
   connection[khandlers] =
     handlers === SocketHandlers2
@@ -1331,7 +1325,7 @@ const SocketHandlers = {
     const callback = self[kwriteCallback];
     if (callback) {
       self[kwriteCallback] = null;
-      failWriteCallbackOf(self, callback, error);
+      callback(error);
     }
 
     self.emit("error", error);
@@ -2261,7 +2255,7 @@ const SocketHandlers2 = {
     const callback = self[kwriteCallback];
     if (callback) {
       self[kwriteCallback] = null;
-      failWriteCallbackOf(self, callback, error);
+      callback(error);
     } else if (tlsError) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
       (self as $Node.TLSSocket)._emitTLSError(error);

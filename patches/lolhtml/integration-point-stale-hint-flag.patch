@@ -1,0 +1,25 @@
+Upstream: https://github.com/cloudflare/lol-html/pull/329 (shipped in v3.0.1)
+The oven-sh/lol-html bun branch is based on upstream v2.7.2, which predates
+the fix; drop this patch when the fork rebases onto v3.0.1 or later.
+
+--- a/src/transform_stream/dispatcher.rs
++++ b/src/transform_stream/dispatcher.rs
+@@ -368,8 +368,16 @@
+         flags: TokenCaptureFlags,
+     ) -> ParserDirective {
+         self.delegate.capture_flags = flags;
+-        self.got_flags_from_hint = true;
+-        self.get_next_parser_directive()
++        let directive = self.get_next_parser_directive();
++        // NOTE: `got_flags_from_hint` tells the lexer's `handle_tag` that selector
++        // matching already ran for the tag it is about to emit. That is only true
++        // when the scanner is actually switching to the lexer for this tag. If the
++        // hint keeps us in scan mode we must clear it, otherwise a subsequent tag
++        // that enters the lexer via tree-builder `RequestLexeme` feedback (which
++        // emits no hint of its own) would inherit the stale flag and skip selector
++        // matching entirely.
++        self.got_flags_from_hint = matches!(directive, ParserDirective::Lex);
++        directive
+     }
+ 
+     /// Emit text chunk with is_last_in_node

@@ -1470,6 +1470,8 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &trustedScriptStructure, // trustedScriptStructure
         &requireBuiltinModule,
         &JS2Native::nativeBinding,
+        nullptr, // moduleHost
+        &Zig::promisesSettledByHostReaction,
     };
     return table;
 }

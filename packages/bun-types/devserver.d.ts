@@ -34,9 +34,9 @@ interface ImportMeta {
   hot: {
     /**
      * Persists state across module instances during hot replacement, so the
-     * previous version of a module can pass data to the next one. Using
-     * `import.meta.hot.data` while the module is evaluated marks the module
-     * as self-accepting (equivalent to calling `accept()`).
+     * previous version of a module can pass data to the next one. Writing to
+     * `import.meta.hot.data` marks the module as self-accepting (equivalent
+     * to calling `accept()`). What a `dispose` callback writes does not count.
      *
      * @example
      * ```ts

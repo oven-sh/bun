@@ -765,6 +765,177 @@ describe("import.meta.hot.accept of a dependency", () => {
   }
 });
 
+for (const side of ["client", "server"] as const) {
+  describe(side + ": a body that reads import.meta.hot.data and does not write to it", () => {
+    test("passes its updates on, also where a dispose callback writes", async () => {
+      const { log, take, define, load, save } = await loader(side);
+      const counter = (version: string) =>
+        esm([], hmr => {
+          const count = hmr.data.count ?? 0;
+          hmr.dispose((data: any) => void (data.count = count + 1));
+          hmr.exports = { render: () => version + " " + count };
+        });
+      define({
+        main: esm(["counter"], (hmr, [counter]) => {
+          hmr.accept();
+          log("main rendered " + counter.render());
+        }),
+        counter: counter("v1"),
+      });
+      await load("main");
+      await save({ counter: counter("v2") });
+      await save({ counter: counter("v3") });
+      expect(take()).toEqual(["main rendered v1 0", "main rendered v2 1", "main rendered v3 2"]);
+    });
+
+    test("a key that an async dispose callback writes does not count either", async () => {
+      const { log, take, define, load, save } = await loader(side);
+      const part = (version: string) =>
+        esm([], hmr => {
+          hmr.dispose(async (data: any) => {
+            await null;
+            data.old = version;
+          });
+          hmr.exports = { part: version + " after " + hmr.data.old };
+        });
+      define({
+        main: esm(["part"], (hmr, [part]) => {
+          hmr.accept();
+          log("main ran " + part.part);
+        }),
+        part: part("v1"),
+      });
+      await load("main");
+      await save({ part: part("v2") });
+      await save({ part: part("v3") });
+      expect(take()).toEqual(["main ran v1 after undefined", "main ran v2 after v1", "main ran v3 after v2"]);
+    });
+
+    test("a write after the body, such as from a function that the importer calls, counts", async () => {
+      const { log, take, define, load, save } = await loader(side);
+      const state = (version: string) =>
+        esm([], hmr => {
+          log("state ran " + version);
+          hmr.exports = { mount: () => void (hmr.data.root = 1) };
+        });
+      define({
+        main: esm(["state"], (hmr, [state]) => {
+          state.mount();
+          log("main ran");
+        }),
+        state: state("v1"),
+      });
+      await load("main");
+      await save({ state: state("v2") });
+      expect(take()).toEqual(["state ran v1", "main ran", "state ran v2"]);
+    });
+  });
+
+  describe(side + ": a module that only import() reaches", () => {
+    test("two import() calls after a save get the same copy while its top-level await is not done", async () => {
+      const { define, load, save } = await loader(side);
+      let open!: () => Promise<any>;
+      const lazy = (value: number) =>
+        esm(
+          [],
+          async hmr => {
+            await null;
+            await null;
+            hmr.exports = { value };
+          },
+          true,
+        );
+      define({
+        app: esm([], hmr => {
+          hmr.accept();
+          open = () => hmr.dynamicImport("lazy");
+        }),
+        lazy: lazy(1),
+      });
+      await load("app");
+      await open();
+      await save({ lazy: lazy(2) });
+      expect((await Promise.all([open(), open()])).map(exports => exports.value)).toEqual([2, 2]);
+    });
+
+    test("two bodies that await an import() of it after a save get the same copy", async () => {
+      const { log, take, define, load, save } = await loader(side);
+      const lazy = (value: number) =>
+        esm(
+          [],
+          async hmr => {
+            await null;
+            await null;
+            hmr.exports = { value };
+          },
+          true,
+        );
+      const shows = (name: string) =>
+        esm(
+          [],
+          async hmr => {
+            hmr.accept();
+            log(name + " shows " + (await hmr.dynamicImport("lazy")).value);
+          },
+          true,
+        );
+      const first = esm([], hmr => void (hmr.exports = { value: 1 }));
+      define({ main: esm(["a", "b"], () => {}), a: shows("a"), b: shows("b"), lazy: first });
+      await load("main");
+      expect(take().sort()).toEqual(["a shows 1", "b shows 1"]);
+      await save({ lazy: lazy(2) });
+      expect(take().sort()).toEqual(["a shows 2", "b shows 2"]);
+    });
+
+    test("a save of it reaches the module with the import() also after that module was saved", async () => {
+      const { log, take, define, load, save } = await loader(side);
+      let open!: () => Promise<any>;
+      const app = (version: string) =>
+        esm([], hmr => {
+          hmr.accept();
+          log("app ran " + version);
+          open = () => hmr.dynamicImport("lazy");
+        });
+      const lazy = (version: string) =>
+        esm([], hmr => {
+          log("lazy ran " + version);
+          hmr.dispose(() => log("lazy " + version + " disposed"));
+        });
+      define({ main: esm(["app"], () => {}), app: app("1"), lazy: lazy("1") });
+      await load("main");
+      await open();
+      await save({ app: app("2") });
+      expect(take()).toEqual(["app ran 1", "lazy ran 1", "app ran 2"]);
+      await save({ lazy: lazy("2") });
+      expect(take()).toEqual(["lazy 1 disposed", "app ran 2"]);
+      await open();
+      expect(take()).toEqual(["lazy ran 2"]);
+    });
+  });
+
+  test(side + ": accept(dep) of a body that was disposed of is not called while the next body waits", async () => {
+    const { log, take, define, load, save } = await loader(side);
+    const gate = Promise.withResolvers<void>();
+    const app = (number: number) =>
+      esm(["slow", "dep"], (hmr, [, dep]) => {
+        log("body " + number + " ran " + dep.dep);
+        hmr.accept();
+        hmr.dispose(() => log("body " + number + " disposed"));
+        hmr.acceptSpecifiers("dep", (next: any) => log("body " + number + " accepted " + next.dep));
+      });
+    const dep = (version: string) => esm([], hmr => void (hmr.exports = { dep: version }));
+    define({ main: esm(["app"], () => {}), app: app(1), slow: esm([], () => {}), dep: dep("d1") });
+    await load("main");
+    const first = save({ app: app(2), slow: esm([], () => gate.promise, true) });
+    await settleJobs();
+    const second = save({ dep: dep("d2") });
+    await settleJobs();
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(take()).toEqual(["body 1 ran d1", "body 1 disposed", "body 2 ran d2"]);
+  });
+}
+
 describe("an import made by require() or import()", () => {
   const x = (log: (line: string) => void, version: string) =>
     esm([], hmr => {
@@ -913,7 +1084,7 @@ describe("import.meta.hot.data", () => {
   });
 
   test.each(["a read", "an assignment"])(
-    "%s from a function that runs later does not change what a save does",
+    "%s from a function that runs later: only what was written makes the module take its updates",
     async use => {
       const { log, take, define, load, save } = await loader("client");
       let touch!: () => void;
@@ -933,7 +1104,7 @@ describe("import.meta.hot.data", () => {
       await save({ leaf: leaf(log, "v3") });
       expect({ before, after: take().map(line => line.split(" ")[0]) }).toEqual({
         before: ["<message>", "<location.reload()>"],
-        after: ["<message>", "<location.reload()>"],
+        after: use === "a read" ? ["<message>", "<location.reload()>"] : ["leaf", "state"],
       });
     },
   );
@@ -2400,8 +2571,8 @@ describe("a body with top-level await that goes on after an update replaced it",
     ]);
   });
 
-  test.each(["a read", "an assignment"])(
-    "client: %s of import.meta.hot.data that it makes while the new body waits does not make the module accept",
+  test.each(["a write to a key", "an assignment"])(
+    "client: %s of import.meta.hot.data that it makes while the new body waits counts from the next save on",
     async use => {
       const { log, take, define, load, save } = await loader("client");
       const gates = gatesOf(2);
@@ -2410,7 +2581,7 @@ describe("a body with top-level await that goes on after an update replaced it",
           [],
           async hmr => {
             await gate;
-            if (usesData && use === "a read") hmr.data.from = version;
+            if (usesData && use === "a write to a key") hmr.data.from = version;
             if (usesData && use === "an assignment") hmr.data = { from: version };
             hmr.exports = { m: version };
           },
@@ -2433,14 +2604,14 @@ describe("a body with top-level await that goes on after an update replaced it",
       gates[1].resolve();
       await Promise.all([first, second]);
       expect(take()).toEqual(["app ran v0", "app ran v2"]);
-      // `m` does not accept, so this save goes on to `app`. The data that the first body wrote is kept.
+      // The data that the first body wrote is kept, and `m` takes this save itself.
       await save({
         m: esm([], hmr => {
           log("m v3 has the data from " + hmr.data.from);
           hmr.exports = { m: "v3" };
         }),
       });
-      expect(take()).toEqual(["m v3 has the data from v1", "app ran v3"]);
+      expect(take()).toEqual(["m v3 has the data from v1"]);
     },
   );
 

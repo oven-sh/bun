@@ -144,7 +144,7 @@ This variant accepts an array of dependencies. The callback receives an array wi
 
 ## import.meta.hot.data
 
-`import.meta.hot.data` carries state from the previous version of a module to the new one across a hot replacement. A module that uses `import.meta.hot.data` while it is evaluated is also marked as self-accepting (equivalent to calling `import.meta.hot.accept()`). A use that only happens later, such as in a `dispose` callback or an event handler, does not mark the module.
+`import.meta.hot.data` carries state from the previous version of a module to the new one across a hot replacement. Writing to `import.meta.hot.data` also marks the module as self-accepting (equivalent to calling `import.meta.hot.accept()`). Reading it does not, and neither does what a `dispose` callback writes.
 
 ```tsx title="index.tsx" icon="/icons/typescript.svg"
 import { createRoot } from "react-dom/client";

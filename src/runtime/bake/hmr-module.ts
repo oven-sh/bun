@@ -152,8 +152,13 @@ export class HMRModule {
   loading: Promise<HMRModule> | null = null;
   /** The imports that the current evaluation waits for. See `waitsFor`. */
   waits: HMRModule[] | null = null;
-  /** Kept across evaluations. `import.meta.hot.data` rewrites to `data`. */
-  hotData: any = {};
+  /** `import.meta.hot.data`. Kept across evaluations. */
+  data: any = {};
+  /** The keys of `data` that only a dispose callback wrote. */
+  disposeKeys: Set<PropertyKey> | null = null;
+  /** The modules that the current evaluation asked for with `import()`, and the modules whose `import()` asked for this one. */
+  asked: Set<HMRModule> | null = null;
+  lazyImporters: Set<HMRModule> | null = null;
 
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
@@ -165,16 +170,6 @@ export class HMRModule {
           require: this.require.bind(this),
         }
       : null;
-  }
-
-  // A body that uses `import.meta.hot.data` while it is evaluated takes its updates itself, like `accept()`.
-  get data() {
-    if (this.state === State.Pending) this.selfAccept ??= implicitAcceptFunction;
-    return this.hotData;
-  }
-  set data(value: any) {
-    if (this.state === State.Pending) this.selfAccept ??= implicitAcceptFunction;
-    this.hotData = value;
   }
 
   // Module Ids are pre-resolved by the bundler
@@ -203,9 +198,19 @@ export class HMRModule {
     } finally {
       bodyLoads--;
     }
+    const mod = registry.get(id);
+    if (mod) {
+      (mod.lazyImporters ??= new Set()).add(this);
+      if (this.state === State.Pending) (this.asked ??= new Set()).add(mod);
+    }
     if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
-      return (found as Promise<HMRModule>).then(getEsmExports);
+      if (found instanceof Promise) return found.then(getEsmExports);
+      // After an update a wait for `found` ends, unless `found` waits for this module.
+      const { loading } = found as HMRModule;
+      if (loading && found.evaluation > 0 && found.state === State.Pending && !isAwaitedBy(this, found)) {
+        return loading.then(getEsmExports);
+      }
+      return Promise.resolve(getEsmExports(found as HMRModule));
     }
     return opts
       ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(id, opts)
@@ -567,6 +572,7 @@ function beginEvaluation(mod: HMRModule) {
   // The body that is replaced keeps the imports that it has. `patchImporters` is for the new body.
   mod.imports = null;
   mod.updateImport = null;
+  mod.asked = null;
 }
 
 function addImporter(mod: HMRModule, importer: HMRModule) {
@@ -577,6 +583,24 @@ function addImporter(mod: HMRModule, importer: HMRModule) {
 function clearHooks(mod: HMRModule) {
   mod.selfAccept = null;
   mod.depAccepts = null;
+}
+
+const keysOf = (data: any) => new Set<PropertyKey>(data && typeof data === "object" ? Object.keys(data) : []);
+
+/** After the dispose callbacks of `mod`, which started when its data had the keys `before`. */
+function noteDisposeKeys(mod: HMRModule, before: Set<PropertyKey>) {
+  for (const key of keysOf(mod.data)) {
+    if (!before.has(key)) (mod.disposeKeys ??= new Set()).add(key);
+  }
+}
+
+/** A module that wrote to `import.meta.hot.data` takes its updates itself, like `accept()`. What its dispose callbacks write does not count. */
+function selfAcceptOf(mod: HMRModule) {
+  if (mod.selfAccept) return mod.selfAccept;
+  for (const key of keysOf(mod.data)) {
+    if (!mod.disposeKeys?.has(key)) return implicitAcceptFunction;
+  }
+  return null;
 }
 
 /** Whether an update marked `mod` Stale, or a new evaluation of it began, while evaluation `evaluation` waited. */
@@ -606,12 +630,30 @@ function waitsFor(mod: HMRModule) {
   return false;
 }
 
+/** Whether `waiting`, which is not done, waits for `mod` through imports and `import()` calls of modules that are not done. */
+function isAwaitedBy(mod: HMRModule, waiting: HMRModule) {
+  if (mod.state === State.Loaded) return false;
+  const seen = new Set<HMRModule>();
+  const stack = [waiting];
+  while (stack.length > 0) {
+    const m = stack.pop()!;
+    if (m === mod) return true;
+    if (seen.has(m) || m.state !== State.Pending) continue;
+    seen.add(m);
+    if (m.waits) stack.push(...m.waits);
+    if (m.asked) stack.push(...m.asked);
+  }
+  return false;
+}
+
 /** The end of a body. Null, or for a replaced body: the dispose callbacks that it registered late run, then the new code takes its place. */
 function endBody(mod: HMRModule, evaluation: number, late: HotDisposeFunction[] | null) {
   if (!isReplaced(mod, evaluation)) return null;
   if (!late?.length) return loadReplacement(mod);
   // A callback that fails does not stop the rest. No update is left that can take the errors, so they are logged.
-  return Promise.allSettled(late.map(async fn => fn(mod.hotData))).then(results => {
+  const keys = keysOf(mod.data);
+  return Promise.allSettled(late.map(async fn => fn(mod.data))).then(results => {
+    noteDisposeKeys(mod, keys);
     for (const result of results) {
       if (result.status === "rejected") console.error(result.reason);
     }
@@ -649,7 +691,6 @@ function evaluationView(mod: HMRModule, evaluation: number, late: HotDisposeFunc
   return new Proxy(mod, {
     get(target, key) {
       if (isBodyReplaced()) {
-        if (key === "data") return target.hotData;
         if (replacedHooks.has(key)) return replacedHook;
         // The update that replaced this body already disposed of the module. See `once`.
         if (key === "dispose") return (cb: HotDisposeFunction) => target.dispose(once(late, cb));
@@ -661,10 +702,6 @@ function evaluationView(mod: HMRModule, evaluation: number, late: HotDisposeFunc
     set(target, key, value) {
       if (isBodyReplaced()) {
         if (key === "exports") return true;
-        if (key === "data") {
-          target.hotData = value;
-          return true;
-        }
       }
       return Reflect.set(target, key, value);
     },
@@ -833,9 +870,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       if (!mod) break;
 
       // A self-accepting module takes the update. Every other module passes it to its importers.
-      const propagates = !mod.selfAccept;
-      if (!propagates) boundaries.set(mod, mod.selfAccept);
+      const selfAccept = selfAcceptOf(mod);
+      const propagates = !selfAccept;
+      if (!propagates) boundaries.set(mod, selfAccept);
 
+      let isImported = false;
+      /** The importers whose old code called `import()`. Whether the new code still can is not known. */
+      let outdated: HMRModule[] | null = null;
       for (const [importer, version] of mod.importers) {
         // Like Vite, an importer accepts the module that it imports, not only the file that changed.
         const accept = importer.depAccepts?.[mod.id];
@@ -843,9 +884,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         const didNotLoad = importer.state === State.Error || importer.state === State.Stale;
         // The new code of a loaded importer can accept a module that it did not import yet with `import()`.
         if (version !== importer.version && (!accept || importer.state !== State.Loaded)) {
-          mod.importers.delete(importer);
+          if (mod.lazyImporters?.has(importer)) (outdated ??= []).push(importer);
+          else mod.importers.delete(importer);
           continue;
         }
+        isImported = true;
         if (accept && !didNotLoad) {
           let entry = toAccept.get(accept);
           if (!entry) toAccept.set(accept, (entry = { importer, evaluation: importer.evaluation, keys: new Set() }));
@@ -857,6 +900,15 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           }
         } else if (didNotLoad) {
           (revive ??= []).push(importer);
+        }
+      }
+
+      // Nothing else imports `mod`: without these the update would end here, and the page would keep the old copy.
+      if (outdated && propagates && !isImported && !roots.has(mod)) {
+        for (const importer of outdated) {
+          if (reached.has(importer)) continue;
+          reached.set(importer, mod);
+          queue.push(importer);
         }
       }
 
@@ -963,18 +1015,24 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   const disposePromises: Promise<void>[] = [];
   for (const mod of disposing) {
     const onDispose = mod.onDispose!;
+    const keys = keysOf(mod.data);
+    const pending: Promise<void>[] = [];
     mod.onDispose = null;
     for (const fn of onDispose) {
-      const p = attempt(errors, fn, mod.hotData);
-      if (p && p instanceof Promise) {
-        disposePromises.push(p);
-      }
+      const p = attempt(errors, fn, mod.data);
+      if (p && p instanceof Promise) pending.push(p);
+    }
+    noteDisposeKeys(mod, keys);
+    for (const p of pending) {
+      disposePromises.push(p.finally(() => noteDisposeKeys(mod, keys)));
     }
   }
 
   // Stale only now: a dispose callback that loads a reached module gets the old copy, a load during the wait the new code.
   for (const mod of reached.keys()) {
     mod.state = State.Stale;
+    // Its body was disposed of. The body that follows makes its own.
+    mod.depAccepts = null;
   }
   // Only now: the walk and the dispose order still count the imports that the replaced code made. See `importers`.
   for (const key of keys) {

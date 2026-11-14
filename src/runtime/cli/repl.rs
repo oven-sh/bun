@@ -271,7 +271,7 @@ impl History {
 
         // Don't add duplicates of the last entry
         if let Some(last) = self.entries.last() {
-            if strings::eql_long(last, line, true) {
+            if strings::eql_long(last, line) {
                 self.position = self.entries.len();
                 return Ok(());
             }
@@ -579,8 +579,7 @@ impl ReplCommand {
 
     fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
-            strings::eql_long(cmd.name, name, true)
-                || (name.len() > 1 && cmd.name.starts_with(name))
+            strings::eql_long(cmd.name, name) || (name.len() > 1 && cmd.name.starts_with(name))
         })
     }
 }

@@ -40,6 +40,13 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
+// The readable to error with the stream: not one that waits for its reader to take the queued output first.
+static JSReadableStreamDefaultController* transformReadableControllerToError(JSTransformStream* stream)
+{
+    auto* controller = transformReadableController(stream);
+    return controller && controller->m_algorithms.kind != SourceKind::TransformErrorWhenDrained ? controller : nullptr;
+}
+
 // [[flushAlgorithm]] dispatch (needed only by the default sink close algorithm below).
 static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller)
 {
@@ -128,11 +135,21 @@ void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* strea
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* readableController = transformReadableController(stream)) {
+    if (auto* readableController = transformReadableControllerToError(stream)) {
         readableStreamDefaultControllerError(globalObject, readableController, error);
         RETURN_IF_EXCEPTION(scope, void());
     }
     RELEASE_AND_RETURN(scope, transformStreamErrorWritableAndUnblockWrite(globalObject, stream, error));
+}
+
+void transformStreamKeepQueuedOutputReadable(VM& vm, JSTransformStream* stream, JSValue error)
+{
+    auto* readableController = transformReadableController(stream);
+    if (!readableController || readableController->m_queue.isEmpty())
+        return;
+    ASSERT(readableController->m_algorithms.kind == SourceKind::Transform);
+    readableController->m_algorithms.kind = SourceKind::TransformErrorWhenDrained;
+    readableController->m_algorithms.underlyingObject.set(vm, readableController, error);
 }
 
 void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
@@ -396,7 +413,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    if (auto* readableController = transformReadableController(stream)) {
+    if (auto* readableController = transformReadableControllerToError(stream)) {
         readableStreamDefaultControllerError(globalObject, readableController, rejection);
         RETURN_IF_EXCEPTION(scope, {});
     }

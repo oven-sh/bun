@@ -10,6 +10,7 @@ import {
   isWindows,
   nodeExe,
   runBunInstall,
+  setuidDeniedCodes,
   shellExe,
   tempDir,
   tls as tlsCert,
@@ -1369,20 +1370,22 @@ describe("uid/gid options", () => {
   it.skipIf(isWindows || isRoot)("spawn with a uid the process cannot set throws EPERM synchronously", () => {
     // Node defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to the 'error'
     // event; EPERM is thrown synchronously from spawn().
+    // On Android the child reports ENOSYS instead (see setuidDeniedCodes).
     let thrown: any;
     try {
       spawn("id", [], { uid: 0 });
     } catch (e) {
       thrown = e;
     }
-    expect(thrown?.code).toBe("EPERM");
-    expect(thrown?.errno).toBe(-1);
+    expect(thrown?.code).toBeOneOf(setuidDeniedCodes);
+    expect(thrown?.errno).toBe(-os.constants.errno[thrown.code as "EPERM" | "ENOSYS"]);
     expect(thrown?.syscall).toBe("spawn");
 
     const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
-    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("EPERM");
-    expect((r.error as NodeJS.ErrnoException | undefined)?.errno).toBe(-1);
-    expect((r.error as NodeJS.ErrnoException | undefined)?.syscall).toBe("spawnSync id");
+    const error = r.error as NodeJS.ErrnoException | undefined;
+    expect(error?.code).toBeOneOf(setuidDeniedCodes);
+    expect(error?.errno).toBe(-os.constants.errno[error!.code as "EPERM" | "ENOSYS"]);
+    expect(error?.syscall).toBe("spawnSync id");
     expect(r.stdout == null).toBe(true);
   });
 

@@ -161,7 +161,11 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // signal; no argv changes so `ps` shows a normal `bun` invocation.
     // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
     // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
-    let base = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
+    let base = unsafe {
+        (*vm.transpiler.get().env)
+            .map
+            .create_null_delimited_env_map()
+    }?;
     let base_slice = base.as_slice();
     // base_slice already has a trailing None sentinel; drop it, append our
     // var, then re-terminate.
@@ -197,7 +201,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // argv[0] non-null; valid for this call.
     let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-    let event_loop = EventLoopHandle::init(vm.event_loop().cast());
+    let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
     let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
         process: spawned.to_process_handle(event_loop),
         retired: false,

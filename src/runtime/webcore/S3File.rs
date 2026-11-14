@@ -170,8 +170,8 @@ fn construct_s3_file_internal_store(
     let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
         global
             .bun_vm()
-            .as_mut()
             .transpiler
+            .get()
             .env_mut()
             .get_s3_credentials(),
     );
@@ -253,7 +253,7 @@ fn finish_s3_blob(
                     if blob::is_valid_blob_type(slice) {
                         blob.content_type_was_set.set(true);
                         blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
+                            .set(match global.bun_vm().mime_type(slice) {
                                 Some(mime) => blob::BlobContentType::from(mime),
                                 None => blob::BlobContentType::from_lowercased(slice),
                             });

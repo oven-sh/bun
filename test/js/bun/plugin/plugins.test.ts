@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, Heap, isWindows } from "harness";
+import { autoInstallTempDir, bunEnv, bunExe, Heap, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -1580,7 +1580,7 @@ describe.concurrent("the registry is not asked for a bare name that onResolve an
         return new Response("{}", { status: 404 });
       },
     });
-    using dir = tempDir("plugin-onresolve-registry", {
+    using dir = autoInstallTempDir("plugin-onresolve-registry", {
       "plugin.ts": `
         import { basename } from "node:path";
         const redirects = { "package.redirect": "a-package", "file.redirect": "b-package/file.transformed" };

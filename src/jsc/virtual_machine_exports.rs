@@ -34,7 +34,7 @@ pub fn get_vm() -> *mut VirtualMachine {
 // HOST_EXPORT(Bun__readOriginTimer, c)
 pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     // Check if performance.now() is overridden (for fake timers)
-    if let Some(overridden) = vm.overridden_performance_now {
+    if let Some(overridden) = vm.overridden_performance_now.get() {
         return overridden;
     }
     vm.origin_timer.elapsed().as_nanos() as u64
@@ -43,7 +43,7 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
     // Fake timers reset performance.now() to 0, so the origin moves with them.
-    if let Some(overridden) = vm.overridden_time_origin {
+    if let Some(overridden) = vm.overridden_time_origin.get() {
         return overridden;
     }
     // timespce to milliseconds
@@ -52,8 +52,8 @@ pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
 }
 
 // HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
-pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
-    this.exit_on_uncaught_exception = true;
+pub fn exit_during_uncaught_exception(this: &VirtualMachine) {
+    this.exit_on_uncaught_exception.set(true);
 }
 
 fn absolute_directory(directory: &BunString) -> Box<[u8]> {
@@ -76,8 +76,9 @@ fn absolute_directory(directory: &BunString) -> Box<[u8]> {
 
 /// Makes the path absolute now, because the report is written at exit and the working directory may change before then.
 // HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
-pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
-    this.sampling_profiler_directory = Some(absolute_directory(directory));
+pub fn set_sampling_profiler_directory(this: &VirtualMachine, directory: &BunString) {
+    this.sampling_profiler_directory
+        .set(Some(absolute_directory(directory)));
 }
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
@@ -87,10 +88,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
     // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
     if !value.is_termination_exception() {
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .uncaught_exception(global, value, false);
+        let _ = global.bun_vm().uncaught_exception(global, value, false);
     }
 }
 
@@ -99,7 +97,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
 // HOST_EXPORT(Bun__VM__queueTask, c)
 pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    this.event_loop_mut().enqueue_task(Task::init(task));
+    this.event_loop().enqueue_task(Task::init(task));
 }
 
 /// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
@@ -107,8 +105,7 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
 // HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
 pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    this.event_loop_mut()
-        .enqueue_task_after_yield(Task::init(task));
+    this.event_loop().enqueue_task_after_yield(Task::init(task));
 }
 
 /// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
@@ -137,7 +134,7 @@ pub fn handle_rejected_promise(
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
-    let jsc_vm = global.bun_vm().as_mut();
+    let jsc_vm = global.bun_vm();
 
     // this seems to happen in some cases when GC is running
     if result.is_empty() {
@@ -163,10 +160,7 @@ impl HandledPromiseTask {
     pub fn run(self: Box<Self>) {
         let global: &JSGlobalObject = &self.global_this;
         // JSGlobalObject::bun_vm contract.
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .handled_promise(global, self.promise.get());
+        let _ = global.bun_vm().handled_promise(global, self.promise.get());
     }
 }
 
@@ -188,7 +182,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     let promise_js = promise.to_js();
     global
         .bun_vm()
-        .event_loop_mut()
+        .event_loop()
         .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
             HandledPromiseTask {
                 global_this: global.into(),
@@ -199,22 +193,20 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &VirtualMachine) -> *mut c_void {
     jsc_vm.uv_loop().cast()
 }
 
 // HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)
 pub fn set_tls_reject_unauthorized_value(value: i32) {
-    // SAFETY: VM singleton is process-lifetime.
     VirtualMachine::get()
-        .as_mut()
-        .default_tls_reject_unauthorized = Some(value != 0);
+        .default_tls_reject_unauthorized
+        .set(Some(value != 0));
 }
 
 // HOST_EXPORT(Bun__getTLSRejectUnauthorizedValue, c)
 pub fn get_tls_reject_unauthorized_value() -> i32 {
-    // SAFETY: VM singleton is process-lifetime.
-    if VirtualMachine::get().as_mut().get_tls_reject_unauthorized() {
+    if VirtualMachine::get().get_tls_reject_unauthorized() {
         1
     } else {
         0
@@ -266,7 +258,7 @@ pub fn get_verbose_fetch_value() -> i32 {
 
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
 pub fn add_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -283,7 +275,7 @@ pub fn add_source_provider_source_map(
 
 // HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
 pub fn remove_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {

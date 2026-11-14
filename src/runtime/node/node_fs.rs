@@ -6,7 +6,6 @@ use bun_paths::strings;
 #[cfg(windows)]
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int, c_uint};
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
@@ -518,7 +517,7 @@ pub(crate) fn note_opened_for_write(path: &[u8], is_whole: bool) {
         && bun_standalone_graph::has_descriptors()
         && let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path))
     {
-        graph.move_descriptors_to_disk(path, VirtualMachine::get_or_null().is_some());
+        graph.move_descriptors_to_disk(path, VirtualMachine::is_loaded());
     }
     #[cfg(windows)]
     let _ = is_whole;
@@ -1404,7 +1403,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let task = Box::new(Self {
@@ -1472,7 +1471,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1603,7 +1602,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1669,7 +1668,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -1690,7 +1689,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -2158,7 +2157,7 @@ mod _async_tasks {
         }
 
         fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-            global.bun_vm().event_loop_mut().run_callback(
+            global.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,
@@ -2247,7 +2246,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             Self::schedule(cx, args, vm, callback)
@@ -2257,7 +2256,7 @@ mod _async_tasks {
         pub(crate) fn schedule(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
@@ -2517,7 +2516,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
@@ -2526,7 +2525,7 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop.cast()),
+                EventLoopHandle::init(vm.event_loop_ptr()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),
@@ -3270,7 +3269,7 @@ mod _async_tasks {
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let tag = args.tag();
@@ -5460,7 +5459,7 @@ pub(crate) mod ret {
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
-    pub(crate) vm: Option<NonNull<VirtualMachine>>,
+    pub(crate) vm: Option<&'static VirtualMachine>,
 }
 
 impl Default for NodeFS {
@@ -7989,10 +7988,7 @@ impl NodeFS {
         // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
         let mut scratch = match self.vm {
-            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
-            Some(vm) if flavor == Flavor::Sync => unsafe {
-                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
-            },
+            Some(vm) if flavor == Flavor::Sync => vm.rare_data().pipe_read_scratch.claim(),
             _ => None,
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
@@ -8028,10 +8024,9 @@ impl NodeFS {
             return match args.encoding {
                 Encoding::Buffer => {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
-                        if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
+                        if let Some(vm) = self.vm {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
@@ -10577,8 +10572,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
-    let node_fs: &mut NodeFS =
-        unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
+    let node_fs: &mut NodeFS = unsafe { &mut *global_this.bun_vm().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
             path: PathLike::borrowed(path_bytes),

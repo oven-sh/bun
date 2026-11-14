@@ -558,7 +558,6 @@ dependencies = [
  "bun_css_derive",
  "bun_io",
  "bun_paths",
- "bun_ptr",
  "bun_wyhash",
  "strum",
  "thiserror",
@@ -583,7 +582,6 @@ dependencies = [
  "bun_core",
  "bun_css",
  "bun_jsc",
- "bun_ptr",
 ]
 
 [[package]]
@@ -1986,7 +1984,6 @@ dependencies = [
  "bun_event_loop",
  "bun_io",
  "bun_jsc",
- "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",

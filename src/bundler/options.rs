@@ -1545,8 +1545,7 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
-    /// Whether the defines replace `process.env.NODE_ENV` with a string. Without one the bundle reads
-    /// `NODE_ENV` when it runs.
+    /// Whether a define gives `process.env.NODE_ENV` a string. Without one the bundle reads it when it runs.
     pub(crate) fn defines_node_env(&self) -> bool {
         self.define
             .dots
@@ -2236,8 +2235,7 @@ pub struct Env {
     pub implicit_defines: ImplicitDefines,
 }
 
-/// Who gives `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` their values
-/// when no `define` names them.
+/// Who gives `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` a value without a `define`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImplicitDefines {
     /// The bundler replaces them with the mode and the target of the build.
@@ -2260,8 +2258,7 @@ impl Default for Env {
 }
 
 impl Env {
-    /// `LoadAllWithoutInlining` is the mode of the runtime and of `bun build --env=disable`,
-    /// which also leave them to the runtime.
+    /// `LoadAllWithoutInlining` (the runtime, `bun build --env=disable`) also leaves them to the runtime.
     pub fn has_implicit_defines(&self) -> bool {
         self.behavior != api::DotEnvBehavior::LoadAllWithoutInlining
             && self.implicit_defines == ImplicitDefines::BuildTime

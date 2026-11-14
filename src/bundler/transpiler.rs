@@ -523,9 +523,7 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// For a build, after `configure_defines()` and `configure_linker()`. A bundle that reads
-    /// `process.env.NODE_ENV` when it runs lets React pick its build then, and only the development
-    /// build of React exports `jsxDEV`.
+    /// For a build, after `configure_defines()` and `configure_linker()`. React's production build has no `jsxDEV`.
     pub fn disable_jsx_development_unless_node_env_is_defined(&mut self) {
         if !self.options.defines_node_env() {
             self.options.jsx.development = false;

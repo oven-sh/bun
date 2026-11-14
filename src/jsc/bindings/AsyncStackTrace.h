@@ -8,7 +8,7 @@
 #include <JavaScriptCore/JSPromise.h>
 
 // Attaches an async stack (from `promise`'s await chain) to `errorValue` when it is an
-// ErrorInstance with no stack of its own; no-op otherwise. Never throws.
+// ErrorInstance that captured a stack with no frames; no-op otherwise. Never throws.
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject*, JSC::EncodedJSValue errorValue, JSC::JSPromise*);
 
 namespace Bun {

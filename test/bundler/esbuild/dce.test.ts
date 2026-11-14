@@ -1390,6 +1390,37 @@ describe("bundler", () => {
     dce: true,
     minifySyntax: true,
   });
+  // Not from esbuild. With --minify-syntax esbuild 0.28.2 prints these heads as `for (var a, b of x)`,
+  // a SyntaxError: a loop head takes one declaration. Without the flag it does not trim dead code.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`dce/DeadForInOrForOfHead${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function afterJump(x) {
+            return (a = 1) + (b = 2);
+            for (var [a, b] of x);
+          }
+          function inDeadBranch(x) {
+            if (false) {
+              for (var { a, b = require("./missing.js") } in require("./missing.js"));
+            }
+            return (a = 1) + (b = 2);
+          }
+          // Each function assigns its own "var" names, so they do not become globals.
+          console.log(afterJump([]), inDeadBranch({}), "a" in globalThis, "b" in globalThis);
+        `,
+      },
+      minifySyntax,
+      onAfterBundle(api) {
+        const file = api.readFile("/out.js");
+        expect(file).toContain("for (var [a, b] of x)");
+        expect(file).toContain("for (var { a, b = null } in null)");
+      },
+      run: {
+        stdout: "3 3 false false",
+      },
+    });
+  }
   itBundled("dce/RemoveTrailingReturn", {
     todo: true,
     files: {

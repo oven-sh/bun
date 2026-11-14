@@ -3969,6 +3969,186 @@ console.log(resolve.length)
           "if (undefined) {\n  let y = Math.random();\n}",
         );
       });
+
+      // A dead loop stays when its head declares a `var` name. The head takes one declaration,
+      // so `for (var a, b of x)` is a SyntaxError.
+      // The default options trim an `if (false)`. `minify.syntax` also trims after a jump.
+      const expectDeadLoop = (loop, printed) => {
+        expectPrinted_(
+          `async function f(x) { if (false) { ${loop} ; } }`,
+          `async function f(x) {\n  if (false) {\n    ${printed}\n      ;\n  }\n}`,
+        );
+        expectPrintedMin_(
+          `async function f(x) { return; ${loop} ; }`,
+          `async function f(x) {\n  return;\n  ${printed}\n    ;\n}`,
+        );
+      };
+
+      it("keeps a dead for-in or for-of head that declares two or more names as it is written", () => {
+        for (const head of [
+          "var [a, b]",
+          "var { a, b }",
+          "var [, a, , b]",
+          "var [a, [b]]",
+          "var [[a], b]",
+          "var [[a, b]]",
+          "var { x: [a, b] }",
+          "var { x: { a }, y: [b] }",
+          "var [{ a }, {}, { b }]",
+          "var [a = 1, b = g()]",
+          "var { [k]: a, b }",
+          "var [a, ...b]",
+          "var { a, ...b }",
+          "var [a, a]",
+          "var [a, { b, c: [d] }]",
+        ]) {
+          expectDeadLoop(`for (${head} in x)`, `for (${head} in x)`);
+          expectDeadLoop(`for (${head} of x)`, `for (${head} of x)`);
+          expectDeadLoop(`for await (${head} of x)`, `for await (${head} of x)`);
+        }
+      });
+
+      it("keeps only the name of a dead for-in or for-of head that declares one name", () => {
+        for (const head of [
+          "var a",
+          "var [a]",
+          "var { a }",
+          "var [a = g()]",
+          "var { [k]: a }",
+          "var [, a]",
+          "var [a, {}]",
+          "var { x: [], a }",
+          "var { a, x: [] }",
+          "var [[a]]",
+          "var { x: { a } }",
+          "var [[], [{ a }]]",
+          "var [...a]",
+          "var { ...a }",
+        ]) {
+          expectDeadLoop(`for (${head} in x)`, "for (var a in x)");
+          expectDeadLoop(`for (${head} of x)`, "for (var a of x)");
+          expectDeadLoop(`for await (${head} of x)`, "for await (var a of x)");
+        }
+      });
+
+      it("keeps a head with two names where another dead statement holds the loop", () => {
+        const onOneLine = (code, transpiler_) => parsed(code, true, false, transpiler_).replaceAll(/\s+/g, " ");
+        for (const stmt of [
+          "label: for (var [a, b] of x) ;",
+          "while (x) for (var [a, b] of x) ;",
+          "do for (var [a, b] of x) ; while (x);",
+          "for (;; ) for (var [a, b] of x) ;",
+          "for (let k in x) for (var [a, b] of x) ;",
+          "for (let v of x) for (var [a, b] of x) ;",
+          "try { for (var [a, b] of x) ; } catch {}",
+          "try {} catch { for (var [a, b] of x) ; }",
+          "try {} finally { for (var [a, b] of x) ; }",
+          "if (x) for (var [a, b] of x) ;",
+          "if (x) ; else for (var [a, b] of x) ;",
+          "switch (x) { case 1: for (var [a, b] of x) ; }",
+        ]) {
+          const inDeadBranch = `function f(x) { if (false) { ${stmt} } }`;
+          expect(onOneLine(inDeadBranch, transpiler)).toBe(inDeadBranch);
+          for (const jump of ["return;", "throw x;"]) {
+            const afterJump = `function f(x) { ${jump} ${stmt} }`;
+            expect(onOneLine(afterJump, transpilerMinifySyntax)).toBe(afterJump);
+          }
+        }
+        for (const jump of ["break;", "continue;"]) {
+          const afterJump = `function f(x) { while (x) { ${jump} for (var [a, b] of x) ; } }`;
+          expect(onOneLine(afterJump, transpilerMinifySyntax)).toBe(afterJump);
+        }
+      });
+
+      it("removes a dead for-in or for-of loop that declares no `var` name", () => {
+        for (const head of [
+          "var []",
+          "var [, {}]",
+          "var { x: [] }",
+          "var [[], [{}]]",
+          "let [a, b]",
+          "const { a, b }",
+          "a",
+          "[a, b]",
+        ]) {
+          for (const loop of [`for (${head} in x)`, `for (${head} of x)`]) {
+            expectPrintedMin_(`function f(x) { return; ${loop} ; }`, "function f(x) {\n  return;\n}");
+            // The body keeps the loop, and the head stays as it is written.
+            expectPrintedMin_(
+              `function f(x) { return; ${loop} { var y = 1; } }`,
+              `function f(x) {\n  return;\n  ${loop}\n    var y;\n}`,
+            );
+          }
+        }
+        // The head of a `for (;;)` takes a list, so it still gets the names alone.
+        expectPrintedMin_(
+          "function f(x) { return; for (var [a, b] = x; a < b; a++) ; }",
+          "function f(x) {\n  return;\n  for (var a, b;a < b; a++)\n    ;\n}",
+        );
+      });
+
+      it.concurrent.each([
+        [
+          "a dead for-of loop after a return",
+          `function f(x) {
+            return (a = 1) + (b = 2);
+            for (var [a, b] of x);
+          }`,
+        ],
+        [
+          "a dead for-in loop in an if (false)",
+          `function f(x) {
+            if (false) {
+              for (var { a, b } in x);
+            }
+            return (a = 1) + (b = 2);
+          }`,
+        ],
+        [
+          "a dead require() call in the head of a dead loop",
+          `function f(x) {
+            if (false) {
+              for (var [a = require("./missing.js"), b] of require("./missing.js"));
+            }
+            return (a = 1) + (b = 2);
+          }`,
+        ],
+        [
+          "a dead require() call in another dead statement that stays",
+          `function f(x) {
+            if (false) {
+              while (require("./missing.js")) var a;
+              switch (require("./missing.js")) {
+                case require("./missing.js").y:
+                  var b;
+              }
+            }
+            return (a = 1) + (b = 2);
+          }`,
+        ],
+        [
+          // Only the name of the head stays, so the file loads as a module too.
+          "sloppy-only code in a dead head that declares one name",
+          `function f(x) {
+            if (false) {
+              for (var [a = delete q] of x);
+              for (var { [delete q]: b } in x);
+            }
+            return (a = 1) + (b = 2);
+          }`,
+        ],
+      ])("runs a file with %s", async (_, source) => {
+        using dir = tempDir("dead-for-in-of-head", {
+          // `f` assigns its own `var` names, so they do not become globals.
+          "entry.js": source + "\nconsole.log(f([]), typeof a, typeof b);",
+        });
+        expect(await bunRun(join(String(dir), "entry.js"))).toEqual({
+          stdout: "3 undefined undefined",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
     });
   });
 

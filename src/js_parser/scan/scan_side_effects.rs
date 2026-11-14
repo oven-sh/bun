@@ -570,6 +570,33 @@ impl SideEffects {
         }
     }
 
+    /// True at the second name that the pattern declares.
+    fn declares_second_name(binding: Binding, has_first: &mut bool) -> bool {
+        match binding.data {
+            bun_ast::binding::Data::BIdentifier(_) => core::mem::replace(has_first, true),
+            bun_ast::binding::Data::BArray(array) => (array.items.slice().iter())
+                .any(|item| Self::declares_second_name(item.binding, has_first)),
+            bun_ast::binding::Data::BObject(obj) => (obj.properties.slice().iter())
+                .any(|item| Self::declares_second_name(item.value, has_first)),
+            _ => false,
+        }
+    }
+
+    /// A for-in/for-of head takes one declaration: the `var a, b` of the `SLocal` arm is a
+    /// SyntaxError there, so a head that declares two or more names stays as it is written.
+    fn should_keep_for_in_or_of_head(init: Stmt, bump: &Bump) -> bool {
+        if let StmtData::SLocal(local) = init.data
+            && local.kind == bun_ast::S::Kind::KVar
+        {
+            let mut has_first = false;
+            let mut decls = local.decls.slice().iter();
+            if decls.any(|decl| Self::declares_second_name(decl.binding, &mut has_first)) {
+                return true;
+            }
+        }
+        Self::should_keep_stmt_in_dead_control_flow(init, bump)
+    }
+
     fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
         for child in stmts.slice() {
             if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
@@ -693,12 +720,12 @@ impl SideEffects {
             }
 
             StmtData::SForIn(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
+                Self::should_keep_for_in_or_of_head(for_.init, bump)
                     || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SForOf(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
+                Self::should_keep_for_in_or_of_head(for_.init, bump)
                     || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
             }
 

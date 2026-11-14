@@ -481,7 +481,9 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Assert
+    {
         Output::enable_ansi_colors_stderr()
     } else {
         Output::enable_ansi_colors_stdout()
@@ -500,7 +502,9 @@ fn message_with_type_and_level_(
     // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
     // arm below.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
-        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+        if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+            || message_type == MessageType::Assert
+        {
             (*console).error_writer()
         } else {
             (*console).writer()
@@ -536,6 +540,22 @@ fn message_with_type_and_level_(
         },
         ..FormatOptions::default()
     };
+
+    // console.assert(false, ...) needs to print "Assertion failed: " prefix
+    // before the user-provided message values.
+    if message_type == MessageType::Assert {
+        if formatter::write_indent_n(u32::from(default_indent), writer).is_err() {
+            return Ok(());
+        }
+        let prefix: &[u8] = if enable_colors {
+            pfmt!("<r><red>Assertion failed<r>: ", true).as_bytes()
+        } else {
+            b"Assertion failed: "
+        };
+        let _ = writer.write_all(prefix);
+        // format2 will write indentation too — we already handled it above.
+        print_options.default_indent = 0;
+    }
 
     if message_type == MessageType::Table && !vals.is_empty() {
         // if value is not an object/array/iterable, don't print a table and just print it

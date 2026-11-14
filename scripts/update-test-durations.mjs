@@ -69,6 +69,12 @@ const api = async path => {
 // prints the bare form. For that concurrent phase the gap is an inter-dispatch
 // delta, not wall clock; we clamp it so the last-dispatched file on each shard
 // does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
+//
+// A file that fails in its parallel bucket gets no sample from the group that
+// the runner prints for that run, `--- <path> - K failing in the parallel
+// batch (X.XXs)`. Its sample is its run alone: a bucket run that was
+// interrupted did not finish, and update-parallel-allowlist.mjs takes a file
+// with a flaky or failed annotation out of the buckets, so it runs alone next.
 export function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);

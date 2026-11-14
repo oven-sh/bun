@@ -42,6 +42,11 @@ struct Http3Context {
             }
 
             Http3Request req(s);
+            if (req.isMalformed()) {
+                res->writeStatus("400 Bad Request")->end();
+                return;
+            }
+            rd->declaredContentLength = req.getContentLength();
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
@@ -52,7 +57,22 @@ struct Http3Context {
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
-            if (rd->inStream) rd->inStream(res, data, len, fin != 0, rd->userData);
+            if (!rd->inStream) return;
+            rd->receivedBodyBytes += len;
+            /* RFC 9114 §4.1.2: a request whose DATA doesn't add up to its content-length is malformed.
+             * lsquic reports that on the connection alone and still ends the read cleanly, hence the
+             * status check. It counts against the content-length of the last header block it decoded
+             * (a second HEADERS, the trailers), and before 4.10.0 not at all when no DATA came, hence
+             * the count against the one the request started with. */
+            if (rd->receivedBodyBytes > rd->declaredContentLength ||
+                (fin && ((rd->declaredContentLength != NO_CONTENT_LENGTH && rd->receivedBodyBytes != rd->declaredContentLength) ||
+                         us_quic_stream_connection_failed(s)))) [[unlikely]] {
+                /* on_stream_close reports the abort, as it does for a reset by the peer. */
+                rd->inStream = nullptr;
+                us_quic_stream_reset_message_error(s);
+                return;
+            }
+            rd->inStream(res, data, len, fin != 0, rd->userData);
         });
 
         us_quic_socket_context_on_stream_writable(ctx, [](us_quic_stream_t *s) {

@@ -958,6 +958,11 @@ test.concurrent.each([
   ["one directory", { project: "packages/a" }, { "@/x": all, "~base/x": all, "#a/x": [], "#b/x": all }],
   // It uses the closest tsconfig.json that includes the file. For a file that none of them includes, it tries each one.
   ["a pattern", { project: "packages/*/tsconfig.json" }, { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] }],
+  [
+    "a pattern with a group that has a separator in it",
+    { project: "{packages/a,packages/b}/tsconfig.json" },
+    { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] },
+  ],
   ["a list", { project: ["packages/a", "packages/b"] }, { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] }],
 ] as [string, unknown, Record<string, string[]>][])(
   "import/resolver: typescript: which tsconfig.json it reads: %s",

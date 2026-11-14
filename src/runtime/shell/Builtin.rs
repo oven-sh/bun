@@ -173,6 +173,7 @@ shell_builtins! {
     unit: {
         True     => (true_::True,       "true",     b""),
         False    => (false_::False,     "false",    b""),
+        Colon    => (true_::True,       ":",        b""),
     }
     inline: {
         Pwd      => (pwd::Pwd,          "pwd",      b""),

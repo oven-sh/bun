@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { registerDebugger } from "./features/debug";
 import { registerDiagnosticsSocket } from "./features/diagnostics/diagnostics";
+import { registerFormatter } from "./features/formatter";
 import { registerBunlockEditor } from "./features/lockfile";
 import { registerPackageJsonProviders } from "./features/tasks/package.json";
 import { registerTaskProvider } from "./features/tasks/tasks";
@@ -48,6 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
   registerPackageJsonProviders(context);
   registerDiagnosticsSocket(context);
   registerTests(context);
+  registerFormatter(context);
 
   // Only register for text editors
   context.subscriptions.push(vscode.commands.registerTextEditorCommand("extension.bun.runUnsavedCode", runUnsavedCode));

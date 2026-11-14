@@ -656,11 +656,8 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
-// Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
-// called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
-// to re-apply that write-through. Gated on the *store*, not the writing thread: node
-// roots a main-founded tree at its RealEnvStore, so a worker writing through that tree
-// reaches the OS env too. `value == nullptr` deletes.
+// Mutations of a main-rooted store must reach the OS environment, including writes
+// from its workers. `value == nullptr` deletes.
 static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
 {
 #if OS(WINDOWS)

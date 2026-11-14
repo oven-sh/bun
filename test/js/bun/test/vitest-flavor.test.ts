@@ -2284,6 +2284,75 @@ describe.concurrent("aroundEach and aroundAll", () => {
     });
   });
 
+  const threeFiles = Object.fromEntries(
+    ["a", "b", "c"].map(name => [
+      `${name}.test.js`,
+      `
+        import { test, beforeAll, afterAll } from "vitest";
+        beforeAll(() => console.log("unreachable"));
+        afterAll(() => console.log("unreachable"));
+        test("${name}", () => console.log("unreachable"));
+      `,
+    ]),
+  );
+
+  // The whole run is inside a preload's aroundAll, so nothing of any file runs, and neither do the preload's other hooks.
+  test.each([
+    [
+      "throws",
+      `async () => { console.log("inner >"); throw new Error("before runSuite()"); }`,
+      "error: before runSuite()",
+    ],
+    ["returns", `() => console.log("inner >")`, notCalled("runSuite", "aroundAll", "suite")],
+    [
+      "times out",
+      `async () => { console.log("inner >"); await new Promise(() => {}); }, 10`,
+      `AroundHookSetupError: The setup phase of "aroundAll" hook timed out after 10ms.`,
+    ],
+  ])("in a preload script, an aroundAll that %s before runSuite() skips every file", async (_, inner, error) => {
+    const { log, results, errors, exitCode } = await runTests(
+      {
+        "preload.js": `
+          import { beforeAll, afterAll, aroundAll } from "vitest";
+          aroundAll(async runSuite => { console.log("outer >"); await runSuite(); console.log("outer <"); });
+          aroundAll(${inner});
+          beforeAll(() => console.log("unreachable"));
+          afterAll(() => console.log("unreachable"));
+        `,
+        ...threeFiles,
+      },
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["outer >", "inner >", "outer <"],
+      results: ["(fail) (unnamed)"],
+      errors: [error],
+      exitCode: 1,
+    });
+  });
+
+  test("in a preload script, a beforeAll that fails inside an aroundAll skips every file", async () => {
+    const { log, results, errors, exitCode } = await runTests(
+      {
+        "preload.js": `
+          import { beforeAll, afterAll, aroundAll } from "vitest";
+          aroundAll(async runSuite => { console.log("aroundAll >"); await runSuite(); console.log("aroundAll <"); });
+          beforeAll(() => { console.log("beforeAll"); throw new Error("in beforeAll"); });
+          beforeAll(() => console.log("unreachable"));
+          afterAll(() => console.log("afterAll"));
+        `,
+        ...threeFiles,
+      },
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["aroundAll >", "beforeAll", "afterAll", "aroundAll <"],
+      results: ["(fail) (unnamed)"],
+      errors: ["error: in beforeAll"],
+      exitCode: 1,
+    });
+  });
+
   test("a hook call and its store survive a GC while the test runs, and are collected afterwards", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

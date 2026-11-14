@@ -2335,6 +2335,17 @@ impl CommandLineReporter {
         vm.run_with_api_lock(|| vm.global_exit())
     }
 
+    /// `--timings`: how long the file that just ran took. A file that ran no test after the preload's set-up failed keeps the time it had.
+    fn record_timing(&mut self, file: &[u8], started_ms: i64) {
+        let Some(timings) = self.timings.as_mut() else {
+            return;
+        };
+        match self.jest.bun_test_root.set_up_failed() {
+            true => timings.keep(file),
+            false => timings.record_since(file, started_ms),
+        }
+    }
+
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
     #[optimize(size)]
     pub(crate) fn write_timings_if_needed(&mut self) {
@@ -3842,9 +3853,7 @@ impl TestCommand {
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
-                        if let Some(t) = reporter.timings.as_mut() {
-                            t.record_since(file_name.as_bytes(), started);
-                        }
+                        reporter.record_timing(file_name.as_bytes(), started);
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
@@ -3872,9 +3881,7 @@ impl TestCommand {
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
                 }
-                if let Some(t) = reporter.timings.as_mut() {
-                    t.record_since(last.as_bytes(), started);
-                }
+                reporter.record_timing(last.as_bytes(), started);
             }
         }
 

@@ -355,6 +355,12 @@ test("this test will be skipped", () => {
 });
 ```
 
+The scope of a `beforeAll` hook in a [preload script](#global-setup-and-teardown) is the whole run. Bun runs the hook before the tests of the first file. If the hook fails, Bun runs no test of any file. It still runs the preload's `afterAll` hooks after the last file. The same applies to a preload's `aroundAll` hook that fails before it calls `runSuite()`, except that the `afterAll` hooks are inside that hook, so they don't run.
+
+If the tests can run without the setup, catch the error in the hook.
+
+With [`--isolate`](/test/parallel#--isolate), and on a [`--parallel`](/test/parallel) worker, Bun runs a preload's hooks for each file. A `beforeAll` hook that fails then skips the tests of that file.
+
 To log a setup failure and still fail the suite:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"

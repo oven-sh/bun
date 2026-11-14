@@ -77,7 +77,9 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--save-text-lockfile" type="boolean">
-  Save a text-based lockfile
+  Save a text-based lockfile (<code>bun.lock</code>). Bun writes <code>bun.lock</code> by default since v1.2. Pass the
+  flag to convert a project that still has a binary <code>bun.lockb</code>, or to override{" "}
+  <code>saveTextLockfile = false</code> in <code>bunfig.toml</code>
 </ParamField>
 
 <ParamField path="--lockfile-only" type="boolean">
@@ -172,7 +174,10 @@ bun install <name>@<version>
 </ParamField>
 
 <ParamField path="--trust" type="boolean">
-  Add to trustedDependencies in the project's package.json and install the package(s)
+  Add the packages named on the command line to <code>trustedDependencies</code> in the project's package.json and
+  install them. With no package names, <code>bun install --trust</code> trusts nothing: blocked lifecycle scripts stay
+  blocked. Use <code>bun pm trust</code> for packages that are already installed. Bun rejects <code>--trust</code>{" "}
+  together with <code>--frozen-lockfile</code> or <code>--production</code>
 </ParamField>
 
 ### Concurrency & Performance

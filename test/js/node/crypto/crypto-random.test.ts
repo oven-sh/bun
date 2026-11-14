@@ -179,7 +179,11 @@ describe.concurrent("randomBytes aliases (DEP0115)", () => {
       sameAsRandomBytes: [false, false, false],
       descriptors: aliases.map(() => ({ writable: true, enumerable: false, configurable: true })),
     });
-    expect(stderr).toContain("[DEP0115] DeprecationWarning: crypto.pseudoRandomBytes is deprecated.");
+    // Exactly one warning line and one trace-warnings hint, nothing else.
+    // The hint names the binary (bun, bun-debug, bun.exe), so it is not pinned.
+    expect(stderr).toMatch(
+      /^\(node:\d+\) \[DEP0115\] DeprecationWarning: crypto\.pseudoRandomBytes is deprecated\.\r?\n\(Use `\S+ --trace-warnings \.\.\.` to show where the warning was created\)\r?\n$/,
+    );
   });
 
   it("warn under NODE_PENDING_DEPRECATION=1", async () => {

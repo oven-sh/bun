@@ -431,7 +431,7 @@ pub(crate) fn edit_update_entries(
 
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let workspace = lockfile.get_workspace_package_id(workspace_name_hash) as usize;
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let resolutions = packages.items_resolution();
         let workspace_deps: &[Dependency] =
             packages.items_dependencies()[workspace].get(lockfile.buffers.dependencies.as_slice());

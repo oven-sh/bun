@@ -873,8 +873,15 @@ pub mod fs {
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
             self.inner().mark_not_found(result)
         }
-        pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
-            self.inner().remove(key)
+        pub(crate) fn invalidate(&mut self, key: &[u8]) -> bool {
+            self.inner().invalidate(key)
+        }
+        #[inline]
+        pub(crate) fn parked_index(
+            &mut self,
+            result: &bun_alloc::Result,
+        ) -> Option<bun_alloc::IndexType> {
+            self.inner().parked_index(result)
         }
     }
 
@@ -1018,13 +1025,25 @@ pub mod fs {
 
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        /// With `keep_listing`, an error other than `ENOENT` leaves the parked listing and is not cached.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            keep_listing: bool,
         ) -> crate::CrateResult<&'static EntriesOption> {
+            let is_enoent = err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT);
+            if keep_listing && !is_enoent {
+                self.entries.invalidate(dir);
+                return Ok(temp_entries_option_write(EntriesOption::Err(
+                    dir_entry::Err {
+                        original_err: err,
+                        canonical_error: err,
+                    },
+                )));
+            }
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
-            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            if is_enoent {
                 self.entries.mark_not_found(get_or_put_result);
                 return Ok(temp_entries_option_write(EntriesOption::Err(
                     dir_entry::Err {
@@ -1032,6 +1051,13 @@ pub mod fs {
                         canonical_error: err,
                     },
                 )));
+            }
+            // A busted path whose slot holds an error takes that slot again.
+            if !get_or_put_result.has_checked_if_exists()
+                && let Some(parked) = self.entries.parked_index(&get_or_put_result)
+                && let Some(EntriesOption::Err(_)) = self.entries.at_index(parked)
+            {
+                get_or_put_result.index = parked;
             }
             let opt = self.entries.put(
                 &mut get_or_put_result,
@@ -1104,13 +1130,16 @@ pub mod fs {
                     )));
                 }
             }
+            if in_place.is_none() {
+                in_place = self.adopt_parked_listing(&mut cache_result);
+            }
 
             let had_handle = maybe_handle.is_some();
             let handle: Fd = match maybe_handle {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, in_place.is_some()),
                 },
             };
 
@@ -1146,7 +1175,7 @@ pub mod fs {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
                     }
-                    return self.read_directory_error(dir, err);
+                    return self.read_directory_error(dir, err, in_place.is_some());
                 }
             };
 
@@ -1178,17 +1207,30 @@ pub mod fs {
             Ok(unsafe { &*out })
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
+        /// Evicts `file_path` from the directory-entry cache. The next read refills the same slot.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
+            // BSSMap singleton and `invalidate` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
-            self.entries.remove(file_path)
+            self.entries.invalidate(file_path)
+        }
+
+        /// Points `result` at the slot its key had before a bust. Returns the listing to refill.
+        #[inline]
+        pub(crate) fn adopt_parked_listing(
+            &mut self,
+            result: &mut bun_alloc::Result,
+        ) -> Option<*mut DirEntry> {
+            debug_assert!(self.entries_mutex.is_held_by_current_thread());
+            result.index = self.entries.parked_index(result)?;
+            match self.entries.at_index(result.index)? {
+                EntriesOption::Entries(listing) => Some(std::ptr::from_mut::<DirEntry>(*listing)),
+                EntriesOption::Err(_) => None,
+            }
         }
 
         /// lstat + (if symlink) open + fstat +
@@ -1199,17 +1241,29 @@ pub mod fs {
             &self,
             dir_: &[u8],
             base: &[u8],
-            existing_fd: Fd,
+            previous: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
+            let existing_fd = previous.fd;
+            // The store is append-only: a target that did not change keeps its bytes.
+            let intern_target = |target: &[u8]| -> crate::CrateResult<Interned> {
+                if !previous.symlink_is_derived && previous.symlink.as_bytes() == target {
+                    return Ok(previous.symlink);
+                }
+                Ok(Interned::from_static(
+                    FilenameStore::instance().append_slice(target)?,
+                ))
+            };
+
             let mut cache = EntryCache {
                 kind: EntryKind::File,
                 symlink: Interned::EMPTY,
                 fd: Fd::INVALID,
+                symlink_is_derived: false,
             };
 
             let combo: [&[u8]; 2] = [dir_, base];
@@ -1307,8 +1361,7 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink = intern_target(real)?;
                 }
                 return Ok(cache);
             }
@@ -1377,8 +1430,7 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    cache.symlink = intern_target(symlink)?;
                 }
 
                 Ok(cache)
@@ -1401,10 +1453,10 @@ pub mod fs {
             &self,
             dir: &[u8],
             base: &[u8],
-            existing_fd: bun_sys::Fd,
+            previous: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            self.kind(dir, base, existing_fd, store_fd)
+            self.kind(dir, base, previous, store_fd)
         }
     }
 
@@ -1466,7 +1518,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            return self.read_directory_error(dir, err.into(), true).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1484,7 +1536,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            return self.read_directory_error(dir, err, true).ok();
                         }
                     }
                 }
@@ -1771,9 +1823,11 @@ pub mod dir_entry_accessor {
                     // The walker gets to apply its own broken-symlink handling.
                     EntryKind::Dangling => bun_sys::FileKind::SymLink,
                 };
-                // `Entry::kind` resolved through symlinks above; a non-empty
-                // cached realpath is what records the entry as a symlink.
-                let symlink_target = entry.cache().symlink;
+                // `Entry::kind` resolved through symlinks above.
+                let symlink_target = entry
+                    .cache()
+                    .symlink_target()
+                    .unwrap_or(bun_ptr::Interned::EMPTY);
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid

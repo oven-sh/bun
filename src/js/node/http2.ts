@@ -94,6 +94,29 @@ const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ObjectCreate = Object.create;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+
+// The copy of an outbound header block: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L712
+function copyHeaders(headers?: HeadersObject | null): HeadersObject {
+  if (headers == undefined) return ObjectCreate(null);
+  // A spread does not clone a null-prototype source. Object.assign onto Object.create(null) does.
+  if (!$isProxyObject(headers) && ObjectGetPrototypeOf(headers) === null) {
+    return ObjectAssign(ObjectCreate(null), headers);
+  }
+  // Spread first: JSC clones the object in one call, then changes the prototype.
+  return { ...headers, __proto__: null };
+}
+
+// A response reads its never-index list through the caller's object: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2622
+function copyResponseHeaders(headers?: HeadersObject | null): HeadersObject {
+  const copy = copyHeaders(headers);
+  if (headers != undefined && copy[sensitiveHeaders] === undefined) {
+    const inherited = headers[sensitiveHeaders];
+    if (inherited !== undefined) copy[sensitiveHeaders] = inherited;
+  }
+  return copy;
+}
 
 const H2FrameParser = $bindgen("h2_frame_parser.bind.ts", "H2FrameParser");
 
@@ -2438,11 +2461,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     }
 
     if (headers == undefined) {
-      headers = {};
+      headers = copyHeaders();
     } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
-      headers = { ...headers };
+      headers = copyHeaders(headers);
     }
     const sensitives = headers[sensitiveHeaders];
     if (sensitives !== undefined && !$isArray(sensitives)) {
@@ -2798,7 +2821,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
               // already-half-closed stream. The emit("wantTrailers") path
               // below reaches the same result via sendTrailers({}) which
               // assigns #sentTrailers itself.
-              this.#sentTrailers = {};
+              this.#sentTrailers = copyHeaders();
             } else {
               this.emit("wantTrailers");
             }
@@ -3333,7 +3356,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (!parser) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
-    headers = { ...headers };
+    headers = copyHeaders(headers);
     assertNoConnectionHeaders(headers);
     // Thrown synchronously like node, before a promised stream id is reserved.
     if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
@@ -3431,11 +3454,11 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_TYPE("headers", ["Array", "Object"], headers);
     }
     if (headers == undefined) {
-      headers = {};
+      headers = copyHeaders();
     } else if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
-      headers = { ...headers };
+      headers = copyResponseHeaders(headers);
     }
 
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
@@ -3491,11 +3514,11 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_TYPE("headers", ["Array", "Object"], headers);
     }
     if (headers == undefined) {
-      headers = {};
+      headers = copyHeaders();
     } else if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
-      headers = { ...headers };
+      headers = copyResponseHeaders(headers);
     }
 
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
@@ -3550,11 +3573,11 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     if (headers == undefined) {
-      headers = {};
+      headers = copyHeaders();
     } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
-      headers = { ...headers };
+      headers = copyHeaders(headers);
     }
 
     for (const name in headers) {
@@ -3615,7 +3638,7 @@ class ServerHttp2Stream extends Http2Stream {
     let rawHeadersList: any[] | null = null;
     let statusCode;
     if (headers == undefined) {
-      headers = {};
+      headers = copyHeaders();
     } else if ($isArray(headers)) {
       statusCode = 0;
       let statusFound = false;
@@ -3661,7 +3684,7 @@ class ServerHttp2Stream extends Http2Stream {
     } else if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
-      headers = { ...headers };
+      headers = copyResponseHeaders(headers);
     }
 
     const sensitives = headers[sensitiveHeaders];
@@ -3958,7 +3981,7 @@ function receivedValueLabel(value) {
 }
 
 function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
-  const map: Record<string, boolean> = {};
+  const map: Record<string, boolean> = ObjectCreate(null);
   if (sensitives) {
     for (let i = 0; i < sensitives.length; i++) {
       map[String(sensitives[i]).toLowerCase()] = true;
@@ -6076,7 +6099,9 @@ class ClientHttp2Session extends Http2Session {
         if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
       }
       if (this.destroyed) {
-        const req = new ClientHttp2Stream(undefined, this, headers);
+        // The object form only: sentHeaders is a copy, as for a live session.
+        const sent = $isObject(headers) && !$isArray(headers) ? copyHeaders(headers) : headers;
+        const req = new ClientHttp2Stream(undefined, this, sent);
         process.nextTick(destroyWithInvalidSessionNT, req);
         return req;
       }
@@ -6100,7 +6125,7 @@ class ClientHttp2Session extends Http2Session {
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
       if (headers == undefined) {
-        headers = {};
+        headers = copyHeaders();
       } else if ($isArray(headers)) {
         const raw = headers;
         let method, scheme, authority, path, protocol;
@@ -6164,7 +6189,7 @@ class ClientHttp2Session extends Http2Session {
       } else if (!$isObject(headers)) {
         throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
       } else {
-        headers = { ...headers };
+        headers = copyHeaders(headers);
       }
 
       // Copy options so user-supplied getters run now, before the header block

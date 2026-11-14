@@ -826,6 +826,40 @@ describe("bunx --no-install", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/36826
+// Windows resolves executables case-insensitively (PATHEXT commonly lists
+// `.EXE`), so argv[0] can be `bunx.EXE` for the same on-disk `bunx.exe`.
+// The invocation-name match must ignore ASCII case; same for posix, where
+// macOS filesystems are case-insensitive by default.
+it.concurrent.each(isWindows ? ["bunx.EXE", "BUNX.EXE"] : ["BUNX", "bunX"])(
+  "detects bunx mode when invoked as %s",
+  async name => {
+    const { x_dir, env } = setup();
+    if (isWindows) {
+      // On disk the file is lowercase; only the invocation casing differs.
+      copyFileSync(bunExe(), join(x_dir, "bunx.exe"));
+    } else {
+      symlinkSync(bunExe(), join(x_dir, name));
+    }
+
+    await using proc = spawn({
+      cmd: [join(x_dir, name), "--help"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `bunx --help` writes its usage to stderr; misclassified as plain `bun`,
+    // it would write the full CLI help to stdout instead.
+    expect(err).toContain("Usage: bunx");
+    expect(out).toBe("");
+    expect(exited).toBe(0);
+  },
+);
+
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
   const { x_dir, env } = setup();
   // Copies rather than symlinks: bun re-runs its own executable path for the

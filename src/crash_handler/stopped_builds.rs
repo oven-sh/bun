@@ -142,7 +142,7 @@ const INTERRUPTIONS: [c_int; 5] = [
     libc::SIGXCPU,
 ];
 
-#[cfg(unix)]
+#[cfg(all(unix, bun_asan))]
 fn raise_with_default_action(signal: c_int) {
     // SAFETY: both are async-signal-safe. The signal is delivered when the handler returns.
     unsafe {
@@ -154,7 +154,7 @@ fn raise_with_default_action(signal: c_int) {
 #[cfg(unix)]
 extern "C" fn handle_interruption(signal: c_int) {
     write_what_threads_are_compiling();
-    raise_with_default_action(signal);
+    bun_core::Global::raise_default_action(signal);
 }
 
 /// A signal that the program handles or ignores stays as it is.

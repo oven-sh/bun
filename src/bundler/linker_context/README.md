@@ -650,6 +650,7 @@ let init_moduleName = __esm(() => {
 
 - The init function (`init_moduleName`) is added to top-level scope
 - Variables are hoisted outside the wrapper, so no new scope isolation needed
+- Exception: a `KEEP_TOP_LEVEL_IN_WRAPPER` file (a script with a top-level name that a `with` body reads) hoists nothing. Its declarations print inside the wrapper with the names that the top-level scope gave them, so two files can each keep a name that must not be renamed
 
 **Phase 5: Part-by-Part Symbol Processing**
 The function processes each part (logical code section) within files:

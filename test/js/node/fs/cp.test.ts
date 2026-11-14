@@ -716,3 +716,186 @@ test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the sou
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// node's cp.js waits for the src and dest stats with SafePromiseAll, so a program that replaces or deletes the public
+// Promise statics still copies. One child per replacement: a write to Promise.resolve changes the engine's state for
+// the rest of the realm.
+describe("fs.cp does not wait for its stats through the public Promise statics", () => {
+  const throwingResolve = `Promise.resolve = function () { calls++; throw new RangeError("replaced"); };`;
+  // The last column is the filter call that installs the replacement; 0 installs it before the first copy.
+  const replacements = [
+    ["nothing replaced", "", 0],
+    ["Promise.resolve that throws", throwingResolve, 0],
+    [
+      "Promise.resolve that counts",
+      `const resolve = Promise.resolve; Promise.resolve = function (value) { calls++; return resolve.call(this, value); };`,
+      0,
+    ],
+    ["Promise.all that throws", `Promise.all = function () { calls++; throw new RangeError("replaced"); };`, 0],
+    ["deleted Promise.all", `delete Promise.all;`, 0],
+    ["deleted Promise.resolve", `delete Promise.resolve;`, 0],
+    ["Promise.resolve that throws, installed while a tree is copied", throwingResolve, 2],
+  ] as const;
+
+  test.concurrent.each(replacements)("%s", async (_name, replacement, installAtEntry) => {
+    using dir = tempDir("cp-promise-statics", {
+      "file.txt": "file",
+      "tree/a.txt": "a",
+      "tree/sub/b.txt": "b",
+    });
+    // A path of MAX_PATH_BYTES or more fails with ENAMETOOLONG before any system call, on every platform.
+    const tooLong = `${JSON.stringify(isWindows ? "C:\\" : "/")} + Buffer.alloc(${isWindows ? 100_000 : 5_000}, "a").toString()`;
+    // "file.txt/x" is ENOTDIR on POSIX only.
+    const destUnderFile = isWindows
+      ? ""
+      : `
+          destUnderFile: await rejection(fs.promises.cp("file.txt", "file.txt/x")),
+          destUnderFileDereferenced: await rejection(fs.promises.cp("file.txt", "file.txt/x", { dereference: true })),`;
+    const script = `
+      const fs = require("node:fs");
+      let calls = 0;
+      const replace = () => { ${replacement} };
+      let entries = 0;
+      // With a filter every platform walks the tree: without one macOS clones it after the first pair of stats.
+      const filter = () => { if (++entries === ${installAtEntry}) replace(); return true; };
+      const callbackForm = (src, dest, options) =>
+        new Promise((resolve, reject) => fs.cp(src, dest, options, err => (err ? reject(err) : resolve())));
+      const rejection = promise =>
+        promise.then(
+          () => "copied",
+          err => (err.code === "ENAMETOOLONG" ? err.code : [err.code, err.syscall, err.path].join(" ")),
+        );
+      const tooLong = ${tooLong};
+      (async () => {
+        if (${installAtEntry} === 0) replace();
+        await fs.promises.cp("tree", "promise-tree", { recursive: true, filter });
+        await fs.promises.cp("file.txt", "promise-file.txt");
+        await callbackForm("tree", "callback-tree", { recursive: true, filter });
+        await callbackForm("file.txt", "callback-file.txt", {});
+        const rejections = {
+          srcMissing: await rejection(fs.promises.cp("missing.txt", "dest.txt")),${destUnderFile}
+          destTooLong: await rejection(fs.promises.cp("file.txt", tooLong)),
+          // Nothing ever waits for the dest stat here: it must not be reported as an unhandled rejection.
+          bothFail: await rejection(fs.promises.cp("missing.txt", tooLong)),
+        };
+        console.log(JSON.stringify({ calls, entries, ...rejections }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        calls: 0,
+        entries: 8,
+        srcMissing: "ENOENT lstat missing.txt",
+        ...(isWindows
+          ? {}
+          : {
+              destUnderFile: "ENOTDIR lstat file.txt/x",
+              destUnderFileDereferenced: "ENOTDIR stat file.txt/x",
+            }),
+        destTooLong: "ENAMETOOLONG",
+        bothFail: "ENOENT lstat missing.txt",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(
+      [
+        "promise-tree/a.txt",
+        "promise-tree/sub/b.txt",
+        "promise-file.txt",
+        "callback-tree/a.txt",
+        "callback-tree/sub/b.txt",
+        "callback-file.txt",
+      ].map(name => fs.readFileSync(join(String(dir), name), "utf8")),
+    ).toEqual(["a", "b", "file", "a", "b", "file"]);
+  });
+});
+
+// cp reads stat and lstat off node:fs/promises the first time it runs, so a program can wrap them. This wrapper reads the
+// Stats it forwards, which node's lstat always gives, and records what cp passes and how many of its calls are pending.
+// node v26.3.0 prints the same for this child.
+test.concurrent("fs.cp stats src and dest as node does, and starts both before either settles", async () => {
+  using dir = tempDir("cp-wrapped-stats", { "file.txt": "file" });
+  const script = `
+    const fs = require("node:fs");
+    const calls = [];
+    let pending = 0;
+    for (const name of ["lstat", "stat"]) {
+      const original = fs.promises[name];
+      fs.promises[name] = async function (path, options) {
+        calls.push([name, path, JSON.stringify(options), "pending: " + pending].join(" "));
+        pending++;
+        try {
+          const stats = await original.apply(this, arguments);
+          stats.size;
+          return stats;
+        } finally {
+          pending--;
+        }
+      };
+    }
+    // The first two stats of a copy are those of its src and dest.
+    const firstPair = () => calls.splice(0).slice(0, 2);
+    const callbackForm = (src, dest, options) =>
+      new Promise((resolve, reject) => fs.cp(src, dest, options, err => (err ? reject(err) : resolve())));
+    (async () => {
+      await fs.promises.cp("file.txt", "lstat.txt", { filter: () => true });
+      const lstat = firstPair();
+      await fs.promises.cp("file.txt", "stat.txt", { dereference: true });
+      const stat = firstPair();
+      await callbackForm("file.txt", "stat-callback.txt", { dereference: true });
+      const statOfCallbackForm = firstPair();
+      const copies = ["lstat.txt", "stat.txt", "stat-callback.txt"].map(name => fs.readFileSync(name, "utf8"));
+      console.log(JSON.stringify({ lstat, stat, statOfCallbackForm, copies }));
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      lstat: ['lstat file.txt {"bigint":true} pending: 0', 'lstat lstat.txt {"bigint":true} pending: 1'],
+      stat: ['stat file.txt {"bigint":true} pending: 0', 'stat stat.txt {"bigint":true} pending: 1'],
+      statOfCallbackForm: [
+        'stat file.txt {"bigint":true} pending: 0',
+        'stat stat-callback.txt {"bigint":true} pending: 1',
+      ],
+      copies: ["file", "file", "file"],
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// No join stands between the src stat and the function that awaits cp, so the error of that stat has an async stack.
+test.concurrent.each([
+  ["no options", undefined],
+  ["a filter", { filter: () => true }],
+  ["dereference", { dereference: true }],
+])("fs.promises.cp names its caller in the stack of a missing source, with %s", async (_name, options) => {
+  using dir = tempDir("cp-missing-source", {});
+  async function copyMissingSource() {
+    await fs.promises.cp(join(String(dir), "missing.txt"), join(String(dir), "dest.txt"), options);
+  }
+  const err: NodeJS.ErrnoException | undefined = await copyMissingSource().then(
+    () => undefined,
+    err => err,
+  );
+  expect({ code: err?.code, stack: err?.stack }).toEqual({
+    code: "ENOENT",
+    stack: expect.stringContaining("at async copyMissingSource"),
+  });
+});

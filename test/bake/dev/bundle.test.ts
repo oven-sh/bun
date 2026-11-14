@@ -1858,6 +1858,94 @@ devTest("dev server survives a css resolution error with an edge adjustment", {
   },
 });
 
+// A framework renders one <link> tag for each entry of `meta.styles`, in that order.
+{
+  const page = `
+    import "../one.css";
+    import "../shared.ts";
+    import "../Box.ts";
+    import "../seven.css";
+    export default function (req, meta) {
+      return Response.json(meta.styles);
+    }
+  `;
+  // Each stylesheet has one rule. The class of that rule names the file.
+  const listed = async (dev: Dev, route: string) => {
+    const styles: string[] = await dev.fetch(route).json();
+    return Promise.all(styles.map(async href => (await dev.fetch(href).text()).match(/\.(\w+) \{/)?.[1]));
+  };
+  for (const { name, serverComponents } of [
+    { name: "one server graph", serverComponents: oneServerGraph },
+    { name: "separate SSR graph", serverComponents: separateSSRGraph },
+  ]) {
+    devTest(`framework route lists its stylesheets in import order (${name})`, {
+      framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes, serverComponents },
+      files: {
+        "routes/index.ts": page,
+        "routes/other.ts": page,
+        "shared.ts": `
+          import "./two.css";
+          import "./three.css";
+        `,
+        "Box.ts": `
+          "use client";
+          import "./four.css";
+          import "./shared.ts";
+          import "./inner.ts";
+          import "./six.css";
+          export const Box = 1;
+        `,
+        "inner.ts": `
+          import "./five.css";
+          import "./one.css";
+        `,
+        ...Object.fromEntries(
+          ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"].map(name => [
+            `${name}.css`,
+            `.${name} { color: red; }`,
+          ]),
+        ),
+      },
+      async test(dev) {
+        expect(await listed(dev, "/")).toEqual(["one", "two", "three", "four", "five", "six", "seven"]);
+
+        // Each rebuild swaps two imports and adds one. The first rebuild also removes one.
+        await dev.write(
+          "Box.ts",
+          `
+            "use client";
+            import "./six.css";
+            import "./inner.ts";
+            import "./eight.css";
+            import "./four.css";
+            export const Box = 1;
+          `,
+        );
+        await dev.write(
+          "shared.ts",
+          `
+            import "./three.css";
+            import "./nine.css";
+            import "./two.css";
+          `,
+        );
+        // "/" has a cached list. "/other" has none, so it shows the import lists that the rebuilds left.
+        expect(await listed(dev, "/other")).toEqual([
+          "one",
+          "three",
+          "nine",
+          "two",
+          "six",
+          "five",
+          "eight",
+          "four",
+          "seven",
+        ]);
+      },
+    });
+  }
+}
+
 // The dev server builds its define table from the env map once. Assigning to a proxy variable frees the map's value.
 const startupProxy = "http://proxy-at-startup.example:8080/" + Buffer.alloc(120, "a").toString();
 async function clientBundle(dev: Dev) {

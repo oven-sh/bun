@@ -997,6 +997,8 @@ pub(crate) fn bun_resolve_sync_with_paths(
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
+/// A name that an `import` cannot resolve yields `undefined` and `require()` is not asked, also
+/// where `require()` alone resolves it.
 // HOST_EXPORT(Bun__resolveForImportAndRequire, c)
 pub(crate) fn bun_resolve_for_import_and_require(
     global: &JSGlobalObject,

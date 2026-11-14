@@ -106,6 +106,22 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is 
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > after vi.doUnmock() []
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > and the walk leaves each module once in the list of what it required
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > but not yet one that required a mocked Node.js builtin, or got the mock from createRequire()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > in a package, for a mocked package
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks the package that it required, with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with jest.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with mock.module()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with vi.doMock() in a test
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a later test file mocks what it required, with vi.mock()
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when a module that it required has read the list of what it required
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when it required a module that made the mock
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked a CommonJS module ends
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked a JSON file ends
+test/js/bun/test/mock/mock-module.test.ts: an ES module that got a mock from require() is evaluated again > when the test file that mocked an ES module ends
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
@@ -126,6 +142,7 @@ test/cli/test/parallel.test.ts: --parallel: a worker that dies mid-file takes th
 test/js/bun/plugin/plugins.test.ts: a macro called in a file that is not the entry point > in bun test ["--isolate"]
 test/js/bun/plugin/plugins.test.ts: a macro called in a file that is not the entry point > in bun test ["--parallel=2"]
 test/js/bun/plugin/plugins.test.ts: a macro called in a file that is not the entry point > in bun test []
+test/js/bun/plugin/plugins.test.ts: module > under bun test, a module that is defined again reaches the ES modules that got it from require()
 test/js/bun/plugin/plugins.test.ts: onLoad that declines > lets a builtin load under bun test, where onLoad runs for builtins
 test/js/bun/plugin/plugins.test.ts: onResolve > is asked once about a test file
 test/js/bun/plugin/plugins.test.ts: onResolve > that answers what is not there about a test file fails that file, and the next one runs

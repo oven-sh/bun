@@ -8,6 +8,7 @@ use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
 use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
+use crate::bun_fs::FileSystem;
 use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
@@ -18,11 +19,11 @@ use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
+use super::{INBOX, THREAD_POOL, directories, enqueue};
 use super::{
     ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
     TaskCallbackList,
 };
-use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
@@ -34,7 +35,7 @@ use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::{Do, Enable};
+use super::package_manager_options::Do;
 use crate::isolated_install::store as Store;
 
 macro_rules! add_error_or_warning_pretty {
@@ -119,17 +120,19 @@ impl Drop for FinishPass<'_> {
             manager.start_progress_bar_if_none();
 
             if self.counts_tasks {
-                let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
+                let completed_items =
+                    (manager.total_tasks.get() - manager.pending_task_count()) as usize;
                 let node = manager.progress.node(manager.downloads_node());
                 if completed_items != node.completed_items.get() || self.has_updated_this_run.get()
                 {
                     node.completed_items.set(completed_items);
-                    node.estimated_total_items.set(manager.total_tasks as usize);
+                    node.estimated_total_items
+                        .set(manager.total_tasks.get() as usize);
                 }
             }
             // The progress bar shows the node that was activated last, so the downloads node is
             // only activated once there is something to download.
-            if manager.total_tasks > 0 {
+            if manager.total_tasks.get() > 0 {
                 manager.progress.activate(manager.downloads_node());
             }
             manager.progress.maybe_refresh();
@@ -248,7 +251,7 @@ pub(crate) fn run_tasks(
         })
     };
 
-    let patch_tasks_batch = manager.patch_task_queue.pop_batch();
+    let patch_tasks_batch = INBOX.patch_tasks.pop_batch();
     let mut patch_tasks_iter = patch_tasks_batch.iterator();
     loop {
         let ptask_ptr = patch_tasks_iter.next();
@@ -383,7 +386,7 @@ pub(crate) fn run_tasks(
         }
     }
 
-    let network_tasks_batch = manager.async_network_task_queue.pop_batch();
+    let network_tasks_batch = INBOX.network_tasks.pop_batch();
     let mut network_tasks_iter = network_tasks_batch.iterator();
     loop {
         let task_ptr = network_tasks_iter.next();
@@ -402,6 +405,7 @@ pub(crate) fn run_tasks(
                 loaded_manifest,
                 name: stored_name,
                 is_extended_manifest,
+                registry,
             } => {
                 let name = stored_name.slice();
                 let is_extended_manifest = *is_extended_manifest;
@@ -597,18 +601,7 @@ pub(crate) fn run_tasks(
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
                         manager.look_ahead.arrived.push(task.task_id);
 
-                        if manager.options.enable.contains(Enable::MANIFEST_CACHE)
-                            && let Ok(temp_dir) = directories::try_get_temporary_directory(manager)
-                        {
-                            // reshaped for borrowck — compute the
-                            // `&mut`-taking directory accessors first so the
-                            // shared `scope_for_package_name` / `manifests`
-                            // borrows below do not overlap them. `save_async`
-                            // only needs `&PackageManifest`, so reborrow the
-                            // freshly-inserted entry immutably alongside the
-                            // scope (both `&manager`, no conflict).
-                            let tmp_fd = temp_dir.handle.fd;
-                            let cache_fd = directories::get_cache_directory(manager);
+                        if let Some(temp_dir) = manager.manifest_cache_temporary_directory() {
                             npm::package_manifest::Serializer::save_async(
                                 manager
                                     .manifests
@@ -616,9 +609,8 @@ pub(crate) fn run_tasks(
                                     .get(&name_hash)
                                     .unwrap()
                                     .manifest(),
-                                manager.scope_for_package_name(name),
-                                tmp_fd,
-                                cache_fd,
+                                *registry,
+                                temp_dir,
                             );
                         }
 
@@ -839,7 +831,7 @@ pub(crate) fn run_tasks(
         }
     }
 
-    let resolve_tasks_batch = manager.resolve_tasks.pop_batch();
+    let resolve_tasks_batch = INBOX.resolve_tasks.pop_batch();
     let mut resolve_tasks_iter = resolve_tasks_batch.iterator();
     loop {
         let task_ptr = resolve_tasks_iter.next();
@@ -879,6 +871,7 @@ pub(crate) fn run_tasks(
                 name,
                 network,
                 manifest,
+                ..
             } => {
                 let _return_network_task = ReturnNetworkTask {
                     manager: manager_ptr,
@@ -1178,7 +1171,7 @@ pub(crate) fn run_tasks(
             } => {
                 let name = commit.name.slice();
                 // Pending while it ran, but not one of the N downloads the summary prints.
-                manager.total_tasks -= 1;
+                manager.total_tasks.update(|total| total - 1);
 
                 if task.status == Task::Status::Fail {
                     let is_required = manager.is_network_task_required(task.id);
@@ -1341,20 +1334,20 @@ impl core::fmt::Display for DownloadFailure<'_> {
 impl PackageManager {
     #[inline]
     pub(crate) fn pending_task_count(&self) -> u32 {
-        self.pending_tasks.load(Ordering::Acquire) + self.retry_queue.len() as u32
+        INBOX.pending_tasks.load(Ordering::Acquire) + self.retry_queue.len() as u32
     }
 
     #[inline]
-    pub(crate) fn increment_pending_tasks(&mut self, count: u32) {
-        self.total_tasks += count;
+    pub(crate) fn increment_pending_tasks(&self, count: u32) {
+        self.total_tasks.update(|total| total + count);
         // Relaxed is enough, because starting a task has no side effects that other threads depend
         // on.
-        let _ = self.pending_tasks.fetch_add(count, Ordering::Relaxed);
+        let _ = INBOX.pending_tasks.fetch_add(count, Ordering::Relaxed);
     }
 
     #[inline]
-    pub(crate) fn decrement_pending_tasks(&mut self) {
-        let _ = self.pending_tasks.fetch_sub(1, Ordering::Release);
+    pub(crate) fn decrement_pending_tasks(&self) {
+        let _ = INBOX.pending_tasks.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -1377,17 +1370,17 @@ pub fn flush_network_queue(this: &mut PackageManager) {
 }
 
 pub fn flush_dependency_queue(this: &mut PackageManager) {
-    let mut last_count = this.total_tasks;
+    let mut last_count = this.total_tasks.get();
     loop {
         flush_network_queue(this);
         enqueue::advance(this);
         flush_network_queue(this);
         this.task_batch.push(core::mem::take(&mut this.patch_batch));
 
-        if this.total_tasks == last_count {
+        if this.total_tasks.get() == last_count {
             break;
         }
-        last_count = this.total_tasks;
+        last_count = this.total_tasks.get();
     }
 }
 
@@ -1397,9 +1390,7 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         + manager.network_tarball_batch.len();
 
     manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.task_batch));
+    THREAD_POOL.schedule(core::mem::take(&mut manager.task_batch));
     let manifests = manager.network_resolve_batch.drain(..);
     http::HTTPThread::schedule(manifests.chain(manager.network_tarball_batch.drain(..)));
     // Git tasks were counted as pending when they were queued.
@@ -1525,7 +1516,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
 }
 
 fn is_bunx_install() -> bool {
-    is_bunx_tree(crate::bun_fs::FileSystem::get().top_level_dir())
+    is_bunx_tree(FileSystem::get().top_level_dir())
 }
 
 /// The error that a command returns when a request failed before it linked or saved anything.
@@ -1671,11 +1662,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
     // tail.
-    // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
-    // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
-    // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
-    // so the task's drop never closes them.
-    let cache_dir = directories::get_cache_directory(this);
+    let cache_dir = directories::open_cache_directory(this);
     let temp_dir = match directories::try_get_temporary_directory(this) {
         Ok(temp_dir) => temp_dir.handle.fd(),
         Err(why) => {
@@ -1725,12 +1712,7 @@ pub fn generate_network_task_for_tarball<'a>(
     };
 
     let extract_tarball = ExtractTarball {
-        // BACKREF — `this_backref` is non-null (just derived from `&mut *this`)
-        // and the PackageManager outlives every ExtractTarball it enqueues.
-        // Safe `From<NonNull>` construction.
-        package_manager: bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this_backref).expect("derived from &mut, non-null"),
-        ),
+        registry: directories::folder_tag(this, scope),
         name: stored_string(pkg_name),
         resolution: package.resolution,
         cache_dir,
@@ -1742,10 +1724,12 @@ pub fn generate_network_task_for_tarball<'a>(
         stays_unpinned: package.meta.id != bun_install::invalid_package_id && !this.pins_tarballs(),
         url: stored_string(url),
         // Copied here: extract workers must not read lockfile buffers.
-        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
-            stored_string(this.lockfile.str(&package.resolution.github().resolved))
+        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github
+            && let resolved @ [_, ..] = this.lockfile.str(&package.resolution.github().resolved)
+        {
+            bun_core::handle_oom(FileSystem::get().dirname_store().append(resolved))
         } else {
-            strings::StringOrTinyString::EMPTY
+            b""
         },
     };
 
@@ -1761,7 +1745,7 @@ pub fn generate_network_task_for_tarball<'a>(
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
         //
-        // Borrowck/SB: `create_extract_task_for_streaming` / `TarballStream::init`
+        // Borrowck/SB: `create_extract_task_for_streaming` and its callees
         // need `&mut PackageManager` while `net_ptr` points into
         // `this.preallocated_network_tasks`. The pool slot is disjoint from
         // every other `this` field these calls touch (resolve-task pool,
@@ -1781,7 +1765,7 @@ pub fn generate_network_task_for_tarball<'a>(
         // (see `write_init` above).
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr, this));
+            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr));
         }
     }
 

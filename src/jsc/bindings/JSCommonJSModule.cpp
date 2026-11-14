@@ -1958,8 +1958,8 @@ static void generateDeferredCommonJSModule(JSC::JSGlobalObject* lexicalGlobalObj
     if (record && (!record->inherits<SyntheticModuleRecord>() || record->moduleEnvironmentMayBeNull()))
         record = nullptr;
 
-    // A run started inside the body of another such module is a part of that body.
-    bool mayMakeTickQueue = !globalObject->isRunningDeferredCommonJSModule && !globalObject->m_nextTickQueue;
+    // A run started inside the body of another such module, or by a require() of an ES module, is a part of what started it.
+    bool mayMakeTickQueue = !globalObject->isRunningDeferredCommonJSModule && !globalObject->m_nextTickQueue && !vm.synchronousModuleQueue();
     {
         SetForScope isRunning(globalObject->isRunningDeferredCommonJSModule, true);
         if (ran) {

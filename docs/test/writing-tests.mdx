@@ -486,6 +486,8 @@ The test context is the object you destructure fixtures from. Each test has one,
 | `signal`                                 | An `AbortSignal` that's aborted when the test times out                                                                           |
 | `annotate(message, type?, attachment?)`  | Adds an entry to `task.annotations`                                                                                               |
 
+The context's `expect` stays bound to its test after the test finishes. A test that times out can go on, and a timer or callback can outlive its test. When such code calls the context's `expect`, the call doesn't count for the test that runs at that moment. Bun reports a failed `expect.soft()` matcher as an unhandled error between tests. A matcher that uses a snapshot file, such as `toMatchSnapshot()`, throws.
+
 As in Vitest, the context isn't a `done` callback. Calling it throws an error.
 
 ## Importing from `vitest`

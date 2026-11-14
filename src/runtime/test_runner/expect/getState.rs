@@ -163,7 +163,8 @@ impl Expect {
                 _ => {}
             }
         });
-        if applied.is_none() {
+        // A test context's `expect` names its test. With no sequence, the file of that test is over, and so are its counters.
+        if applied.is_none() && test.is_none() {
             return Err(global.throw(format_args!("expect.setState() cannot set the assertion counters in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         }
         Ok(())

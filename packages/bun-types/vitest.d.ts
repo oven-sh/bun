@@ -546,6 +546,10 @@ declare module "vitest" {
     /**
      * An `expect` bound to this test. Its `expect.assertions()`, `expect.hasAssertions()` and snapshots belong to this
      * test even when other tests run concurrently.
+     *
+     * It stays bound after the test has finished. A late call, for example after a timeout, doesn't count for the test
+     * that runs at that moment. Bun reports a failed `expect.soft()` matcher as an unhandled error between tests. A
+     * matcher that uses a snapshot file, such as `toMatchSnapshot()`, throws.
      */
     readonly expect: ExpectStatic;
     /** Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first. */

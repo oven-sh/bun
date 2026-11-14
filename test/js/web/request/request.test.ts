@@ -13,6 +13,26 @@ test("undefined args don't throw", () => {
   expect(request.method).toBe("GET");
 });
 
+test("Request has the lengths of the IDL", () => {
+  const { prototype } = Request;
+  expect({
+    Request: Request.length,
+    prototype: {
+      clone: prototype.clone.length,
+      arrayBuffer: prototype.arrayBuffer.length,
+      blob: prototype.blob.length,
+      bytes: prototype.bytes.length,
+      formData: prototype.formData.length,
+      json: prototype.json.length,
+      text: prototype.text.length,
+      textStream: prototype.textStream.length,
+    },
+  }).toEqual({
+    Request: 1,
+    prototype: { clone: 0, arrayBuffer: 0, blob: 0, bytes: 0, formData: 0, json: 0, text: 0, textStream: 0 },
+  });
+});
+
 test("request can receive undefined signal", async () => {
   const request = new Request("http://example.com/", {
     method: "POST",

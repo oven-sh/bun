@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (8.81 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -213,5 +213,27 @@ describe("clone()", () => {
 
     expect(originalText).toBe("Hello, world!");
     expect(clonedText).toBe("Hello, world!");
+  });
+});
+
+test("Response has the lengths of the IDL", () => {
+  const { prototype } = Response;
+  expect({
+    Response: Response.length,
+    static: { error: Response.error.length, json: Response.json.length, redirect: Response.redirect.length },
+    prototype: {
+      clone: prototype.clone.length,
+      arrayBuffer: prototype.arrayBuffer.length,
+      blob: prototype.blob.length,
+      bytes: prototype.bytes.length,
+      formData: prototype.formData.length,
+      json: prototype.json.length,
+      text: prototype.text.length,
+      textStream: prototype.textStream.length,
+    },
+  }).toEqual({
+    Response: 0,
+    static: { error: 0, json: 1, redirect: 1 },
+    prototype: { clone: 0, arrayBuffer: 0, blob: 0, bytes: 0, formData: 0, json: 0, text: 0, textStream: 0 },
   });
 });

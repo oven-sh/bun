@@ -22,7 +22,7 @@ const body = {
   textStream: { returns: b.any.returning("ReadableStream"), ...js },
 } as const;
 const clone = (name: "Request" | "Response") =>
-  ({ returns: b.any.returning(name), ...js, passThis: true, rustName: "do_clone", length: 1 }) as const;
+  ({ returns: b.any.returning(name), ...js, passThis: true, rustName: "do_clone" }) as const;
 
 export const Request = b.class({
   rustPath: "crate::webcore::Request",
@@ -34,7 +34,7 @@ export const Request = b.class({
   estimatedSize: true,
   types: [table.viewType("Request"), table.exactType("$Bindgen.Request")],
   lockedMembers: ["prototype"],
-  construct: { args: { input: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
+  construct: { args: { input: b.any, init: b.any }, ...js, passStructure: true, length: 1 },
   internalFields: ["stream"],
   proto: {
     arrayBuffer: body.arrayBuffer,
@@ -62,7 +62,11 @@ export const Request = b.class({
   },
 });
 
-const factory = { args: { args: b.any.variadic }, returns: b.any.returning("Response"), ...js } as const;
+/**
+ * The Fetch IDL requires the first argument of both, so `length` is 1. Bun takes a call without it, where the IDL
+ * and Node throw a TypeError.
+ */
+const factory = { args: { args: b.any.variadic }, returns: b.any.returning("Response"), ...js, length: 1 } as const;
 
 export const Response = b.class({
   rustPath: "crate::webcore::Response",

@@ -105,6 +105,26 @@ test("new Blob", () => {
   expect(blob.type).toBe("");
 });
 
+test("Blob and File have the lengths of the IDL", () => {
+  expect({
+    Blob: Blob.length,
+    File: File.length,
+    slice: Blob.prototype.slice.length,
+    stream: Blob.prototype.stream.length,
+    text: Blob.prototype.text.length,
+    arrayBuffer: Blob.prototype.arrayBuffer.length,
+    bytes: Blob.prototype.bytes.length,
+  }).toEqual({ Blob: 0, File: 2, slice: 0, stream: 0, text: 0, arrayBuffer: 0, bytes: 0 });
+});
+
+// A BuildArtifact has a `slice` and a `stream` of its own.
+test("the slice and stream of a BuildArtifact have the lengths of those of Blob", async () => {
+  using dir = tempDir("build-artifact-lengths", { "entry.js": "export default 1;\n" });
+  const build = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")] });
+  const [artifact] = build.outputs;
+  expect({ slice: artifact.slice.length, stream: artifact.stream.length }).toEqual({ slice: 0, stream: 0 });
+});
+
 test.each(["text/plain", "text/html", "text/css", "application/json", "application/javascript", "image/png"])(
   "type is the %s that the script gave",
   type => {

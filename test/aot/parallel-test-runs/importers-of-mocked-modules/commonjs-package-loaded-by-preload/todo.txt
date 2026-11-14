@@ -1,0 +1,2 @@
+"SAID b real mock second ran 2" | "SAID b real real second ran 1": `bun test` leaves second.mjs, which the load of the test file imported, to every run of --rerun-each; the compiled run takes it in the second run for what an earlier file left, and loads it again under the mock
+"SAID c real second ran 3" | "SAID c real second ran 1": second.mjs then imports the mock in the compiled run, so the end of the mock evicts it, and the next test file runs it a third time

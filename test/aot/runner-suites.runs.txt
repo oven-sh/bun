@@ -39,6 +39,13 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
 # The next one: under --rerun-each the second run runs k.js again compiled, not in plain. Every test passes.
 test/js/bun/test/mock/mock-module.test.ts: the next --rerun-each run gets the original after a factory resets modules while patching a loaded one
+# These: under --rerun-each, vi.doMock() of a module that the load of the test file brought in. Plain runs that module and the modules that import it once for all the runs of the file.
+# Compiled runs them again in every second run, and a test of the fixture fails for it.
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that a Vitest file imports as it is
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that the file imports as it is ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that the file imports as it is ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that the file imports as it is []
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves every other module that the file holds as it is
 # The next one never ends compiled: two factories run at one time, each with vi.importActual() of a file of one import cycle.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while another running factory imports a module that waits for this one's mock
 # The next one never ends compiled: an import cycle is first loaded by vi.importActual() of the mocked module, whose factory takes importOriginal.

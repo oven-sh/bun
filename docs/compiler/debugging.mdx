@@ -126,6 +126,8 @@ math.test.ts:
 
 `--isolate`, `--parallel`, `--rerun-each`, `--coverage` and snapshots work as in `bun test`. `--isolate=modules` runs like `--isolate`. `--watch`, `--hot` and `--inspect` exit with an error.
 
+One thing differs with `--rerun-each`. In `bun test`, `vi.doMock()` leaves a module that the test file imports as it is in every run. A compiled run loads the module again in every second run.
+
 `--shard=i/n` can split the files differently from `bun test`. Test files that import the same code go into the same shard, so each part of your project is compiled on one machine. Every machine needs the same checkout, and the same `--timings` file if you pass one.
 
 ### What differs from an executable

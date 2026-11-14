@@ -1,0 +1,1 @@
+"one 10 10 undefined undefined undefined false" | "one,other 1 1 5 5 5 true": `bun test` leaves the hub that the load of the test file imported to every run of --rerun-each; the compiled run takes it in the second run for what an earlier file left, and loads it again under the mock

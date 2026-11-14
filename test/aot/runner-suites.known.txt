@@ -107,6 +107,12 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# These run a test file three times with --rerun-each. Plain leaves what the load of the file brought in to every run of it. Compiled takes it in the next run for what an earlier file left, and vi.doMock() loads it again.
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that a Vitest file imports as it is
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that the file imports as it is ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that the file imports as it is ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves a module that the file imports as it is []
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() in a test file that --rerun-each runs again > leaves every other module that the file holds as it is
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
 # These ask about the transpiler cache, which a compiled run doesn't use: they say nothing about compiled code.

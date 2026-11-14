@@ -161,6 +161,22 @@ function restoreListeners() {
   }
 }
 
+// For builtins that listen on `process` themselves: test/internal/source-lints/process-listeners-of-builtins.test.ts.
+const forgets: (() => void)[] = [];
+const realProcess = process;
+const addListener: (name: string, listener: (...args: any[]) => void) => unknown = process.on;
+$putByIdDirectPrivate(realProcess, "sharedByTestFiles", {
+  on(name: string, listener: (...args: any[]) => void) {
+    addListener.$call(realProcess, name, listener);
+    const saved = listeners.$get(name);
+    if (saved) $arrayPush(saved, listener);
+    else listeners.$set(name, [listener]);
+  },
+  forget(forget: () => void) {
+    $arrayPush(forgets, forget);
+  },
+});
+
 function saveShapes() {
   shapes = shapesOf(objects);
   alwaysComparedCount = indexesOfChanged(objects, shapes).length;
@@ -178,6 +194,11 @@ export default function restoreGlobals() {
     const names = eventNames.$call(process);
     for (let i = 0; i < names.length; i++) listeners.$set(names[i], rawListeners.$call(process, names[i]));
     return;
+  }
+  if (forgets.length !== 0) {
+    // Ahead of what can throw below: each only assigns variables of its builtin.
+    for (let i = 0; i < forgets.length; i++) forgets[i]();
+    forgets.length = 0;
   }
   const changed = indexesOfChanged(objects, shapes);
   for (let i = 0; i < changed.length; i++) {

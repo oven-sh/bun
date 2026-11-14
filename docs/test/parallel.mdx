@@ -108,6 +108,8 @@ Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
 
 Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
 
+`process.stdout` and `process.stderr` are shared too. On a terminal each has a `SIGWINCH` listener on `process`, which Bun keeps for the later files. A file that removes that listener takes it from the files after it. What a file registers with `process.finalization` ends with that file.
+
 ## Concurrent tests within a file
 
 `--parallel` spreads _files_ across cores. Within one file tests still run one at a time unless you opt in to concurrency, which lets `async` tests overlap while one is waiting on I/O:

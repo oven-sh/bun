@@ -23,7 +23,8 @@ fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("cli") => {
             // cli [paths..] [@<response file>] [-b] [-p <project>] [--<compiler option> [value]]
-            // [--threads=n] [--plain] [--no-color] [--github] [--timing]: behaves like `bun check`.
+            // [--threads=n] [--plain] [--no-color] [--github] [--timing]
+            // [--no-follow-imports]: behaves like `bun check`.
             use bun_sema_driver::format::{
                 Layout, Style, write_diagnostics, write_slowest_files, write_summary,
             };

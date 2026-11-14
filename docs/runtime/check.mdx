@@ -244,7 +244,7 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 - If that `tsconfig.json` does not include the file but has `references`, Bun uses the referenced project that includes the file. The `tsconfig.json` from `create vite` works this way.
 - If no project includes the file, Bun still checks it, with the options of the nearest `tsconfig.json`.
 
-To report only the errors of the files you name, and not those of the files they import, add `--no-follow-imports`. Bun loads the whole project, so each file gets the errors that a check of the project reports in it. It computes the types of the other files only where a named file needs them.
+To report only the errors of the files you name, and not those of the files they import, add `--no-follow-imports`. Bun loads the whole project, so each file gets the errors that a check of the project reports in it. It computes the types of the project's other files only where a named file needs them. Projects in `references` are still checked in full, because the named files read their declarations.
 
 ```bash terminal icon="terminal"
 bun check --no-follow-imports src/index.ts src/server.ts

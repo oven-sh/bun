@@ -38,9 +38,7 @@ pub use multi_array_list::MultiArrayList;
 pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, recycle};
 
-pub use bit_set::{
-    AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
-};
+pub use bit_set::{AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, IntegerBitSet};
 
 // `multi_array_list` imports from here; canonical impl lives in
 // `bun_core::strings`.

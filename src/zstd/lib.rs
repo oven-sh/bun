@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-use core::ffi::{c_ulonglong, c_void};
+use core::ffi::{CStr, c_uint, c_ulonglong, c_void};
 
 use bun_core::ZStr;
 
@@ -292,6 +292,51 @@ pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: Option<i32>) -> Res
 /// absurd allocation.
 pub fn is_error(code: usize) -> bool {
     c::ZSTD_isError(code) != 0
+}
+
+/// The name of a `ZSTD_ErrorCode` constant in `zstd_errors.h`, which `node:zlib` reports as an error's `code`.
+pub const fn error_code_name(code: c_uint) -> &'static CStr {
+    match code {
+        c::ZSTD_error_no_error => c"ZSTD_error_no_error",
+        c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",
+        c::ZSTD_error_prefix_unknown => c"ZSTD_error_prefix_unknown",
+        c::ZSTD_error_version_unsupported => c"ZSTD_error_version_unsupported",
+        c::ZSTD_error_frameParameter_unsupported => c"ZSTD_error_frameParameter_unsupported",
+        c::ZSTD_error_frameParameter_windowTooLarge => c"ZSTD_error_frameParameter_windowTooLarge",
+        c::ZSTD_error_corruption_detected => c"ZSTD_error_corruption_detected",
+        c::ZSTD_error_checksum_wrong => c"ZSTD_error_checksum_wrong",
+        c::ZSTD_error_literals_headerWrong => c"ZSTD_error_literals_headerWrong",
+        c::ZSTD_error_dictionary_corrupted => c"ZSTD_error_dictionary_corrupted",
+        c::ZSTD_error_dictionary_wrong => c"ZSTD_error_dictionary_wrong",
+        c::ZSTD_error_dictionaryCreation_failed => c"ZSTD_error_dictionaryCreation_failed",
+        c::ZSTD_error_parameter_unsupported => c"ZSTD_error_parameter_unsupported",
+        c::ZSTD_error_parameter_combination_unsupported => {
+            c"ZSTD_error_parameter_combination_unsupported"
+        }
+        c::ZSTD_error_parameter_outOfBound => c"ZSTD_error_parameter_outOfBound",
+        c::ZSTD_error_tableLog_tooLarge => c"ZSTD_error_tableLog_tooLarge",
+        c::ZSTD_error_maxSymbolValue_tooLarge => c"ZSTD_error_maxSymbolValue_tooLarge",
+        c::ZSTD_error_maxSymbolValue_tooSmall => c"ZSTD_error_maxSymbolValue_tooSmall",
+        c::ZSTD_error_stabilityCondition_notRespected => {
+            c"ZSTD_error_stabilityCondition_notRespected"
+        }
+        c::ZSTD_error_stage_wrong => c"ZSTD_error_stage_wrong",
+        c::ZSTD_error_init_missing => c"ZSTD_error_init_missing",
+        c::ZSTD_error_memory_allocation => c"ZSTD_error_memory_allocation",
+        c::ZSTD_error_workSpace_tooSmall => c"ZSTD_error_workSpace_tooSmall",
+        c::ZSTD_error_dstSize_tooSmall => c"ZSTD_error_dstSize_tooSmall",
+        c::ZSTD_error_srcSize_wrong => c"ZSTD_error_srcSize_wrong",
+        c::ZSTD_error_dstBuffer_null => c"ZSTD_error_dstBuffer_null",
+        c::ZSTD_error_noForwardProgress_destFull => c"ZSTD_error_noForwardProgress_destFull",
+        c::ZSTD_error_noForwardProgress_inputEmpty => c"ZSTD_error_noForwardProgress_inputEmpty",
+        _ => c"ZSTD_error_GENERIC",
+    }
+}
+
+/// `ZSTD_getErrorString`: the library's text for a `ZSTD_ErrorCode`.
+pub fn error_code_message(code: c_uint) -> &'static CStr {
+    // SAFETY: `ZSTD_getErrorString` returns a NUL-terminated string literal for every value.
+    unsafe { bun_core::ffi::cstr(c::ZSTD_getErrorString(code)) }
 }
 
 /// `ZSTD_decompress` into `out`'s spare capacity, which is the output bound; commits the bytes written.

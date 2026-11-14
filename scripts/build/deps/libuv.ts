@@ -70,11 +70,21 @@ export const libuv: Dependency = {
   // win-poll-no-reendgame-after-close: doesn't queue the endgame after poll_cb
   // if a nested uv_run inside poll_cb already ran it. Otherwise close_cb runs
   // twice.
+  //
+  // win-tty-read-stop-match-pending-req: makes uv__tty_read_stop cancel the
+  // console read that is pending. It chose the cancel from mode.mode, which
+  // after uv_tty_set_mode names the next read. A second mode change or a read
+  // stop in the same loop turn then set the line-cancel flag with no line read
+  // pending, and libuv dropped the next line the user typed. Upstream libuv
+  // does the same, so Node does too, and has no issue for it. The patch also
+  // ends that flag with its line read, on the error branch too
+  // (libuv/libuv#5312).
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
+    "patches/libuv/win-tty-read-stop-match-pending-req.patch",
   ],
 
   build: () => ({

@@ -1,0 +1,52 @@
+--- a/src/win/tty.c
++++ b/src/win/tty.c
+@@ -1013,13 +1013,17 @@ void uv_process_tty_read_raw_req(uv_loop_t* loop, uv_tty_t* handle,
+ void uv_process_tty_read_line_req(uv_loop_t* loop, uv_tty_t* handle,
+     uv_req_t* req) {
+   uv_buf_t buf;
++  int cancelled;
+ 
+   assert(handle->type == UV_TTY);
+   assert(handle->flags & UV_HANDLE_TTY_READABLE);
+ 
+   buf = handle->tty.rd.read_line_buffer;
+ 
+-  handle->flags &= ~UV_HANDLE_READ_PENDING;
++  /* The cancellation belongs to this request: read_cb can queue the next line
++   * read and cancel it before it returns. */
++  cancelled = !!(handle->flags & UV_HANDLE_CANCELLATION_PENDING);
++  handle->flags &= ~(UV_HANDLE_READ_PENDING | UV_HANDLE_CANCELLATION_PENDING);
+   handle->tty.rd.read_line_buffer = uv_null_buf_;
+ 
+   if (!REQ_SUCCESS(req)) {
+@@ -1033,5 +1037,5 @@ void uv_process_tty_read_line_req(uv_loop_t* loop, uv_tty_t* handle,
+                       &buf);
+     }
+   } else {
+-    if (!(handle->flags & UV_HANDLE_CANCELLATION_PENDING) &&
++    if (!cancelled &&
+         req->u.io.overlapped.InternalHigh != 0) {
+@@ -1039,7 +1043,6 @@ void uv_process_tty_read_line_req(uv_loop_t* loop, uv_tty_t* handle,
+       DWORD bytes = req->u.io.overlapped.InternalHigh;
+       handle->read_cb((uv_stream_t*) handle, bytes, &buf);
+     }
+-    handle->flags &= ~UV_HANDLE_CANCELLATION_PENDING;
+   }
+ 
+   /* Wait for more input events. */
+@@ -1114,7 +1117,14 @@ int uv__tty_read_stop(uv_tty_t* handle) {
+   if (!(handle->flags & UV_HANDLE_READ_PENDING))
+     return 0;
+ 
+-  if (uv__is_raw_tty_mode(handle->tty.rd.mode.mode)) {
++  /* Cancel the request that is pending. uv_tty_set_mode() stops, stores the
++   * new mode and restarts while the old request is still pending, so mode.mode
++   * names the kind of the next request, not of this one. */
++  if (handle->tty.rd.read_line_buffer.len == 0) {
++    /* Outside raw mode no wait is left to wake: the stop before the mode
++     * change woke it, or uv__tty_read_start() queued the request itself. */
++    if (!uv__is_raw_tty_mode(handle->tty.rd.mode.mode))
++      return 0;
+     /* Cancel raw read. Write some bullshit event to force the console wait to
+      * return. */
+     memset(&record, 0, sizeof record);

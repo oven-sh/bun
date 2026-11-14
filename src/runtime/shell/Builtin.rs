@@ -899,7 +899,7 @@ impl Builtin {
     /// Cwd fd of the owning Cmd's shell env.
     #[inline]
     pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
-        Self::shell(interp, cmd).cwd_fd
+        Self::shell(interp, cmd).cwd_fd.fd()
     }
 
     /// Format `"{kind}: {fmt}"` into a fresh heap buffer.

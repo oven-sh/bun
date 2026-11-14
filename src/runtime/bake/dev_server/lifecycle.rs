@@ -37,8 +37,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     /// `addr_of_mut!((*p).$field).write($value)` — writes a single field of the
     /// partially-initialized `DevServer` without materializing `&mut DevServer`.
     macro_rules! w {
-        ($field:ident, $value:expr) => {
-            addr_of_mut!((*p).$field).write($value)
+        ($($field:ident).+, $value:expr) => {
+            addr_of_mut!((*p).$($field).+).write($value)
         };
     }
 
@@ -48,7 +48,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
-        w!(root, Box::from(root));
         w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(vm_handle, options.vm.handle());
         w!(server, None);
@@ -71,12 +70,15 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             frontend_only,
             options.framework.file_system_router_types.is_empty()
         );
-        w!(client_graph, IncrementalGraph::default());
-        w!(server_graph, IncrementalGraph::default());
+        w!(graphs.root, Box::from(root));
+        w!(graphs.client, IncrementalGraph::default());
+        w!(graphs.server, IncrementalGraph::default());
+        w!(graphs.incremental_result, IncrementalResult::EMPTY);
+        w!(graphs.route_lookup, Default::default());
+        w!(graphs.assets, Assets::default());
+        w!(graphs.bundling_failures, Default::default());
         w!(barrel_files_with_deferrals, Default::default());
         w!(barrel_needed_exports, Default::default());
-        w!(incremental_result, IncrementalResult::EMPTY);
-        w!(route_lookup, Default::default());
         w!(route_bundles, Vec::new());
         w!(html_router, HTMLRouter::empty());
         w!(active_websocket_connections, Default::default());
@@ -90,18 +92,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             }
         );
         w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:
-        w!(
-            assets,
-            Assets {
-                path_map: Default::default(),
-                files: Default::default(),
-                refs: Default::default(),
-                needs_reindex: false,
-            }
-        );
         w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
-        w!(bundling_failures, Default::default());
         w!(
             assume_perfect_incremental_bundling,
             bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
@@ -259,16 +251,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &raw mut *dev;
 
-    // Note: the graphs are stored by value; `owner()` is provided on
-    // `IncrementalGraph` via `offset_of!` so the parent-pointer invariant is
-    // structural. Retain the field touches so the addresses are stable for
-    // `container_of` consumers below.
-    let _ = (
-        &dev.server_graph,
-        &dev.client_graph,
-        &dev.directory_watchers,
-    );
-
     let _unlock = dev.graph_safety_lock.guard();
 
     if let Err(err) = dev.bun_watcher.start() {
@@ -328,8 +310,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             dev.ssr_transpiler_mut().options.framework = Some(resolved_view);
         }
     }
-
-    // errdefer dev.route_lookup.clearAndFree() / client_graph.deinit() / server_graph.deinit()
 
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
@@ -433,8 +413,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // the side-effecting `insert_stale`
         // out so the refresh runtime is registered at index 0 in all builds.
         let idx = dev
-            .client_graph
-            .insert_stale(&rfr.import_source, bake::Graph::Client)?;
+            .graphs
+            .insert_stale::<{ Side::Client }>(&rfr.import_source, bake::Graph::Client)?;
         debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0));
     }
 
@@ -450,7 +430,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         for fsr in dev.framework.file_system_router_types.iter() {
             let mut buf = paths::path_buffer_pool::get();
             let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &dev.root,
+                &dev.graphs.root,
                 &mut buf[..],
                 &[&fsr.root],
             );
@@ -462,7 +442,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 continue;
             };
 
-            let server_file = dev.server_graph.insert_stale_extra(
+            let server_file = dev.graphs.insert_stale_extra::<{ Side::Server }>(
                 &fsr.entry_server,
                 bake::Graph::Server,
                 incremental_graph::RouteKind::Route,
@@ -489,7 +469,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(
-                        dev.client_graph.insert_stale(client, bake::Graph::Client)?,
+                        dev.graphs
+                            .insert_stale::<{ Side::Client }>(client, bake::Graph::Client)?,
                     ))
                 } else {
                     None
@@ -497,13 +478,13 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 server_file_string: jsc::StrongOptional::empty(),
             });
 
-            dev.route_lookup.put(
+            dev.graphs.route_lookup.put(
                 server_file,
                 RouteIndexAndRecurseFlag::new(router::Type::root_route_index(type_index), true),
             )?;
         }
 
-        break 'router FrameworkRouter::init_empty(&dev.root, types.into_boxed_slice())?;
+        break 'router FrameworkRouter::init_empty(&dev.graphs.root, types.into_boxed_slice())?;
     };
 
     // TODO: move scanning to be one tick after server startup. this way the
@@ -530,7 +511,6 @@ impl Drop for DevServer {
         {
             let DevServer {
                 magic: _,
-                root: _,
                 inspector_server_id: _,
                 configuration_hash_key: _,
                 vm: _,
@@ -539,16 +519,20 @@ impl Drop for DevServer {
                 router: _,
                 route_bundles: _,
                 graph_safety_lock: _,
-                client_graph: _,
-                server_graph: _,
+                graphs:
+                    Graphs {
+                        root: _,
+                        client: _,
+                        server: _,
+                        incremental_result: _,
+                        route_lookup: _,
+                        assets: _,
+                        bundling_failures: _,
+                    },
                 barrel_files_with_deferrals: _,
                 barrel_needed_exports: _,
-                incremental_result: _,
-                route_lookup: _,
                 html_router: _,
-                assets: _,
                 source_maps: _,
-                bundling_failures: _,
                 frontend_only: _,
                 has_tailwind_plugin_hack: _,
                 server_fetch_function_callback: _,
@@ -580,22 +564,14 @@ impl Drop for DevServer {
         }
 
         // WebSockets should be deinitialized before other parts.
-        // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,
-        // which calls `dev.active_websocket_connections.remove(s)` and
-        // destroys the `HmrSocket`. Snapshot the keys first.
-        {
-            let count = self.active_websocket_connections.len();
-            if count > 0 {
-                let sockets: Vec<*mut HmrSocket> =
-                    self.active_websocket_connections.keys().copied().collect();
-                for s in sockets {
-                    // SAFETY: s is a valid HmrSocket ptr owned by the connection map
-                    if let Some(websocket) = unsafe { (*s).underlying } {
-                        websocket.close();
-                    }
-                }
+        for &s in ::core::mem::take(&mut self.active_websocket_connections).keys() {
+            // SAFETY: a socket is live until it is closed. The borrow ends before that.
+            let socket = unsafe { &mut *s };
+            socket.release(self);
+            socket.dev = ::core::ptr::null_mut();
+            if let Some(websocket) = socket.underlying {
+                websocket.close();
             }
-            debug_assert!(self.active_websocket_connections.is_empty());
         }
 
         if self.memory_visualizer_timer.state.get() == EventLoopTimerState::ACTIVE {
@@ -625,11 +601,9 @@ impl Drop for DevServer {
 
         {
             while let Some(r) = self.next_bundle.requests.pop_first() {
-                // SAFETY: `pop_first` returns a live node linked by `defer_request`,
-                // which initialized `data`. This exclusive borrow ends at `deref_`.
-                let data = unsafe { (*r).data.assume_init_mut() };
-                debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
-                data.abort_and_deref();
+                let handler = r.take_handler();
+                debug_assert!(!matches!(handler, Handler::ServerHandler(_)));
+                handler.fail();
             }
         }
 
@@ -776,15 +750,11 @@ impl DevServer {
     fn scan_initial_routes(&mut self) -> crate::Result<()> {
         self.router.scan_all(
             &mut self.server_transpiler.resolver,
-            router::InsertionContext::wrap(&mut router_glue::DevRouteScan {
-                root: &self.root,
-                server_graph: &mut self.server_graph,
-                route_lookup: &mut self.route_lookup,
-            }),
+            router::InsertionContext::wrap(&mut self.graphs),
         )?;
 
-        self.server_graph.ensure_stale_bit_capacity(true)?;
-        self.client_graph.ensure_stale_bit_capacity(true)?;
+        self.graphs.server.ensure_stale_bit_capacity(true)?;
+        self.graphs.client.ensure_stale_bit_capacity(true)?;
         Ok(())
     }
 

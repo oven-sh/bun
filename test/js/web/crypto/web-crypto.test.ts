@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, nodeExeAtLeast } from "harness";
 import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
+import { report, usages } from "./keyusages-fixture.mjs";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1581,6 +1582,8 @@ describe("crypto.getRandomValues argument types", () => {
   }
 });
 
+const keyUsagesOfGenerateKey = "Failed to execute 'generateKey' on 'SubtleCrypto': 3rd argument";
+
 describe("exception scope discipline", () => {
   // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
   // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full
@@ -1618,6 +1621,27 @@ describe("exception scope discipline", () => {
         "generateKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "generateKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
         "generateKey thrower = REJECTED Error: boom",
+        "generateKey usage from toString = RESOLVED",
+        "generateKey usage toString throws = REJECTED Error: boom",
+        `generateKey usage not known = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'bogus' is not a valid enum value of type KeyUsage.`,
+        `generateKey usage is a symbol = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] is a Symbol and cannot be converted to a string.`,
+        `generateKey usage is a hole = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'undefined' is not a valid enum value of type KeyUsage.`,
+        `generateKey usages not an object = REJECTED TypeError: ${keyUsagesOfGenerateKey} cannot be converted to sequence.`,
+        "generateKey usages from a Set = RESOLVED",
+        "generateKey usages from a Set without an entry = REJECTED SyntaxError: Usages cannot be empty when creating a key.",
+        `generateKey usage not known in a Set = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'bogus' is not a valid enum value of type KeyUsage.`,
+        "generateKey usages from an iterator = RESOLVED",
+        `generateKey usage not known from an iterator = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'bogus' is not a valid enum value of type KeyUsage.`,
+        `generateKey usages not iterable = REJECTED TypeError: ${keyUsagesOfGenerateKey} cannot be converted to sequence.`,
+        "generateKey usages Symbol.iterator getter throws = REJECTED Error: boom",
+        "generateKey usages Symbol.iterator throws = REJECTED Error: boom",
+        `generateKey usages iterator is not an object = REJECTED TypeError: ${keyUsagesOfGenerateKey} cannot be converted to sequence.`,
+        "generateKey usages next getter throws = REJECTED Error: boom",
+        `generateKey usages next is not a function = REJECTED TypeError: ${keyUsagesOfGenerateKey} cannot be converted to sequence.`,
+        "generateKey usages next throws = REJECTED Error: boom",
+        `generateKey usages step is not an object = REJECTED TypeError: ${keyUsagesOfGenerateKey} cannot be converted to sequence.`,
+        "generateKey usages done getter throws = REJECTED Error: boom",
+        "generateKey usages value getter throws = REJECTED Error: boom",
         "deriveKey ok = RESOLVED",
         "deriveKey bogus algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
         "deriveKey bogus derived type = REJECTED NotSupportedError: Unrecognized algorithm name",
@@ -1642,6 +1666,13 @@ describe("exception scope discipline", () => {
         "unwrapKey jwk not json = REJECTED DataError: WrappedKey cannot be converted to a JSON object",
         "unwrapKey bogus unwrap algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
         "unwrapKey bogus unwrapped type = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "toCryptoKey ok = RESOLVED",
+        "toCryptoKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "toCryptoKey thrower = REJECTED Error: boom",
+        "toCryptoKey usage from toString = RESOLVED",
+        "toCryptoKey usage toString throws = REJECTED Error: boom",
+        "toCryptoKey usage not known = REJECTED TypeError: Value[0] 'bogus' is not a valid enum value of type KeyUsage.",
+        "toCryptoKey AES-CFB-8 = REJECTED NotSupportedError: Unrecognized algorithm name",
       ],
       uncheckedScopes: [],
       exitCode: 0,
@@ -1890,6 +1921,141 @@ describe("key_ops of a JWK", () => {
     const wrapped = await crypto.subtle.encrypt(algorithm, wrappingKey, text);
     const key = await crypto.subtle.unwrapKey("jwk", wrapped, wrappingKey, algorithm, "AES-GCM", true, ["encrypt"]);
     expect(key.usages).toEqual(["encrypt"]);
+  });
+});
+
+describe("keyUsages", () => {
+  type Operation = keyof typeof usages;
+  // What an error of Node.js calls the value.
+  const argument = (name: string, nth: string) => `Failed to execute '${name}' on 'SubtleCrypto': ${nth} argument`;
+  const contexts: Record<Operation, string> = {
+    generateKey: keyUsagesOfGenerateKey,
+    deriveKey: argument("deriveKey", "5th"),
+    importKey: argument("importKey", "5th"),
+    unwrapKey: argument("unwrapKey", "7th"),
+    getPublicKey: argument("getPublicKey", "2nd"),
+    encapsulateKey: argument("encapsulateKey", "5th"),
+    decapsulateKey: argument("decapsulateKey", "6th"),
+    "SecretKeyObject.toCryptoKey": "Value",
+    "PrivateKeyObject.toCryptoKey": "Value",
+    "PublicKeyObject.toCryptoKey": "Value",
+  };
+  const operations = Object.keys(contexts) as Operation[];
+
+  const typeError = (code: string, message: string) => ({ name: "TypeError", code, message });
+  const notUsage = (context: string, index: number, string: string) =>
+    typeError("ERR_INVALID_ARG_VALUE", `${context}[${index}] '${string}' is not a valid enum value of type KeyUsage.`);
+
+  // What Node.js v26.1.0 and later answer for each row of keyusages-fixture.mjs.
+  const answers = (operation: Operation) => {
+    const usage = usages[operation];
+    const context = contexts[operation];
+    const notSequence = typeError("ERR_INVALID_ARG_TYPE", `${context} cannot be converted to sequence.`);
+    return {
+      "an object with toString": [usage],
+      "an array": [usage],
+      "a String object": [usage],
+      "an object with Symbol.toPrimitive": [usage],
+      "a Set": [usage],
+      "a generator": [usage],
+      "an Array subclass": [usage],
+      "an array with its own Symbol.iterator": [usage],
+
+      "a string that is not a usage": notUsage(context, 1, "bogus"),
+      "a usage in capitals": notUsage(context, 0, usage.toUpperCase()),
+      "a number": notUsage(context, 0, "1"),
+      "null": notUsage(context, 0, "null"),
+      "a hole": notUsage(context, 0, "undefined"),
+      "an object with only valueOf": notUsage(context, 0, "[object Object]"),
+      "a symbol": typeError("ERR_INVALID_ARG_TYPE", `${context}[0] is a Symbol and cannot be converted to a string.`),
+      "a toString that throws": { name: "RangeError", message: "toString" },
+
+      "a string": notSequence,
+      "undefined": notSequence,
+      "an object that is not iterable": notSequence,
+      "an array whose Symbol.iterator is not a function": notSequence,
+      "an array without a prototype": notSequence,
+      "an iterator that is not an object": notSequence,
+      "an iterator without next": notSequence,
+      "a step that is not an object": notSequence,
+    };
+  };
+
+  // The user code that the conversion runs, in order. It does not call `return` of an iterator.
+  const bogus = notUsage(keyUsagesOfGenerateKey, 0, "bogus");
+  const notSupported = { name: "NotSupportedError", code: 9, message: "Unrecognized algorithm name" };
+  const orders = {
+    "an iterable": {
+      log: ["get Symbol.iterator", "next", "toString sign", "next", "toString verify", "next"],
+      answer: ["sign", "verify"],
+    },
+    "an iterable with an entry that is not a usage": {
+      log: ["get Symbol.iterator", "next", "toString bogus"],
+      answer: bogus,
+    },
+    "an array with an entry that is not a usage": { log: ["toString bogus"], answer: bogus },
+    "a Set with an entry that is not a usage": { log: ["toString bogus"], answer: bogus },
+    "an array that an entry appends to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
+    "a Set that an entry adds to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
+    "a Set that an entry clears and then adds to": {
+      log: ["toString sign", "toString verify"],
+      answer: ["sign", "verify"],
+    },
+    "a Set without an entry": {
+      log: [],
+      answer: { name: "SyntaxError", code: 12, message: "Usages cannot be empty when creating a key." },
+    },
+    // An array or a Set that is read in place has no iterator to close. "get return" in a log is a read of `return`.
+    "an array with an entry that defines return, then one that is not a usage": {
+      log: ["toString sign"],
+      answer: notUsage(keyUsagesOfGenerateKey, 1, "bogus"),
+    },
+    "a Set with an entry that defines return, then one that is not a usage": {
+      log: ["toString sign"],
+      answer: notUsage(keyUsagesOfGenerateKey, 1, "bogus"),
+    },
+    // Every argument is converted before the algorithm is normalized.
+    "SubtleCrypto with an algorithm and a usage that are not known": { log: ["toString bogus"], answer: bogus },
+    // The algorithm is normalized before keyUsages is converted.
+    "KeyObject.toCryptoKey with an algorithm and a usage that are not known": { log: [], answer: notSupported },
+    // Node.js has no AES-CFB-8. Bun has it in SubtleCrypto alone, so KeyObject.toCryptoKey does not know the name.
+    "KeyObject.toCryptoKey with AES-CFB-8 and a usage that is not known": { log: [], answer: notSupported },
+  };
+
+  let bun: Awaited<ReturnType<typeof report>>;
+  beforeAll(async () => {
+    bun = await report();
+  });
+
+  it.each(operations)("%s: what each value gives", operation => {
+    expect(bun.answers[operation]).toEqual(answers(operation));
+  });
+
+  it.each(Object.keys(orders) as (keyof typeof orders)[])("%s: what runs, in order", scenario => {
+    expect(bun.orders[scenario]).toEqual(orders[scenario]);
+  });
+
+  it("KeyObject.toCryptoKey throws what SubtleCrypto rejects with", () => {
+    const secret = createSecretKey(new Uint8Array(32));
+    expect(() => secret.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["bogus" as KeyUsage])).toThrow(
+      expect.objectContaining(notUsage("Value", 0, "bogus")),
+    );
+  });
+
+  const node = nodeExeAtLeast("26.1.0");
+  it.skipIf(!node)("Node.js answers the same", async () => {
+    await using proc = Bun.spawn({
+      cmd: [node!, "--no-warnings", import.meta.resolveSync("./keyusages-fixture.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ report: stdout ? JSON.parse(stdout) : null, stderr, exitCode }).toEqual({
+      report: { answers: Object.fromEntries(operations.map(operation => [operation, answers(operation)])), orders },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

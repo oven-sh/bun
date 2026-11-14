@@ -1054,7 +1054,7 @@ impl FetchTasklet {
 
                 promise_value.ensure_still_alive();
                 let r = promise.reject_with_async_stack(&global_this, result.to_js(&global_this));
-                result.reset();
+                drop(result);
 
                 tracker.did_dispatch(&global_this);
                 self.promise = jsc::JSPromiseStrong::empty();
@@ -1115,7 +1115,7 @@ impl FetchTasklet {
             let mut err = self.get_abort_error().unwrap();
             promise_value.ensure_still_alive();
             let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
-            err.reset();
+            drop(err);
             tracker.did_dispatch(&global_this);
             self.promise = jsc::JSPromiseStrong::empty();
             cleanup(self);
@@ -1139,7 +1139,6 @@ impl FetchTasklet {
                 let err_js = err.to_js(&global_this);
                 err_js.ensure_still_alive();
                 self.cancel_request_body_sink(err_js);
-                err.reset();
             }
             StrongOptional::create(resolved, &global_this)
         } else {
@@ -1147,9 +1146,9 @@ impl FetchTasklet {
             let mut value = self.on_reject();
             let err_js = value.to_js(&global_this);
             self.cancel_request_body_sink(err_js);
-            // `to_js` leaves `value` in the `JSValue(Strong)` state (Body.rs:547). Move
+            // `to_js` leaves `value` in the `JSValue(Strong)` state. Move
             // that Strong out instead of allocating a
-            // second one — `ValueError` has no `Drop`, so the inner Strong would leak.
+            // second one.
             let BodyValueError::JSValue(strong) = value else {
                 unreachable!("ValueError::to_js leaves self in JSValue state");
             };

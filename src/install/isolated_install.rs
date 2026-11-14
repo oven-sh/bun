@@ -1424,7 +1424,6 @@ fn build_store(
             nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
-            scripts: core::cell::Cell::new(None),
         })?;
 
         // skip implicit workspace dependencies on the root.
@@ -2207,6 +2206,7 @@ pub(crate) fn install_isolated_packages(
                 relink: installer::Relink::Off,
                 newly_trusted: false,
                 blocked_scripts: 0,
+                scripts: None,
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,

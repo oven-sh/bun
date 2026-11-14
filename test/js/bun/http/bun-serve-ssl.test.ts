@@ -916,3 +916,50 @@ test("stop(true) survives a handler that closes other connections and runs the e
   expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
+
+// Sanitizer and debug builds do not hand freed memory back as it was, so only a release build can fail these.
+test.concurrent.each([
+  ["key", "{ key: latin1 }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a 16-bit string", "{ key: utf16 }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a Buffer", "{ key: bytes }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key after a NUL", "{ key: afterNul }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a file", `{ key: Bun.file("small") }`, "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a file larger than the first read", `{ key: Bun.file("large") }`, "ERR_OSSL_PEM_NO_START_LINE"],
+  ["passphrase", `{ ...${JSON.stringify(tlsCert)}, passphrase: latin1 }`, undefined],
+])("a TLS %s leaves no copy in freed memory", async (_, options, error) => {
+  using dir = tempDir("tls-secret", { small: Buffer.alloc(3000, "K"), large: Buffer.alloc(300_000, "K") });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const bytes = Buffer.alloc(3000, "K");
+        // Globals, so that they are never freed themselves.
+        globalThis.latin1 = bytes.toString("latin1");
+        globalThis.afterNul = Buffer.alloc(3000, "K").fill(0, 1, 2);
+        const utf16 = Buffer.alloc(6000, "K\\0").fill("\\u2603", 5998, 6000, "utf16le").toString("utf16le");
+        function isInFreedMemory() {
+          const blocks = [3000, 3001, 6000, 256 * 1024, 300_000].flatMap(size =>
+            Array.from({ length: 16 }, () => Buffer.allocUnsafeSlow(size)),
+          );
+          return blocks.some(block => block.includes(bytes.subarray(0, 100)));
+        }
+        const before = isInFreedMemory();
+        Bun.gc(true);
+        let error;
+        try {
+          Bun.serve({ port: 0, fetch() {}, tls: ${options} }).stop(true);
+        } catch (e) {
+          error = String(e.code);
+        }
+        console.log(JSON.stringify({ before, error, after: isInFreedMemory() }));
+      `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ before: false, error, after: false });
+  expect(exitCode).toBe(0);
+});

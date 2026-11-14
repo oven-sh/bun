@@ -243,7 +243,7 @@ impl NetworkTask {
                 if result.has_more {
                     if !chunk.is_empty() {
                         // The drain task is scheduled by `on_chunk`
-                        // (guarded by its own `draining` atomic) so it
+                        // (guarded by its own `draining` flag) so it
                         // runs at most once at a time, releases the
                         // worker on ARCHIVE_RETRY, and is re-enqueued by
                         // the next chunk. Pending-task accounting stays

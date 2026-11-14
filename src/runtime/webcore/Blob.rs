@@ -3377,25 +3377,17 @@ impl<'a> FormDataContext<'a> {
                             // `NodeFS` (it is stateless aside from a path scratch
                             // buffer; a per-VM cache would be purely a perf reuse).
                             let mut node_fs = crate::node::fs::NodeFS::default();
-                            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-                            let mut rf_args = crate::node::fs::args::ReadFile::default();
-                            rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = file.pathlike.clone();
-                            rf_args.offset = blob.offset.get();
-                            rf_args.max_size = Some(blob.size.get());
+                            let rf_args = crate::node::fs::args::ReadFile {
+                                encoding: crate::node::types::Encoding::Buffer,
+                                path: file.pathlike.clone(),
+                                offset: blob.offset.get(),
+                                max_size: Some(blob.size.get()),
+                                ..Default::default()
+                            };
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
                                 Err(err) => self.read_error = Some(err),
-                                Ok(mut result) => {
-                                    joiner.push_cloned(result.slice());
-                                    // StringOrBuffer::Drop is a no-op for Buffer; release
-                                    // the readFile allocation explicitly.
-                                    if let crate::node::types::StringOrBuffer::Buffer(buf) =
-                                        &mut result
-                                    {
-                                        buf.destroy();
-                                    }
-                                }
+                                Ok(result) => joiner.push_cloned(result.slice()),
                             }
                         }
                         store::Data::Bytes(_) => joiner.push(blob.shared_view()),

@@ -168,20 +168,12 @@ pub struct ZlibReaderArrayList<'a> {
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
     fn drop(&mut self) {
-        self.end();
+        // SAFETY: zlib was initialized via inflateInit2_, or has no state to free.
+        unsafe { inflateEnd(self.zlib.as_ptr()) };
     }
 }
 
 impl<'a> ZlibReaderArrayList<'a> {
-    pub(crate) fn end(&mut self) {
-        // always free with `inflateEnd`
-        if self.state != ZlibReaderArrayListState::End {
-            // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(self.zlib.as_ptr()) };
-            self.state = ZlibReaderArrayListState::End;
-        }
-    }
-
     pub fn init(input: &'a [u8], list: &'a mut Vec<u8>) -> Result<Self, ZlibError> {
         let options = Options {
             window_bits: 15 + 32,
@@ -300,7 +292,7 @@ impl<'a> ZlibReaderArrayList<'a> {
                             self.zlib.set_total_out(total_out);
                             continue;
                         }
-                        self.end();
+                        self.state = ZlibReaderArrayListState::End;
                         return Ok(());
                     }
                     ReturnCode::MemError => {
@@ -626,14 +618,6 @@ pub struct ZlibCompressorArrayList<'a> {
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {
-    pub(crate) fn end(&mut self) {
-        if self.state != ZlibCompressorArrayListState::End {
-            // SAFETY: zlib was initialized via deflateInit2_; safe to end.
-            unsafe { deflateEnd(self.zlib.as_ptr()) };
-            self.state = ZlibCompressorArrayListState::End;
-        }
-    }
-
     pub fn init(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
@@ -695,7 +679,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
             if self.list_ptr.len() == self.list_ptr.capacity()
                 && self.list_ptr.try_reserve(4096).is_err()
             {
-                self.end();
                 self.state = ZlibCompressorArrayListState::Error;
                 return Err(ZlibError::OutOfMemory);
             }
@@ -715,11 +698,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
             match rc {
                 ReturnCode::StreamEnd => {
-                    self.end();
+                    self.state = ZlibCompressorArrayListState::End;
                     return Ok(());
                 }
                 ReturnCode::MemError => {
-                    self.end();
                     self.state = ZlibCompressorArrayListState::Error;
                     return Err(ZlibError::OutOfMemory);
                 }
@@ -729,7 +711,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 | ReturnCode::NeedDict
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
-                    self.end();
                     self.state = ZlibCompressorArrayListState::Error;
                     return Err(ZlibError::ZlibError);
                 }
@@ -742,7 +723,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
 impl<'a> Drop for ZlibCompressorArrayList<'a> {
     fn drop(&mut self) {
-        self.end();
+        // SAFETY: zlib was initialized via deflateInit2_, or has no state to free.
+        unsafe { deflateEnd(self.zlib.as_ptr()) };
     }
 }
 

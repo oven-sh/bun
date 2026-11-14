@@ -732,6 +732,28 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) use network_interfaces_windows as network_interfaces;
 
+    /// The list that `getifaddrs` returns.
+    #[cfg(unix)]
+    struct Interfaces(*mut libc::ifaddrs);
+
+    #[cfg(unix)]
+    impl Interfaces {
+        fn iter(&self) -> impl Iterator<Item = &libc::ifaddrs> {
+            // SAFETY: each link is null or an entry that lives until `drop`.
+            core::iter::successors(unsafe { self.0.as_ref() }, |it| unsafe {
+                it.ifa_next.as_ref()
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Interfaces {
+        fn drop(&mut self) {
+            // SAFETY: returned by getifaddrs
+            unsafe { libc::freeifaddrs(self.0) };
+        }
+    }
+
     #[cfg(unix)]
     pub(crate) fn network_interfaces_posix(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -763,10 +785,7 @@ mod _impl {
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
         }
-        scopeguard::defer! {
-            // SAFETY: returned by getifaddrs
-            unsafe { libc::freeifaddrs(interface_start) };
-        };
+        let interfaces = Interfaces(interface_start);
 
         // We'll skip interfaces that aren't actually available
         fn skip(iface: &libc::ifaddrs) -> bool {
@@ -807,13 +826,8 @@ mod _impl {
         let ret = JSValue::create_empty_object(global_this, 0);
 
         // Populate each interface object
-        let mut it = interface_start;
-        while !it.is_null() {
-            // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
-            let next = iface.ifa_next;
+        for iface in interfaces.iter() {
             if skip(iface) || is_link_layer(iface) {
-                it = next;
                 continue;
             }
 
@@ -909,27 +923,20 @@ mod _impl {
             // mac <string> The MAC address of the network interface
             {
                 // We need to search for the link-layer interface whose name matches this one
-                let mut ll_it = interface_start;
                 let maybe_ll_addr: Option<*const c_void> = 'search: {
-                    while !ll_it.is_null() {
-                        // SAFETY: ll_it is a valid pointer in the linked list
-                        let ll_iface = unsafe { &*ll_it };
-                        let ll_next = ll_iface.ifa_next;
+                    for ll_iface in interfaces.iter() {
                         if skip(ll_iface) || !is_link_layer(ll_iface) {
-                            ll_it = ll_next;
                             continue;
                         }
 
                         // SAFETY: ifa_name is a NUL-terminated C string
                         let ll_name = unsafe { bun_core::ffi::cstr(ll_iface.ifa_name) }.to_bytes();
                         if !strings::has_prefix(ll_name, interface_name) {
-                            ll_it = ll_next;
                             continue;
                         }
                         if ll_name.len() > interface_name.len()
                             && ll_name[interface_name.len()] != b':'
                         {
-                            ll_it = ll_next;
                             continue;
                         }
 
@@ -1005,8 +1012,6 @@ mod _impl {
                 array.put_index(global_this, 0, interface)?;
                 ret.put_may_be_index(global_this, &key, array)?;
             }
-
-            it = next;
         }
 
         Ok(ret)

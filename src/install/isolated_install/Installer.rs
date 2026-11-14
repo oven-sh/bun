@@ -614,9 +614,9 @@ impl<'a> Installer<'a> {
         let pkg_bins = self.lockfile().packages.items_bin();
 
         let mut members: Vec<PackageID> = Vec::new();
-        for (index, scripts) in store.entries.items_scripts().iter().enumerate() {
-            let entry_id = StoreEntryId::from(index as u32);
-            if scripts.get().is_some()
+        for task in &self.tasks {
+            let entry_id = task.entry_id;
+            if task.scripts.is_some()
                 && self.is_member(entry_id)
                 && pkg_bins[store.ids(entry_id).pkg_id as usize].tag != bin::Tag::None
                 && !self.left_out_entries.contains(&entry_id)
@@ -872,9 +872,9 @@ impl<'a> Installer<'a> {
         let entries = &self.store.entries;
 
         let mut names: Vec<Box<[u8]>> = Vec::new();
-        for (scripts, node_id) in entries.items_scripts().iter().zip(entries.items_node_id()) {
+        for (task, node_id) in self.tasks.iter().zip(entries.items_node_id()) {
             let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-            if scripts.get().is_none()
+            if task.scripts.is_none()
                 || !self
                     .trusted_dependencies_from_update_requests
                     .contains(&pkg_id)
@@ -1003,6 +1003,8 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
+    /// Set by `Step::RunPreinstall`. The main thread reads it while the task isn't running.
+    pub(crate) scripts: Option<Box<package::scripts::List>>,
     /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
@@ -1020,7 +1022,7 @@ pub enum Result {
     None,
     Err(TaskError),
     Blocked,
-    /// Those of `store.entries.items_scripts()[entry_id]`, from its `first_index` on.
+    /// Those of `Task::scripts`, from its `first_index` on.
     RunScripts,
     Done,
 }
@@ -1240,13 +1242,7 @@ impl Task {
                 }
 
                 Step::RunPostInstallAndPrePostPrepare => {
-                    // Written, if at all, by this same Task in `Step::RunPreinstall`.
-                    if let Some(list) = entries.items_scripts()[entry_id.get() as usize].get() {
-                        // SAFETY: single-owner — the slot holds a `*mut List` boxed per entry, and
-                        // each Task is the unique consumer of its own `entry_id`. No other
-                        // `&`/`&mut` to this allocation is live.
-                        let list = unsafe { &mut *list };
-
+                    if let Some(list) = &mut self.scripts {
                         if list.first_index == 0 {
                             for (i, item) in list.items[1..].iter().enumerate() {
                                 if item.is_some() {
@@ -1343,10 +1339,7 @@ impl Task {
         };
 
         let has_preinstall = list.first_index == 0;
-        // Only this task writes the slot, and nothing reads it until the task returns
-        // `Result::RunScripts`.
-        installer.store.entries.items_scripts()[self.entry_id.get() as usize]
-            .set(Some(bun_core::heap::into_raw(Box::new(list))));
+        self.scripts = Some(Box::new(list));
         Ok(has_preinstall)
     }
 

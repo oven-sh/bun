@@ -5779,7 +5779,6 @@ impl VirtualMachine {
             }
             drop_source_code_printer();
 
-            // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
             drop(core::mem::take(&mut (*this).source_mappings));
 
             if let Some(hooks) = runtime_hooks() {
@@ -7428,24 +7427,7 @@ impl VirtualMachine {
             )?;
         }
 
-        // This is usually unsafe to do, but we are protecting them each time first.
-        let mut errors_to_append: Vec<JSValue> = Vec::new();
-        // Each appended error is unprotected at scope exit.
-        // `BackRef` (constructed from `&raw mut` via `NonNull` so the tag is
-        // not popped by later `errors_to_append.push` reborrows) lets the drop
-        // body read the Vec safely.
-        struct UnprotectAll(bun_ptr::BackRef<Vec<JSValue>>);
-        impl Drop for UnprotectAll {
-            fn drop(&mut self) {
-                // BackRef invariant: borrows the caller's stack `Vec`, live for this scope.
-                for v in self.0.iter() {
-                    v.unprotect();
-                }
-            }
-        }
-        let _unprotect_guard = UnprotectAll(bun_ptr::BackRef::from(
-            NonNull::new(&raw mut errors_to_append).expect("stack addr"),
-        ));
+        let mut errors_to_append: Vec<crate::ProtectedJSValue> = Vec::new();
 
         if is_error_instance {
             let mut saw_cause = false;
@@ -7481,8 +7463,7 @@ impl VirtualMachine {
                     if field.eq_ascii(b"cause") {
                         saw_cause = true;
                     }
-                    value.protect();
-                    errors_to_append.push(value);
+                    errors_to_append.push(value.protected());
                 } else if kind.is_object()
                     || kind.is_array()
                     || value.is_primitive()
@@ -7591,8 +7572,7 @@ impl VirtualMachine {
                                 " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"
                             )?;
                         } else {
-                            cause.protect();
-                            errors_to_append.push(cause);
+                            errors_to_append.push(cause.protected());
                         }
                     }
                 }
@@ -7641,7 +7621,7 @@ impl VirtualMachine {
         }
 
         let mut exception_list = exception_list;
-        for &err in &errors_to_append {
+        for err in &errors_to_append {
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
@@ -7650,7 +7630,7 @@ impl VirtualMachine {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
             } else {
                 self.print_error_instance_js(
-                    err,
+                    err.value(),
                     exception_list.as_deref_mut(),
                     formatter,
                     writer,
@@ -7915,15 +7895,7 @@ impl VirtualMachine {
         // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
-        // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
-        // ref into the table (reclaimed by `put_value`'s replace path /
-        // `SavedSourceMap` teardown).
-        self.source_mappings.put_value(
-            path,
-            crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
-                &map,
-            ))),
-        );
+        (self.source_mappings).put_parsed(path, std::sync::Arc::clone(&map));
 
         let mapping = map.find_mapping(line, column)?;
 

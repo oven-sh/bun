@@ -14,23 +14,21 @@
 //! resolve thread pool without ever parking a worker on a condvar, and
 //! without holding the full compressed or decompressed tarball in memory.
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use bun_archive::tar::{self, Event};
 use bun_collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
-use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{self, Output, env_var, fmt as bun_fmt};
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::{self, Dir, Fd, File, FileKind, Mode, O};
-use bun_threading::{Mutex, thread_pool};
+use bun_threading::{Guarded, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
-use crate::cache_publish::StagedEntry;
+use crate::cache_publish::UnfinishedEntry;
 use crate::integrity::{self, Integrity};
 use crate::package_manager_real::PackageManager;
 
@@ -43,33 +41,10 @@ type OSPathZ<'a> = &'a OSPathSliceZ;
 // `finish` borrows the task's fields through a raw copy of it
 // would be aliased UB; raw pointers avoid forming aliased references.
 pub struct TarballStream {
-    // ---------------------------------------------------------------------
-    // Cross-thread producer state (HTTP → worker)
-    // ---------------------------------------------------------------------
-    mutex: Mutex,
-
-    /// Compressed .tgz bytes that have arrived from the HTTP thread but have
-    /// not yet been moved to `reading`.
-    pending: Vec<u8>,
-
-    /// True once the HTTP thread has delivered the final chunk (or an error).
-    closed: bool,
-
-    /// Set if the HTTP request failed mid-stream. Unless the decoder still
-    /// reached end-of-archive and the digest verifies, this — not
-    /// the decoder's truncation error — is the failure, and `finish()` hands
-    /// the NetworkTask back to be retried as a failed download.
-    http_err: Option<crate::Error>,
+    incoming: Guarded<Incoming>,
 
     /// Cached response status (metadata only arrives on the first callback).
     pub(crate) status_code: u32,
-
-    /// True while a drain task is either queued on the thread pool or
-    /// running. `on_chunk` sets it before scheduling; `drain` clears it when
-    /// it runs out of input and decides to yield. Both transitions happen
-    /// with `mutex` held, and whoever does not own it stops touching `*this`
-    /// at the following `unlock()`.
-    draining: AtomicBool,
 
     // ---------------------------------------------------------------------
     // Drain-side state (touched only by one drain task at a time)
@@ -87,7 +62,6 @@ pub struct TarballStream {
     /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
     hasher: integrity::Streaming,
 
-    bytes_received: usize,
     /// `Content-Length` of the response, when the server sent one.
     pub(crate) content_length: Option<usize>,
     fail: Option<crate::Error>,
@@ -98,6 +72,20 @@ pub struct TarballStream {
 
     network_task: *mut NetworkTask,
     package_manager: *mut PackageManager,
+}
+
+/// What the HTTP thread hands to the drain task.
+#[derive(Default)]
+struct Incoming {
+    /// Compressed .tgz bytes that have not yet been moved to `reading`.
+    pending: Vec<u8>,
+    /// True once the HTTP thread has delivered the final chunk (or an error).
+    closed: bool,
+    /// The request failed mid-stream, which is the failure unless the archive is whole and verifies.
+    http_err: Option<crate::Error>,
+    bytes_received: usize,
+    /// A drain task is queued or running. Whoever doesn't own it is done with the stream on unlock.
+    draining: bool,
 }
 
 /// What the decoder's events are applied to. Nothing in here is touched by the HTTP thread, so the
@@ -116,9 +104,8 @@ struct Extraction {
     /// touches the filesystem.
     // Not a `Dir`, which closes 0-2: auto-install can run after script has closed one of them.
     dest: Option<File>,
-    /// Owned copy of the temp-directory name.
-    // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
-    tmpname: ZBox,
+    /// After `dest`: Windows can't remove a directory that is open.
+    staging: Option<UnfinishedEntry>,
 
     /// Resolved first-directory name for GitHub tarballs (written to
     /// `.bun-tag` and used for the cache folder name).
@@ -213,12 +200,8 @@ impl TarballStream {
         );
 
         Box::new(TarballStream {
-            mutex: Mutex::new(),
-            pending: Vec::new(),
-            closed: false,
-            http_err: None,
+            incoming: Guarded::default(),
             status_code: 0,
-            draining: AtomicBool::new(false),
             reading: Vec::new(),
             read_pos: 0,
             decoder: None,
@@ -227,7 +210,7 @@ impl TarballStream {
                 out: None,
                 write_strategy: bun_archive::WriteStrategy::default(),
                 dest: None,
-                tmpname: ZBox::from_bytes(b""),
+                staging: None,
                 resolved_github_dirname,
                 want_first_dirname,
                 npm_mode,
@@ -238,7 +221,6 @@ impl TarballStream {
                 extract_task,
             },
             hasher,
-            bytes_received: 0,
             content_length: None,
             fail: None,
             drain_task: thread_pool::Task {
@@ -270,25 +252,22 @@ impl TarballStream {
         // SAFETY: see fn-level # Safety — `this` is live, raw-ptr field
         // projection only (no `&mut TarballStream` formed).
         unsafe {
-            (*this).mutex.lock();
-            if !chunk.is_empty() {
-                (*this).pending.extend_from_slice(chunk);
-                (*this).bytes_received += chunk.len();
-            }
-            if is_last {
-                (*this).closed = true;
-            }
-            if let Some(e) = err {
-                (*this).http_err = Some(e);
-            }
-            let pending_len = (*this).pending.len();
-
-            // Batch sub-threshold chunks so each one doesn't re-wake a worker
-            // once the drain has yielded; `is_last`/`err` always schedule so
-            // `finish()` never waits on the threshold.
-            let schedule = (is_last || err.is_some() || pending_len >= drain_threshold)
-                && !(*this).draining.swap(true, Ordering::AcqRel);
-            (*this).mutex.unlock();
+            let schedule = {
+                let mut incoming = (*this).incoming.lock();
+                if !chunk.is_empty() {
+                    incoming.pending.extend_from_slice(chunk);
+                    incoming.bytes_received += chunk.len();
+                }
+                if is_last {
+                    incoming.closed = true;
+                }
+                if let Some(e) = err {
+                    incoming.http_err = Some(e);
+                }
+                // One wakeup per batch of small chunks. `finish()` never waits on the threshold.
+                (is_last || err.is_some() || incoming.pending.len() >= drain_threshold)
+                    && !core::mem::replace(&mut incoming.draining, true)
+            };
 
             if schedule {
                 Self::schedule_drain(this);
@@ -298,7 +277,7 @@ impl TarballStream {
 
     /// # Safety
     /// `this` must be live and the caller must have just taken `draining`
-    /// (false -> true) with `mutex` held, so no worker is inside `drain()`.
+    /// (false -> true) with `incoming` locked, so no worker is inside `drain()`.
     /// Never forms `&mut TarballStream`.
     unsafe fn schedule_drain(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
@@ -350,9 +329,7 @@ impl TarballStream {
                         // If the body was cut short by a transport error,
                         // that is the failure; the decoder's complaint about
                         // the truncated input is just its symptom.
-                        (*this).mutex.lock();
-                        let http_err = (*this).http_err;
-                        (*this).mutex.unlock();
+                        let http_err = (*this).incoming.lock().http_err;
                         (*this).fail = Some(match (err, http_err) {
                             (crate::Error::Fail, Some(http_err)) => http_err,
                             (err, _) => err,
@@ -367,16 +344,12 @@ impl TarballStream {
                         // The decoder consumed everything we had. Yield the
                         // worker until the HTTP thread delivers the next
                         // chunk.
-                        (*this).mutex.lock();
-                        let again = !(*this).pending.is_empty() || (*this).closed;
-                        if !again {
-                            (*this).draining.store(false, Ordering::Release);
+                        let mut incoming = (*this).incoming.lock();
+                        if incoming.pending.is_empty() && !incoming.closed {
+                            incoming.draining = false;
+                            return;
                         }
-                        (*this).mutex.unlock();
-                        if again {
-                            continue;
-                        }
-                        return;
+                        continue;
                     }
                 }
 
@@ -387,21 +360,21 @@ impl TarballStream {
                 (*this).reading = Vec::new();
                 (*this).read_pos = 0;
 
-                (*this).mutex.lock();
+                let mut incoming = (*this).incoming.lock();
                 // Hash any bytes that arrived after the decoder hit
                 // end-of-archive so the integrity digest covers the full
                 // response (tar zero-padding, gzip footer). Skip this once
                 // an error is recorded — the digest won't be checked anyway.
-                if (*this).fail.is_none() && !(*this).pending.is_empty() {
-                    (*this).hasher.update(&(*this).pending);
+                if (*this).fail.is_none() && !incoming.pending.is_empty() {
+                    (*this).hasher.update(&incoming.pending);
                 }
                 // After EOF/failure we stop feeding the decoder but must keep
                 // consuming (and discarding) chunks until the HTTP thread
                 // closes the stream; freeing ourselves earlier would let the
                 // next `notify` dereference a dead pointer.
-                (*this).pending.clear();
-                let closed = (*this).closed;
-                (*this).mutex.unlock();
+                incoming.pending.clear();
+                let closed = incoming.closed;
+                drop(incoming);
                 if closed {
                     Self::finish(this);
                     // `this` is freed; nothing below may touch it.
@@ -411,16 +384,11 @@ impl TarballStream {
                 // Archive is done (or failed) but the HTTP response has not
                 // finished yet. Yield; the next `on_chunk` will reschedule us
                 // to discard the new bytes and eventually observe `closed`.
-                (*this).mutex.lock();
-                let again = !(*this).pending.is_empty() || (*this).closed;
-                if !again {
-                    (*this).draining.store(false, Ordering::Release);
+                let mut incoming = (*this).incoming.lock();
+                if incoming.pending.is_empty() && !incoming.closed {
+                    incoming.draining = false;
+                    return;
                 }
-                (*this).mutex.unlock();
-                if again {
-                    continue;
-                }
-                return;
             }
         } // unsafe
     }
@@ -431,39 +399,35 @@ impl TarballStream {
     /// # Safety
     /// `this` must be live. The HTTP thread may be inside `on_chunk()`, so
     /// this must NOT materialise `&mut TarballStream` — all
-    /// access is via raw-ptr field projection. Producer fields (`pending`/`closed`)
-    /// are synchronised by `mutex`; drain-side fields (`reading`/
+    /// access is via raw-ptr field projection. Drain-side fields (`reading`/
     /// `read_pos`/`hasher`) are owned by the single active drain task.
     unsafe fn take_pending(this: *mut Self) -> bool {
         // SAFETY: see fn-level # Safety — raw-ptr field projection only.
         unsafe {
-            (*this).mutex.lock();
+            let mut incoming = (*this).incoming.lock();
 
-            if (*this).pending.is_empty() {
-                let closed = (*this).closed;
-                (*this).mutex.unlock();
-                return closed;
+            if incoming.pending.is_empty() {
+                return incoming.closed;
             }
 
             // Hash before the decoder sees the bytes so integrity covers exactly
             // what came off the socket.
-            (*this).hasher.update(&(*this).pending);
+            (*this).hasher.update(&incoming.pending);
 
             if (*this).reading.len() == (*this).read_pos {
                 // Previous buffer fully consumed — swap so the HTTP thread can
                 // reuse its capacity without reallocating.
                 (*this).reading.clear();
-                core::mem::swap(&mut (*this).reading, &mut (*this).pending);
+                core::mem::swap(&mut (*this).reading, &mut incoming.pending);
                 (*this).read_pos = 0;
             } else {
                 // Keep the unconsumed tail in front of the new bytes.
                 let read_pos = (*this).read_pos;
                 (*this).reading.drain_front(read_pos);
                 (*this).read_pos = 0;
-                (*this).reading.extend_from_slice(&(*this).pending);
-                (*this).pending.clear();
+                (*this).reading.extend_from_slice(&incoming.pending);
+                incoming.pending.clear();
             }
-            (*this).mutex.unlock();
             true
         } // unsafe
     }
@@ -472,16 +436,14 @@ impl TarballStream {
     ///
     /// # Safety
     /// `this` must be live, and the caller the one active drain task. The
-    /// HTTP thread may be inside `on_chunk()`, so the producer fields are
-    /// only read under `mutex`.
+    /// HTTP thread may be inside `on_chunk()`.
     unsafe fn step(this: *mut Self) -> crate::Result<()> {
-        // SAFETY: see fn-level # Safety. Everything but `mutex`, `pending`
-        // and `closed` is drain-local.
+        // SAFETY: see fn-level # Safety. Everything but `incoming` is drain-local.
         unsafe {
-            (*this).mutex.lock();
+            let incoming = (*this).incoming.lock();
             // Nothing follows `reading` once the body has ended and all of it was taken.
-            let eof = (*this).closed && (*this).pending.is_empty();
-            (*this).mutex.unlock();
+            let eof = incoming.closed && incoming.pending.is_empty();
+            drop(incoming);
 
             if (*this).decoder.is_none() {
                 let head: &[u8] = &(*this).reading;
@@ -576,12 +538,11 @@ impl Extraction {
             };
         let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
-        // allocator.dupeZ → owned NUL-terminated copy.
-        self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
+        self.staging = Some(UnfinishedEntry::new(tarball.temp_dir, tmpname.as_bytes()));
 
         let dest = bun_sys::make_path::make_open_path(
             Dir::borrow(&tarball.temp_dir),
-            self.tmpname.as_bytes(),
+            tmpname.as_bytes(),
             Default::default(),
         )?;
         self.dest = Some(File::from_fd(dest.into_raw()));
@@ -754,10 +715,6 @@ impl TarballStream {
             // SAFETY: see comment above; network_task is live until published below.
             (*network).response_buffer = Default::default();
 
-            // The HTTP thread delivered its final chunk before `closed` was
-            // set, so `http_err` is stable without the lock.
-            let http_err = (*this).http_err;
-
             // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
             // `(*this).extraction.extract_task` is a raw `*mut Task` (not `&mut`), so this
             // is the only writer — no aliasing with a stored reference.
@@ -765,7 +722,7 @@ impl TarballStream {
             let Job::Extract { tarball, data, .. } = &mut (*task).job else {
                 unreachable!("`create_extract_task_for_streaming` built it");
             };
-            match (*this).populate_result(tarball, &mut (*task).log, http_err) {
+            match (*this).populate_result(tarball, &mut (*task).log) {
                 Ok(extracted) => {
                     *data = Some(extracted);
                     (*task).err = None;
@@ -775,20 +732,6 @@ impl TarballStream {
                     (*task).err = Some(err);
                     (*task).status = TaskStatus::Fail;
                 }
-            }
-
-            // Temp-dir cleanup must happen before we release the stream or
-            // publish the task: both `(*this).extraction.tmpname` and
-            // `tarball.temp_dir` become invalid once
-            // the stream drops / the main thread recycles the Task.
-            // SAFETY: task is live (see above).
-            if (*task).status != TaskStatus::Success && !(*this).extraction.tmpname.is_empty() {
-                // `populate_result` closes `dest` on the success path before the
-                // rename; the early-return failure paths leave it open, so close
-                // it here first — Windows can't remove an open directory.
-                (*this).extraction.dest = None;
-                let _ = Dir::borrow(&tarball.temp_dir)
-                    .delete_tree((*this).extraction.tmpname.as_bytes());
             }
 
             if let Some(crate::Error::Http(err)) = (*task).err
@@ -841,7 +784,6 @@ impl TarballStream {
         &mut self,
         tarball: &crate::ExtractTarball,
         log: &mut bun_ast::Log,
-        http_err: Option<crate::Error>,
     ) -> Result<crate::ExtractData, crate::Error> {
         if let Some(err) = self.fail {
             if matches!(err, crate::Error::Http(_)) {
@@ -881,7 +823,7 @@ impl TarballStream {
 
         if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
             if !self.hasher.verify() {
-                if let Some(http_err) = http_err {
+                if let Some(http_err) = self.incoming.get_mut().http_err {
                     // The decoder found the end-of-archive marker but the
                     // body still ended early (gzip trailer, tar padding):
                     // the same failed download as above.
@@ -925,21 +867,18 @@ impl TarballStream {
         let (name, basename) = tarball.name_and_basename();
 
         let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
-        let mut result = tarball.move_to_cache_directory(
-            log,
-            StagedEntry::new(tarball.temp_dir, self.extraction.tmpname.as_zstr()),
-            name,
-            basename,
-            self.extraction.resolved_github_dirname,
-            &integrity,
-        )?;
+        let staging = self.extraction.staging.take().unwrap();
+        let mut result = staging.finish(|staged| {
+            let resolved = self.extraction.resolved_github_dirname;
+            tarball.move_to_cache_directory(log, staged, name, basename, resolved, &integrity)
+        })?;
         result.integrity = integrity;
 
         if PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
                 "[{}] Streamed {} tarball → {} entries<r>",
                 bun_fmt::for_terminal(bstr::BStr::new(name)),
-                bun_fmt::size(self.bytes_received, Default::default()),
+                bun_fmt::size(self.incoming.get_mut().bytes_received, Default::default()),
                 self.extraction.entry_count,
             );
             Output::flush();
@@ -951,14 +890,13 @@ impl TarballStream {
     /// Prepare this stream for another HTTP attempt after a failed request
     /// that never scheduled a drain.
     pub(crate) fn reset_for_retry(&mut self) {
-        self.mutex.lock();
-        self.pending.clear();
-        self.closed = false;
-        self.http_err = None;
+        let incoming = self.incoming.get_mut();
+        incoming.pending.clear();
+        incoming.closed = false;
+        incoming.http_err = None;
+        incoming.bytes_received = 0;
         self.status_code = 0;
-        self.bytes_received = 0;
         self.content_length = None;
-        self.mutex.unlock();
     }
 }
 

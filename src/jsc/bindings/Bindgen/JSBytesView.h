@@ -18,6 +18,9 @@ using BytesCopy = std::optional<WTF::MallocSpan<uint8_t>>;
 // `bytes` become a copy of themselves, which `copy` holds, unless there are none. False if it threw: allocating can.
 bool copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>& bytes, BytesCopy& copy);
 
+// A copy that is zeroed before it is freed, as it can be a TLS key. Null if allocating failed.
+RefPtr<JSC::ArrayBuffer> tryCopySensitiveBytes(std::span<const uint8_t>);
+
 // Whether it holds a Blob: a Blob, or a `Bun.build()` output. Throws for one whose bytes are not in memory: a file.
 bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
 

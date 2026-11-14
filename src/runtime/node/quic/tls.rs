@@ -1,6 +1,5 @@
 use core::ffi::{CStr, c_char, c_int};
 use core::net::IpAddr;
-use core::ptr::null_mut;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
@@ -122,7 +121,12 @@ impl TlsConfig {
         {
             let ca_pem = collect_pem(global, v)?;
             if !ca_pem.is_empty() {
-                given.ca = Some(ca_pem.iter().map(|pem| bun_core::dupe_z(pem)).collect());
+                given.ca = Some(
+                    ca_pem
+                        .iter()
+                        .map(|pem| bun_core::SensitiveCString::new(pem))
+                        .collect(),
+                );
             }
         }
         let trust = global.bun_vm().tls_config(given, is_server);
@@ -553,41 +557,13 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if cert.is_null() {
         return None;
     }
-    let mut der: *mut u8 = null_mut();
-    // SAFETY: cert is live; i2d allocates.
-    let len = unsafe { ssl::i2d_X509(cert, core::ptr::from_mut(&mut der)) };
-    if len <= 0 || der.is_null() {
-        return None;
-    }
-    // SAFETY: i2d allocated `der[..len]`.
-    let bytes = unsafe { core::slice::from_raw_parts(der, len as usize).to_vec() };
-    // SAFETY: i2d's allocation is freed with OPENSSL_free.
-    unsafe { ssl::OPENSSL_free(der.cast()) };
-    Some(bytes)
+    Some(ssl::X509::opaque_ref(cert).to_der()?.to_vec())
 }
 
 pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl_ptr.is_null() {
         return None;
     }
-    // SAFETY: `ssl_ptr` is non-null (checked above) and live for this call;
-    // SSL_get_peer_certificate returns an owned +1 X509 reference we release
-    // below.
-    unsafe {
-        let cert = ssl::SSL_get_peer_certificate(ssl_ptr);
-        if cert.is_null() {
-            return None;
-        }
-        let mut der: *mut u8 = null_mut();
-        let len = ssl::i2d_X509(cert, core::ptr::from_mut(&mut der));
-        let result = if len > 0 && !der.is_null() {
-            let bytes = core::slice::from_raw_parts(der, len as usize).to_vec();
-            ssl::OPENSSL_free(der.cast());
-            Some(bytes)
-        } else {
-            None
-        };
-        ssl::X509_free(cert);
-        result
-    }
+    let cert = ssl::SSL::opaque_ref(ssl_ptr).peer_certificate()?;
+    Some(cert.to_der()?.to_vec())
 }

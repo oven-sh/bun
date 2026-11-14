@@ -1072,7 +1072,18 @@ pub struct MarkedArrayBuffer {
 /// conversion path bailed) frees them here.
 impl Drop for MarkedArrayBuffer {
     fn drop(&mut self) {
-        self.destroy();
+        if !self.owns_buffer {
+            return;
+        }
+        if self.is_private_copy {
+            bun_sys::private_copy::unmap(
+                self.buffer.ptr.cast(),
+                core::ptr::without_provenance_mut(self.buffer.byte_len),
+            );
+            return;
+        }
+        // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
+        unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
     }
 }
 
@@ -1095,7 +1106,7 @@ impl MarkedArrayBuffer {
     pub fn from_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             // An empty boxed slice has no backing allocation (dangling ptr):
-            // nothing to own, so `destroy()` must not free it.
+            // nothing to own, so `drop` must not free it.
             owns_buffer: !bytes.is_empty(),
             is_private_copy: false,
             buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
@@ -1126,24 +1137,6 @@ impl MarkedArrayBuffer {
     #[inline]
     pub fn slice(&self) -> &[u8] {
         self.buffer.byte_slice()
-    }
-
-    /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
-    /// allocator (e.g. via `from_string`/`from_bytes`) and never handed to JSC.
-    /// Idempotent; also what `Drop` does.
-    pub fn destroy(&mut self) {
-        if self.owns_buffer {
-            self.owns_buffer = false;
-            if self.is_private_copy {
-                bun_sys::private_copy::unmap(
-                    self.buffer.ptr.cast(),
-                    core::ptr::without_provenance_mut(self.buffer.byte_len),
-                );
-                return;
-            }
-            // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
-            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
-        }
     }
 
     /// Ownership of the bytes moves to JSC (freed by the buffer's deallocator).

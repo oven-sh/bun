@@ -5626,7 +5626,7 @@ describe.concurrent("oxlint's command line", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--print-config output matches oxlint's", async () => {
+  test("--print-config output matches oxlint's, except that a rule's options follow its severity in one array", async () => {
     using dir = tempDir("bun-lint-print-config", {
       ".oxlintrc.json": JSON.stringify({
         plugins: ["import", "typescript"],
@@ -5659,7 +5659,7 @@ describe.concurrent("oxlint's command line", () => {
       [
         "rules",
         {
-          eqeqeq: ["warn", ["smart"]],
+          eqeqeq: ["warn", "smart"],
           "no-alert": "deny",
           "no-console": "allow",
           "no-eval": "deny",
@@ -5677,7 +5677,7 @@ describe.concurrent("oxlint's command line", () => {
             env: null,
             globals: null,
             plugins: null,
-            rules: { "no-var": "allow", eqeqeq: ["deny", ["always"]] },
+            rules: { "no-var": "allow", eqeqeq: ["deny", "always"] },
           },
         ],
       ],
@@ -5689,6 +5689,254 @@ describe.concurrent("oxlint's command line", () => {
     expect(settings.react.version).toBe("18.2.0");
     expect(stdout.endsWith("\n}\n")).toBe(true);
     expect(exitCode).toBe(0);
+  });
+
+  test("--print-config output can be loaded with -c and lints the same", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: { eqeqeq: ["error", "smart"], "no-var": "allow" },
+        overrides: [{ files: ["src/**"], rules: { "no-var": "deny", "no-debugger": ["error"] } }],
+      }),
+      "a.js": code,
+      // `smart` allows `== null`.
+      "c.js": "if (x == null) {}\n",
+      "src/b.js": code,
+    };
+    const first = await lint(files, ["--print-config"]);
+    const printed = JSON.parse(first.raw);
+    expect(printed.rules).toEqual({ eqeqeq: ["deny", "smart"], "no-var": "allow" });
+    expect(printed.overrides[0].rules).toEqual({ "no-var": "deny", "no-debugger": "deny" });
+    expect(first.exitCode).toBe(0);
+    const expected = ["a.js:2:7 eqeqeq", "src/b.js:1:1 no-var", "src/b.js:2:13 no-debugger", "src/b.js:2:7 eqeqeq"];
+    const [before, reloaded, again] = await Promise.all([
+      lint(files),
+      lint({ ...files, "printed.json": first.raw }, ["-c", "printed.json", "."]),
+      lint({ ...files, ".oxlintrc.json": first.raw }, ["--print-config"]),
+    ]);
+    expect(before.problems).toEqual(expected);
+    expect(before.exitCode).toBe(1);
+    expect(reloaded.stderr).toBe("");
+    expect(reloaded.problems).toEqual(expected);
+    expect(reloaded.exitCode).toBe(1);
+    expect(again.raw).toBe(first.raw);
+  });
+
+  describe("--print-config with a file", () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: { "no-debugger": "off", curly: ["error", "all"] },
+        overrides: [{ files: ["src/special/**"], rules: { "no-debugger": "error" } }],
+      }),
+      "src/special/a.js": "debugger;\n",
+      "src/other/a.js": "debugger;\n",
+    };
+
+    test("prints the rules that apply to the file, without the overrides", async () => {
+      const [special, other] = await Promise.all([
+        lint(files, ["--print-config", "src/special/a.js"]),
+        lint(files, ["--print-config", "src/other/a.js"]),
+      ]);
+      expect(JSON.parse(special.raw).rules).toEqual({ curly: ["deny", "all"], "no-debugger": "deny" });
+      expect(JSON.parse(other.raw).rules).toEqual({ curly: ["deny", "all"], "no-debugger": "allow" });
+      expect(Object.keys(JSON.parse(special.raw))).not.toContain("overrides");
+      expect(Object.keys(JSON.parse(other.raw))).not.toContain("overrides");
+      expect(special.exitCode).toBe(0);
+    });
+
+    test.each(["src/special/a.js", "src/other/a.js"])("the printed config lints %s the same with -c", async file => {
+      const [{ raw: printed }, before] = await Promise.all([
+        lint(files, ["--print-config", file]),
+        lint(files, [file]),
+      ]);
+      const after = await lint({ ...files, "printed.json": printed }, ["-c", "printed.json", file]);
+      expect(after.stderr).toBe("");
+      expect(after.problems).toEqual(before.problems);
+      expect(before.problems).toEqual(file.includes("special") ? [`${file}:1:1 no-debugger`] : []);
+    });
+
+    test("a rule that the kind of file turns off is allow, and an override's plugin is listed", async () => {
+      const config = {
+        categories: { correctness: "off" },
+        plugins: ["typescript"],
+        rules: { "typescript/no-explicit-any": "error", "no-var": "error" },
+        overrides: [{ files: ["*.ts"], plugins: ["unicorn"], rules: { "unicorn/no-null": "error" } }],
+      };
+      const tree = { ".oxlintrc.json": JSON.stringify(config), "a.js": code, "a.ts": code };
+      const [bare, js, ts] = await Promise.all([
+        lint(tree, ["--print-config"]),
+        lint(tree, ["--print-config", "a.js"]),
+        lint(tree, ["--print-config", "a.ts"]),
+      ]);
+      expect(JSON.parse(bare.raw).rules).toEqual({ "no-var": "deny", "typescript/no-explicit-any": "deny" });
+      expect(JSON.parse(bare.raw).plugins).toEqual(["typescript"]);
+      expect(JSON.parse(js.raw).rules).toEqual({ "no-var": "deny", "typescript/no-explicit-any": "allow" });
+      expect(JSON.parse(js.raw).plugins).toEqual(["typescript"]);
+      expect(JSON.parse(ts.raw).rules).toEqual({
+        "no-var": "deny",
+        "typescript/no-explicit-any": "deny",
+        "unicorn/no-null": "deny",
+      });
+      expect(JSON.parse(ts.raw).plugins).toEqual(["unicorn", "typescript"]);
+    });
+
+    test("prints undefined for a file that isn't linted", async () => {
+      const ignoring = { ...files, ".oxlintrc.json": JSON.stringify({ ignorePatterns: ["src/other/**"] }) };
+      const [ignored, notCode, byFlag, byFile] = await Promise.all([
+        lint(ignoring, ["--print-config", "src/other/a.js"]),
+        lint(files, ["--print-config", "README.md"]),
+        lint(files, ["--ignore-pattern", "src/other/**", "--print-config", "src/other/a.js"]),
+        lint({ ...files, ".eslintignore": "src/other/a.js\n" }, ["--print-config", "src/other/a.js"]),
+      ]);
+      expect(ignored.raw).toBe("undefined\n");
+      expect(notCode.raw).toBe("undefined\n");
+      expect(byFlag.raw).toBe("undefined\n");
+      expect(byFile.raw).toBe("undefined\n");
+      expect(ignored.exitCode).toBe(0);
+    });
+
+    test("an override's globals, env and plugins, and the overrides of an extended file, are applied and left out", async () => {
+      const tree = {
+        ".oxlintrc.json": JSON.stringify({
+          extends: ["./base.json"],
+          categories: { correctness: "off" },
+          rules: { "no-undef": "error" },
+          overrides: [
+            {
+              files: ["src/**"],
+              globals: { FOO: "readonly" },
+              env: { browser: true },
+              rules: { "no-debugger": "error" },
+            },
+          ],
+        }),
+        "base.json": JSON.stringify({
+          categories: { suspicious: "warn" },
+          options: { typeAware: false },
+          overrides: [
+            { files: ["*.ts"], plugins: ["unicorn"], rules: { "unicorn/no-null": "error", "no-debugger": "off" } },
+          ],
+        }),
+        "src/x.ts": "FOO; window; debugger; null;\n",
+      };
+      const { raw } = await lint(tree, ["--print-config", "src/x.ts"]);
+      const printed = JSON.parse(raw);
+      expect(printed.rules).toMatchObject({ "no-debugger": "deny", "no-undef": "deny", "unicorn/no-null": "deny" });
+      expect(printed.rules["no-extend-native"]).toBe("warn");
+      expect(printed.categories).toEqual({ correctness: "allow", suspicious: "warn" });
+      expect(printed.options).toEqual({ typeAware: false });
+      expect(printed.plugins).toEqual(["unicorn", "typescript", "oxc"]);
+      expect(printed.env).toEqual({ builtin: true, browser: true });
+      expect(printed.globals).toEqual({ FOO: "readonly" });
+      expect(Object.keys(printed)).not.toContain("extends");
+      const [before, after] = await Promise.all([
+        lint(tree, ["src/x.ts"]),
+        lint({ ...tree, "printed.json": raw }, ["-c", "printed.json", "src/x.ts"]),
+      ]);
+      expect(before.problems).toEqual(["src/x.ts:1:14 no-debugger", "src/x.ts:1:24 unicorn/no-null"]);
+      expect(after.stderr).toBe("");
+      expect(after.problems).toEqual(before.problems);
+    });
+
+    test("lists the rules of JavaScript plugins for a file, and the plugins, so -c can load them", async () => {
+      const plugin = `module.exports = { meta: { name: "mine" }, rules: { "no-foo": { create: context => ({
+        Identifier: node => node.name === "foo" && context.report({ node, message: "foo" }) }) } } };`;
+      const tree = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          rules: { "no-var": "error" },
+          overrides: [{ files: ["src/**"], jsPlugins: ["./plugin.js"], rules: { "mine/no-foo": "error" } }],
+        }),
+        "plugin.js": plugin,
+        "src/a.js": "var foo = 1;\n",
+      };
+      const [{ raw }, before] = await Promise.all([
+        lint(tree, ["--print-config", "src/a.js"]),
+        lint(tree, ["src/a.js"]),
+      ]);
+      const printed = JSON.parse(raw);
+      expect(printed.rules).toEqual({ "no-var": "deny", "mine/no-foo": "deny" });
+      expect(printed.jsPlugins).toEqual([{ name: "mine", specifier: expect.stringContaining("plugin.js") }]);
+      expect(before.problems).toEqual(["src/a.js:1:1 no-var", "src/a.js:1:5 mine/no-foo"]);
+      // The plugin's path is that of the directory the config was printed in, which is gone.
+      const before_ = (dir: string) => {
+        const moved = { ...printed, jsPlugins: [{ name: "mine", specifier: join(dir, "plugin.js") }] };
+        writeFileSync(join(dir, "printed.json"), JSON.stringify(moved));
+      };
+      const after = await lint(tree, ["-c", "printed.json", "src/a.js"], { before: before_ });
+      expect(after.problems).toEqual(before.problems);
+    });
+
+    test("an override plugin's category rules that the config file turns off stay off with -D", async () => {
+      // The override's plugin gets the categories of the config file, not those of the command line.
+      const tree = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          overrides: [{ files: ["*.ts"], plugins: ["promise"] }],
+        }),
+        "a.ts": "export const p = new Promise.resolve(1);\n",
+      };
+      const { raw } = await lint(tree, ["--print-config", "a.ts", "-D", "correctness"]);
+      const printed = JSON.parse(raw);
+      expect(printed.categories).toEqual({ correctness: "deny" });
+      expect(printed.rules["promise/no-new-statics"]).toBe("allow");
+      const [before, after] = await Promise.all([
+        lint(tree, ["a.ts", "-D", "correctness"]),
+        lint({ ...tree, "printed.json": raw }, ["-c", "printed.json", "a.ts"]),
+      ]);
+      expect(before.problems).toEqual([]);
+      expect(after.problems).toEqual(before.problems);
+    });
+
+    test("an override's category rules that the linter skips are allow", async () => {
+      // oxlint applies `categories` to an override's plugins only if the override changes the set of plugins.
+      const tree = {
+        ".oxlintrc.json": JSON.stringify({
+          plugins: [],
+          overrides: [{ files: ["*.ts"], plugins: ["promise"], rules: { "no-var": "error" } }],
+        }),
+        "a.ts": "var p = new Promise.resolve(1);\n",
+      };
+      const { raw } = await lint(tree, ["--print-config", "a.ts", "-D", "suspicious"]);
+      const promise = Object.entries(JSON.parse(raw).rules).filter(it => it[0].startsWith("promise/"));
+      expect(promise).toContainEqual(["promise/no-new-statics", "allow"]);
+      // `-D suspicious` is a category of the command line, which the override's plugin doesn't get either.
+      expect(promise).toContainEqual(["promise/always-return", "allow"]);
+      expect(promise.filter(it => it[1] !== "allow")).toEqual([]);
+      const [before, after] = await Promise.all([
+        lint(tree, ["a.ts", "-D", "suspicious"]),
+        lint({ ...tree, "printed.json": raw }, ["-c", "printed.json", "a.ts"]),
+      ]);
+      expect(before.problems).toEqual(["a.ts:1:1 no-var", "a.ts:1:5 no-unused-vars"]);
+      expect(after.problems).toEqual(before.problems);
+    });
+
+    test("an override written as a list prints its files and rules", async () => {
+      const tree = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          overrides: [[["src/**"], [], null, null, null, null, { "no-var": "deny" }]],
+        }),
+      };
+      const { raw } = await lint(tree, ["--print-config"]);
+      expect(JSON.parse(raw).overrides).toEqual([
+        { files: ["src/**"], excludeFiles: [], env: null, globals: null, plugins: null, rules: { "no-var": "deny" } },
+      ]);
+    });
+
+    test("a type-aware rule that oxlint reports under its ESLint name has that name's severity for a file", async () => {
+      const tree = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          rules: { "require-await": "warn", "typescript/require-await": "error" },
+        }),
+        "a.ts": "",
+      };
+      const [bare, file] = await Promise.all([lint(tree, ["--print-config"]), lint(tree, ["--print-config", "a.ts"])]);
+      expect(JSON.parse(bare.raw).rules).toEqual({ "require-await": "warn", "typescript/require-await": "deny" });
+      expect(JSON.parse(file.raw).rules).toEqual({ "require-await": "warn", "typescript/require-await": "warn" });
+    });
   });
 
   test("--threads=0 is accepted", async () => {

@@ -308,6 +308,11 @@ export interface BundlerTestInput {
    * Pass an array to run multiple times with different options.
    */
   run?: boolean | BundlerTestRunOptions | BundlerTestRunOptions[];
+  /**
+   * The first entry point, run by `bun` without bundling, must print the `stdout` of the first `run`.
+   * The unbundled run gets the build `env` and the `env`, `args` and `bunArgs` of that `run`.
+   */
+  matchesBunRun?: boolean;
 
   /**
    * Shorthand for testing dead code elimination cases.
@@ -527,6 +532,7 @@ function expectBundled(
     legalComments,
     loader,
     mainFields,
+    matchesBunRun,
     matchesReference,
     metafile,
     minifyIdentifiers,
@@ -1691,6 +1697,44 @@ for (const [key, blob] of build.outputs) {
 
     if (onAfterBundle) {
       await onAfterBundle(api);
+    }
+
+    if (matchesBunRun) {
+      const firstRun = Array.isArray(run) ? run[0] : run;
+      if (typeof firstRun !== "object" || typeof firstRun.stdout !== "string") {
+        throw new Error(`[${id}] matchesBunRun needs a first \`run\` with a string \`stdout\``);
+      }
+      const cmd = [bunExe(), ...(firstRun.bunArgs ?? []), entryPaths[0], ...(firstRun.args ?? [])];
+      const unbundledEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries({ ...bunEnv, ...env })) {
+        if (typeof value === "string") unbundledEnv[key] = value.replaceAll("{{root}}", root);
+      }
+      Object.assign(unbundledEnv, firstRun.env);
+      await using unbundled = Bun.spawn({
+        cmd,
+        env: unbundledEnv,
+        timeout: 60_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: root,
+      });
+      const [unbundledStdout, unbundledStderr, unbundledExitCode] = await Promise.all([
+        unbundled.stdout.text(),
+        unbundled.stderr.text(),
+        unbundled.exited,
+      ]);
+      if (unbundled.signalCode) {
+        throw new Error(
+          `[${id}] unbundled run killed by ${unbundled.signalCode}\n` +
+            `cmd: ${cmd.join(" ")}\n` +
+            `STDOUT: ${unbundledStdout.slice(0, 2000)}\n` +
+            `STDERR: ${unbundledStderr.slice(0, 2000)}`,
+        );
+      }
+      expect({ stdout: unbundledStdout.trim(), stderr: unbundledStderr, exitCode: unbundledExitCode }).toEqual({
+        stdout: dedent(firstRun.stdout).trim(),
+        stderr: "",
+        exitCode: 0,
+      });
     }
 
     // check reference

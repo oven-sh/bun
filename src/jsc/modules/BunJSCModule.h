@@ -532,8 +532,11 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
 JSC_DEFINE_HOST_FUNCTION(functionGetRandomSeed,
-    (JSGlobalObject * globalObject, CallFrame*))
+    (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    // An object argument selects its realm: a `node:vm` context has no bun:jsc of its own.
+    if (JSValue argument = callFrame->argument(0); argument.isObject())
+        globalObject = asObject(argument)->globalObject();
     return JSValue::encode(jsNumber(globalObject->weakRandom().seed()));
 }
 

@@ -158,8 +158,12 @@ declare module "bun:jsc" {
    * Returns the seed of the pseudo-random number generator behind
    * `Math.random()`. The seed is chosen at random when Bun starts; see
    * {@link setRandomSeed}.
+   *
+   * The generator belongs to a global object. Without an argument this is the
+   * current one. Pass an object from another realm, for example the `Math` of
+   * a `node:vm` context, to read that realm's seed.
    */
-  function getRandomSeed(): number;
+  function getRandomSeed(object?: object): number;
 
   /**
    * Reseeds the pseudo-random number generator behind `Math.random()`, making
@@ -168,6 +172,8 @@ declare module "bun:jsc" {
    *
    * The generator belongs to the current global object, so this does not affect
    * `node:vm` contexts, and it has no effect on `node:crypto` or Web Crypto.
+   * To reseed every generator in the process at random, for example after a VM
+   * snapshot restore, use `Bun.reseedRandom()`.
    *
    * @param value The seed, converted to an unsigned 32-bit integer
    *

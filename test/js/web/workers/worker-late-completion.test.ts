@@ -217,6 +217,12 @@ const ROWS: Row[] = [
     parent: `port1.postMessage("late");`,
     weak: "CppTask",
   },
+  {
+    name: "Bun.reseedRandom() from the parent",
+    worker: ``,
+    parent: `Bun.reseedRandom();`,
+    weak: "CppTask",
+  },
 ];
 
 // The host: one worker, armed gate. The worker starts its work, reports

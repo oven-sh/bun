@@ -264,13 +264,6 @@ pub(crate) fn run_task(
             // the task owns a ref for its duration; `run_deferred` releases it.
             unsafe { crate::ipc::SendQueue::run_deferred(queue) };
         }),
-        task_tag::AsyncModule => boxed_arm!(
-            task,
-            [Install],
-            |module: bun_jsc::async_module::AsyncModule| -> JsResult<()> {
-                bun_jsc::async_module::AsyncModule::on_done(module)
-            }
-        )?,
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
             (
@@ -634,9 +627,6 @@ pub(crate) fn run_task(
             bun_jsc::mark_binding();
             cast!(JSCDeferredWorkTask).run(global)?;
         }
-        task_tag::PollPendingModulesTask => {
-            vm.modules.on_poll();
-        }
         task_tag::RuntimeTranspilerStore => in_features!(
             [RuntimeTranspiler],
             (
@@ -870,7 +860,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 87,
+    task_tag::COUNT == 85,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1637,7 +1627,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
-        task_tag::AsyncModule => release_boxed_in!([Install], bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
@@ -1740,7 +1729,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NativeBrotli => release_in!([NodeZlibBrotli], NativeBrotli),
         task_tag::NativeZlib => release_in!([NodeZlib], NativeZlib),
         task_tag::NativeZstd => release_in!([NodeZlibZstd], NativeZstd),
-        task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
         task_tag::PosixSignalTask => release!(PosixSignalTask),
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {

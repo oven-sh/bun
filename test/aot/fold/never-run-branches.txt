@@ -109,7 +109,7 @@ kept	ts	namespace N { if (typeof late) {} else { var v = 1; } let late = 1; }
 kept	ts	namespace N { if (typeof late) {} else { async function f() {} } let late = 1; }
 dropped	ts	namespace N { if (typeof late) {} else { function f() {} } let late = 1; }
 dropped	ts	if (typeof late) {} else { declare var v: number; } let late = 1;
-# a var at the level of the file is declared at the end of the file, unless only an if or a loop without braces stands between
+# a var at the level of the file is declared at the end of the file and leaves nothing in its place, unless only an `if`, a `while` or a `do` without braces stands between. In the head of a `for (;;)` a var that assigns no value stays as well
 dropped	cjs	if (typeof late) {} else { var v = 1; } let late = 1;
 kept	cjs	if (typeof late) {} else var v = 1; let late = 1;
 kept	cjs	if (typeof late) {} else if (late) var v = 1; let late = 1;
@@ -117,6 +117,11 @@ kept	cjs	if (typeof late) {} else while (late) var v = 1; let late = 1;
 dropped	cjs	if (typeof late) {} else l: var v = 1; let late = 1;
 dropped	cjs	if (typeof late) {} else for (var i = 0; i < 1; i++) {} let late = 1;
 dropped	cjs	if (typeof late) {} else for (var k in {}) {} let late = 1;
+kept	cjs	if (typeof late) {} else for (var i;;) {} let late = 1;
+kept	cjs	if (typeof late) {} else { l: for (var i, j;;) {} } let late = 1;
+kept	mjs	if (typeof late) {} else for (var i;;) {} let late = 1;
+dropped	cjs	if (typeof late) {} else for (var i, j = 0;;) {} let late = 1;
+dropped	cjs	if (typeof late) {} else for (var i = 0, j;;) {} let late = 1;
 dropped	cjs	if (typeof late) {} else try { var v = 1; } catch {} let late = 1;
 dropped	cjs	if (typeof late) {} else { var v = 1; function f() {} } let late = 1;
 kept	cjs	class C { static { if (typeof late) {} else { var v = 1; } let late = 1; } }

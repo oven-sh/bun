@@ -98,8 +98,8 @@ impl Removable<'_, '_> {
         }
     }
 
-    /// `prints_every_if`: the run counts executions, and `bun test --coverage` removes no code.
-    pub(crate) fn find_regexp_literals_left_out(&self, prints_every_if: bool) -> Vec<ExprId> {
+    /// `keeps_never_run_code`: `bun test --coverage` turns dead code elimination off, so an `if` keeps its test.
+    pub(crate) fn find_regexp_literals_left_out(&self, keeps_never_run_code: bool) -> Vec<ExprId> {
         let hir = self.hir;
         let never_run = NeverRun::new(hir, self.bound);
         let mut simplified = self.simplify_unused_expressions();
@@ -107,7 +107,7 @@ impl Removable<'_, '_> {
             match statement.kind {
                 StmtKind::If { test, no, .. }
                     if self.is_written_as_object(test)
-                        && !prints_every_if
+                        && !keeps_never_run_code
                         && !never_run.keeps_its_if(no) =>
                 {
                     self.simplify_unused(test, &mut simplified);

@@ -143,7 +143,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let is_reached_function =
             matches!(hir[dead].kind, StmtKind::Fn(_)) && !is_branch_of_decided_if;
-        let is_printed = self.counts_executions() || is_reached_function;
+        let is_printed = self.keeps_never_run_code() || is_reached_function;
         if is_printed || !self.never_run().prints_nothing(dead) {
             return false;
         }
@@ -574,7 +574,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         _ => statements.push(whole),
                     }
                     let is_directive = matches!(hir[statement].kind, StmtKind::Directive { .. });
-                    if is_directive && !self.counts_executions() {
+                    if is_directive && !self.keeps_never_run_code() {
                         not_printed.push((hir[statement].loc.pos, hir[statement].loc.end));
                         continue;
                     }
@@ -587,18 +587,15 @@ impl FileLowering<'_, '_, '_, '_> {
                         if is_branch {
                             floor_of_never_run_branch = Some(stack.len());
                         }
-                        if let StmtKind::Var(declarations) = hir[statement].kind {
+                        if let StmtKind::Var(declarations) = hir[statement].kind
+                            && !self.keeps_never_run_code()
+                        {
                             for declaration in declarations.iter().map(|it| hir[it]) {
                                 let value = declaration.init;
                                 if value.is_some() {
                                     not_printed.push((hir[value].pos, hir[value].end));
                                 }
-                                match self.counts_executions() {
-                                    true => stack.push(TreeNode::Pattern(declaration.pat)),
-                                    false => {
-                                        self.leave_names_alone(declaration.pat, &mut not_printed)
-                                    }
-                                }
+                                self.leave_names_alone(declaration.pat, &mut not_printed);
                             }
                             continue;
                         }
@@ -647,7 +644,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         && let Some(is_true) = self.find_side_that_printer_keeps(test, consts)
                     {
                         let (live, dead) = if is_true { (yes, no) } else { (no, yes) };
-                        match self.counts_executions() || never_run.keeps_its_if(dead) {
+                        match self.keeps_never_run_code() || never_run.keeps_its_if(dead) {
                             true => stack.push(TreeNode::Expr(test)),
                             false => not_printed.push((hir[test].pos, hir[test].end)),
                         }
@@ -810,7 +807,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 TreeNode::Function(inner) => {
                     let never_runs =
-                        floor_of_never_run_branch.is_some() && !self.counts_executions();
+                        floor_of_never_run_branch.is_some() && !self.keeps_never_run_code();
                     match hir[inner].body {
                         FnBody::Block(list) => {
                             let whole = self.compute_text_range(inner);

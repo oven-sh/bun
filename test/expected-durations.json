@@ -17,8 +17,8 @@
     }
   },
   "aot/fold/never-run-code.test.ts": {
-    "default": 5000,
-    "asan": 20000
+    "default": 10000,
+    "asan": 40000
   },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,

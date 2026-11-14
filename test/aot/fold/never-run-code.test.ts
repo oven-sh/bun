@@ -100,6 +100,7 @@ const declared = [
   "switch (0) {}",
   "with (x) {}",
   "for (var i = 0; i < 1; i++) {}",
+  "for (var i;;) {}",
   "try {} catch { var v; }",
 ];
 // Where the literal stands beside it: `K` is what is declared, `L` the literal.
@@ -178,4 +179,69 @@ test("a build reports no regexp literal in a file that plain Bun loads", async (
   expect(loaded.length).toBeGreaterThan(300);
   expect(refused.filter(file => reported.has(file)).length).toBeGreaterThan(50);
   expect(loaded.filter(file => reported.has(file)).map(file => files[file].trim())).toEqual([]);
+  expect({ plain: plain.exitCode, checked: checked.exitCode }).toEqual({ plain: 0, checked: 1 });
+});
+
+// `bun test --coverage` turns dead code elimination off on the main thread, for a file of a package too. So an `if` stays with
+// its test, and a mock factory says what stands behind its `return`: the word there asks for the file that it replaces.
+const factory = `async () => {
+    return { value: "mock" };
+    var spare = "importOriginal";
+  }`;
+const counted = {
+  "package.json": `{ "name": "made-up", "type": "module" }`,
+  "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "index.cjs" }`,
+  "node_modules/pkg/index.cjs": "if (/a**/) {} else { var v = 1; }\n",
+  "node_modules/pkg/lay.mjs": `import { vi } from "bun:test";
+export function lay() {
+  vi.doMock("../../other.js", ${factory});
+}
+`,
+  "own.cjs": "if (/a**/) {}\n",
+  "mocked.js": `globalThis.ran = "ran";\nexport const value = "own";\n`,
+  "other.js": `globalThis.ranOther = "ran";\nexport const value = "own";\n`,
+  "user.js": `import { value } from "./mocked.js";
+import { value as other } from "./other.js";
+export const look = () => [value, String(globalThis.ran), other, String(globalThis.ranOther)];
+`,
+  "a.test.js": `import { test, vi } from "bun:test";
+import { lay } from "pkg/lay.mjs";
+test("what the run takes for printed", async () => {
+  const said = [];
+  for (const load of [() => require("./own.cjs"), () => require("pkg")]) {
+    try {
+      load();
+      said.push("loads");
+    } catch (error) {
+      said.push(error.name);
+    }
+  }
+  vi.doMock("./mocked.js", ${factory});
+  lay();
+  const user = await import("./user.js");
+  console.log("SAID " + [...said, ...user.look()].join(" "));
+});
+`,
+};
+
+test("a run that counts executions takes no never-run code for gone", async () => {
+  const run = async (...flags: string[]) => {
+    using dir = tempDir("aot-never-run-counted", counted);
+    const { stdout, exitCode } = await spawned([bunExe(), "test", ...flags, "./a.test.js"], String(dir), bunEnv);
+    return { said: stdout.match(/^SAID (.*)$/m)?.[1], exitCode };
+  };
+  const [plain, compiled, plainCounted, compiledCounted] = await Promise.all([
+    run(),
+    run("--aot"),
+    run("--coverage"),
+    run("--aot", "--coverage"),
+  ]);
+  const removed = { said: "loads loads mock undefined mock undefined", exitCode: 0 };
+  const whole = { said: "SyntaxError SyntaxError mock ran mock ran", exitCode: 0 };
+  expect({ plain, compiled, plainCounted, compiledCounted }).toEqual({
+    plain: removed,
+    compiled: removed,
+    plainCounted: whole,
+    compiledCounted: whole,
+  });
 });

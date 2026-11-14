@@ -62,10 +62,15 @@ impl<'a, 's> NeverRun<'a, 's> {
                     let declaration = hir[declaration];
                     declaration.kind == VarKind::Var && binds_a_name(hir, declaration.pat)
                 };
+                let assigns = |declaration: VarDeclId| hir[declaration].init.is_some();
                 match declarations.iter().any(binds_a_name) {
                     false => Left::Nothing,
-                    true if self.is_moved_to_end_of_file(statement) => Left::VarsAtEndOfFile,
-                    true => Left::InPlace,
+                    true if !self.is_moved_to_end_of_file(statement) => Left::InPlace,
+                    // `s_for`: without a value to assign the `var` stays in the head. `s_for_in` and `s_for_of` always move it.
+                    true if !declarations.iter().any(assigns) && self.is_init_of_for(statement) => {
+                        Left::InPlace
+                    }
+                    true => Left::VarsAtEndOfFile,
                 }
             }
             StmtKind::Fn(_) => match self.becomes_let(statement) {
@@ -128,6 +133,13 @@ impl<'a, 's> NeverRun<'a, 's> {
                 _ => return false,
             }
         }
+    }
+
+    fn is_init_of_for(&self, statement: StmtId) -> bool {
+        let Parent::Stmt(above) = self.bound.parent_of_stmt(statement) else {
+            return false;
+        };
+        matches!(self.hir[above].kind, StmtKind::For { init, .. } if init == statement)
     }
 
     /// Whether `bun run` writes a function of a block, of a label or of an `if` as `let f = function() {}`: `visit_stmts`.

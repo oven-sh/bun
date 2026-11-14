@@ -3110,7 +3110,7 @@ impl Package<u64> {
                         let num_notes = 'count: {
                             let mut i: usize = 0;
                             for value in workspace_names.values() {
-                                if strings::eql_long(&value.name, &entry.name, true) {
+                                if strings::eql_long(&value.name, &entry.name) {
                                     i += 1;
                                 }
                             }
@@ -3127,7 +3127,7 @@ impl Package<u64> {
                                 if note_path.as_ptr() == path_.as_ptr() {
                                     continue;
                                 }
-                                if strings::eql_long(&value.name, &entry.name, true) {
+                                if strings::eql_long(&value.name, &entry.name) {
                                     let note_abs_path = bun_core::ZBox::from_bytes(
                                         resolve_path::join_abs_string_z::<path::platform::Auto>(
                                             root_dir,

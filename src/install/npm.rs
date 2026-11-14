@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
+use std::sync::LazyLock;
 
 use crate::Error;
 use crate::bun_json as JSON;
@@ -12,6 +13,7 @@ use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, HeaderBuilder};
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
+use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
@@ -19,7 +21,8 @@ use crate::bin::{self, Bin};
 use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
-use crate::package_manager::directories;
+use crate::package_manager::THREAD_POOL;
+use crate::package_manager::directories::TemporaryDirectory;
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
     VersionSlice, initialize_mini_store as initialize_store,
@@ -240,6 +243,7 @@ pub mod registry {
         pub(crate) auth: Box<[u8]>,
         pub url: OwnedURL,
         pub url_hash: u64,
+        pub(crate) folder_tag: FolderTag,
         pub(crate) token: Box<[u8]>,
 
         // username and password combo, `user:pass`
@@ -250,6 +254,22 @@ pub mod registry {
 
         /// The `.npmrc` key this registry's URL resolves to, once every source was applied.
         pub(crate) url_auth_key: Option<Box<[u8]>>,
+    }
+
+    /// What a cached manifest records about the registry's URL.
+    #[derive(Clone, Copy)]
+    pub struct ManifestTag {
+        pub(crate) url_hash: u64,
+        pub(crate) url_len: u64,
+    }
+
+    /// What the name of a cache folder records about the registry's URL.
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct FolderTag {
+        pub(crate) hostname: &'static [u8],
+        pub(crate) href_hash: u64,
+        /// `https://host/`. With a port, a path or http, it's a different registry on that host.
+        pub(crate) is_host_only: bool,
     }
 
     /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in JFrog's (`/npm/_auth=<b64>`).
@@ -379,6 +399,21 @@ pub mod registry {
             self.url = URL::from_string(&bun_core::StringView::borrow_utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+            let url = self.url.url();
+            self.folder_tag = FolderTag {
+                hostname: bun_core::handle_oom(
+                    FileSystem::get().dirname_store().append(url.hostname),
+                ),
+                href_hash: Self::hash(url.href),
+                is_host_only: url.is_https() && url.port.is_empty() && url.pathname.len() <= 1,
+            };
+        }
+
+        pub fn manifest_tag(&self) -> ManifestTag {
+            ManifestTag {
+                url_hash: self.url_hash,
+                url_len: strings::without_trailing_slash(self.url.href()).len() as u64,
+            }
         }
 
         pub(crate) fn has_credentials(&self) -> bool {
@@ -724,13 +759,13 @@ pub mod registry {
     }
 
     pub(crate) fn get_package_metadata(
-        scope: &Scope,
+        registry: ManifestTag,
         response: &bun_http::HTTPResponseMetadata,
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
-        package_manager: &mut PackageManager,
+        save_through: Option<&'static TemporaryDirectory>,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
         match response.status_code() {
@@ -756,7 +791,7 @@ pub mod registry {
         }
 
         if let Some(package) = PackageManifest::parse(
-            scope,
+            registry,
             log,
             body,
             package_name,
@@ -765,16 +800,8 @@ pub mod registry {
             manifest_expiry(response),
             is_extended_manifest,
         )? {
-            // If the cache cannot be written, the manifest is still used. It is just not saved.
-            if package_manager.options.enable.manifest_cache()
-                && let Ok(temp_dir) = directories::try_get_temporary_directory(package_manager)
-            {
-                package_manifest::Serializer::save_async(
-                    &package,
-                    scope,
-                    temp_dir.handle.fd,
-                    package_manager.get_cache_directory(),
-                );
+            if let Some(temp_dir) = save_through {
+                package_manifest::Serializer::save_async(&package, registry, temp_dir);
             }
 
             return Ok(PackageVersionResponse::Fresh(package));
@@ -1108,9 +1135,9 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    pub(crate) fn byte_length(&self, scope: &registry::Scope) -> usize {
+    pub(crate) fn byte_length(&self, registry: registry::ManifestTag) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
-        match package_manifest::Serializer::write(self, scope, &mut counter) {
+        match package_manifest::Serializer::write(self, registry, &mut counter) {
             Ok(()) => counter.count,
             Err(_) => 0,
         }
@@ -1201,17 +1228,15 @@ pub mod package_manifest {
 
         pub(crate) fn write<W: bun_io::Write>(
             this: &PackageManifest,
-            scope: &registry::Scope,
+            registry: registry::ManifestTag,
             writer: &mut W,
         ) -> Result<(), Error> {
             let mut pos: u64 = 0;
             writer.write_all(Self::HEADER_BYTES.as_bytes())?;
             pos += Self::HEADER_BYTES.len() as u64;
 
-            writer.write_int_le::<u64>(scope.url_hash)?;
-            writer.write_int_le::<u64>(
-                strings::without_trailing_slash(scope.url.href()).len() as u64
-            )?;
+            writer.write_int_le::<u64>(registry.url_hash)?;
+            writer.write_int_le::<u64>(registry.url_len)?;
 
             pos += 128 / 8;
 
@@ -1246,15 +1271,14 @@ pub mod package_manifest {
 
         fn write_file(
             this: &PackageManifest,
-            scope: &registry::Scope,
+            registry: registry::ManifestTag,
             tmp_path: &bun_core::ZStr,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            temp_dir: &TemporaryDirectory,
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
-            Serializer::write(this, scope, &mut buffer)?;
+            let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(registry) + 64);
+            Serializer::write(this, registry, &mut buffer)?;
             // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
             //
@@ -1263,15 +1287,10 @@ pub mod package_manifest {
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
             let mut realpath_buf = bun_paths::path_buffer_pool::get();
-            // SAFETY: `crate::package_manager::get()` returns the live
-            // singleton; `get_temporary_directory` only mutates its
-            // lazy-init state and is called from the install thread.
-            #[cfg(windows)]
-            let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
             let path_to_use_for_opening_file =
                 bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                    &tmpdir_stub.path,
+                    &temp_dir.path,
                     &mut realpath_buf[..],
                     &[tmp_path.as_bytes()],
                 );
@@ -1279,8 +1298,9 @@ pub mod package_manifest {
             let path_to_use_for_opening_file = tmp_path;
             #[cfg(not(windows))]
             let _ = &mut realpath_buf;
-            #[cfg(windows)]
-            let _ = cache_dir;
+            let tmpdir = temp_dir.handle.fd();
+            #[cfg(not(windows))]
+            let cache_dir = temp_dir.cache.handle.fd();
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
@@ -1343,7 +1363,7 @@ pub mod package_manifest {
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::path_buffer_pool::get();
-                let cache_dir_abs = &PackageManager::get().cache_directory_path;
+                let cache_dir_abs = &temp_dir.cache.path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
                         cache_dir_abs,
@@ -1422,7 +1442,7 @@ pub mod package_manifest {
         /// The next run, `--offline` above all, reads what this one fetched. A pool thread must not wait for its own pool.
         pub(crate) extern "C" fn finish_saves_at_exit() {
             if bun_crash_handler::cli_state::is_main_thread()
-                && PackageManager::get().thread_pool.has_workers()
+                && LazyLock::get(&THREAD_POOL).is_some_and(ThreadPool::has_workers)
             {
                 SAVES.wait();
             }
@@ -1432,19 +1452,15 @@ pub mod package_manifest {
         /// `finish_saves_at_exit`.
         pub(crate) fn save_async(
             this: &PackageManifest,
-            scope: &registry::Scope,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            registry: registry::ManifestTag,
+            temp_dir: &'static TemporaryDirectory,
         ) {
             use bun_threading::thread_pool::{Batch as PoolBatch, Task as PoolTask};
 
             struct SaveTask {
                 manifest: PackageManifest,
-                // Owned: the thread-pool task can outlive the caller's borrow
-                // of the Registry.Scope, so it owns a clone.
-                scope: registry::Scope,
-                tmpdir: Fd,
-                cache_dir: Fd,
+                registry: registry::ManifestTag,
+                temp_dir: &'static TemporaryDirectory,
 
                 task: PoolTask,
             }
@@ -1455,8 +1471,7 @@ pub mod package_manifest {
                 fn run(self: Box<Self>) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
-                    if let Err(err) =
-                        Serializer::save(&self.manifest, &self.scope, self.tmpdir, self.cache_dir)
+                    if let Err(err) = Serializer::save(&self.manifest, self.registry, self.temp_dir)
                     {
                         if PackageManager::verbose_install() {
                             bun_core::warn!(
@@ -1475,29 +1490,28 @@ pub mod package_manifest {
             SAVES.add_one();
             let batch = PoolBatch::from_owned(Box::new(SaveTask {
                 manifest: this.clone(),
-                scope: scope.clone(),
-                tmpdir,
-                cache_dir,
+                registry,
+                temp_dir,
                 task: PoolTask::default(),
             }));
-            PackageManager::get().thread_pool.schedule(batch);
+            THREAD_POOL.schedule(batch);
         }
 
         fn manifest_file_name<'b>(
             buf: &'b mut [u8],
             file_id: u64,
-            scope: &registry::Scope,
+            url_hash: u64,
         ) -> Result<&'b bun_core::ZStr, Error> {
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
-            if scope.url_hash == *registry::DEFAULT_URL_HASH {
+            if url_hash == *registry::DEFAULT_URL_HASH {
                 write!(stream, "{}.npm", file_id_hex_fmt)?;
             } else {
                 write!(
                     stream,
                     "{}-{}.npm",
                     file_id_hex_fmt,
-                    bun_fmt::hex_int_lower::<16>(scope.url_hash),
+                    bun_fmt::hex_int_lower::<16>(url_hash),
                 )?;
             }
             stream.write_byte(0)?;
@@ -1508,17 +1522,16 @@ pub mod package_manifest {
 
         pub(crate) fn save(
             this: &PackageManifest,
-            scope: &registry::Scope,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            registry: registry::ManifestTag,
+            temp_dir: &TemporaryDirectory,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
             let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
-            Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
+            let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, registry.url_hash)?;
+            Self::write_file(this, registry, tmp_path, temp_dir, out_path)
         }
 
         pub(crate) fn load_by_file_id(
@@ -1528,7 +1541,7 @@ pub mod package_manifest {
             file_id: u64,
         ) -> Result<Option<PackageManifest>, Error> {
             let mut file_path_buf = [0u8; 512 + 64];
-            let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope)?;
+            let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope.url_hash)?;
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
@@ -2381,7 +2394,7 @@ fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
-        scope: &registry::Scope,
+        registry: registry::ManifestTag,
         log: &mut bun_ast::Log,
         json_buffer: &[u8],
         expected_name: &[u8],
@@ -2441,7 +2454,7 @@ impl PackageManifest {
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
                 // from the default registry we don't check because the registry might have a different name in the manifest.
                 // https://github.com/oven-sh/bun/issues/4925
-                if scope.url_hash == *registry::DEFAULT_URL_HASH
+                if registry.url_hash == *registry::DEFAULT_URL_HASH
                     && !strings::eql_long(expected_name, received_name, true)
                 {
                     bun_core::warn!(

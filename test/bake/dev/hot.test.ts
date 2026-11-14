@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -689,5 +689,123 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+// The stale bitset of an incremental graph grows in steps of 512 files. In the
+// tests below the first bundle adds files past the end of the set, and something
+// else in that bundle grows the set. The bundled modules must not be bundled again.
+const modulesPastOneBitsetStep = Array.from({ length: 600 }, (_, i) => `m${i}`);
+const moduleFilesPastOneBitsetStep = Object.fromEntries(
+  modulesPastOneBitsetStep.map(name => [`modules/${name}.ts`, `export const ${name} = "${name}";`]),
+);
+const importModulesPastOneBitsetStep = (from: string) =>
+  modulesPastOneBitsetStep.map(name => `import "${from}/modules/${name}";`).join("\n");
+// `onLoad` runs once for each file the dev server parses, and not for a file it has cached.
+const countLoadsBySide = (filter: string) => `
+  export default [
+    {
+      name: "count-loads-by-side",
+      setup(build) {
+        build.onLoad({ filter: /${filter}/ }, args => {
+          const loads = (globalThis.moduleLoads ??= { client: 0, server: 0 });
+          loads[args.side]++;
+        });
+      },
+    },
+  ];
+`;
+const countModuleLoads = countLoadsBySide("[\\\\/]modules[\\\\/]m\\d+\\.ts$");
+devTest("repairing a failed import does not parse the unchanged modules of a route again (over 512 modules)", {
+  framework: minimalFramework,
+  pluginFile: countModuleLoads,
+  files: {
+    "routes/index.ts": [
+      importModulesPastOneBitsetStep(".."),
+      `import { marker } from "../a";`,
+      `export default function (req, meta) {`,
+      `  return Response.json({ marker, loads: globalThis.moduleLoads });`,
+      `}`,
+    ].join("\n"),
+    // The failed import is recorded after the modules are bundled. It grows the bitset of the server graph.
+    "a.ts": [importModulesPastOneBitsetStep("."), `import "./missing";`, `export const marker = "a1";`].join("\n"),
+    ...moduleFilesPastOneBitsetStep,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+
+    await dev.write("a.ts", [importModulesPastOneBitsetStep("."), `export const marker = "a2";`].join("\n"));
+    await dev.fetch("/").equals({ marker: "a2", loads: { client: 0, server: modulesPastOneBitsetStep.length } });
+  },
+});
+// The bitset of the client graph is empty until the first bundle when the framework has no client entry point.
+devTest("editing a client component does not parse its unchanged import again in a route with a stylesheet", {
+  framework: minimalFramework,
+  pluginFile: countModuleLoads,
+  files: {
+    "routes/index.ts": `
+      import "../style.css";
+      import "../Component";
+
+      export default function (req, meta) {
+        return Response.json({ loads: globalThis.moduleLoads });
+      }
+    `,
+    "Component.ts": `
+      "use client";
+      import { m0 } from "./modules/m0";
+      export const marker = "c1" + m0;
+    `,
+    "modules/m0.ts": `
+      export const m0 = "m0";
+    `,
+    "style.css": `
+      body { color: red; }
+    `,
+  },
+  async test(dev) {
+    // The first bundle parses "modules/m0.ts" once for each graph.
+    await dev.fetch("/").equals({ loads: { client: 1, server: 1 } });
+
+    await dev.write(
+      "Component.ts",
+      `
+        "use client";
+        import { m0 } from "./modules/m0";
+        export const marker = "c2" + m0;
+      `,
+    );
+    await dev.fetch("/").equals({ loads: { client: 1, server: 1 } });
+  },
+});
+// A css file that a server route imports is a node of the server graph. It is
+// created after the css is bundled, so it starts out cached.
+devTest("editing a route does not parse its unchanged stylesheet again on the server", {
+  framework: minimalFramework,
+  pluginFile: countLoadsBySide("\\.css$"),
+  files: {
+    "routes/index.ts": `
+      import "../style.css";
+      export default function (req, meta) {
+        return Response.json({ marker: "r1", loads: globalThis.moduleLoads });
+      }
+    `,
+    "style.css": `
+      body { color: red; }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ marker: "r1", loads: { client: 0, server: 1 } });
+
+    await dev.write(
+      "routes/index.ts",
+      `
+        import "../style.css";
+        export default function (req, meta) {
+          return Response.json({ marker: "r2", loads: globalThis.moduleLoads });
+        }
+      `,
+    );
+    await dev.fetch("/").equals({ marker: "r2", loads: { client: 0, server: 1 } });
   },
 });

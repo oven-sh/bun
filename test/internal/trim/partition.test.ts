@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { BuildError } from "../../../scripts/build/error.ts";
 import type { Feature, FeatureModel } from "../../../scripts/build/trim/features.ts";
-import { EdgeKind, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
+import { EdgeKind, partition, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
 import {
   describeFailures,
   describeFiller,
@@ -26,6 +26,7 @@ import {
   B,
   C,
   edgeKindOf,
+  graphOf,
   modelOf,
   partitioned,
   tableOutput,
@@ -82,6 +83,121 @@ const sharedEntryPointGuards: Guard[] = [
 ];
 
 describe("the partition", () => {
+  const builtinBacklinks: {
+    name: string;
+    format: "coff" | "elf" | "macho";
+    section: string;
+    output: string;
+    extra?: string[];
+    chain?: boolean;
+    isFollowed: boolean;
+  }[] = [
+    {
+      name: "COFF xdata references do not enter a built-in as native code",
+      format: "coff",
+      section: ".xdata",
+      output: ".xdata",
+      isFollowed: false,
+    },
+    {
+      name: "COFF pdata references do not enter a built-in as native code",
+      format: "coff",
+      section: ".pdata",
+      output: ".pdata",
+      isFollowed: false,
+    },
+    {
+      name: "COFF code references enter a built-in as native code",
+      format: "coff",
+      section: ".text.native",
+      output: ".text",
+      isFollowed: true,
+    },
+    {
+      name: "COFF xdata with an ordinary data reference enters a built-in as native code",
+      format: "coff",
+      section: ".xdata",
+      output: ".xdata",
+      extra: ["data"],
+      isFollowed: true,
+    },
+    {
+      name: "COFF xdata with an ordinary code reference enters a built-in as native code",
+      format: "coff",
+      section: ".xdata",
+      output: ".xdata",
+      extra: ["code"],
+      isFollowed: true,
+    },
+    {
+      name: "COFF xdata-pdata chains do not enter a built-in as native code",
+      format: "coff",
+      section: ".xdata",
+      output: ".xdata",
+      extra: ["unwind2"],
+      chain: true,
+      isFollowed: false,
+    },
+    {
+      name: "ELF xdata-named references enter a built-in as native code",
+      format: "elf",
+      section: ".xdata",
+      output: ".xdata",
+      isFollowed: true,
+    },
+    {
+      name: "Mach-O xdata-named references enter a built-in as native code",
+      format: "macho",
+      section: ".xdata",
+      output: ".xdata",
+      isFollowed: true,
+    },
+  ];
+  for (const { name, format, section, output, extra = [], chain = false, isFollowed } of builtinBacklinks) {
+    test(name, () => {
+      const { graph, node } = graphOf({
+        main: { root: true, to: ["builtin"] },
+        builtin: { to: ["other", "unwind"] },
+        unwind: { to: ["builtin", ...extra], output },
+        other: {},
+        data: { output: ".rdata" },
+        code: {},
+        ...(chain ? { unwind2: { to: ["builtin", "unwind"], output: ".pdata" } } : {}),
+      });
+      graph.format = format;
+      graph.section[node("unwind")] = section;
+      if (chain) graph.section[node("unwind2")] = ".pdata";
+      const result = partition({
+        graph,
+        model: abc,
+        entryPoints: [
+          {
+            guard: node("main"),
+            entry: node("builtin"),
+            feature: A,
+            stub: "Throw",
+            origin: "Builtin",
+            builtin: 7,
+            entrySection: "toy.o\0builtin",
+          },
+          {
+            guard: node("builtin"),
+            entry: node("other"),
+            feature: B,
+            stub: "Abort",
+            origin: "NativeCode",
+            builtin: undefined,
+            entrySection: "toy.o\0other",
+          },
+        ],
+        isMovable: output => output === ".text",
+        isCode: output => output === ".text",
+      });
+      expect(result.failures).toEqual([]);
+      expect(result.edges).toEqual([{ from: A, to: B, strength: "AbortingGuard", isFollowed }]);
+    });
+  }
+
   test("only the guarded edge is cut", () => {
     const result = partitioned(oneFeature, oneFeatureGuards);
     expect(result.failures).toEqual([]);

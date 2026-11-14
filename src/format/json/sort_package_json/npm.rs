@@ -20,8 +20,9 @@ use super::{
 };
 use bun_collections::index_sort::{apply_permutation_in_place, identity};
 use bun_core::{handle_oom, strings};
+use bun_semver::query::NpmRange;
 use bun_semver::range::Op;
-use bun_semver::{SlicedString, Version, query};
+use bun_semver::{Version, query};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Ordering;
 
@@ -363,12 +364,7 @@ impl Lowest {
 
 /// `semver.minVersion(range)`. `None` where that throws or returns `null`.
 fn min_version(range: &[u8]) -> Option<Lowest> {
-    let words = strings::split_any(range, b" \t\n\r\x0B\x0C").filter(|it| !it.is_empty());
-    let raw = words.collect::<Vec<_>>().join(&b" "[..]);
-    let group = handle_oom(query::parse(&raw, SlicedString::init(&raw, &raw)));
-    if group.has_skipped() {
-        return None;
-    }
+    let NpmRange { raw, group } = handle_oom(query::parse_npm(range))?;
     let satisfies = |it: &Lowest| group.satisfies(it.version, &raw, &it.text);
     let zero = [&b"0.0.0"[..], b"0.0.0-0"].into_iter();
     if let Some(zero) = zero

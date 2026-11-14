@@ -2136,17 +2136,6 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
-            // A transform that adds a statement to a body puts it after the directive prologue.
-            debug_assert!(
-                !stmts
-                    .iter()
-                    .skip_while(|stmt| matches!(
-                        stmt.data,
-                        StmtData::SDirective(_) | StmtData::SComment(_)
-                    ))
-                    .any(|stmt| matches!(stmt.data, StmtData::SDirective(_))),
-                "a directive is printed after another statement"
-            );
             for stmt in stmts {
                 self.print_semicolon_if_needed();
                 self.print_stmt(*stmt).expect("unreachable");

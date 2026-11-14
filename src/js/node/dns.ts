@@ -7,6 +7,7 @@ const {
   validateFunction,
   validateArray,
   validateString,
+  validateStringWithoutNullBytes,
   validateBoolean,
   validateNumber,
   validateInt32,
@@ -261,9 +262,9 @@ function validateResolve(hostname: unknown, callback: ResolveCallback | undefine
 }
 
 function validateLocalAddresses(first: string, second?: string) {
-  validateString(first, "ipv4");
+  validateStringWithoutNullBytes(first, "ipv4");
   if (typeof second !== "undefined") {
-    validateString(second, "ipv6");
+    validateStringWithoutNullBytes(second, "ipv6");
   }
 }
 
@@ -710,6 +711,7 @@ class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
+    validateStringWithoutNullBytes(ip, "name");
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
@@ -936,6 +938,7 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip: string) {
+    validateStringWithoutNullBytes(ip, "name");
     return translateErrorCode(dns.reverse(ip));
   },
 
@@ -1029,6 +1032,7 @@ const promises = {
     }
 
     reverse(this: object | undefined, ip: string) {
+      validateStringWithoutNullBytes(ip, "name");
       return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
     }
 

@@ -1,0 +1,1 @@
+"false | extra,knot,warp | knot,warp" | "true | extra,knot,warp | extra,knot,warp": `bun test` takes the second import() of the outer factory for one of the factory of warp.mjs, which runs and is written in the same file, and gives it the original; the compiled run gives it the mock, as `bun test` does where the outer factory is written in another file

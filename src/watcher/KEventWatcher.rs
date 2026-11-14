@@ -50,7 +50,14 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop(this: &mut Watcher) -> bun_sys::Result<()> {
+    while this.running.load() {
+        watch_loop_cycle(this)?;
+    }
+    Ok(())
+}
+
+fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
     let fd = this.platform.fd;
 
@@ -89,6 +96,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         }
     }
 
-    this.dispatch_file_updates(out_len, out_len);
+    this.dispatch_file_updates(out_len, &[]);
     Ok(())
 }

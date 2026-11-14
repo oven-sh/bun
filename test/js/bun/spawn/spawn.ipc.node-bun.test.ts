@@ -9,13 +9,14 @@ test("ipc with json serialization still works when bun is not the parent and the
   });
   await child.exited;
   expect(await new Response(child.stderr).text()).toEqual("");
-  expect(await new Response(child.stdout).text()).toEqual(
-    `p start
-p end
-c start
-c end
-c I am your father
-p I am your father
-`,
-  );
+  // "p end" is the only line with no fixed place: the parent prints it right after it spawns the
+  // child, on the stdout both processes share. Every other line can only follow the one before it.
+  const lines = (await new Response(child.stdout).text()).trimEnd().split("\n");
+  expect({
+    parent: lines.filter(line => line.startsWith("p ")),
+    withoutParentEnd: lines.filter(line => line !== "p end"),
+  }).toEqual({
+    parent: ["p start", "p end", "p I am your father"],
+    withoutParentEnd: ["p start", "c start", "c end", "c I am your father", "p I am your father"],
+  });
 });

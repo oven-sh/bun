@@ -141,7 +141,7 @@ impl FileFinder {
         let failure = resolver.esm_failure.take();
         let result = match result {
             ResultUnion::Success(result) => result,
-            ResultUnion::Failure(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
+            ResultUnion::Failure(_) | ResultUnion::NotFound => {
                 return failure.map_or_else(FoundCode::not_found, describe_failure);
             }
         };

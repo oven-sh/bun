@@ -2316,6 +2316,19 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     }
   });
 
+  // Jest and Vitest read the list with includes() and for...of, which a Proxy of an array serves.
+  test.each<[string, object, string[] | ((byDefault: readonly string[]) => string[])]>([
+    ["toFake", { toFake: new Proxy(["Date"], {}) }, ["Date"]],
+    ["doNotFake", { doNotFake: new Proxy(["Date"], {}) }, without("Date")],
+    ["toNotFake", { toNotFake: new Proxy(new Proxy(["setInterval"], {}), {}) }, without("setInterval")],
+  ])("%s takes a Proxy of an array", (_, options, faked) => {
+    for (const [api, byDefault] of defaults) {
+      const expected = without(...neverFakedBy(api))(typeof faked === "function" ? faked(byDefault) : faked);
+      api.useFakeTimers(options as any);
+      expect(whatIsFaked()).toEqual(expected);
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/44605
   test('toFake: ["setTimeout"] leaves Date, performance.now and process.hrtime real', () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
@@ -2389,6 +2402,23 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     expect(() => vi.useFakeTimers(options)).toThrow(message);
     expect(vi.isFakeTimers()).toBe(false);
     expect(setTimeout).toBe(saved.setTimeout);
+  });
+
+  test("a Proxy that is not an array of strings throws and leaves the real timers in place", () => {
+    const revocable = Proxy.revocable(["Date"], {});
+    revocable.revoke();
+    for (const [toFake, error] of [
+      [new Proxy({ 0: "Date", length: 1 }, {}), new TypeError("'toFake' must be an array of strings")],
+      [new Proxy([5], {}), new TypeError("'toFake' must be an array of strings")],
+      [revocable.proxy, new TypeError("Array.isArray cannot be called on a Proxy that has been revoked")],
+    ] as const) {
+      for (const api of [vi, bunVi, jest]) {
+        // @ts-expect-error
+        expect(() => api.useFakeTimers({ toFake })).toThrow(error);
+        expect(vi.isFakeTimers()).toBe(false);
+        expect(setTimeout).toBe(saved.setTimeout);
+      }
+    }
   });
 
   test("an invalid option throws and leaves the active fake timers alone", () => {

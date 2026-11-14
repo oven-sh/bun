@@ -956,6 +956,112 @@ describe("expect()", () => {
         signalCode: null,
       });
     });
+
+    // These arguments are tested as Array.isArray() tests a value: a Proxy of an array is an array, and a revoked
+    // Proxy throws a TypeError, which every caller must check for.
+    test("the arguments that must be arrays take a Proxy of an array and throw for a revoked Proxy", async () => {
+      const { bunEnv, bunExe, tempDir } = require("harness");
+      using dir = tempDir("proxy-of-array-arguments", {
+        "arguments.test.js": `
+          import { test as jestTest } from "bun:test";
+          import { expect, test, vi } from "vitest";
+          const live = target => new Proxy(target, {});
+          const revoked = target => {
+            const { proxy, revoke } = Proxy.revocable(target, {});
+            revoke();
+            return proxy;
+          };
+          const outcome = run => {
+            try {
+              run();
+              return "accepted";
+            } catch (error) {
+              return error.name + ": " + error.message.split("\\n")[0];
+            }
+          };
+          const attempt = (name, run) => console.log(name + ": " + outcome(() => run(live)) + ", " + outcome(() => run(revoked)));
+
+          attempt("table of each()", P => test.each(P([[1]])));
+          attempt("table of for()", P => test.for(P([[1]])));
+          attempt("row", P => test.each([P([1])])("row", () => {}));
+          attempt("row, from bun:test", P => jestTest.each([P([1])])("row, from bun:test", () => {}));
+          // jest-each asks the rows in order, and stops at the first that is not an array.
+          attempt("row after a number, from bun:test", P => jestTest.each([1, P([1])])("row after a number %#", () => {}));
+          attempt("toContainValues", P => expect({ a: 1 }).toContainValues(P([1])));
+          attempt("toContainKeys", P => expect({ a: 1 }).toContainKeys(P(["a"])));
+          expect.extend({
+            toCompareWith(received, testers) {
+              return { pass: this.equals(received, received, testers), message: () => "" };
+            },
+          });
+          attempt("this.equals", P => expect(1).toCompareWith(P([() => undefined])));
+          attempt("addEqualityTesters", P => expect.addEqualityTesters(P([() => undefined])));
+          attempt("toFake", P => {
+            try {
+              vi.useFakeTimers({ toFake: P(["Date"]) });
+            } finally {
+              vi.useRealTimers();
+            }
+          });
+          attempt("fixture tuple", P => test.extend({ x: P([1, { auto: true }]) }));
+          attempt("fixture options", P => test.extend({ x: [1, P({ auto: true })] }));
+          attempt("fixture options of the builder", P => test.extend("x", P({ auto: true })));
+
+          test("printer", () => {
+            let wrap;
+            expect.addSnapshotSerializer({
+              test: value => value === "printed",
+              serialize: (value, config, indentation, depth, refs, printer) => printer([1], ...wrap(config, refs, indentation, depth)),
+            });
+            attempt("plugins of printer", P => {
+              wrap = (config, refs, indentation, depth) => [{ ...config, plugins: P(config.plugins) }, indentation, depth, refs];
+              expect("printed").toMatchSnapshot();
+            });
+            attempt("refs of printer", P => {
+              wrap = (config, refs, indentation, depth) => [config, indentation, depth, P(refs)];
+              expect("printed").toMatchSnapshot();
+            });
+          });
+        `,
+      });
+      // A missing exception check aborts a debug build under BUN_JSC_validateExceptionChecks=1.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "arguments.test.js"],
+        env: { ...bunEnv, CI: "false", BUN_JSC_validateExceptionChecks: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const isRevoked = "TypeError: Array.isArray cannot be called on a Proxy that has been revoked";
+      expect({
+        outcomes: stdout.split("\n").filter(line => line.includes(": ")),
+        stderr: exitCode === 0 ? "" : stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        outcomes: [
+          `table of each(): accepted, ${isRevoked}`,
+          `table of for(): accepted, ${isRevoked}`,
+          `row: accepted, ${isRevoked}`,
+          `row, from bun:test: accepted, ${isRevoked}`,
+          "row after a number, from bun:test: accepted, accepted",
+          `toContainValues: accepted, ${isRevoked}`,
+          `toContainKeys: accepted, ${isRevoked}`,
+          `this.equals: accepted, ${isRevoked}`,
+          `addEqualityTesters: accepted, ${isRevoked}`,
+          `toFake: accepted, ${isRevoked}`,
+          `fixture tuple: accepted, ${isRevoked}`,
+          `fixture options: accepted, ${isRevoked}`,
+          `fixture options of the builder: accepted, ${isRevoked}`,
+          `plugins of printer: accepted, ${isRevoked}`,
+          `refs of printer: accepted, ${isRevoked}`,
+        ],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {
@@ -3305,6 +3411,56 @@ describe("expect()", () => {
     expect(o).toContainAnyValues([100]);
     expect(o).toContainAnyValues([20n]);
     expect(o).toContainAnyValues([20.5]);
+  });
+
+  // jest-extended reads the expected array with every(), some() and length, which a Proxy of an array serves.
+  test("toContain*Keys and toContain*Values take a Proxy of an array", () => {
+    const P = (/** @type {any[]} */ target, /** @type {ProxyHandler<any[]>} */ handler = {}) =>
+      new Proxy(target, handler);
+    const o = { a: 1, b: 2 };
+    expect(o).toContainKeys(P(["a"]));
+    expect(o).not.toContainKeys(P(["a", "c"]));
+    expect(o).toContainAllKeys(P(["a", "b"]));
+    expect(o).not.toContainAllKeys(P(["a"]));
+    expect(o).toContainAnyKeys(P(["a", "z"]));
+    expect(o).not.toContainAnyKeys(P(["z"]));
+    expect(o).toContainValues(P([1]));
+    expect(o).not.toContainValues(P([1, 3]));
+    expect(o).toContainAllValues(P([1, 2]));
+    expect(o).not.toContainAllValues(P([1]));
+    expect(o).toContainAnyValues(P([1, 9]));
+    expect(o).not.toContainAnyValues(P([9]));
+    expect(o).toContainAllKeys(P(P(["a", "b"])));
+    // the `get` trap decides what an element is
+    const served = P(["a"], {
+      get: (target, key, receiver) => (key === "0" ? "b" : Reflect.get(target, key, receiver)),
+    });
+    expect(o).toContainKeys(served);
+    expect({ a: 1 }).not.toContainKeys(served);
+    expect({ a: 1 }).not.toContainAnyKeys(served);
+    expect({ a: "b" }).toContainValues(served);
+    expect(() => expect(o).toContainKeys(P(["a", "c"]))).toThrow("toContainKeys");
+    expect(() => expect(o).not.toContainAnyValues(P([1]))).toThrow("toContainAnyValues");
+
+    if (isBun) {
+      // jest-extended calls a method of `expected`, so it fails with "expected.every is not a function" here.
+      for (const matcher of /** @type {const} */ ([
+        "toContainKeys",
+        "toContainAllKeys",
+        "toContainAnyKeys",
+        "toContainValues",
+        "toContainAllValues",
+        "toContainAnyValues",
+      ])) {
+        const notAnArray = ANY(new Proxy({ 0: "a", length: 1 }, {}));
+        expect(() => expect(o)[matcher](notAnArray)).toThrow(`Expected expected to be a array for '${matcher}'.`);
+        const { proxy, revoke } = Proxy.revocable(["a"], {});
+        revoke();
+        const isRevoked = new TypeError("Array.isArray cannot be called on a Proxy that has been revoked");
+        expect(() => expect(o)[matcher](proxy)).toThrow(isRevoked);
+        expect(() => expect(o).not[matcher](proxy)).toThrow(isRevoked);
+      }
+    }
   });
 
   test("toBeTruthy()", () => {

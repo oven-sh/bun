@@ -2,6 +2,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
 
 use super::super::jest::{FileColumns as _, Jest};
+use super::super::pretty_format;
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
@@ -66,7 +67,7 @@ impl Expect {
     pub(crate) fn add_equality_testers(cx: &mut JsScope<'_>, testers: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         let testers = testers.to_js();
-        if !testers.js_type().is_array() {
+        if !pretty_format::is_array(global, testers)? {
             return Err(global.throw_invalid_argument_type_value("testers", "array", testers));
         }
 

@@ -8,11 +8,7 @@ test("reportError", () => {
   const { stderr } = spawnSync({
     cmd: [bunExe(), join(import.meta.dir, "reportError.ts")],
     cwd,
-    env: {
-      ...bunEnv,
-      // this is default enabled in debug, affects output.
-      BUN_JSC_showPrivateScriptsInStackTraces: "0",
-    },
+    env: bunEnv,
   });
   let output = stderr.toString().replaceAll(cwd, "").replaceAll("\\", "/");
   // remove bun version from output

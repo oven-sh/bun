@@ -91,7 +91,7 @@ it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({
     cmd: [bunExe(), filepath],
-    env: { ...bunEnv, "BUN_JSC_showPrivateScriptsInStackTraces": "0" },
+    env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
   });
   expect(proc.exitCode).toBe(0);

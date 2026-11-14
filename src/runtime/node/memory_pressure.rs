@@ -128,9 +128,9 @@ mod posix {
     fn own_cgroup_pressure_path(buf: &mut [u8]) -> Option<&bun_core::ZStr> {
         use bun_sys::O;
         let fd = bun_sys::open(bun_core::zstr!("/proc/self/cgroup"), O::RDONLY, 0).ok()?;
+        let _close = bun_sys::CloseOnDrop::new(fd);
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
-        let _ = bun_sys::close(fd);
         for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
@@ -244,8 +244,8 @@ mod posix {
                     NonNull::<()>::dangling().as_ptr(),
                 ),
             );
-            // SAFETY: `poll` is the fresh hive slot; `loop_()` is the live uws loop.
-            let result = unsafe { (*poll).register(&*ctx.loop_(), Flags::MemoryPressure, false) };
+            // SAFETY: `poll` is the fresh hive slot.
+            let result = unsafe { (*poll).register(ctx.loop_(), Flags::MemoryPressure, false) };
             if result.is_err() {
                 // SAFETY: fresh hive slot never handed out.
                 deinit_poll(unsafe { &mut *poll });

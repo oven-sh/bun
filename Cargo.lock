@@ -243,7 +243,6 @@ dependencies = [
  "bun_sys",
  "bun_tar",
  "bun_wyhash",
- "scopeguard",
  "thiserror",
 ]
 
@@ -651,7 +650,6 @@ dependencies = [
  "bun_dispatch",
  "bun_dotenv",
  "bun_io",
- "bun_paths",
  "bun_ptr",
  "bun_sys",
  "bun_threading",
@@ -912,7 +910,6 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sys",
- "scopeguard",
 ]
 
 [[package]]

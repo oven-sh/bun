@@ -372,15 +372,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
-            let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
-                Some(cwd),
-            );
-            // SAFETY: `init_global` returns the thread-local singleton as a raw
-            // pointer; reborrow `&'static mut` for the
-            // duration of `init_and_run_from_source` — single-threaded mini loop,
-            // no aliasing `&mut` exists across this call.
-            let mini = unsafe { &mut *mini };
+            let mini = bun_event_loop::MiniEventLoop::init_global(Some(unsafe {
+                &mut *std::ptr::from_mut::<DotEnv::Loader>(env)
+            }));
             let code = match crate::shell::Interpreter::init_and_run_from_source(
                 ctx,
                 mini,
@@ -470,7 +464,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: `env` outlives the mini event loop.
                         Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
                     ),
                 ),
                 ..Default::default()
@@ -950,17 +943,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
-        let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
             // singleton (set by `Transpiler::init`).
             Some(unsafe { &mut *bundle.env }),
-            None,
         );
-        // SAFETY: `init_global` returns the thread-local singleton; single-
-        // threaded mini loop, no aliasing `&mut` exists across this call.
-        let mini = unsafe { &mut *mini };
-        mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
@@ -2234,7 +2221,6 @@ impl RunCommand {
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: env loader is process-lifetime.
                         Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
                     ),
                 ),
                 ..Default::default()
@@ -3058,7 +3044,10 @@ impl RunCommand {
         // `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
         let mut list: Vec<u8> = Vec::new();
-        if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
+        if bun_sys::File::borrow(&Fd::stdin())
+            .read_to_end_into(&mut list)
+            .is_err()
+        {
             return Ok(false);
         }
         ctx.runtime_options.eval.script = list.leak();

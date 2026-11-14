@@ -564,7 +564,7 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd.set(refd);
-        let uws_loop = self.global_this().bun_vm().uws_loop_ref();
+        let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
         crate::jsc_hooks::timer_all().increment_timer_ref(delta, uws_loop);
     }

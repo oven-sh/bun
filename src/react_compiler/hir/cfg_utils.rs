@@ -209,6 +209,8 @@ pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
         })
         .collect();
 
+    // Not in upstream, which removes each block at once: that moves every later block of the map.
+    let mut removed: IdBitSet<BlockId> = IdBitSet::new();
     for (block_id, try_block, handler_id, fallthrough_id, loc) in replacements {
         // Replace the terminal
         if let Some(block) = hir.blocks.get_mut(&block_id) {
@@ -224,11 +226,15 @@ pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
         if let Some(fallthrough) = hir.blocks.get_mut(&fallthrough_id) {
             if fallthrough.preds.len() == 1 && fallthrough.preds.contains(&handler_id) {
                 // The handler was the only predecessor: remove the fallthrough block
-                hir.blocks.shift_remove(&fallthrough_id);
+                removed.insert(fallthrough_id);
             } else {
                 fallthrough.preds.shift_remove(&handler_id);
             }
         }
+    }
+    if !removed.is_empty() {
+        hir.blocks
+            .retain(|block_id, _| !removed.contains(*block_id));
     }
 }
 

@@ -11,7 +11,7 @@
 //!
 //! Analogous to TS `PruneUnusedLabelsHIR.ts`.
 
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::hir::{BlockId, BlockKind, GotoVariant, HirFunction, Terminal};
 
 pub(crate) fn prune_unused_labels_hir(
@@ -46,14 +46,23 @@ pub(crate) fn prune_unused_labels_hir(
         }
     }
 
+    // Not in upstream. Without a merge there is nothing to rewrite either.
+    if merged.is_empty() {
+        return Ok(());
+    }
+
     // Phase 2: Apply merges
     let mut rewrites: IdMap<BlockId, BlockId> = IdMap::new();
+    // Not in upstream, which removes each block at once: that moves every later block of the map.
+    let mut removed: IdBitSet<BlockId> = IdBitSet::new();
 
     for (original_label_id, next_id, fallthrough_id) in &merged {
         let label_id = rewrites
             .get(*original_label_id)
             .copied()
             .unwrap_or(*original_label_id);
+        // Upstream's lookups below fail for a block that an earlier merge removed.
+        debug_assert!(!removed.contains(*next_id) && !removed.contains(*fallthrough_id));
 
         // Validate: no phis in next or fallthrough
         let next_phis_empty = func.body.blocks[next_id].phis.is_empty();
@@ -85,11 +94,16 @@ pub(crate) fn prune_unused_labels_hir(
         label_block.terminal = fallthrough_terminal;
 
         // Remove merged blocks
-        func.body.blocks.shift_remove(next_id);
-        func.body.blocks.shift_remove(fallthrough_id);
+        removed.insert(*next_id);
+        removed.insert(*fallthrough_id);
 
         rewrites.insert(*fallthrough_id, label_id);
     }
+    func.body
+        .blocks
+        .retain(|block_id, _| !removed.contains(*block_id));
+    // No block that others were merged into was merged away itself. Phase 3 relies on it.
+    debug_assert!(rewrites.values().all(|label| !removed.contains(*label)));
 
     // Phase 3: Rewrite predecessor sets
     for block in func.body.blocks.values_mut() {
@@ -98,9 +112,28 @@ pub(crate) fn prune_unused_labels_hir(
             .iter()
             .filter_map(|pred| rewrites.get(*pred).map(|rewritten| (*pred, *rewritten)))
             .collect();
-        for (old, new) in preds_to_rewrite {
-            block.preds.shift_remove(&old);
+        // Not in upstream, which removes each one before it adds its rewrite: that moves every later predecessor.
+        if !preds_to_rewrite.is_empty() {
+            block.preds.retain(|pred| !rewrites.contains_key(*pred));
+        }
+        for (_, new) in preds_to_rewrite {
             block.preds.insert(new);
+        }
+    }
+    // The rewrite leaves the predecessors that `mark_predecessors` computes, in another order.
+    #[cfg(debug_assertions)]
+    {
+        let mut marked = func.body.clone();
+        crate::hir::cfg_utils::mark_predecessors(&mut marked);
+        for (block, expected) in func.body.blocks.values().zip(marked.blocks.values()) {
+            debug_assert!(
+                block.preds.len() == expected.preds.len()
+                    && block.preds.iter().all(|pred| expected.preds.contains(pred)),
+                "bb{}: {:?} is not {:?}",
+                block.id.0,
+                block.preds,
+                expected.preds,
+            );
         }
     }
     Ok(())

@@ -289,7 +289,6 @@ fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
     // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
     // (→ `mi_heap_destroy`) on the lazily-created `bump`.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
-    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
 
 /// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
@@ -435,12 +434,7 @@ impl Macro {
             (vm, true)
         };
 
-        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
-        // (which runs the macro module's top-level JS via `wait_for_promise`) so
-        // a top-level `Bun.Transpiler#transformSync` doesn't see
-        // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
-        // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
-        // own `MacroModeGuard` re-enables for the actual macro call.
+        // Covers `configure_defines` and the macro module's top-level code.
         let _init_guard = MacroModeGuard::new(vm);
         vm.event_loop().ensure_waker();
         if is_new_vm {

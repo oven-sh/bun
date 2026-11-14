@@ -196,30 +196,6 @@ pub struct TargetElement<'a> {
     pub node: Node<'a>,
 }
 
-impl<'a> From<Pat<'a>> for Target<'a> {
-    #[inline]
-    fn from(pat: Pat<'a>) -> Self {
-        Target::Pat(pat)
-    }
-}
-
-impl<'a> From<Expr<'a>> for Target<'a> {
-    #[inline]
-    fn from(e: Expr<'a>) -> Self {
-        Target::Expr(e)
-    }
-}
-
-impl<'a> From<Target<'a>> for Node<'a> {
-    #[inline]
-    fn from(target: Target<'a>) -> Self {
-        match target {
-            Target::Pat(pat) => Node::Pat(pat),
-            Target::Expr(e) => Node::Expr(e),
-        }
-    }
-}
-
 impl Spanned for Target<'_> {
     #[inline]
     fn span(&self) -> Span {

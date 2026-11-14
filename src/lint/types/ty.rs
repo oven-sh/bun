@@ -156,13 +156,6 @@ impl<'a> Iterator for TypeIter<'a> {
         (len, Some(len))
     }
 }
-impl DoubleEndedIterator for TypeIter<'_> {
-    #[inline]
-    fn next_back(&mut self) -> Option<Self::Item> {
-        let id = self.ids.next_back().copied().or_else(|| self.one.take())?;
-        Some(Type::new(self.file, id))
-    }
-}
 impl ExactSizeIterator for TypeIter<'_> {}
 
 /// `ts.TupleType`: `reference.target` of a tuple type.

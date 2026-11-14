@@ -8,8 +8,6 @@
 // by `properties_generated.rs`, `declaration.rs`, and
 // `rules/{font_face,font_palette_values}.rs`.
 
-#![warn(unused_must_use)]
-
 use crate::PrintResult;
 use crate::compat::Feature;
 use crate::css_parser as css;

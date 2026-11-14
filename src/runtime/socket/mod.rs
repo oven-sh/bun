@@ -130,14 +130,9 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         this: bun_ptr::ThisPtr<Self>,
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
-        reason: *mut core::ffi::c_void,
+        _reason: *mut core::ffi::c_void,
     ) -> bun_jsc::JsResult<()> {
-        NewSocket::on_close(
-            this,
-            s,
-            code,
-            if reason.is_null() { None } else { Some(reason) },
-        )
+        NewSocket::on_close(this, s, code)
     }
     #[inline]
     fn on_timeout(

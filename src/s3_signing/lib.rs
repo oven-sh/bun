@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 pub mod acl;
 pub mod crate_error;
 pub mod error;

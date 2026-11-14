@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 pub mod ansi_renderer;
 pub mod autolinks;
 pub(crate) mod blocks;

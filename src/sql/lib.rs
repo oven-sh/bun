@@ -1,5 +1,4 @@
 #![allow(non_snake_case, non_camel_case_types)]
-#![warn(unused_must_use)]
 
 pub mod error;
 pub use error::{Error, Result};

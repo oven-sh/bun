@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 mod apply;
 mod decide;
 mod edges;

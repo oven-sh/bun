@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 //! JSC bridge for `bun.bundler`. Keeps `src/bundler/` free of JSC types.
 
 // ──────────────────────────────────────────────────────────────────────────

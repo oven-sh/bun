@@ -23,7 +23,6 @@
 // `stopped_builds::end_build_where_allocation_fails`.
 #![feature(alloc_error_hook)]
 #![allow(internal_features)]
-#![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 

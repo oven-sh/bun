@@ -304,7 +304,7 @@ impl Histogram {
         let magnitude = self.sub_bucket_half_count_magnitude;
         // The bit that a value has to reach to be past bucket 0.
         let bucket_0_bits = self.unit_magnitude + magnitude + 1;
-        let bucket = (u64::BITS - value.leading_zeros()).saturating_sub(bucket_0_bits);
+        let bucket = value.bit_width().saturating_sub(bucket_0_bits);
         // In the upper half of the sub-buckets, unless this is bucket 0.
         let sub_bucket = value >> (bucket + self.unit_magnitude);
         ((bucket as usize) << magnitude) + sub_bucket as usize

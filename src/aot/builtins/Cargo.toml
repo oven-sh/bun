@@ -2,6 +2,7 @@
 name = "bun_aot_builtins"
 version.workspace = true
 edition.workspace = true
+publish.workspace = true
 build = "build.rs"
 
 [lib]

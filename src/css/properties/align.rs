@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;

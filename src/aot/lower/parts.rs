@@ -805,7 +805,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 parts.count,
                 lowered_after.as_millis(),
                 longest.into_inner(),
-                (began.elapsed() - lowered_after).as_millis(),
+                began.elapsed().saturating_sub(lowered_after).as_millis(),
             );
         }
         self.part = None;

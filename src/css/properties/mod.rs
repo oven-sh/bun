@@ -1,7 +1,5 @@
 //! CSS property definitions.
 
-#![warn(unused_must_use)]
-
 // `properties_generated.rs` carries the 249-variant `Property` /
 // `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
 // `context.rs`, and `rules/`. Every *value type* the `Property` enum names is

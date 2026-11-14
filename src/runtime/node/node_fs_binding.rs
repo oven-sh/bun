@@ -17,9 +17,6 @@ use crate::node::fs::{
 // `async_::*` aliases) and reused here via the `node_fs_bindings!` macro at
 // the bottom of this file.
 
-/// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
-/// Async calls use a thread pool.
-
 fn run_sync_with<R: FsReturn, A: FsArgument>(
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],

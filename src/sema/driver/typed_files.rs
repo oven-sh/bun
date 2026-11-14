@@ -2039,9 +2039,7 @@ fn link(
         else {
             return false;
         };
-        name_in_output(index, found)
-            .filter(|_| index < mapped)
-            .is_none()
+        name_in_output(index, found).is_none_or(|_| index >= mapped)
             && module.syntax.overload_signatures(found).is_empty()
             && module
                 .syntax

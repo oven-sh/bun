@@ -1,5 +1,4 @@
 #![feature(adt_const_params, allocator_api)]
-#![warn(unused_must_use)]
 
 pub mod error;
 pub use error::{Error, Result};

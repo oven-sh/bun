@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 pub mod build_id;
 pub mod builtins;
 mod cut_choice;

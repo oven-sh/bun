@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate::DeclarationList;
 use crate::Parser;
 use crate::PrintErr;

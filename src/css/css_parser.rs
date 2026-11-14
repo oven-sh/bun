@@ -631,6 +631,10 @@ pub trait CustomAtRuleParser<'bump> {
         options: &ParserOptions,
     ) -> CssResult<'bump, Self::Prelude>;
 
+    #[expect(
+        clippy::result_unit_err,
+        reason = "as in cssparser: the caller reports the `;` as an unexpected token"
+    )]
     fn rule_without_block(
         this: &mut Self,
         prelude: Self::Prelude,
@@ -648,6 +652,10 @@ pub trait CustomAtRuleParser<'bump> {
         is_nested: bool,
     ) -> CssResult<'bump, Self::AtRule>;
 
+    #[expect(
+        clippy::result_unit_err,
+        reason = "`rule_without_block` calls it and returns the same error"
+    )]
     fn on_import_rule(
         this: &mut Self,
         input: &mut Parser<'_, 'bump>,
@@ -688,6 +696,10 @@ pub trait AtRuleParser<'bump> {
     ) -> CssResult<'bump, Self::Prelude> {
         Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
     }
+    #[expect(
+        clippy::result_unit_err,
+        reason = "as in cssparser: the caller reports the `;` as an unexpected token"
+    )]
     fn rule_without_block(
         _this: &mut Self,
         _prelude: Self::Prelude,

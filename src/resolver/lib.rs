@@ -1,6 +1,5 @@
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
-#![warn(unused_must_use)]
 #![feature(adt_const_params)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:

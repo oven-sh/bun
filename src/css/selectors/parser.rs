@@ -1256,7 +1256,7 @@ impl<'a> SelectorParser<'a> {
         }
 
         let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-        TokenList::parse_raw(input, &mut args, self.options, 0)?;
+        TokenList::parse_raw(input, &mut args, 0)?;
         Ok(PseudoElement::CustomFunction {
             name,
             arguments: TokenList { v: args },
@@ -1342,7 +1342,7 @@ impl<'a> SelectorParser<'a> {
                     );
                 }
                 let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-                css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
+                css::TokenListFns::parse_raw(parser, &mut args, 0)?;
                 PseudoClass::CustomFunction {
                     name,
                     arguments: TokenList { v: args },

@@ -1857,6 +1857,10 @@ impl Follower<'_, '_, '_> {
         .then_some(Held::Primitive(Constant::Undefined))
     }
 
+    #[expect(
+        clippy::set_contains_or_insert,
+        reason = "the value is looked for between the two calls, and only a revisit inserts"
+    )]
     fn values_of_written(&mut self, e: ExprId) -> Option<Values> {
         let hir = self.inputs.hir;
         let e = hir.skip_type_assertions(e);

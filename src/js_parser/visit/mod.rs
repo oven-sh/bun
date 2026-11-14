@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 

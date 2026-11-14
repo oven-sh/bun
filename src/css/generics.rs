@@ -394,6 +394,7 @@ mod inherent_bridge {
     /// Forward `CssEql` to `PartialEq`.
     macro_rules! bridge_eql_partialeq {
         ($($t:ty),* $(,)?) => {$(
+            #[allow(unused_lifetimes, reason = "only some of the listed types name it")]
             impl<'bump> CssEql for $t {
                 #[inline]
                 fn eql(&self, other: &Self) -> bool { PartialEq::eq(self, other) }
@@ -1314,6 +1315,7 @@ macro_rules! impl_parse_tocss_via_inherent {
                 <$ty>::parse(input)
             }
         }
+        #[allow(unused_lifetimes, reason = "only some of the listed types name it")]
         impl<'bump> $crate::generics::ToCss for $ty {
             #[inline]
             fn to_css(

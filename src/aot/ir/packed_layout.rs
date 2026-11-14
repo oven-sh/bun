@@ -19,7 +19,7 @@ const FLAGS_AT: u32 = POSITION_AT + width(PositionFlags::ALL.0);
 const _: () = assert!(FLAGS_AT + width(FieldFlags::ALL.0) <= u32::BITS);
 
 const fn width(all: u32) -> u32 {
-    u32::BITS - all.leading_zeros()
+    all.bit_width()
 }
 
 #[derive(Default)]

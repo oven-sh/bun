@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 //! `bun_css_jsc` — JSC bridge for `bun_css`.
 
 pub(crate) mod color_js;

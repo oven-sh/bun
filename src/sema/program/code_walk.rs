@@ -1091,7 +1091,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 let inputs = inputs.as_load_inputs();
                 let (began, bytes) = (self.began.elapsed(), text.len());
                 let parsed = Box::new(load_code_file(context, arena, target, text, &inputs));
-                let took = self.began.elapsed() - began;
+                let took = self.began.elapsed().saturating_sub(began);
                 state = self.state.lock();
                 state.time_loading += took;
                 if took > state.longest_load.0 {
@@ -1151,7 +1151,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     false => self.has_to_read.wait_guarded(&mut state),
                 }
                 if let Some(since) = since {
-                    state.time_asleep += self.began.elapsed() - since;
+                    state.time_asleep += self.began.elapsed().saturating_sub(since);
                 }
                 state.asleep -= 1;
             }

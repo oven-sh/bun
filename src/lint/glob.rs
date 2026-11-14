@@ -360,6 +360,7 @@ fn push_class_member(pattern: &mut Vec<u8>, c: &[u8]) {
 /// globset's `parse_class` for the class that starts at `open`. It has no escapes, and a `]` or `-` right after the `[`
 /// is a member. Appends the class to `pattern` and returns the index after the `]`. `Ok(None)` means the class isn't
 /// closed, and `Err` means it has a reversed range like `z-a`.
+#[expect(clippy::result_unit_err, reason = "a reversed range is the only error")]
 pub fn from_globset_class(
     globset_pattern: &[u8],
     open: usize,

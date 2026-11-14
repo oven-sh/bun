@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, Ordering};
 

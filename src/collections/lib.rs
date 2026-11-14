@@ -9,7 +9,6 @@
     allocator_api
 )]
 #![allow(incomplete_features)]
-#![warn(unused_must_use)]
 
 pub mod hive_array;
 pub mod index_sort;

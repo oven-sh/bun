@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate as css;
 
 use css::css_properties::Property;

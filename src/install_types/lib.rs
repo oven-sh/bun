@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-#![warn(unused_must_use)]
 pub mod NodeLinker;
 pub mod resolver_hooks;
 

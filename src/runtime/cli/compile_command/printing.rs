@@ -104,7 +104,9 @@ pub(super) fn print_outcome(
     let whole_build = time_since_start(finished);
     let bundle_time =
         (time_since_start(outcome.compiler_called_at) + outcome.load_time).min(whole_build);
-    let check_time = outcome.check_time.min(whole_build - bundle_time);
+    let check_time = outcome
+        .check_time
+        .min(whole_build.saturating_sub(bundle_time));
     let executable = outcome.executable.as_ref();
     let build_id = executable
         .and_then(|executable| executable.build_id.as_ref())
@@ -114,7 +116,9 @@ pub(super) fn print_outcome(
         &BuildRows {
             bundle_time,
             check_time,
-            compile_time: whole_build - bundle_time - check_time,
+            compile_time: whole_build
+                .saturating_sub(bundle_time)
+                .saturating_sub(check_time),
             module_count: u64::from(outcome.module_count),
             line_count: outcome.line_count,
             untyped_file_count: outcome.untyped_file_count,

@@ -858,7 +858,7 @@ impl Response {
                         u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
                 });
             } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
+                if let Some(init) = Init::from_js(global_this, arg_init)? {
                     response.init.set(init);
                 }
             }
@@ -972,7 +972,7 @@ impl Response {
             } else if arg_init.is_number() {
                 let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                 response.init.with_mut(|i| i.status_code = status);
-            } else if let Some(init) = Init::init(global_this, arg_init)? {
+            } else if let Some(init) = Init::from_js(global_this, arg_init)? {
                 // cleanup is handled by Init's drop glue on `?` below
                 response.init.set(init);
 
@@ -1098,7 +1098,7 @@ impl Response {
                 };
             }
             if init.is_object() {
-                break 'brk Init::init(global_this, init)?.expect("unreachable");
+                break 'brk Init::from_js(global_this, init)?.expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1259,7 +1259,7 @@ impl Init {
         })
     }
 
-    /// The members are taken in the order in which `init` reads them.
+    /// The members are taken in the order in which `from_js` reads them.
     fn from_parts(global_this: &JSGlobalObject, parts: &InitParts) -> JsResult<Init> {
         let mut init = Init {
             status_code: 200,
@@ -1312,7 +1312,7 @@ impl Init {
         Ok(())
     }
 
-    pub(crate) fn init(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {

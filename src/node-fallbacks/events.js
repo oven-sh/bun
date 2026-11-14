@@ -19,7 +19,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
-const EventEmitter = function EventEmitter(opts) {
+function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;
@@ -29,7 +29,7 @@ const EventEmitter = function EventEmitter(opts) {
   if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
     this.emit = emitWithRejectionCapture;
   }
-};
+}
 const EventEmitterPrototype = (EventEmitter.prototype = {});
 
 EventEmitterPrototype._events = undefined;
@@ -530,15 +530,21 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
+// The bundler numbers a function expression named like an export (`once2`). These exports have other binding names.
+const eventsGetMaxListeners = getMaxListeners,
+  eventsListenerCount = listenerCount,
+  eventsOnce = once,
+  eventsSetMaxListeners = setMaxListeners;
+
 export default EventEmitter;
 export {
   EventEmitter,
   addAbortListener,
   captureRejectionSymbol,
   getEventListeners,
-  getMaxListeners,
+  eventsGetMaxListeners as getMaxListeners,
   EventEmitter as init,
-  listenerCount,
-  once,
-  setMaxListeners,
+  eventsListenerCount as listenerCount,
+  eventsOnce as once,
+  eventsSetMaxListeners as setMaxListeners,
 };

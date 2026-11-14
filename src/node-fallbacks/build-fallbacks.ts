@@ -33,7 +33,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
 
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --keep-names --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
     buildCommand.then(async text => {
@@ -74,6 +74,13 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         outfile.includes("$newPromiseCapability(")
       ) {
         throw new Error("Unsupported function in " + name);
+      }
+
+      // https://github.com/oven-sh/bun/pull/40503 makes --keep-names add __name() calls, which run in user bundles.
+      if (outfile.includes("__name(")) {
+        throw new Error(
+          `Unexpected __name() call in ${name}. If --keep-names added it, drop --minify-syntax and --keep-names.`,
+        );
       }
 
       fs.writeFileSync(`${outdir}/${name}`, outfile);

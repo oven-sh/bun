@@ -166,6 +166,106 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // Node's test/parallel/test-event-emitter-method-names.js reads these names. build-fallbacks.ts must keep them.
+  const NodeEventsMethodNames = itBundled("browser/NodeEventsMethodNames", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter, getMaxListeners, listenerCount, once } from "node:events";
+        const E = EventEmitter.prototype;
+        for (const name of Object.getOwnPropertyNames(E).sort()) {
+          if (typeof E[name] === "function") console.log(name + ": " + E[name].name);
+        }
+        console.log("exports: " + [getMaxListeners.name, listenerCount.name, once.name]);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        addListener: addListener
+        constructor: EventEmitter
+        emit: emit
+        eventNames: eventNames
+        getMaxListeners: getMaxListeners
+        listenerCount: listenerCount
+        listeners: listeners
+        off: removeListener
+        on: addListener
+        once: once
+        prependListener: prependListener
+        prependOnceListener: prependOnceListener
+        rawListeners: rawListeners
+        removeAllListeners: removeAllListeners
+        removeListener: removeListener
+        setMaxListeners: setMaxListeners
+        exports: getMaxListeners,listenerCount,once
+      `,
+    },
+  });
+  // The user's --minify-syntax drops the names again, unless --keep-names ("cli") or minify.keepNames ("api") is set.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`browser/NodeEventsMethodNamesKeepNames-${backend}`, {
+      ...NodeEventsMethodNames.options,
+      backend,
+      minifySyntax: true,
+      keepNames: true,
+    });
+  }
+  // buffer is hand-written, stream ships as CommonJS, and stream's require("events") gives events an exports object.
+  itBundled("browser/NodePolyfillFunctionNames", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        import { EventEmitter } from "node:events";
+        import { addAbortSignal, Writable } from "node:stream";
+        console.log(JSON.stringify([
+          EventEmitter.name,
+          new EventEmitter().constructor.name,
+          Buffer.concat.name,
+          Buffer.prototype.toString.name,
+          addAbortSignal.name,
+          Writable.prototype.setDefaultEncoding.name,
+        ]));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '["EventEmitter","EventEmitter","concat","toString","addAbortSignal","setDefaultEncoding"]',
+    },
+  });
+  // With an exports object, the bundler numbers a function expression named like an export (EventEmitter2, once2).
+  itBundled("browser/NodePolyfillFunctionNamesRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const [events, http, util] = [require("node:events"), require("node:http"), require("node:util")];
+        const E = events.EventEmitter.prototype;
+        console.log(JSON.stringify([
+          events.EventEmitter.name,
+          new events.EventEmitter().constructor.name,
+          E.once.name,
+          E.listenerCount.name,
+          E.getMaxListeners.name,
+          E.setMaxListeners.name,
+          http.get.name,
+          util.inspect.name,
+          util.promisify.name,
+        ]));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: JSON.stringify([
+        "EventEmitter",
+        "EventEmitter",
+        "once",
+        "listenerCount",
+        "getMaxListeners",
+        "setMaxListeners",
+        "get",
+        "inspect",
+        "promisify",
+      ]),
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

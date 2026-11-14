@@ -1,4 +1,4 @@
-import { parse, urlToHttpOptions } from "url";
+import { format, parse, urlToHttpOptions } from "url";
 
 describe("Url.prototype.parse", () => {
   it("parses URL correctly", () => {
@@ -81,6 +81,31 @@ it("urlToHttpOptions returns a null-prototype object", () => {
     port: 21,
     auth: "user:pass",
   });
+});
+
+// A non-special URL with credentials and no path has the pathname "", not "/". The values are what Node.js gives.
+it("urlToHttpOptions and format keep the empty path of a non-special URL with credentials", () => {
+  const url = new URL("zz://u:p@h:8?q#f");
+  expect<object>({ ...urlToHttpOptions(url) }).toEqual({
+    protocol: "zz:",
+    hostname: "h",
+    hash: "#f",
+    search: "?q",
+    pathname: "",
+    path: "?q",
+    href: "zz://u:p@h:8?q#f",
+    port: 8,
+    auth: "u:p",
+  });
+  expect([
+    format(url),
+    format(url, { auth: false }),
+    format(url, { search: false }),
+    format(url, { fragment: false }),
+  ]).toEqual(["zz://u:p@h:8?q#f", "zz://h:8?q#f", "zz://u:p@h:8#f", "zz://u:p@h:8?q"]);
+  // A special URL keeps the path "/".
+  expect(urlToHttpOptions(new URL("http://u:p@h:8?q#f")).path).toBe("/?q");
+  expect(format(new URL("http://u:p@h:8?q#f"))).toBe("http://u:p@h:8/?q#f");
 });
 
 it("URL constructor throws ERR_MISSING_ARGS", () => {

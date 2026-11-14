@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
@@ -248,6 +249,170 @@ describe("url", () => {
     expect([u.href, String(u), JSON.stringify(u)]).toEqual(["http://other/", "http://other/", '"http://other/"']);
     const v = new URL("HTTP://Example.COM");
     expect(v.href).toBe("http://example.com/");
+  });
+
+  // URL Standard, path start state: when "?" or "#" follows the host, only a special URL gets the path "/".
+  // Every expected value is also what Node.js gives.
+  describe("a non-special URL with credentials keeps an empty path before a query or fragment", () => {
+    type Row = [input: string, href: string, user: string, pass: string, host: string, path: string, ...rest: string[]];
+    const parts = (u: URL) => [u.href, u.username, u.password, u.host, u.pathname, u.search, u.hash];
+    // The same text as a UTF-16 string. The parser has separate code for each string width.
+    const wide = (text: string) => {
+      const utf16 = new TextDecoder("utf-16le").decode(Buffer.from(text, "utf16le"));
+      expect(jscDescribe(utf16)).toContain("8Bit:(0)");
+      return utf16;
+    };
+    // Each row whose input is a Latin-1 string runs again as a UTF-16 string.
+    const inBothWidths = (rows: Row[]) =>
+      rows.flatMap(row => (/^[\x00-\xff]*$/.test(row[0]) ? [row, [wide(row[0]), ...row.slice(1)] as Row] : [row]));
+
+    it("in the constructor and URL.parse", () => {
+      const rows = inBothWidths([
+        // a plain host
+        ["zz://u@h?q", "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        ["zz://u@h#f", "zz://u@h#f", "u", "", "h", "", "", "#f"],
+        ["zz://u:p@h?q#f", "zz://u:p@h?q#f", "u", "p", "h", "", "?q", "#f"],
+        ["zz://u@h?", "zz://u@h?", "u", "", "h", "", "", ""],
+        ["zz://u@h#", "zz://u@h#", "u", "", "h", "", "", ""],
+        // a port, an IPv6 address, a percent sign or a non-ASCII character in the host
+        ["zz://u:p@h:8?q", "zz://u:p@h:8?q", "u", "p", "h:8", "", "?q", ""],
+        ["zz://u:p@h:8#f", "zz://u:p@h:8#f", "u", "p", "h:8", "", "", "#f"],
+        ["zz://u@h:?q", "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        ["zz://u@[::1]?q", "zz://u@[::1]?q", "u", "", "[::1]", "", "?q", ""],
+        ["zz://u@[::1]:8?q#f", "zz://u@[::1]:8?q#f", "u", "", "[::1]:8", "", "?q", "#f"],
+        ["zz://u@h%41#f", "zz://u@h%41#f", "u", "", "h%41", "", "", "#f"],
+        ["zz://u@h\u00e9?q", "zz://u@h%C3%A9?q", "u", "", "h%C3%A9", "", "?q", ""],
+        // characters outside Latin-1
+        ["zz://u@h?q\u4e2d", "zz://u@h?q%E4%B8%AD", "u", "", "h", "", "?q%E4%B8%AD", ""],
+        ["zz://u@h#\u4e2d", "zz://u@h#%E4%B8%AD", "u", "", "h", "", "", "#%E4%B8%AD"],
+        ["zz://u:p@h:8?q\u4e2d", "zz://u:p@h:8?q%E4%B8%AD", "u", "p", "h:8", "", "?q%E4%B8%AD", ""],
+        ["zz://\u4e2d@h?q", "zz://%E4%B8%AD@h?q", "%E4%B8%AD", "", "h", "", "?q", ""],
+        ["zz://u@\u4e2d#f", "zz://u@%E4%B8%AD#f", "u", "", "%E4%B8%AD", "", "", "#f"],
+        // credentials that are empty after parsing
+        ["zz://@h?q", "zz://h?q", "", "", "h", "", "?q", ""],
+        ["zz://:@h#f", "zz://h#f", "", "", "h", "", "", "#f"],
+        ["zz://u@@h?q", "zz://u%40@h?q", "u%40", "", "h", "", "?q", ""],
+        // tab, newline and surrounding spaces are removed first
+        ["zz://u@h\t?q", "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        ["zz://u@\nh#f", "zz://u@h#f", "u", "", "h", "", "", "#f"],
+        [" zz://u@h?q ", "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        // other schemes
+        ["postgres://u:p@h:5432?ssl=1", "postgres://u:p@h:5432?ssl=1", "u", "p", "h:5432", "", "?ssl=1", ""],
+        ["redis://:p@h:6379?db=1", "redis://:p@h:6379?db=1", "", "p", "h:6379", "", "?db=1", ""],
+        ["ssh://git@github.com#frag", "ssh://git@github.com#frag", "git", "", "github.com", "", "", "#frag"],
+      ]);
+      expect(rows.map(([input]) => [input, ...parts(new URL(input))])).toEqual(rows);
+      expect(rows.map(([input]) => [input, ...parts(URL.parse(input)!)])).toEqual(rows);
+      // The serialization parses to itself.
+      expect(rows.map(([, href]) => new URL(href).href)).toEqual(rows.map(([, href]) => href));
+    });
+
+    it("against a base", () => {
+      const rows: [input: string, base: string, ...expected: string[]][] = [
+        ["//u@h?q", "zz://x/y", "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        ["//u:p@h:8#f", "zz://x/y", "zz://u:p@h:8#f", "u", "p", "h:8", "", "", "#f"],
+        [wide("//u@h?q"), wide("zz://x/y"), "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        ["?r", "zz://u@h?q", "zz://u@h?r", "u", "", "h", "", "?r", ""],
+        ["#g", "zz://u@h?q", "zz://u@h?q#g", "u", "", "h", "", "?q", "#g"],
+        ["", "zz://u@h?q#f", "zz://u@h?q", "u", "", "h", "", "?q", ""],
+        // A path in the reference starts at the host of the base.
+        ["x", "zz://u@h?q", "zz://u@h/x", "u", "", "h", "/x", "", ""],
+        [".", "zz://u:p@h:8#f", "zz://u:p@h:8/", "u", "p", "h:8", "/", "", ""],
+        ["..", "zz://u@h?q", "zz://u@h/", "u", "", "h", "/", "", ""],
+        ["x", wide("zz://u@h?q"), "zz://u@h/x", "u", "", "h", "/x", "", ""],
+      ];
+      expect(rows.map(([input, base]) => [input, base, ...parts(new URL(input, base))])).toEqual(rows);
+      expect(rows.map(([input, base]) => [input, base, ...parts(new URL(input, new URL(base)))])).toEqual(rows);
+    });
+
+    it("in the setters", () => {
+      // The href after each assignment, then the pathname.
+      const steps = (start: string, ...assignments: [property: string, value: string][]) => {
+        const u = new URL(start);
+        const hrefs: string[] = [];
+        for (const [property, value] of assignments) {
+          (u as any)[property] = value;
+          hrefs.push(u.href);
+        }
+        return [...hrefs, u.pathname];
+      };
+      expect([
+        // Credentials, a query or a fragment that come and go leave the path empty.
+        steps("zz://h?q", ["username", "u"], ["username", ""]),
+        steps("zz://h#f", ["password", "p"], ["password", ""]),
+        steps("zz://u@h", ["search", "?q"], ["search", ""]),
+        steps("zz://u@h", ["hash", "#f"], ["hash", ""]),
+        steps("zz://u@h/p?q", ["pathname", ""], ["pathname", "/"], ["pathname", ""]),
+        steps("zz://u:p@h:8/p#f", ["pathname", ""]),
+        steps(
+          "zz://u@h?q",
+          ["port", "8"],
+          ["port", ""],
+          ["host", "x:9"],
+          ["hostname", "y"],
+          ["protocol", "yy"],
+          ["href", "zz://v@i#f"],
+        ),
+        steps(wide("zz://h?q"), ["username", wide("us")], ["search", wide("?r")], ["hash", wide("#f")]),
+      ]).toEqual([
+        ["zz://u@h?q", "zz://h?q", ""],
+        ["zz://:p@h#f", "zz://h#f", ""],
+        ["zz://u@h?q", "zz://u@h", ""],
+        ["zz://u@h#f", "zz://u@h", ""],
+        ["zz://u@h?q", "zz://u@h/?q", "zz://u@h?q", ""],
+        ["zz://u:p@h:8#f", ""],
+        ["zz://u@h:8?q", "zz://u@h?q", "zz://u@x:9?q", "zz://u@y:9?q", "yy://u@y:9?q", "zz://v@i#f", ""],
+        ["zz://us@h?q", "zz://us@h?r", "zz://us@h?r#f", ""],
+      ]);
+
+      const u = new URL("zz://u@h");
+      const hrefs: string[] = [];
+      u.searchParams.append("a", "b");
+      hrefs.push(u.href);
+      u.searchParams.set("a", "c");
+      hrefs.push(u.href);
+      u.searchParams.delete("a");
+      expect([...hrefs, u.href, u.pathname]).toEqual(["zz://u@h?a=b", "zz://u@h?a=c", "zz://u@h", ""]);
+
+      expect(Response.redirect("zz://u@h?q").headers.get("location")).toBe("zz://u@h?q");
+    });
+
+    // A control: this test passes without the fix too.
+    it("and nothing else changes", () => {
+      const rows = inBothWidths([
+        // a slash in the input stays
+        ["zz://u@h/?q", "zz://u@h/?q", "u", "", "h", "/", "?q", ""],
+        ["zz://u@h/#f", "zz://u@h/#f", "u", "", "h", "/", "", "#f"],
+        ["zz://u@h/p?q", "zz://u@h/p?q", "u", "", "h", "/p", "?q", ""],
+        // nothing after the host
+        ["zz://u@h", "zz://u@h", "u", "", "h", "", "", ""],
+        ["zz://u:p@h:8", "zz://u:p@h:8", "u", "p", "h:8", "", "", ""],
+        // no credentials
+        ["zz://h?q", "zz://h?q", "", "", "h", "", "?q", ""],
+        ["zz://h:8#f", "zz://h:8#f", "", "", "h:8", "", "", "#f"],
+        // a special URL gets the path "/"
+        ["http://u@h?q", "http://u@h/?q", "u", "", "h", "/", "?q", ""],
+        ["http://u@h#f", "http://u@h/#f", "u", "", "h", "/", "", "#f"],
+        ["https://u:p@h:8?q", "https://u:p@h:8/?q", "u", "p", "h:8", "/", "?q", ""],
+        ["https://u:p@h:8#f", "https://u:p@h:8/#f", "u", "p", "h:8", "/", "", "#f"],
+        ["ws://u@h?q", "ws://u@h/?q", "u", "", "h", "/", "?q", ""],
+        ["wss://u@[::1]#f", "wss://u@[::1]/#f", "u", "", "[::1]", "/", "", "#f"],
+        ["ftp://u@h?q", "ftp://u@h/?q", "u", "", "h", "/", "?q", ""],
+        ["http://u@h", "http://u@h/", "u", "", "h", "/", "", ""],
+        ["https://u:p@h:8?q\u4e2d", "https://u:p@h:8/?q%E4%B8%AD", "u", "p", "h:8", "/", "?q%E4%B8%AD", ""],
+        ["http://u@h\\p", "http://u@h/p", "u", "", "h", "/p", "", ""],
+      ]);
+      expect(rows.map(([input]) => [input, ...parts(new URL(input))])).toEqual(rows);
+      expect(parts(new URL("//u@h?q", "http://x/y"))).toEqual(["http://u@h/?q", "u", "", "h", "/", "?q", ""]);
+      // Credentials need a host.
+      const invalid = ["zz://u@?q", "zz://u@#f", "zz://u@", "zz://u@h\\?q"];
+      for (const input of invalid) expect(() => new URL(input)).toThrow(TypeError);
+      expect(invalid.map(input => URL.canParse(input))).toEqual([false, false, false, false]);
+      const special = new URL("http://h?q");
+      special.username = "u";
+      special.pathname = "";
+      expect(special.href).toBe("http://u@h/?q");
+    });
   });
 
   it("prints", () => {

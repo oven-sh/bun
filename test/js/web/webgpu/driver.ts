@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 const info = (await navigator.gpu.requestAdapter())?.info;
 export const hasAdapter = info !== undefined;
+export const isParavirtual = info?.device === "apple-paravirtual-device";
 // For the report of a failure.
 if (info) console.log(`${info.device}, ${info.description}`);
 

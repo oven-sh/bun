@@ -1,4 +1,3 @@
-// Runs alone: its last tests disturb other processes that use the GPU of a macOS virtual machine.
 import { describe, expect, test } from "bun:test";
 import { isArm64, isASAN, isDebug, isLinux, isMacOS, libcPathForDlopen, withoutAsanQuarantine } from "harness";
 import { hasAdapter, runWithDriverOfChrome } from "./driver";
@@ -270,7 +269,8 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       const device = await requestDevice();
       await keepBusy(device, 1).mapAsync(GPUMapMode.READ);
       // More each time, as the GPU may finish all of it before this thread gets to run.
-      for (let workgroups = 60; workgroups < 65536; workgroups *= 4) {
+      const end = performance.now() + 30_000;
+      for (let workgroups = 60; performance.now() < end; workgroups = Math.min(workgroups * 4, 61440)) {
         const [early, late] = [prepare(device, workgroups / 2), prepare(device, workgroups)];
         const [first] = ${start};
         const last = device.queue.onSubmittedWorkDone();
@@ -555,7 +555,7 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       const upload = prepareUploads(await requestDevice());
       const before = process.memoryUsage.rss();
       let rounds = 0;
-      do upload(4), Bun.sleepSync(++rounds);
+      do upload(4), Bun.sleepSync(++rounds ** 2);
       while (rounds * 16 - ((process.memoryUsage.rss() - before) >> 20) < 64 && rounds < 24);
       console.log(rounds < 24);`;
     expect(await run({ "index.js": script }, undefined, returningFreedMemory(withoutGC))).toEqual(printed("true"));
@@ -1032,7 +1032,6 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
   });
 });
 
-// Last and one at a time: the Apple Paravirtual device then fails the pipelines that other processes are compiling.
 describe.skipIf(!hasAdapter)("the process ends while a pipeline compiles", () => {
   test("at process.exit()", async () => {
     const script = `

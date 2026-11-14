@@ -741,11 +741,43 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
             format_args!("argument to sleepSync must not be negative, got {milliseconds}"),
         ));
     };
+    let duration = core::time::Duration::from_millis(duration);
 
     // mimalloc's scavenger sweeps this thread's heaps while it sleeps, as it does across the event loop's poll.
     // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
     let handed_off = unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
-    std::thread::sleep(core::time::Duration::from_millis(duration));
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    if !duration.is_zero() {
+        // After a signal the kernel's time left is too long: it omits the handler, and Linux adds the timer slack.
+        let started = std::time::Instant::now();
+        let mut left = duration;
+        loop {
+            let request = libc::timespec {
+                tv_sec: left.as_secs() as _,
+                tv_nsec: left.subsec_nanos() as _,
+            };
+            let mut remain = request;
+            match sys::c::clock_nanosleep(libc::CLOCK_MONOTONIC, 0, &request, Some(&mut remain)) {
+                0 => break,
+                libc::EINTR => {}
+                // Refused: `thread::sleep` makes the same call and asserts, as it does without this loop.
+                _ => {
+                    std::thread::sleep(left);
+                    break;
+                }
+            }
+            // The kernel's count bounds the rest too: no time passes on a clock that stands still (libfaketime).
+            let reported = core::time::Duration::from_secs(remain.tv_sec as u64)
+                .saturating_add(core::time::Duration::from_nanos(remain.tv_nsec as u64));
+            left = reported.min(duration.saturating_sub(started.elapsed()));
+            if left.is_zero() {
+                break;
+            }
+        }
+    }
+    // macOS libc counts the time left to its own deadline. Windows has no signals.
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+    std::thread::sleep(duration);
     if handed_off {
         bun_alloc::mimalloc::mi_on_thread_idle_end();
     }

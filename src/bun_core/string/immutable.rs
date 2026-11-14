@@ -754,7 +754,6 @@ const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 impl StringOrTinyString {
     const MAX: usize = 31;
     const TINY_TAG: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
-    pub const EMPTY: Self = Self(StringOrTinyStringRepr::Static(b""));
 
     #[inline]
     pub fn slice(&self) -> &[u8] {

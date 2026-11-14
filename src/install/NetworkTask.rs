@@ -14,6 +14,7 @@ use std::io::Write as _;
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
+use crate::package_manager::INBOX;
 use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
 struct FilenameStoreAppender<'a>(&'a FilenameStore);
@@ -46,10 +47,7 @@ pub struct NetworkTask {
     pub(crate) header_buf: Box<[u8]>,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
-    // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
-    // ParentRef constructed via `from_raw_mut` so `as_mut_ptr` retains write
-    // provenance for `notify` (`wake_raw`) and `reset_streaming_for_retry`
-    // (`TarballStream::init`).
+    /// Owns this task. Install thread only.
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     pub(crate) callback: Callback,
     pub(crate) next: bun_threading::Link<NetworkTask>,
@@ -64,7 +62,7 @@ pub struct NetworkTask {
     pub(crate) streaming_extract_task: *mut Task,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
-    /// `async_network_task_queue` — the extract Task published by
+    /// `INBOX.network_tasks` — the extract Task published by
     /// `TarballStream.finish()` owns the NetworkTask's lifetime instead
     /// (its `resolve_tasks` handler returns it to the pool). Also read by
     /// the main-thread fallback / retry paths in `run_tasks` to assert
@@ -90,6 +88,7 @@ pub enum Callback {
         loaded_manifest: Option<PackageManifest>,
         name: strings::StringOrTinyString,
         is_extended_manifest: bool,
+        registry: npm::registry::ManifestTag,
     },
     Extract(ExtractTarball),
     LocalTarball,
@@ -219,7 +218,7 @@ impl NetworkTask {
                         // exactly one of the extract Task (to
                         // `resolve_tasks`) or, when the connection failed
                         // mid-body, this NetworkTask (to
-                        // `async_network_task_queue`).
+                        // `network_tasks`).
                         // SAFETY: `this` is live; the HTTP thread is its sole writer here.
                         unsafe { (*this).streaming_committed = true };
                         // SAFETY: `stream` is the live heap-allocated
@@ -255,7 +254,7 @@ impl NetworkTask {
                     // of that Task returns this NetworkTask to
                     // `preallocated_network_tasks` (poisoning it under
                     // ASAN). The NetworkTask is therefore *not* pushed to
-                    // `async_network_task_queue` here; the extract Task
+                    // `network_tasks` here; the extract Task
                     // owns its lifetime from now on.
                     return;
                 }
@@ -288,20 +287,8 @@ impl NetworkTask {
         // SAFETY: `this` is live; the HTTP thread is its sole writer here.
         unsafe { result.body_into(&mut (*this).response_buffer.list) };
 
-        // BACKREF — PackageManager owns this task and outlives it. `notify`
-        // runs on the HTTP thread, so we never materialize a `&mut
-        // PackageManager` here (the main thread may hold one concurrently);
-        // field access goes through `addr_of!` and the cross-thread
-        // `wake_raw` path, mirroring `TarballStream::finish` /
-        // `isolated_install::Installer::Task::callback`.
-        //
-        // SAFETY: `this` is live and non-null; `package_manager` is the
-        // owning-manager BACKREF, valid for the task's lifetime.
-        let pm = unsafe { (*this).package_manager.as_mut_ptr() };
         // SAFETY: `this` is non-null (raw receiver from the callback).
         let this_ptr = unsafe { ptr::NonNull::new_unchecked(this) };
-        // The wake happens at the end of the fn (no
-        // early returns past this point).
 
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
@@ -315,12 +302,8 @@ impl NetworkTask {
                 (*this).response.metadata = saved_metadata;
             }
         }
-        // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
-        // internally synchronized (`UnboundedQueue::push` takes `&self`).
-        unsafe {
-            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this_ptr);
-            PackageManager::wake_raw(pm);
-        }
+        INBOX.network_tasks.push(this_ptr);
+        INBOX.wake();
     }
 }
 
@@ -704,6 +687,7 @@ impl NetworkTask {
             name: stored_string(name),
             loaded_manifest: loaded_manifest.cloned(),
             is_extended_manifest: needs_extended,
+            registry: scope.manifest_tag(),
         };
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -887,7 +871,7 @@ impl NetworkTask {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on
-            // `thread_pool`; the drain task runs the decoder until it is
+            // `THREAD_POOL`; the drain task runs the decoder until it is
             // out of input, then returns so the
             // worker can be reused for other install work. The next chunk
             // reschedules it and the decoder — whose state lives on the heap
@@ -967,13 +951,8 @@ impl NetworkTask {
         if let Some(stream) = self.tarball_stream.as_deref_mut() {
             stream.reset_for_retry();
         } else if !self.streaming_extract_task.is_null() {
-            let manager = self.package_manager.as_mut_ptr();
             let this: *mut NetworkTask = self;
-            self.tarball_stream = Some(TarballStream::init(
-                self.streaming_extract_task,
-                this,
-                manager,
-            ));
+            self.tarball_stream = Some(TarballStream::init(self.streaming_extract_task, this));
         }
         self.response = HTTPClientResult::default();
     }
@@ -1003,9 +982,7 @@ impl NetworkTask {
         // contents are garbage; every field is written without dropping.
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
-            // SAFETY: `package_manager` is the live owner of this task; write
-            // provenance is required for the `as_mut_ptr()` in `notify` and
-            // `reset_streaming_for_retry`, so callers pass `*mut` (not `*const`).
+            // SAFETY: `package_manager` is the live owner of this task.
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             // Struct-default fields.

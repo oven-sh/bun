@@ -33,14 +33,14 @@ impl Resolver<'_> {
         glob: &[u8],
     ) -> Option<GlobInDir> {
         let dir_info = self.read_dir_info_ignore_error(importer_dir)?;
-        let tsconfig = self.enclosing_tsconfig_json(&dir_info);
+        let tsconfig = self.enclosing_tsconfig_json(dir_info);
         if let Some(tsconfig) = &tsconfig
             && let Some(found) = self.import_meta_glob_in_tsconfig_paths(tsconfig, glob)
         {
             return Some(found);
         }
         if glob.starts_with(b"#")
-            && let Some(found) = self.import_meta_glob_in_package_imports(&dir_info, glob)
+            && let Some(found) = self.import_meta_glob_in_package_imports(dir_info, glob)
         {
             return Some(found);
         }

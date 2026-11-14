@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
 import { join } from "node:path";
-import { patterned, runWithPrefilledStdin } from "./stdin/prefilled-stdin";
+import { patterned, runWithPrefilledStdin, socketHolds } from "./stdin/prefilled-stdin";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -759,6 +759,11 @@ describe("process.stdin pushes no chunk inside the nextTicks of the chunk before
   // fd 0 holds every byte and the EOF before the reader exists, in more than one read of the source. Linux only: the
   // capacity of the pipe or of the socket is raised with the constants of Linux.
   describe.skipIf(!isLinux)("a descriptor that holds every chunk and the EOF", () => {
+    // One read of the source and 7,856 bytes more. A host with a net.core.wmem_max below the default of Linux cannot
+    // put that much into a socket that nothing reads.
+    const socketInput = patterned(270_000);
+    const noSuchSocket = !isLinux || !socketHolds(socketInput.length);
+
     test.concurrent.each([
       ["the next once('data') comes one nextTick behind the chunk", 1_000_000, "tick", "1"],
       ["the next once('data') comes two nextTicks behind the chunk", 600_000, "tick", "2"],
@@ -773,13 +778,12 @@ describe("process.stdin pushes no chunk inside the nextTicks of the chunk before
       expect(await runWithPrefilledStdin([bunExe(), fixture, form, ticks], patterned(size))).toEqual(everyByte(size));
     });
 
-    test.concurrent.each([
+    test.concurrent.skipIf(noSuchSocket).each([
       ["the next once('data') comes two nextTicks behind the chunk", "tick", "2"],
       ["stdin is paused for that nextTick, and the next once('data') comes one nextTick behind resume()", "late", "1"],
     ] as const)("a socket: %s", async (_, form, ticks) => {
-      const input = patterned(270_000);
-      const result = await runWithPrefilledStdin([bunExe(), fixture, form, ticks], input, { kind: "socket" });
-      expect(bytesOf(result)).toEqual(everyByteOf(input.length));
+      const result = await runWithPrefilledStdin([bunExe(), fixture, form, ticks], socketInput, { kind: "socket" });
+      expect(bytesOf(result)).toEqual(everyByteOf(socketInput.length));
     });
 
     // process.stdin lets go of `Bun.stdin.stream()` one nextTick after pause(). The source that it stopped still reads
@@ -816,9 +820,8 @@ describe("process.stdin pushes no chunk inside the nextTicks of the chunk before
     );
 
     test.todo("a socket: 'end' comes when the loop is done with the last chunk", async () => {
-      const input = patterned(270_000);
-      const result = await runWithPrefilledStdin([bunExe(), fixture, "tick", "2"], input, { kind: "socket" });
-      expect(result).toEqual(everyByte(input.length));
+      const result = await runWithPrefilledStdin([bunExe(), fixture, "tick", "2"], socketInput, { kind: "socket" });
+      expect(result).toEqual(everyByte(socketInput.length));
     });
 
     // A chunk that came while nothing asked for it answers the next pull inside the call. ref() starts the source.
@@ -869,7 +872,12 @@ describe("process.stdin pushes no chunk inside the nextTicks of the chunk before
       console.log("READY");
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", reader], env: bunEnv, terminal });
-    await ready.promise;
+    // A child that ends before it is ready fails here with what it printed, and not at the time limit of the test.
+    const started = Promise.race([
+      ready.promise.then(() => "ready"),
+      proc.exited.then(code => `exited with ${code}: ${output}`),
+    ]);
+    expect(await started).toBe("ready");
     terminal.write("abc\n\x04");
     const exitCode = await proc.exited;
     expect(output.replaceAll("\r", "")).toContain('END "abc\\n"');

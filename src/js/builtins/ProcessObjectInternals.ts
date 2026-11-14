@@ -140,8 +140,9 @@ export function getStdinStream(
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
-    // Node hands stdin each read in a callback of its own. While this stream holds the reader, no pull reads fd 0
-    // inside the call: a chunk that a pull answers at once is pushed ahead of the nextTicks of the chunk before.
+    // Node hands stdin each read in a callback of its own. While this stream holds the reader, no pull reads a
+    // descriptor that the poll drives (`is_poll_driven`, PipeReader.rs) inside the call: a chunk that a pull answers
+    // at once is pushed ahead of the nextTicks of the chunk before. A regular file is still read inside the pull.
     source?.setPollOnly?.(true);
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;

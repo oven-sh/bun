@@ -695,6 +695,10 @@ declare module "bun:test" {
 }
 expect.extend({
   toBeWithinRange(received: unknown, floor: unknown, ceiling: unknown) {
+    const { RECEIVED_COLOR, INVERTED_COLOR, DIM_COLOR, BOLD_WEIGHT } = this.utils;
+    expectType(INVERTED_COLOR(RECEIVED_COLOR(received))).is<string>();
+    expectType(DIM_COLOR("between", floor, "and", ceiling)).is<string>();
+    expectType(BOLD_WEIGHT()).is<string>();
     return { pass: true, message: () => this.utils.matcherHint("toBeWithinRange", received, floor) };
   },
 });

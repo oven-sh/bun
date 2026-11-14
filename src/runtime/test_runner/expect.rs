@@ -14,6 +14,7 @@ use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
 use bun_ptr::RefPtr;
+use bun_simdutf_sys::simdutf;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
@@ -2754,31 +2755,62 @@ impl ExpectMatcherContext {
 
 const NO_VISUAL_DIFFERENCE: &[u8] = b"Compared values have no visual difference.";
 
+/// Like chalk, a style ends with the code that turns off only that style, so that one style can wrap another.
 #[derive(Clone, Copy)]
 enum HintColor {
+    Bold,
     Dim,
     Expected,
+    Inverted,
     Received,
 }
 
 impl HintColor {
+    /// The codes that turn the style on and off. `None` when color is off.
+    fn codes(self) -> Option<(&'static [u8], &'static [u8])> {
+        use bun_core::output::ansi;
+        if !Output::enable_ansi_colors_stderr() {
+            return None;
+        }
+        let (on, off) = match self {
+            HintColor::Bold => (ansi::BOLD, ansi::NORMAL_INTENSITY),
+            HintColor::Dim => (ansi::DIM, ansi::NORMAL_INTENSITY),
+            HintColor::Expected => (ansi::GREEN, ansi::DEFAULT_COLOR),
+            HintColor::Inverted => (ansi::INVERT, ansi::INVERT_OFF),
+            HintColor::Received => (ansi::RED, ansi::DEFAULT_COLOR),
+        };
+        Some((on.as_bytes(), off.as_bytes()))
+    }
+
+    /// Ends the span at `text_start`. Like chalk, turns the style on again where the text turns it off, not per line.
+    #[optimize(size)]
+    fn close(out: &mut Vec<u8>, text_start: usize, on: &[u8], off: &[u8]) {
+        if strings::contains(&out[text_start..], off) {
+            let text = out.split_off(text_start);
+            for (i, piece) in strings::split(&text, off).enumerate() {
+                if i > 0 {
+                    out.extend_from_slice(off);
+                    out.extend_from_slice(on);
+                }
+                out.extend_from_slice(piece);
+            }
+        }
+        out.extend_from_slice(off);
+    }
+
     #[optimize(size)]
     fn paint(self, out: &mut Vec<u8>, text: &[u8]) {
         if text.is_empty() {
             return;
         }
-        if !Output::enable_ansi_colors_stderr() {
+        let Some((on, off)) = self.codes() else {
             out.extend_from_slice(text);
             return;
-        }
-        let open: &'static str = match self {
-            HintColor::Dim => bun_core::pretty_fmt!("<d>", true),
-            HintColor::Expected => bun_core::pretty_fmt!("<green>", true),
-            HintColor::Received => bun_core::pretty_fmt!("<red>", true),
         };
-        out.extend_from_slice(open.as_bytes());
+        out.extend_from_slice(on);
+        let text_start = out.len();
         out.extend_from_slice(text);
-        out.extend_from_slice(bun_core::pretty_fmt!("<r>", true).as_bytes());
+        Self::close(out, text_start, on, off);
     }
 }
 
@@ -2828,12 +2860,15 @@ impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         let utils = ExpectMatcherUtils::default().to_js(global_this);
-        let functions: [(&str, bun_jsc::JSHostFn, u32); 8] = [
+        let functions: [(&str, bun_jsc::JSHostFn, u32); 11] = [
             ("stringify", generated::Bun__ExpectMatcherUtils__stringify, 1),
             ("printExpected", generated::Bun__ExpectMatcherUtils__printExpected, 1),
             ("printReceived", generated::Bun__ExpectMatcherUtils__printReceived, 1),
             ("EXPECTED_COLOR", generated::Bun__ExpectMatcherUtils__expectedColor, 1),
             ("RECEIVED_COLOR", generated::Bun__ExpectMatcherUtils__receivedColor, 1),
+            ("INVERTED_COLOR", generated::Bun__ExpectMatcherUtils__invertedColor, 1),
+            ("DIM_COLOR", generated::Bun__ExpectMatcherUtils__dimColor, 1),
+            ("BOLD_WEIGHT", generated::Bun__ExpectMatcherUtils__boldWeight, 1),
             ("matcherHint", generated::Bun__ExpectMatcherUtils__matcherHint, 1),
             ("printWithType", generated::Bun__ExpectMatcherUtils__printWithType, 3),
             ("diff", generated::Bun__ExpectMatcherUtils__diff, 2),
@@ -2850,17 +2885,12 @@ impl ExpectMatcherUtils {
     }
 
     #[optimize(size)]
-    fn print_value(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        color_or_null: Option<&'static str>,
-    ) -> JsResult<JSValue> {
+    fn print_value(global_this: &JSGlobalObject, value: JSValue, color: Option<HintColor>) -> JsResult<JSValue> {
         let mut mutable_string = bun_core::MutableString::init_2048()?;
+        let codes = color.and_then(HintColor::codes);
 
-        if let Some(color) = color_or_null {
-            if Output::enable_ansi_colors_stderr() {
-                let _ = mutable_string.write_all(Output::pretty_fmt::<true>(color).as_ref());
-            }
+        if let Some((on, _)) = codes {
+            let _ = mutable_string.write_all(on);
         }
 
         if value.is_error() {
@@ -2873,10 +2903,8 @@ impl ExpectMatcherUtils {
             formatter.format_value::<false>(value, &mut mutable_string)?;
         }
 
-        if color_or_null.is_some() {
-            if Output::enable_ansi_colors_stderr() {
-                let _ = mutable_string.write_all(Output::pretty_fmt::<true>("<r>").as_ref());
-            }
+        if let Some((on, off)) = codes {
+            HintColor::close(&mut mutable_string.list, on.len(), on, off);
         }
 
         bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
@@ -2889,25 +2917,44 @@ impl ExpectMatcherUtils {
 
     #[optimize(size)]
     pub(crate) fn print_expected(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::print_value(cx.global(), value.to_js(), Some("<green>"))
+        Self::print_value(cx.global(), value.to_js(), Some(HintColor::Expected))
     }
 
     #[optimize(size)]
     pub(crate) fn print_received(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::print_value(cx.global(), value.to_js(), Some("<red>"))
+        Self::print_value(cx.global(), value.to_js(), Some(HintColor::Received))
     }
 
     #[optimize(size)]
     fn color_text(global_this: &JSGlobalObject, texts: &[JsLocal<'_>], color: HintColor) -> JsResult<JSValue> {
-        let mut text: Vec<u8> = Vec::new();
+        let codes = color.codes();
+        let mut out: Vec<u8> = Vec::new();
+        if let Some((on, _)) = codes {
+            out.extend_from_slice(on);
+        }
+        let text_start = out.len();
+        let mut has_lone_surrogate = false;
         for (i, argument) in texts.iter().enumerate() {
             if i > 0 {
-                text.push(b' ');
+                out.push(b' ');
             }
-            text.extend_from_slice(argument.to_js().to_bun_string(global_this)?.to_utf8().slice());
+            let text = argument.to_js().to_bun_string(global_this)?;
+            if text.is_utf16() && !simdutf::validate::utf16le(text.utf16()) {
+                has_lone_surrogate = true;
+                out.extend_from_slice(&strings::wtf16_to_wtf8(text.utf16()));
+            } else {
+                out.extend_from_slice(text.to_utf8().slice());
+            }
         }
-        let mut out: Vec<u8> = Vec::new();
-        color.paint(&mut out, &text);
+        if out.len() == text_start {
+            out.clear();
+        } else if let Some((on, off)) = codes {
+            HintColor::close(&mut out, text_start, on, off);
+        }
+        // A matcher that colors a diff of UTF-16 code units passes each half of a surrogate pair in its own call.
+        if has_lone_surrogate {
+            return bun_string_jsc::owned_utf16_into_js(global_this, strings::wtf8_to_utf16(&out));
+        }
         bun_string_jsc::create_utf8_for_js(global_this, &out)
     }
 
@@ -2917,6 +2964,18 @@ impl ExpectMatcherUtils {
 
     pub(crate) fn received_color(cx: &mut JsScope<'_>, texts: &[JsLocal<'_>]) -> JsResult<JSValue> {
         Self::color_text(cx.global(), texts, HintColor::Received)
+    }
+
+    pub(crate) fn inverted_color(cx: &mut JsScope<'_>, texts: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        Self::color_text(cx.global(), texts, HintColor::Inverted)
+    }
+
+    pub(crate) fn dim_color(cx: &mut JsScope<'_>, texts: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        Self::color_text(cx.global(), texts, HintColor::Dim)
+    }
+
+    pub(crate) fn bold_weight(cx: &mut JsScope<'_>, texts: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        Self::color_text(cx.global(), texts, HintColor::Bold)
     }
 
     /// Mirrors `getType` in @jest/get-type.

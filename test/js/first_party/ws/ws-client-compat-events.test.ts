@@ -1,6 +1,6 @@
 // EventEmitter and EventTarget behavior of a `ws` client, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { errorMonitor, EventEmitter, on, once } from "node:events";
 import net from "node:net";
@@ -33,6 +33,8 @@ const connectionRefused = 'Error "connect ECONNREFUSED 127.0.0.1:PORT" ECONNREFU
 const unexpected404 = 'Error "Unexpected server response: 404"';
 const closedBeforeOpen = 'Error "WebSocket was closed before the connection was established"';
 const invalidOpcode = 'RangeError "Invalid WebSocket frame: invalid opcode 3" WS_ERR_INVALID_OPCODE';
+/** The arguments of 'close' when no Close frame arrived, as `show()` formats them. */
+const abnormalCloseArgs = ["1006", "Buffer()"];
 
 /**
  * A socket with no listeners except the ones the test adds. With the default peer it stays CONNECTING.
@@ -84,7 +86,7 @@ async function refusingUrl() {
   };
 }
 
-describe.each(implementations)("ws client events ($name)", ({ ws: implementation, builtin, specifier }) => {
+describe.each(implementations)("ws client events ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   describe("on<event> attributes", () => {
@@ -431,8 +433,10 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
       } catch (error) {
         thrown = error;
       }
-      expect(thrown?.name).toBe("AbortError");
-      expect(seen).toEqual(["1 false", "2 false"]);
+      expect({ thrown: [thrown?.name, thrown?.code], seen }).toEqual({
+        thrown: ["AbortError", "ABORT_ERR"],
+        seen: ["1 false", "2 false"],
+      });
     });
 
     test("WebSocket extends EventEmitter", () => {
@@ -679,8 +683,8 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
         const ws = new WebSocket(target.url);
         const seen: string[] = [];
         listen(ws, event => seen.push(`${event.constructor.name} ${showError(event.error)}`));
-        await nextEvent(ws, "close");
-        expect(seen).toEqual([`ErrorEvent ${connectionRefused}`]);
+        const closed = (await nextEvent(ws, "close")).map(show);
+        expect({ seen, closed }).toEqual({ seen: [`ErrorEvent ${connectionRefused}`], closed: abnormalCloseArgs });
       },
     );
 
@@ -696,12 +700,11 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
       ws.on("error", record("on"));
       ws.onerror = record("onerror");
       ws.addEventListener("error", record("listener"));
-      await nextEvent(ws, "close");
-      expect(lines).toEqual([
-        `on ${unexpected404}`,
-        `onerror ErrorEvent(${unexpected404})`,
-        `listener ErrorEvent(${unexpected404})`,
-      ]);
+      const closed = (await nextEvent(ws, "close")).map(show);
+      expect({ lines, closed }).toEqual({
+        lines: [`on ${unexpected404}`, `onerror ErrorEvent(${unexpected404})`, `listener ErrorEvent(${unexpected404})`],
+        closed: abnormalCloseArgs,
+      });
     });
 
     test("two invalid frames and a reset emit only one 'error'", async () => {
@@ -713,32 +716,98 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
       conn.write(Buffer.concat([conn.frame(3, "x"), conn.frame(3, "y")]));
       expect(await conn.next()).toBe("close 1002");
       conn.reset();
-      await closed;
-      expect(errors).toEqual([invalidOpcode]);
+      expect({ closed: (await closed).map(show), errors }).toEqual({
+        closed: abnormalCloseArgs,
+        errors: [invalidOpcode],
+      });
     });
   });
 
   test("a connection dropped after 'open' doesn't emit 'error', so nothing throws without a listener", async () => {
     await using client = await openBareClient(implementation);
     client.conn.end();
-    expect((await nextEvent(client.ws, "close")).map(show)).toEqual(["1006", "Buffer()"]);
+    expect((await nextEvent(client.ws, "close")).map(show)).toEqual(abnormalCloseArgs);
+  });
+});
+
+// `bun run testleak` turns `print_suppressions` on, which puts LeakSanitizer's list of used suppressions on stderr.
+const childEnv = { LSAN_OPTIONS: [bunEnv.LSAN_OPTIONS, "print_suppressions=0"].filter(Boolean).join(":") };
+
+/**
+ * Runs `script` in a child process. `WS_URL` points to a raw server in this process, or for "refuses" to a port
+ * nothing listens on. Returns what `runScript()` returns plus `handshakes`: how many upgrade requests the raw server
+ * received.
+ */
+async function runChild(
+  specifier: string,
+  script: string,
+  target: PeerOptions | "refuses",
+  drive?: (conn: RawSocket) => unknown,
+) {
+  await using peer = target === "refuses" ? undefined : await createPeer(target);
+  await using refusing = peer ? undefined : await refusingUrl();
+  const result = runScript({ specifier }, script, { ...childEnv, WS_URL: (peer ?? refusing)!.url });
+  if (drive) {
+    // A child that exits before it connects fails its test on what it printed, not on the timeout.
+    const conn = await Promise.race([peer!.connection(), result.then(() => undefined)]);
+    if (conn) await drive(conn);
+  }
+  return { ...(await result), handshakes: peer?.connections.length };
+}
+const connect = "const ws = new WebSocket(process.env.WS_URL);";
+
+/** What a child returns if it printed `lines`, wrote nothing to stderr and exited with code 0. */
+const cleanExit = (lines: string[], handshakes?: number) => ({ lines, stderr: "", exitCode: 0, handshakes });
+
+// First, so that the other child-process tests overlap these two: their children exit slowest under LeakSanitizer.
+describe.concurrent.each(implementations)("ws client events ($name)", ({ specifier }) => {
+  describe("'error' without a listener throws", () => {
+    test(
+      "in a Worker, the error terminates the Worker",
+      async () => {
+        const child = await runChild(
+          specifier,
+          `const source = "new (require(process.env.WS_SPECIFIER).WebSocket)(process.env.WS_URL);";
+        const worker = new Worker(URL.createObjectURL(new Blob([source])));
+        worker.addEventListener("error", event => console.log(/^error: .*$/m.exec(event.message)[0]));
+        // The process exits once the Worker does.
+        worker.addEventListener("close", event => console.log("close " + event.code));`,
+          hangsUp,
+        );
+        expect(child).toEqual(cleanExit(["error: socket hang up", "close 1"], 1));
+      },
+      scriptTimeout,
+    );
   });
 
-  // Runs `script` in a child process. `WS_URL` points to a raw server in this process, or for "refuses" to a port
-  // nothing listens on. `lines` is the child's stdout followed by `exit <code>`.
-  async function runChild(script: string, target: PeerOptions | "refuses", drive?: (conn: RawSocket) => unknown) {
-    await using peer = target === "refuses" ? undefined : await createPeer(target);
-    await using refusing = peer ? undefined : await refusingUrl();
-    const result = runScript({ specifier }, script, { WS_URL: (peer ?? refusing)!.url });
-    if (drive) await drive(await peer!.connection());
-    const { lines, stderr, exitCode } = await result;
-    return { lines: [...lines, "exit " + exitCode], stderr, handshakes: peer?.connections.length };
-  }
-  const connect = "const ws = new WebSocket(process.env.WS_URL);";
+  describe("nothing throws", () => {
+    test(
+      "when the server calls terminate() in 'connection': emits 'open', then 'close' 1006",
+      async () => {
+        const child = await runScript(
+          { specifier },
+          `const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+        wss.on("connection", ws => ws.terminate());
+        wss.on("listening", () => {
+          const ws = new WebSocket("ws://127.0.0.1:" + wss.address().port);
+          ws.on("open", () => console.log("open"));
+          // Closing the server lets the process exit.
+          ws.on("close", code => (console.log("close " + code), wss.close()));
+        });`,
+          childEnv,
+        );
+        expect(child).toEqual(cleanExit(["open", "close 1006"]));
+      },
+      scriptTimeout,
+    );
+  });
+});
 
+// Not in the first describe.each(), so that the children of both implementations run as one concurrent group.
+describe.concurrent.each(implementations)("ws client events ($name)", ({ specifier }) => {
   // The children need no timer or exit() call. Once the handshake fails, nothing keeps their event loop alive.
   describe("'error' without a listener throws", () => {
-    test.concurrent.each([
+    test.each([
       { name: "no listener at all", script: connect },
       {
         name: "'upgrade', 'open', 'message' and 'close' listeners, none of which are called",
@@ -775,62 +844,68 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
     ] as { name: string; script: string; printed?: string[] }[])(
       "$name",
       async ({ script, printed = [] }) => {
-        expect((await runChild(script, hangsUp)).lines).toEqual([...printed, "uncaught " + socketHangUp, "exit 0"]);
+        const child = await runChild(specifier, script, hangsUp);
+        expect(child).toEqual(cleanExit([...printed, "uncaught " + socketHangUp], 1));
       },
       scriptTimeout,
     );
 
     const atExit = `process.on("exit", () => console.log("rs=" + ws.readyState));`;
-    test.concurrent.each([
+    test.each([
       { name: "a refused connection", peer: "refuses", script: connect, lines: ["uncaught " + connectionRefused] },
-      { name: "a 404", peer: notFound, script: connect, lines: ["uncaught " + unexpected404] },
+      { name: "a 404", peer: notFound, script: connect, lines: ["uncaught " + unexpected404], handshakes: 1 },
       {
         name: "a 404, with an 'upgrade' listener",
         peer: notFound,
         script: `${connect} ws.on("upgrade", () => console.log("upgrade"));`,
         lines: ["uncaught " + unexpected404],
+        handshakes: 1,
       },
       {
         name: "a wrong Sec-WebSocket-Accept",
         peer: { respond: connection => response101(connection, [], { "Sec-WebSocket-Accept": "AAAA" }) },
         script: connect,
         lines: ['uncaught Error "Invalid Sec-WebSocket-Accept header"'],
+        handshakes: 1,
       },
+      // A socket that is closed in the tick that created it never sends its request.
       {
         name: "close() before the server responds",
         peer: neverResponds,
         script: `${connect} ${atExit} ws.close();`,
         lines: ["uncaught " + closedBeforeOpen, "rs=2"],
+        handshakes: 0,
       },
       {
         name: "terminate() before the server responds",
         peer: neverResponds,
         script: `${connect} ${atExit} ws.terminate();`,
         lines: ["uncaught " + closedBeforeOpen, "rs=2"],
+        handshakes: 0,
       },
-    ] as { name: string; peer: PeerOptions | "refuses"; script: string; lines: string[] }[])(
+    ] as { name: string; peer: PeerOptions | "refuses"; script: string; lines: string[]; handshakes?: number }[])(
       "$name",
-      async ({ peer, script, lines }) => {
-        expect((await runChild(script, peer)).lines).toEqual([...lines, "exit 0"]);
+      async ({ peer, script, lines, handshakes }) => {
+        expect(await runChild(specifier, script, peer)).toEqual(cleanExit(lines, handshakes));
       },
       scriptTimeout,
     );
 
-    test.concurrent.skipIf(isWindows)(
+    test.skipIf(isWindows)(
       "a unix socket that doesn't exist",
       async () => {
         using dir = tempDir("ws-events", {});
         const socketPath = path.join(String(dir), "missing.sock");
-        const { lines, exitCode } = await runScript({ specifier }, connect, { WS_URL: "ws+unix:" + socketPath });
-        expect(lines.map(line => line.replace(socketPath, "<path>"))).toEqual([
-          'uncaught Error "connect ENOENT <path>" ENOENT',
-        ]);
-        expect(exitCode).toBe(0);
+        const env = { ...childEnv, WS_URL: "ws+unix:" + socketPath };
+        const { lines, ...rest } = await runScript({ specifier }, connect, env);
+        expect({ lines: lines.map(line => line.replace(socketPath, "<path>")), ...rest }).toEqual(
+          cleanExit(['uncaught Error "connect ENOENT <path>" ENOENT']),
+        );
       },
       scriptTimeout,
     );
 
-    test.concurrent(
+    test(
       "a protocol error after 'open' still sends the Close frame and emits 'close'",
       async () => {
         const script = `${connect}
@@ -839,33 +914,36 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
         // The peer closes the connection once it gets the Close frame, which lets the process exit.
         ws.on("close", (code, reason) => console.log("close " + code + " " + show(reason) + " rs=" + ws.readyState));`;
         let sent = "";
-        const { lines } = await runChild(script, {}, async conn => {
+        const child = await runChild(specifier, script, {}, async conn => {
           conn.send(3, "x");
           sent = await conn.next();
           conn.end();
         });
-        expect(sent).toBe("close 1002");
-        expect(lines).toEqual(["open", "uncaught " + invalidOpcode, "rs=2", "close 1006 Buffer() rs=3", "exit 0"]);
+        expect({ sent, ...child }).toEqual({
+          sent: "close 1002",
+          ...cleanExit(["open", "uncaught " + invalidOpcode, "rs=2", "close 1006 Buffer() rs=3"], 1),
+        });
       },
       scriptTimeout,
     );
 
-    test.concurrent(
+    test(
       "when an 'error' listener throws, its exception propagates and 'close' isn't emitted",
       async () => {
-        const { lines } = await runChild(
+        const child = await runChild(
+          specifier,
           `${connect}
         ws.on("error", () => { throw new Error("thrown by the listener"); });
         ws.on("close", () => console.log("close"));`,
           hangsUp,
         );
-        expect(lines).toEqual(['uncaught Error "thrown by the listener"', "exit 0"]);
+        expect(child).toEqual(cleanExit(['uncaught Error "thrown by the listener"'], 1));
       },
       scriptTimeout,
     );
 
     // These remove the 'uncaughtException' listener that runScript() installs.
-    test.concurrent.each([
+    test.each([
       {
         name: "a refused connection, no listener",
         peer: "refuses",
@@ -877,95 +955,65 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
         peer: hangsUp,
         listeners: `ws.on("open", () => console.log("open")); ws.on("message", () => console.log("message"));`,
         error: "socket hang up",
+        handshakes: 1,
       },
       {
         name: "a 404, an 'open' listener",
         peer: notFound,
         listeners: `ws.on("open", () => console.log("open"));`,
         error: "Unexpected server response: 404",
+        handshakes: 1,
       },
-    ] as { name: string; peer: PeerOptions | "refuses"; listeners: string; error: string }[])(
+    ] as { name: string; peer: PeerOptions | "refuses"; listeners: string; error: string; handshakes?: number }[])(
       "$name: the process prints the error and exits with code 1",
-      async ({ peer, listeners, error }) => {
-        const { lines, stderr } = await runChild(
+      async ({ peer, listeners, error, handshakes }) => {
+        const { stderr, ...child } = await runChild(
+          specifier,
           `process.removeAllListeners("uncaughtException"); ${connect} ${listeners}`,
           peer,
         );
         const errors = stderr.split(/\r?\n/).filter(line => /^error: /i.test(line));
         expect(errors.map(line => line.slice(7).replace(/(127\.0\.0\.1:)\d+/, "$1PORT"))).toEqual([error]);
-        expect(lines).toEqual(["exit 1"]);
-      },
-      scriptTimeout,
-    );
-
-    test.concurrent(
-      "in a Worker, the error terminates the Worker",
-      async () => {
-        const { lines } = await runChild(
-          `const source = "new (require(process.env.WS_SPECIFIER).WebSocket)(process.env.WS_URL);";
-        const worker = new Worker(URL.createObjectURL(new Blob([source])));
-        worker.addEventListener("error", event => console.log(/^error: .*$/m.exec(event.message)[0]));
-        // The process exits once the Worker does.
-        worker.addEventListener("close", event => console.log("close " + event.code));`,
-          hangsUp,
-        );
-        expect(lines).toEqual(["error: socket hang up", "close 1", "exit 0"]);
+        expect(child).toEqual({ lines: [], exitCode: 1, handshakes });
       },
       scriptTimeout,
     );
   });
 
   describe("nothing throws", () => {
-    test.concurrent(
+    test(
       "when events.once(ws, 'open') is the only listener on a refused connection",
       async () => {
-        const { lines } = await runChild(
+        const child = await runChild(
+          specifier,
           `${connect} require("node:events").once(ws, "open").catch(error => console.log("rejected " + showError(error)));`,
           "refuses",
         );
-        expect(lines).toEqual(["rejected " + connectionRefused, "exit 0"]);
+        expect(child).toEqual(cleanExit(["rejected " + connectionRefused]));
       },
       scriptTimeout,
     );
 
-    test.concurrent(
+    test(
       "when an 'unexpected-response' listener handles the 404",
       async () => {
-        const { lines } = await runChild(
+        const child = await runChild(
+          specifier,
           `${connect}
         // The peer closes the connection after responding, which lets the process exit.
         ws.on("unexpected-response", (request, response) => console.log("unexpected-response " + response.statusCode));`,
           notFound,
         );
-        expect(lines).toEqual(["unexpected-response 404", "exit 0"]);
+        expect(child).toEqual(cleanExit(["unexpected-response 404"], 1));
       },
       scriptTimeout,
     );
 
-    test.concurrent(
-      "when the server calls terminate() in 'connection': emits 'open', then 'close' 1006",
-      async () => {
-        const { lines, exitCode } = await runScript(
-          { specifier },
-          `const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
-        wss.on("connection", ws => ws.terminate());
-        wss.on("listening", () => {
-          const ws = new WebSocket("ws://127.0.0.1:" + wss.address().port);
-          ws.on("open", () => console.log("open"));
-          // Closing the server lets the process exit.
-          ws.on("close", code => (console.log("close " + code), wss.close()));
-        });`,
-        );
-        expect(lines).toEqual(["open", "close 1006"]);
-        expect(exitCode).toBe(0);
-      },
-      scriptTimeout,
-    );
-
-    test.concurrent(
+    test(
       "when finishRequest ends the request asynchronously: sends one handshake, with the header it added",
       async () => {
-        const { lines, handshakes } = await runChild(
+        const child = await runChild(
+          specifier,
           `const ws = new WebSocket(process.env.WS_URL, {
           finishRequest(request) {
             setImmediate(() => {
@@ -983,17 +1031,17 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
                 : (connection.socket.end("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n"), null),
           },
         );
-        expect(lines).toEqual(["open", "exit 0"]);
-        expect(handshakes).toBe(1);
+        expect(child).toEqual(cleanExit(["open"], 1));
       },
       scriptTimeout,
     );
   });
 
-  test.concurrent(
+  test(
     "an async listener that rejects causes an unhandled rejection, not an 'error'",
     async () => {
-      const { lines } = await runChild(
+      const child = await runChild(
+        specifier,
         `${connect}
       ws.on("error", error => console.log("error " + showError(error)));
       ws.on("message", async () => { throw new Error("async boom"); });
@@ -1002,7 +1050,7 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
         {},
         conn => conn.text("1"),
       );
-      expect(lines).toEqual(['unhandledRejection Error "async boom"', "exit 0"]);
+      expect(child).toEqual(cleanExit(['unhandledRejection Error "async boom"'], 1));
     },
     scriptTimeout,
   );

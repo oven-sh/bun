@@ -16,14 +16,20 @@ declare module "bun" {
     idleTimeout?: number;
 
     /**
-     * Whether to automatically reconnect
+     * Whether to automatically reconnect. Once the client has connected, a
+     * reconnection attempt whose handshake fails (an error reply to `HELLO`,
+     * a failed TLS handshake, or an expired `connectionTimeout`) counts as
+     * one attempt. A first connection or a `connect()` call whose handshake
+     * fails is not retried. Neither is a failure Bun detects on an
+     * established connection.
      * @default true
      */
     autoReconnect?: boolean;
 
     /**
      * Maximum number of reconnection attempts before the client gives up and
-     * runs `onclose`.
+     * runs `onclose`. If the last attempt fails in its handshake, queued
+     * commands reject with that attempt's error.
      * @default 20
      */
     maxRetries?: number;

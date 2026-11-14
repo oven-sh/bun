@@ -3735,6 +3735,7 @@ impl Lockfile {
 
     pub fn has_trusted_dependency(
         &self,
+        options: &PackageManagerOptions,
         alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
@@ -3763,10 +3764,7 @@ impl Lockfile {
         if url.is_empty() {
             return true;
         }
-        let registry = PackageManager::get()
-            .scope_for_package_name(pkg_name)
-            .url
-            .href();
+        let registry = options.scope_for_package_name(pkg_name).url.href();
         url == registry_tarball_url(registry, pkg_name, npm.version, buf).as_slice()
     }
 

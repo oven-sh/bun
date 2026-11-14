@@ -383,18 +383,6 @@ impl fmt::Debug for Ref {
     }
 }
 
-// Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
-// be `bun_paths`); defined here so init_file / init_recycled_file resolve.
-// `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file`.
-/// A [`Source`]'s path paired with its raw bytes (used by virtual-module
-/// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
-#[derive(Clone, Copy)]
-pub struct PathContentsPair<'a> {
-    pub path: bun_paths::fs::Path<'a>,
-    pub contents: &'a [u8],
-}
-
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
 /// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
 /// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
@@ -2066,7 +2054,6 @@ pub struct Source<'a> {
 
     /// `Owned` when the `Source` read the file itself ([`source_from_file`]).
     pub contents: Cow<'a, [u8]>,
-    pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
@@ -2081,7 +2068,6 @@ impl Default for Source<'_> {
         Source {
             path: bun_paths::fs::Path::default(),
             contents: Cow::Borrowed(b""),
-            contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
         }
@@ -2355,17 +2341,6 @@ impl<'a> Source<'a> {
             contents: Cow::Borrowed(b""),
             ..Default::default()
         }
-    }
-
-    pub fn init_recycled_file(file: &PathContentsPair<'a>) -> crate::Result<Source<'a>> {
-        let mut source = Source {
-            path: file.path,
-            contents: Cow::Borrowed(file.contents),
-            contents_is_recycled: true,
-            ..Default::default()
-        };
-        source.path.namespace = b"file";
-        Ok(source)
     }
 
     pub fn init_path_string(

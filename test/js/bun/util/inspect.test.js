@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, expectTypeOf, it, mock } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { SocketAddress } from "net";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
@@ -1493,6 +1494,83 @@ describe("own non-enumerable properties are not printed", () => {
     }
     expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
     expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+describe("native getters of the prototype", () => {
+  it("are read as data", () => {
+    expect(Bun.inspect(new TextDecoder())).toBe(
+      'TextDecoder {\n  decode: [Function: decode],\n  encoding: "utf-8",\n  fatal: false,\n  ignoreBOM: false,\n}',
+    );
+    // These are not enumerable.
+    const address = Bun.inspect(new SocketAddress({ address: "127.0.0.1", port: 80 }));
+    expect(address.split("\n").filter(line => /^  (address|port): /.test(line))).toEqual([
+      '  address: "127.0.0.1",',
+      "  port: 80,",
+    ]);
+    // The context of a matcher is a class of the same schema as `Expect`.
+    let context = "";
+    expect.extend({
+      toPrintItsContext() {
+        context = Bun.inspect(this, { depth: 0 });
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(1).toPrintItsContext();
+    expect(context.split("\n").filter(line => /^  (isNot|promise): /.test(line))).toEqual([
+      "  isNot: false,",
+      '  promise: "",',
+    ]);
+  });
+
+  // `expect(1).not` is a step of a chain: to read it changes `expect(1)`, or makes one more object with the same getter.
+  it.each([
+    ["Expect", () => expect(1), ["not", "rejects", "resolves"]],
+    ["ExpectStatic", () => expect.not, ["not", "rejectsTo", "resolvesTo"]],
+    [
+      "ExpectTypeOf",
+      () => expectTypeOf(),
+      [
+        "asserts",
+        "branded",
+        "constructorParameters",
+        "guards",
+        "instance",
+        "items",
+        "not",
+        "parameters",
+        "resolves",
+        "returns",
+        "thisParameter",
+      ],
+    ],
+  ])("one of %s that answers another instance is named and not read", (name, make, getters) => {
+    const value = make();
+    const accessors = text => text.split("\n").filter(line => !line.includes("[Function: "));
+    const printedAs = answer => [`${name} {`, ...getters.map(getter => `  ${getter}: ${answer},`), "}"];
+    // Depth 0 first: if the walk reads a getter after all, this fails on one line and not on a print that has no end.
+    const shallow = Bun.inspect(value, { depth: 0 });
+    expect(accessors(shallow)).toEqual(printedAs("[Getter]"));
+    let members = 0;
+    for (const _ in value) members++;
+    expect(shallow.split("\n").length).toBe(members + 2);
+    expect(Bun.inspect(value, { depth: 2 })).toBe(shallow);
+    expect(Bun.inspect(value)).toBe(shallow);
+    // The prototype is not an instance. JSC does not call a native getter on it, and the walk prints what JSC answers.
+    expect(accessors(Bun.inspect(Object.getPrototypeOf(value), { depth: 0 }))).toEqual(printedAs("undefined"));
+  });
+
+  // Somebody can give an expect() another prototype. What it then inherits is not a getter of its class.
+  it.each([
+    // A native getter of another class.
+    ["a TextDecoder", () => new TextDecoder(), "encoding"],
+    // A native value that the function makes when somebody reads it.
+    ["a mock function", () => mock(() => {}), "prototype"],
+  ])("an expect() that inherits from %s prints the members that any object prints", (_, make, member) => {
+    const members = value => Bun.inspect(value, { depth: 0 }).split("\n").slice(1);
+    const inherited = members(Object.setPrototypeOf(expect(1), make()));
+    expect(inherited).toEqual(members(Object.create(make())));
+    expect(inherited.map(line => line.trim().split(":")[0])).toContain(member);
   });
 });
 

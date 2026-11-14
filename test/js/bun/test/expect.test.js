@@ -6,6 +6,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
 
+import { readFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
@@ -215,6 +216,127 @@ describe("expect()", () => {
       kept.not.toRecordIsNot();
       kept.not.toRecordIsNot();
       expect(seen).toEqual([true, true]);
+    });
+
+    // console.log, Bun.inspect and a failure message list the members of the prototype of a native object.
+    describe("a print", () => {
+      /** The modifiers that a matcher of `kept` sees. */
+      const modifiersOf = async (/** @type {any} */ kept) => {
+        /** @type {{ isNot: boolean, promise: string } | undefined} */
+        let seen;
+        expect.extend({
+          toRecordModifiers() {
+            seen = { isNot: this.isNot, promise: this.promise };
+            return { pass: !this.isNot, message: () => "" };
+          },
+        });
+        await kept.toRecordModifiers();
+        return seen;
+      };
+
+      /** @type {[string, (kept: any) => unknown][]} */
+      const prints = [
+        ["Bun.inspect", kept => Bun.inspect(kept)],
+        ["Bun.inspect to depth 0", kept => Bun.inspect(kept, { depth: 0 })],
+        ["of a property", kept => Bun.inspect({ kept })],
+        ["of an item of an array", kept => Bun.inspect([kept])],
+        ["of a value of a Map", kept => Bun.inspect(new Map([["kept", kept]]))],
+        ["of a property of an Error", kept => Bun.inspect(Object.assign(new Error("has it"), { kept }))],
+        ["of a Proxy of it", kept => Bun.inspect(new Proxy(kept, {}))],
+        ["of the sample of expect.objectContaining()", kept => Bun.inspect(expect.objectContaining(kept))],
+        // Their keys are in quotes.
+        [
+          "of what toJSON() of a Headers returns",
+          kept => Bun.inspect(Object.defineProperty(new Headers(), "toJSON", { value: () => kept })),
+        ],
+        [
+          "of what toJSON() of a FormData returns",
+          kept => Bun.inspect(Object.defineProperty(new FormData(), "toJSON", { value: () => kept })),
+        ],
+        [
+          "in the message of a matcher that fails",
+          kept => {
+            try {
+              expect(kept).toBe(2);
+            } catch (error) {
+              return ANY(error).message;
+            }
+          },
+        ],
+        [
+          "by utils.stringify() of a matcher",
+          kept => {
+            let text;
+            expect.extend({
+              toBeStringified(received) {
+                text = this.utils.stringify(received);
+                return { pass: true, message: () => "" };
+              },
+            });
+            ANY(expect(kept)).toBeStringified();
+            return text;
+          },
+        ],
+      ];
+
+      test_skipIf(!isBun).each(prints)("%s names the modifiers and reads none", async (_, print) => {
+        const kept = expect(1);
+        const text = stripVTControlCharacters(String(print(kept)));
+        expect(
+          text.match(/^ +"?(not|rejects|resolves)"?: .*$/gm)?.map(line => line.trim().replaceAll('"', "")),
+        ).toEqual(["not: [Getter],", "rejects: [Getter],", "resolves: [Getter],"]);
+        expect(await modifiersOf(kept)).toEqual({ isNot: false, promise: "" });
+        kept.toBe(1);
+      });
+
+      // The message names the value in one line, to any depth.
+      test_skipIf(!isBun)("in the message of an argument error reads none", async () => {
+        const kept = expect(1);
+        expect(() => readFileSync("any", { flag: ANY(kept) })).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+        );
+        expect(await modifiersOf(kept)).toEqual({ isNot: false, promise: "" });
+      });
+
+      test_skipIf(!isBun)("has one line for each member of the prototype", () => {
+        const kept = expect(1);
+        const lines = Bun.inspect(kept).split("\n");
+        let members = 0;
+        for (const _ in kept) members++;
+        expect(lines.length).toBe(members + 2);
+        expect([lines[0], lines.at(-1)]).toEqual(["Expect {", "}"]);
+        expect(lines.filter(line => !line.includes("[Function"))).toEqual([
+          "Expect {",
+          "  not: [Getter],",
+          "  rejects: [Getter],",
+          "  resolves: [Getter],",
+          "}",
+        ]);
+      });
+
+      test_skipIf(!isBun)("leaves the modifiers that were read before it", async () => {
+        const negated = expect(1).not;
+        Bun.inspect(negated);
+        expect(await modifiersOf(negated)).toEqual({ isNot: true, promise: "" });
+
+        const resolved = expect(Promise.resolve(1)).resolves;
+        Bun.inspect(resolved);
+        expect(await modifiersOf(resolved)).toEqual({ isNot: false, promise: "resolves" });
+
+        const rejected = expect(Promise.reject(1)).rejects;
+        Bun.inspect(rejected);
+        expect(await modifiersOf(rejected)).toEqual({ isNot: false, promise: "rejects" });
+      });
+
+      test_skipIf(!isBun)("does not change what expect.soft() and expect.poll() return", async () => {
+        const soft = expect.soft(1);
+        Bun.inspect(soft);
+        expect(await modifiersOf(soft)).toEqual({ isNot: false, promise: "" });
+
+        const polled = expect.poll(() => 1);
+        Bun.inspect(polled);
+        expect(await modifiersOf(polled)).toEqual({ isNot: false, promise: "" });
+      });
     });
   });
 

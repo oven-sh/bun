@@ -6024,6 +6024,18 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
+// A native getter of these classes is a step of a chain (`expect(x).not`), not data: the call can change `receiver`, and answers one more object to walk.
+static bool callsChainGetter(JSC::JSObject* receiver, const JSC::PropertySlot& slot)
+{
+    using namespace Bun::Bindgen::Generated;
+    // A getter of a bindgen class is a DOMAttribute of that class. JSC calls it only on an instance.
+    auto attribute = slot.domAttribute();
+    if (!attribute)
+        return false;
+    const JSC::ClassInfo* owner = attribute->classInfo;
+    return (owner == JSExpect::info() || owner == JSExpectStatic::info() || owner == JSExpectTypeOf::info()) && receiver->inherits(owner);
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
@@ -6293,7 +6305,11 @@ restart:
 
                 JSC::JSValue propertyValue = jsUndefined();
 
-                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+                if (callsChainGetter(object, slot)) {
+                    // The accessor itself, which prints as [Getter].
+                    propertyValue = slot.slotBase()->getDirect(vm, property);
+                    ASSERT(propertyValue);
+                } else if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
                         // If we can't use getPureResult, let's at least say it was a [Getter]
                         if (!slot.isCacheableGetter()) {

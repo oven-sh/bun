@@ -304,6 +304,33 @@ describe("echo | bun run -", () => {
   group(run);
 });
 
+test.each([
+  {
+    inputType: "module",
+    source: 'console.log(JSON.stringify({ value: await Promise.resolve("module"), argv: process.argv.slice(1) }));',
+    expected: { value: "module", argv: [] },
+  },
+  {
+    inputType: "commonjs",
+    source:
+      'console.log(JSON.stringify({ value: require("node:path").basename("/tmp/commonjs"), argv: process.argv.slice(1) }));',
+    expected: { value: "commonjs", argv: [] },
+  },
+])("bare --input-type $inputType executes stdin", async ({ inputType, source, expected }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--input-type", inputType],
+    env: bunEnv,
+    stdin: Buffer.from(source),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(stdout)).toEqual(expected);
+});
+
 test("process._eval (undefined for normal run)", async () => {
   const cwd = tmpdirSync();
   const file = join(cwd, "test.js");

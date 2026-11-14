@@ -17,6 +17,7 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
+use crate::webcore::readable_stream::Lift;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
@@ -278,11 +279,11 @@ impl PendingValue {
         self.size_hint
     }
 
-    fn to_any_blob(&mut self) -> Option<AnyBlob> {
+    fn to_any_blob(&mut self, lift: Lift) -> Option<AnyBlob> {
         if self.promise.is_some() {
             return None;
         }
-        self.to_any_blob_allow_promise()
+        self.to_any_blob_allow_promise(lift)
     }
 
     pub(crate) fn is_disturbed<T: BodyOwnerJs>(
@@ -320,11 +321,11 @@ impl PendingValue {
         false
     }
 
-    fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
+    fn to_any_blob_allow_promise(&mut self, lift: Lift) -> Option<AnyBlob> {
         let global = self.global();
         let mut stream = self.readable.get()?;
 
-        if let Some(blob) = stream.to_any_blob(global) {
+        if let Some(blob) = stream.to_any_blob(global, lift) {
             self.readable.deinit();
             return Some(blob);
         }
@@ -352,7 +353,7 @@ impl PendingValue {
                 return None;
             }
         }
-        let blob = stream.to_any_blob(global)?;
+        let blob = stream.to_any_blob(global, Lift::Keep)?;
         self.readable.deinit();
         Some(blob)
     }
@@ -372,30 +373,38 @@ impl PendingValue {
                 | Action::GetBlob
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
-                    let promise = match &mut self.action {
-                        Action::GetJSON => global_this.readable_stream_to_json(readable.value),
-                        Action::GetArrayBuffer => {
-                            global_this.readable_stream_to_array_buffer(readable.value)
-                        }
-                        Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
-                        Action::GetText => global_this.readable_stream_to_text(readable.value),
-                        Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
-                        Action::GetFormData(form_data) => 'brk: {
-                            let fd = form_data.take().unwrap();
-                            let encoding_js = match &fd.encoding {
-                                bun_core::form_data::Encoding::Multipart(multipart) => {
-                                    bun_string_jsc::create_utf8_for_js(global_this, multipart)?
-                                }
-                                bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
-                            };
-                            // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
-                            break 'brk global_this
-                                .readable_stream_to_form_data(readable.value, encoding_js);
-                        }
-                        _ => unreachable!(),
-                    };
+                    let mut started = false;
+                    // A stream that cannot start throws here: the reader rejects, as for a read that fails later.
+                    let promise = JSPromise::wrap(global_this, |global_this| {
+                        let promise = match &mut self.action {
+                            Action::GetJSON => global_this.readable_stream_to_json(readable.value),
+                            Action::GetArrayBuffer => {
+                                global_this.readable_stream_to_array_buffer(readable.value)
+                            }
+                            Action::GetBytes => {
+                                global_this.readable_stream_to_bytes(readable.value)
+                            }
+                            Action::GetText => global_this.readable_stream_to_text(readable.value),
+                            Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
+                            Action::GetFormData(form_data) => 'brk: {
+                                let fd = form_data.take().unwrap();
+                                let encoding_js = match &fd.encoding {
+                                    bun_core::form_data::Encoding::Multipart(multipart) => {
+                                        bun_string_jsc::create_utf8_for_js(global_this, multipart)?
+                                    }
+                                    bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
+                                };
+                                // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
+                                break 'brk global_this
+                                    .readable_stream_to_form_data(readable.value, encoding_js);
+                            }
+                            _ => unreachable!(),
+                        }?;
+                        started = true;
+                        Ok(promise)
+                    });
                     self.readable.deinit();
-                    if promise.is_ok() {
+                    if started {
                         // The consumer holds its reader now; keep the lock once it lets go.
                         readable.mark_consumed_as_body(global_this);
                     }
@@ -690,27 +699,23 @@ impl Value {
             }
         }
 
+        self.lift_unread_stream(Lift::Read);
+    }
+
+    /// A stream that nothing has read becomes the payload behind it, when `lift` allows that for its source.
+    fn lift_unread_stream(&mut self, lift: Lift) {
         let Value::Locked(locked) = self else {
             return;
         };
 
-        if let Some(blob) = locked.to_any_blob() {
+        if let Some(blob) = locked.to_any_blob(lift) {
             *self = Value::from(blob);
         }
     }
 
     /// [`Self::to_blob_if_possible`], except a file-backed stream keeps streaming (a FIFO has no length).
     pub(crate) fn to_blob_if_in_memory(&mut self) {
-        let Value::Locked(locked) = self else {
-            return;
-        };
-        let file_backed = locked
-            .readable
-            .get()
-            .is_some_and(|r| matches!(r.ptr, webcore::readable_stream::Source::File(_)));
-        if !file_backed {
-            self.to_blob_if_possible();
-        }
+        self.lift_unread_stream(Lift::InMemory);
     }
 
     pub(crate) fn size(&mut self) -> blob::SizeType {
@@ -1227,7 +1232,7 @@ impl Value {
             }
             // `?` on the Option early-returns None; on Some it falls through
             // to the `*self = Value::Used` assignment below.
-            Value::Locked(l) => l.to_any_blob_allow_promise()?,
+            Value::Locked(l) => l.to_any_blob_allow_promise(Lift::Read)?,
             _ => return None,
         };
 
@@ -1261,7 +1266,7 @@ impl Value {
                 }
             }
             Value::Locked(l) => l
-                .to_any_blob_allow_promise()
+                .to_any_blob_allow_promise(Lift::Read)
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
             _ => AnyBlob::Blob(Blob::default()),
         };
@@ -1278,7 +1283,7 @@ impl Value {
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(_) => AnyBlob::WTFStringImpl(self.take_wtf_string()),
             Value::Locked(l) => l
-                .to_any_blob_allow_promise()
+                .to_any_blob_allow_promise(Lift::Read)
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
             _ => AnyBlob::Blob(Blob::default()),
         };
@@ -2014,7 +2019,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(rejected);
                 }
                 let value = self.get_body_value();
-                value.to_blob_if_possible();
+                value.to_blob_if_in_memory();
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2024,7 +2029,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 let value = self.get_body_value();
-                value.to_blob_if_possible();
+                value.to_blob_if_in_memory();
             }
         }
 
@@ -2090,13 +2095,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn blob(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.get_blob_with_this_value(cx.global(), this_value.to_js())
+        self.get_blob_with_this_value(cx.global(), this_value.to_js(), Lift::Keep)
     }
 
     fn get_blob_with_this_value(
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
+        lift: Lift,
     ) -> JsResult<JSValue> {
         let value = self.get_body_value();
 
@@ -2119,7 +2125,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
                     return Ok(rejected);
                 }
-                value.to_blob_if_possible();
+                value.lift_unread_stream(lift);
                 if let Value::Locked(locked) = value {
                     return locked.set_promise(global_object, Action::GetBlob, Some(readable));
                 }
@@ -2134,7 +2140,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 let value = self.get_body_value();
-                value.to_blob_if_possible();
+                value.lift_unread_stream(lift);
                 if let Value::Locked(locked) = value {
                     return locked.set_promise(global_object, Action::GetBlob, None);
                 }
@@ -2164,8 +2170,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         ))
     }
 
+    /// `blob()` for a macro, which inlines the bytes that the Blob holds.
     fn get_blob_without_call_frame(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        self.get_blob_with_this_value(global_object, JSValue::ZERO)
+        self.get_blob_with_this_value(global_object, JSValue::ZERO, Lift::InMemory)
     }
 }
 

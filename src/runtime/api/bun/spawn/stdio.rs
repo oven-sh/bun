@@ -12,6 +12,7 @@ use bun_sys::{self as sys, Fd};
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
+use crate::webcore::readable_stream::Lift;
 
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
@@ -500,7 +501,7 @@ impl Stdio {
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {
             let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(cx.global()) {
+            if let Some(blob) = stream.to_any_blob(cx.global(), Lift::Read) {
                 return out_stdio.extract_blob(cx.global(), blob, i);
             }
 

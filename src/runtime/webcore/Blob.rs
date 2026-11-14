@@ -24,6 +24,7 @@ use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
+use crate::webcore::readable_stream::Lift;
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
 
@@ -5586,6 +5587,23 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     }
 }
 
+/// `st_mode` for a body's `clone()` or `blob()`. Not through `resolve_file_stat`: the `Bun.file()` sharing the store answers from what that caches.
+fn mode_for_clone(file: &mut store::File) -> Option<bun_sys::Mode> {
+    if file.seekable.is_some() {
+        return Some(file.mode);
+    }
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return None;
+    };
+    if file.mode_seen_by_clone.is_none() {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
+            file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
+        }
+    }
+    file.mode_seen_by_clone
+}
+
 /// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory or a closed fd has none: each Blob fails when read.
 pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
     if !matches!(store.data, store::Data::File(_)) {
@@ -5596,22 +5614,24 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
     if is_fd && Store::data_mut(store).as_file().seekable.is_none() {
         resolve_file_stat(store);
     }
-    let file = Store::data_mut(store).as_file_mut();
-    let mode = if file.seekable.is_some() {
-        Some(file.mode)
-    } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-        // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
-        if file.mode_seen_by_clone.is_none() {
-            let mut buffer = bun_paths::path_buffer_pool::get();
-            if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
-                file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
-            }
-        }
-        file.mode_seen_by_clone
-    } else {
-        None
-    };
+    let mode = mode_for_clone(Store::data_mut(store).as_file_mut());
     mode.is_some_and(|mode| !bun_sys::S::ISDIR(mode) && (is_fd || !bun_sys::S::ISREG(mode)))
+}
+
+/// Whether a Blob over the file `store` can replace the unread stream over it, for what `lift` says the caller does.
+pub(crate) fn file_store_lifts(store: &RefPtr<Store>, lift: Lift) -> bool {
+    match lift {
+        Lift::Read => true,
+        Lift::InMemory => false,
+        Lift::Keep => {
+            let file = Store::data_mut(store).as_file_mut();
+            // On Windows a stat by path never says FIFO or socket, and it can open a named pipe as a client.
+            !file.pathlike.is_fd()
+                && (cfg!(windows)
+                    || !mode_for_clone(file)
+                        .is_some_and(|mode| bun_sys::S::ISFIFO(mode) || bun_sys::S::ISSOCK(mode)))
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

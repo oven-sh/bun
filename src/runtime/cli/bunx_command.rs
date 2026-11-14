@@ -1070,7 +1070,6 @@ impl BunxCommand {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
-                    true,
                 ) {
                     if i > 0 {
                         new_path.push(DELIMITER);

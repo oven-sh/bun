@@ -580,7 +580,7 @@ pub fn enqueue_dependency_to_root(
     let dep_id = 'brk: {
         let str_buf = this.lockfile.buffers.string_bytes.as_slice();
         for (id, dep) in this.lockfile.buffers.dependencies.iter().enumerate() {
-            if !strings::eql_long(dep.name.slice(str_buf), name, true) {
+            if !strings::eql_long(dep.name.slice(str_buf), name) {
                 continue;
             }
             if !dep.version.eql(version, str_buf, version_buf) {

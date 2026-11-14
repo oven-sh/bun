@@ -3540,7 +3540,7 @@ impl Clone for SensitiveCString {
 
 impl PartialEq for SensitiveCString {
     fn eq(&self, other: &Self) -> bool {
-        crate::strings::eql_long(self.as_bytes(), other.as_bytes(), true)
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes())
     }
 }
 

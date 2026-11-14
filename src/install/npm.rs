@@ -2455,7 +2455,7 @@ impl PackageManifest {
                 // from the default registry we don't check because the registry might have a different name in the manifest.
                 // https://github.com/oven-sh/bun/issues/4925
                 if registry.url_hash == *registry::DEFAULT_URL_HASH
-                    && !strings::eql_long(expected_name, received_name, true)
+                    && !strings::eql_long(expected_name, received_name)
                 {
                     bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",

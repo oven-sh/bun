@@ -158,6 +158,7 @@ function setServersOn(servers: readonly string[], object: { setServers(servers: 
       ipVersion = isIP(match[1]);
       if (ipVersion !== 0) {
         const port = parseInt(addrSplitRE[Symbol.replace](server, "$2")) || IANA_DNS_PORT;
+        validatePort(port);
         triples.push([ipVersion, stripZoneId(match[1]), port]);
         return;
       }
@@ -168,11 +169,12 @@ function setServersOn(servers: readonly string[], object: { setServers(servers: 
 
     if (addrSplitMatch) {
       const hostIP = addrSplitMatch[1];
-      const port = addrSplitMatch[2] ? parseInt(addrSplitMatch[2]) : IANA_DNS_PORT;
+      const port = parseInt(addrSplitMatch[2]) || IANA_DNS_PORT;
 
       ipVersion = isIP(hostIP);
 
       if (ipVersion !== 0) {
+        validatePort(port);
         triples.push([ipVersion, hostIP, port]);
         return;
       }

@@ -1437,6 +1437,48 @@ describe.concurrent("bundler", () => {
       stdout: '{"inner":{"b":456},"a":123}',
     },
   });
+  // ESM output imports an inner file's external `export *` as a namespace, for
+  // `__reExport` to copy from.
+  itBundled("importstar/ReExportStarEntryPointAndInnerFileExternalESM", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from 'a'
+        import * as inner from './inner.js'
+        export { inner }
+      `,
+      "/inner.js": `export * from 'b'`,
+    },
+    format: "esm",
+    external: ["a", "b"],
+    runtimeFiles: {
+      "/test.js": /* js */ `
+      import * as out from './out.js'
+      console.log(JSON.stringify(out))
+      `,
+      "/node_modules/a/index.js": `export const a = 123;`,
+      "/node_modules/b/index.js": `export const b = 456;`,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"a":123,"inner":{"b":456}}',
+    },
+  });
+  itBundled("importstar/ReExportStarBuiltinFromLazyModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './re.js'
+        const lazy = await import('./lazy.js')
+        console.log(typeof ns.join, ns.own, typeof lazy.readFileSync)
+      `,
+      "/re.js": `export * from 'node:path'; export const own = 1`,
+      "/lazy.js": `export * from 'node:fs'`,
+    },
+    target: "bun",
+    format: "esm",
+    run: {
+      stdout: "function 1 function",
+    },
+  });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
     files: {
       "/entry.js": /* js */ `

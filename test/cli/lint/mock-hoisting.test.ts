@@ -7,6 +7,9 @@
 // Each case is a test file that passes. `bun test` runs it as written, after `--fix` and after `--fix-dangerously`, and
 // what it prints tells which module it got. If `bun test` starts to treat one of these names in another way, a case
 // here fails, and src/lint/utils/bun_test.rs has to follow.
+//
+// The same goes for a fix that moves a call from one object to another. `vitest/consistent-vitest-vi` renames `vitest`
+// to `vi` only where both names are Vitest's object, and not where one of them is a name of the file's own.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -27,12 +30,20 @@ type Case = {
   /** What `bun test` prints for the file as written. */
   prints: string[];
   /**
-   * What it prints after `--fix-dangerously`, for a case whose fix `--fix` holds back. Without it, `--fix` applies the
-   * fix, and the file prints the same as before.
+   * What it prints after `--fix-dangerously`, for a case whose fix `--fix` holds back. Without it and without `noFix`,
+   * `--fix` applies the fix, and the file prints the same as before.
    */
   dangerously?: string[];
   /** The file has a second fix, which `--fix` applies: it changes the file, and the rule still reports it. */
   partly?: true;
+  /** `--fix-dangerously` leaves a report: its fix needs the pass after this one, and a config of oxlint gives one. */
+  leaves?: true;
+  /**
+   * The rule has no fix for the file: no flag changes it, and its reports offer none. That isn't a fix that `bun lint`
+   * drops because the text it writes doesn't parse. Only for a case with a `bunfig.toml`: the JSON that a config of
+   * oxlint gives doesn't say whether a report has a fix.
+   */
+  noFix?: true;
 };
 
 const dep = { "dep.js": 'console.log(TAG, "runs dep.js");\nmodule.exports = { greet: () => "real" };\n' };
@@ -66,6 +77,80 @@ const imports = 'console.log(TAG, Object.keys(await actual()).filter(it => it !=
 
 const doMock = (call: string) =>
   `test("greets", async () => {\n  ${call}(import("./dep.js"), () => ({ greet: () => "mock" }));\n  console.log(TAG, require("./dep.js").greet());\n});\n`;
+
+// Test files in which `name`, which is `vitest` or `vi`, is a name of the file's own and not Vitest's object. Each
+// prints "string" until a fix moves the call to the other name, which is Vitest's global. `moved` is what it prints
+// then: the type of what `fn()` of the global returns, or nothing where the global has no such function and throws.
+const ownNames = (name: "vitest" | "vi"): Record<string, { text: string; moved: string[] }> => {
+  const value = '{ fn: () => "own" }';
+  const returnsFn = (declaration: string) => ({
+    text: `${declaration}\nconst greet = () => ${name}.fn();\n`,
+    moved: ["function"],
+  });
+  const inFunction = (parameters: string, body = `return ${name}.fn();`) => ({
+    text: `function greet(${parameters}) {\n  ${body}\n}\n`,
+    moved: ["function"],
+  });
+  const throws = (declaration: string, call: string) => ({
+    text: `${declaration}\nfunction greet() {\n  ${name}.${call};\n  return "own";\n}\n`,
+    moved: [],
+  });
+  return {
+    "a parameter": inFunction(`${name} = ${value}`),
+    "a destructured parameter": inFunction(`{ ${name} } = { ${name}: ${value} }`),
+    "a catch variable": inFunction(
+      "",
+      `try {\n    throw ${value};\n  } catch (${name}) {\n    return ${name}.fn();\n  }`,
+    ),
+    "a variable": returnsFn(`const ${name} = ${value};`),
+    "a variable below the call": {
+      text: `const greet = () => ${name}.fn();\nvar ${name} = ${value};\n`,
+      moved: ["function"],
+    },
+    "a variable with two declarations": returnsFn(`var { ${name} } = require("vitest");\nvar ${name} = ${value};`),
+    "a function": returnsFn(`function ${name}() {}\n${name}.fn = () => "own";`),
+    "a class": returnsFn(`class ${name} {\n  static fn() {\n    return "own";\n  }\n}`),
+    "a name from another module": returnsFn(`const { ${name} } = require("./own.js");`),
+    "another export of vitest": throws(`const { expect: ${name} } = require("vitest");`, "any(String)"),
+    "the whole module": throws(`const ${name} = require("vitest");`, 'expect("own")'),
+  };
+};
+const ownFiles = { ...dep, "own.js": 'const own = { fn: () => "own" };\nmodule.exports = { vitest: own, vi: own };\n' };
+/** A case for each of `ownNames`. The rule goes by the name, as oxlint does, so it reports them. `--fix` holds the fix back. */
+const ownCases = (name: "vitest" | "vi"): Record<string, Case> =>
+  Object.fromEntries(
+    Object.entries(ownNames(name)).map(([title, { text, moved }]) => [
+      `a call on ${title}`,
+      {
+        text:
+          'const { test } = require("vitest");\n' +
+          text +
+          'test("greets", () => {\n  console.log(TAG, typeof greet());\n});\n',
+        files: ownFiles,
+        prints: ["string"],
+        dangerously: moved,
+      },
+    ]),
+  );
+/** A call on a name from `require()` in a function, in a file that imports the name from Vitest as `imported`. */
+const nestedRequire = (imported: string) =>
+  `import ${imported} from "vitest";\nimport { test } from "vitest";\n` +
+  'function spy() {\n  const { vitest } = require("vitest");\n  return vitest.fn();\n}\n' +
+  'test("greets", () => {\n  console.log(TAG, typeof spy());\n});\n';
+/**
+ * A test that prints the type of what `fn()` of `object` returns, for a file that has set a global `vitest` of its own.
+ * It removes that global, also if the call throws: the cases share a process. `global` is how the file writes
+ * `globalThis`.
+ */
+const printsAndRemovesGlobal = (object: string, global = "globalThis") =>
+  `test("greets", () => {\n  try {\n    console.log(TAG, typeof ${object}.fn());\n  } finally {\n    delete ${global}.vitest;\n  }\n});\n`;
+/** A file that sets a global `vitest` of its own and calls `fn()` on `object`. */
+const assignsGlobal = (object: string) =>
+  requireGreet + 'vitest = { fn: () => "own" };\n' + printsAndRemovesGlobal(object);
+/** A use of the global `vi` in a file that imports `vitest` from Vitest as `imported`. */
+const besideGlobalVi = (imported: string, use: string) =>
+  `import ${imported} from "vitest";\nimport { test } from "vitest";\n` +
+  `test("greets", () => {\n  console.log(TAG, typeof vi.fn(), typeof ${use});\n});\n`;
 
 // Packages that the Vitest rules take for Vitest, and `bun test` doesn't.
 const packages: Files = {
@@ -513,8 +598,201 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["runs dep.js", "real"],
         dangerously: ["runs dep.js"],
       },
-      // The call is on a parameter. The fix of the import doesn't rename it, and its own fix would move it to the `vi`
-      // that the import then declares.
+      // A `vi` that isn't Vitest's object is another thing as well: another export under that name, from `require()`
+      // as from an import of a package that `bun test` doesn't know, and a `vi` that only a type of that name hides.
+      "a spy on a name from require() beside another export as vi": {
+        text:
+          'const { vitest, test: vi } = require("vitest");\n' +
+          requireGreet +
+          'const spy = vitest.fn(greet);\nvi("greets", () => {\n  console.log(TAG, spy());\n});\n',
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js"],
+      },
+      "a spy on an import from @effect/vitest that has another vi": {
+        text:
+          'import { test as vi, vitest } from "@effect/vitest";\n' +
+          importGreet +
+          'const spy = vitest.fn(greet);\nvi("greets", () => {\n  console.log(TAG, spy());\n});\n',
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js"],
+      },
+      "a call under a type that has the name of another vi": {
+        file: "greet.test.ts",
+        text:
+          'import { test } from "vitest";\n' +
+          'const vi = { fn: () => "own" };\n' +
+          "function spy() {\n  type vi = string;\n  return vitest.fn();\n}\n" +
+          'test("greets", () => {\n  console.log(TAG, typeof spy(), typeof vi.fn());\n});\n',
+        prints: ["function string"],
+        dangerously: ["string string"],
+      },
+      "a use of an import under a type that has the name of another vi": {
+        file: "greet.test.ts",
+        text:
+          'import { vitest, test } from "vitest";\n' +
+          "function spies() {\n" +
+          '  const vi = { fn: () => "own" };\n' +
+          "  function spy() {\n    type vi = string;\n    return vitest.fn();\n  }\n" +
+          '  return typeof spy() + " " + typeof vi.fn();\n}\n' +
+          'test("greets", () => {\n  console.log(TAG, spies());\n});\n',
+        prints: ["function string"],
+        dangerously: ["string string"],
+      },
+      // A name that the file assigns to can be anything at the call. That goes for the name and for `vi`.
+      "a call on a name from require() that the file assigns to": {
+        text:
+          'let { vitest, test } = require("vitest");\n' +
+          'vitest = { fn: () => "own" };\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["string"],
+        dangerously: ["function"],
+      },
+      "a call beside a vi from the same require() that the file assigns to": {
+        text:
+          'let { vi, vitest, test } = require("vitest");\n' +
+          'vi = { fn: () => "own" };\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["function"],
+        dangerously: ["string"],
+      },
+      // So can a global that the file sets, also where a `declare` or a type has its name. `bun test` has no `vitest`
+      // of its own in a file that loads no Vitest module. The cases share a process, so the file removes its global.
+      "a call on a global that the file assigns to": {
+        text: assignsGlobal("vitest"),
+        prints: ["runs dep.js", "string"],
+        dangerously: ["runs dep.js", "function"],
+      },
+      "a call on a global under a declare that the file assigns to": {
+        file: "greet.test.cts",
+        text:
+          "declare let vitest: { fn(): unknown };\n" +
+          'vitest = { fn: () => "own" };\n' +
+          printsAndRemovesGlobal("vitest", "(globalThis as any)"),
+        prints: ["string"],
+        dangerously: ["function"],
+      },
+      "a call on a global beside an interface of its name that the file assigns to": {
+        file: "greet.test.cts",
+        text:
+          "interface vitest {\n  fn(): unknown;\n}\n" +
+          'vitest = { fn: () => "own" };\n' +
+          printsAndRemovesGlobal("vitest", "(globalThis as any)"),
+        prints: ["string"],
+        dangerously: ["function"],
+      },
+      // A use of the global on its own that is no assignment holds nothing back.
+      "a call on a global that the file also reads on its own": {
+        text:
+          'const { test } = require("vitest");\n' +
+          "const same = vitest;\n" +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn(), same === vi);\n});\n',
+        prints: ["function true"],
+      },
+      // A file that loads the name itself can be for a runner that has no global `vi`, as Vitest is by default. Vitest
+      // can't load `require("vitest")`, and it can load the two below.
+      "a call on a name from await import()": {
+        text:
+          'const { vitest, test } = await import("vitest");\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["function"],
+        dangerously: ["function"],
+      },
+      "a call on a name from require() of @effect/vitest": {
+        text:
+          'const { vitest, test } = require("@effect/vitest");\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["function"],
+        dangerously: ["function"],
+      },
+      // The default and a namespace are the module, not Vitest's object. Under the name `vi` they take the uses of
+      // the global `vi`, and a call that has a fix of its own.
+      "a default import": {
+        text: 'import vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js", "real"],
+      },
+      "a namespace": {
+        text: 'import * as vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js", "real"],
+      },
+      "a default import, and a use of the global vi": {
+        text: besideGlobalVi("vitest", "vitest.vi.fn"),
+        prints: ["function function"],
+        dangerously: [],
+      },
+      "a namespace, and a use of the global vi": {
+        text: besideGlobalVi("* as vitest", "vitest.vi.fn"),
+        prints: ["function function"],
+        dangerously: [],
+      },
+      "a default import, and a call on a name from require() in a function": {
+        text: nestedRequire("vitest"),
+        prints: ["function"],
+        dangerously: [],
+      },
+      "a namespace, and a call on a name from require() in a function": {
+        text: nestedRequire("* as vitest"),
+        prints: ["function"],
+        dangerously: [],
+      },
+      // oxlint writes the entries of an import as one list of names in braces, which is wrong text for an import that
+      // has the default or a namespace beside another entry. Such an import has no fix.
+      "a default import beside a named import": {
+        text:
+          'import vitest, { test } from "vitest";\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.vi.fn);\n});\n',
+        prints: ["function"],
+        noFix: true,
+      },
+      "a namespace beside a default import": {
+        text:
+          'import runner, * as vitest from "vitest";\n' +
+          'runner.test("greets", () => {\n  console.log(TAG, typeof vitest.vi.fn);\n});\n',
+        prints: ["function"],
+        noFix: true,
+      },
+      "a named import beside a default import": {
+        text:
+          'import runner, { vitest } from "vitest";\n' +
+          'runner.test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["function"],
+        noFix: true,
+      },
+      // A type of the name merges with the import. The fix of the import renames the uses of the type too and leaves
+      // its declaration, which TypeScript rejects (TS2749).
+      "an import beside a type of its name": {
+        file: "greet.test.ts",
+        text:
+          'import { vitest, test } from "vitest";\n' +
+          "type vitest = ReturnType<typeof vitest.fn>;\n" +
+          'test("greets", () => {\n  const spy: vitest = vitest.fn();\n  console.log(TAG, typeof spy);\n});\n',
+        prints: ["function"],
+        dangerously: ["function"],
+      },
+      // The rule goes by the name, as oxlint does, so it reports a call on a name that isn't Vitest's object. `--fix`
+      // leaves such a call alone.
+      ...ownCases("vitest"),
+      "a call on a name from a require() that the file declares": {
+        file: "greet.test.mjs",
+        text:
+          'import { test } from "vitest";\n' +
+          'const require = () => ({ vitest: { fn: () => "own" } });\n' +
+          'const { vitest } = require("vitest");\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["string"],
+        dangerously: ["function"],
+      },
+      // The fix of this import writes an import of `vi` in place of the other export.
+      "an import of another export under the name": {
+        text:
+          'import { expect as vitest, test } from "vitest";\n' +
+          'test("greets", () => {\n  vitest.any(String);\n  console.log(TAG, "own");\n});\n',
+        prints: ["own"],
+        dangerously: [],
+      },
+      // Here `--fix` renames the import, and the call's own fix would move the call to the `vi` that the import then
+      // declares.
       "a call on a parameter of the name": {
         text:
           'import { vitest, test } from "vitest";\n' +
@@ -647,13 +925,31 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text: 'import { vitest, test } from "@effect/vitest";\n' + importGreet + mock("vitest") + greets(),
         prints: ["runs dep.js", "mock"],
       },
-      "a default import": {
-        text: 'import vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
-        prints: ["runs dep.js", "real"],
+      // These are Vitest's object too: a name from `require()` in a function, from one `await import()` with `vi`, and
+      // a declared global. The call in the function gets its fix in the pass after the fix of the import.
+      "a call on a name from require() in a function": {
+        text:
+          'const { test } = require("vitest");\n' +
+          'test("greets", () => {\n  const { vitest } = require("vitest");\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["function"],
       },
-      "a namespace": {
-        text: 'import * as vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
-        prints: ["runs dep.js", "real"],
+      "an import of the name, and a call on a name from require() in a function": {
+        text: nestedRequire("{ vitest }"),
+        prints: ["function"],
+      },
+      "two names from await import()": {
+        file: "greet.test.mjs",
+        text:
+          'const { vi, vitest, test } = await import("vitest");\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn(), typeof vi.fn);\n});\n',
+        prints: ["function function"],
+      },
+      "a call on a declared global": {
+        file: "greet.test.ts",
+        text:
+          'import { test } from "vitest";\ndeclare const vitest: { fn(): unknown };\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n});\n',
+        prints: ["function"],
       },
       // The fix of an import renames every use of the name: the calls above it,
       "a mock above the import": {
@@ -792,6 +1088,21 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text: 'const { test } = require("vitest");\n' + requireGreet + mock("vi") + greets(),
         prints: ["mock"],
       },
+      ...ownCases("vi"),
+      // `bun test` has no global `vitest` in a file that loads no module named `vitest`.
+      "a call on a name from require() of @effect/vitest": {
+        text:
+          'const { vi, test } = require("@effect/vitest");\n' +
+          'test("greets", () => {\n  console.log(TAG, typeof vi.fn());\n});\n',
+        prints: ["function"],
+        dangerously: [],
+      },
+      // A file can set that global itself, and the new name is then the file's own object.
+      "a call beside a global vitest that the file assigns to": {
+        text: assignsGlobal("vi"),
+        prints: ["runs dep.js", "function"],
+        dangerously: ["runs dep.js", "string"],
+      },
     },
   },
   {
@@ -824,7 +1135,48 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["mock"],
         dangerously: [],
       },
+      // A name that isn't Vitest's object keeps its name with this config too.
+      ...ownCases("vitest"),
+      "an import of another export under the name": {
+        text:
+          'import { expect as vitest, test } from "@effect/vitest";\n' +
+          'const own = vitest;\ntest("greets", () => {\n  console.log(TAG, typeof own.any);\n});\n',
+        prints: ["function"],
+        dangerously: ["undefined"],
+      },
+      "a namespace, and a use of the global vi": {
+        text: besideGlobalVi("* as vitest", "vitest.vi.fn"),
+        prints: ["function function"],
+        dangerously: [],
+      },
+      // One pass renames the import. The call in the function has no fix while an import from Vitest has the name.
+      "a default import, and a call on a name from require() in a function": {
+        text: nestedRequire("vitest"),
+        prints: ["function"],
+        dangerously: ["function"],
+        leaves: true,
+      },
+      "a namespace, and a call on a name from require() in a function": {
+        text: nestedRequire("* as vitest"),
+        prints: ["function"],
+        dangerously: ["function"],
+        leaves: true,
+      },
+      "a call on a global that the file assigns to": {
+        text: assignsGlobal("vitest"),
+        prints: ["runs dep.js", "string"],
+        dangerously: ["runs dep.js", "function"],
+      },
     },
+  },
+  {
+    name: 'vitest/consistent-vitest-vi with fn: "vitest" and an .oxlintrc.json',
+    rule: "vitest/consistent-vitest-vi",
+    config: {
+      ".oxlintrc.json":
+        '{ "plugins": ["vitest"], "categories": { "correctness": "off" }, "rules": { "vitest/consistent-vitest-vi": ["warn", { "fn": "vitest" }] } }',
+    },
+    cases: ownCases("vi"),
   },
   {
     name: "vitest/prefer-import-in-mock",
@@ -919,6 +1271,8 @@ type Result = {
   isFixed?: boolean;
   /** Whether the rule still reports the file. Not for the file as written, which isn't linted. */
   isReported?: boolean;
+  /** Whether one of those reports has a fix for some flag. Only for a case with `noFix`. */
+  hasFix?: boolean;
 };
 const results = new Map<string, Record<Step, Result>>();
 /** The exit code of `bun test` in each step. */
@@ -941,21 +1295,27 @@ beforeAll(async () => {
   using dir = tempDir("bun-lint-mock-hoisting", files);
   const root = String(dir);
 
-  /** Runs `bun lint` with the rule of group `g`. Returns the files that the rule still reports. */
+  /** Runs `bun lint` with the rule of group `g`. Returns what the rule still reports: the file, and whether the report has a fix. */
   const lint = async (copy: string, flag: string, g: number) => {
     const { stdout, stderr } = await run(join(root, copy, String(g)), "lint", "-f", "json", flag);
     if (!/^[[{]/.test(stdout)) throw new Error(`bun lint ${flag} printed no JSON: ${stdout}\n${stderr}`);
     const json = JSON.parse(stdout);
-    // An oxlint config gives oxlint's JSON.
-    const reports: { path: string; rule: string }[] = Array.isArray(json)
-      ? json.flatMap((file: { filePath: string; messages: { ruleId: string | null }[] }) =>
-          file.messages.map(it => ({ path: file.filePath, rule: it.ruleId ?? "" })),
+    type Message = { ruleId: string | null; fix?: unknown; suggestions?: unknown[] };
+    // An oxlint config gives oxlint's JSON, which has no fixes.
+    const reports: { path: string; rule: string; hasFix: boolean }[] = Array.isArray(json)
+      ? json.flatMap((file: { filePath: string; messages: Message[] }) =>
+          file.messages.map(it => ({
+            path: file.filePath,
+            rule: it.ruleId ?? "",
+            hasFix: it.fix !== undefined || (it.suggestions ?? []).length > 0,
+          })),
         )
       : json.diagnostics.map((it: { filename: string; code: string }) => ({
           path: join(root, copy, String(g), it.filename),
           rule: it.code.replace(/^(?:eslint-plugin-)?([\w-]+)\((.+)\)$/, "$1/$2"),
+          hasFix: false,
         }));
-    return reports.filter(it => it.rule === groups[g].rule).map(it => it.path);
+    return reports.filter(it => it.rule === groups[g].rule);
   };
   const resultsOf = async (step: Step): Promise<[Step, (it: (typeof cases)[number]) => Result, number]> => {
     const { flag, copy } = steps[step];
@@ -967,10 +1327,12 @@ beforeAll(async () => {
       const prints = lines.filter(line => line.startsWith(it.tag)).map(line => line.slice(it.tag.length + 1));
       if (!flag) return { prints };
       const asWritten = readFileSync(pathOf(steps["as written"].copy, it), "utf8");
+      const reports = reported.filter(report => report.path === pathOf(copy, it));
       return {
         prints,
         isFixed: readFileSync(pathOf(copy, it), "utf8") !== asWritten,
-        isReported: reported.includes(pathOf(copy, it)),
+        isReported: reports.length > 0,
+        ...(it.it.noFix ? { hasFix: reports.some(report => report.hasFix) } : {}),
       };
     };
     return [step, resultOf, tested.exitCode];
@@ -997,12 +1359,20 @@ test("every case passes as written and after --fix", () => {
 for (const group of groups) {
   describe(group.name, () => {
     for (const { name, it, tag } of cases.filter(it => it.group === group)) {
-      const held = it.dangerously !== undefined;
-      test(`${held ? "only --fix-dangerously fixes" : "--fix fixes"}: ${name}`, () => {
+      const noFix = it.noFix === true;
+      const held = it.dangerously !== undefined || noFix;
+      const fixes = noFix ? "no flag fixes" : held ? "only --fix-dangerously fixes" : "--fix fixes";
+      const offered = noFix ? { hasFix: false } : {};
+      test(`${fixes}: ${name}`, () => {
         expect(results.get(tag)).toEqual({
           "as written": { prints: it.prints },
-          "--fix": { prints: it.prints, isFixed: !held || it.partly === true, isReported: held },
-          "--fix-dangerously": { prints: it.dangerously ?? it.prints, isFixed: true, isReported: false },
+          "--fix": { prints: it.prints, isFixed: !held || it.partly === true, isReported: held, ...offered },
+          "--fix-dangerously": {
+            prints: it.dangerously ?? it.prints,
+            isFixed: !noFix,
+            isReported: noFix || it.leaves === true,
+            ...offered,
+          },
         });
       });
     }

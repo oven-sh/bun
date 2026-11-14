@@ -64,7 +64,7 @@ pub fn is_known_import(source: &[u8], imported: &[u8]) -> bool {
 }
 
 /// True for a declaration that is gone when the file runs: one under `declare`, like `declare const vi: Vi`, a type, a type-only import.
-fn is_erased(declaration: Declaration<'_>) -> bool {
+pub fn is_erased(declaration: Declaration<'_>) -> bool {
     match declaration {
         Declaration::Var(pattern) => {
             matches!(pattern.parent(), Node::VarDecl(it) if it.flags().contains(Flags::AMBIENT))

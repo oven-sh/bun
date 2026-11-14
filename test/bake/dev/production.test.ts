@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
@@ -610,6 +610,133 @@ export default function IndexPage() {
       '"useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `"use client";` to the top of the file).',
     );
     expect(exitCode).toBe(1);
+  });
+
+  // The files that get the server-component `useState` error, relative to `root`.
+  const filesWithUseStateError = (stderr: string, root: string) =>
+    Array.from(stderr.matchAll(/"useState" is not available in a server component.*\n\s+at (.+):\d+:\d+/g), match =>
+      normalizePath(path.relative(root, match[1])),
+    ).sort();
+
+  // A package module with a hook that calls `useState` and an export that uses no hook.
+  const libWithHook = (label: string) => `import { useState } from 'react';
+
+export function useCounter() {
+  return useState(0);
+}
+
+export function ${label}() {
+  return ${JSON.stringify(label)};
+}`;
+  const libPackageJson = (name: string) => JSON.stringify({ name, version: "1.0.0", type: "module", main: "index.js" });
+
+  test.concurrent("useState in a package is not a server-component error, wherever node_modules is", async () => {
+    // The app is in apps/web. React and most of the packages are in the node_modules folder two levels above it.
+    const dir = await tempDirWithBakeDeps("bake-production-package-useState", {
+      "node_modules/hoisted-lib/package.json": libPackageJson("hoisted-lib"),
+      "node_modules/hoisted-lib/index.js": libWithHook("hoistedLabel"),
+      // A file directly inside node_modules.
+      "node_modules/loose-lib.js": libWithHook("looseLabel"),
+      // The store of the isolated linker. node_modules/iso-lib is a link to it.
+      "node_modules/.bun/iso-lib@1.0.0/node_modules/iso-lib/package.json": libPackageJson("iso-lib"),
+      "node_modules/.bun/iso-lib@1.0.0/node_modules/iso-lib/index.js": libWithHook("isoLabel"),
+      "node_modules/cjs-lib/package.json": JSON.stringify({ name: "cjs-lib", version: "1.0.0", main: "index.js" }),
+      "node_modules/cjs-lib/index.js": `const React = require("react");
+
+exports.useCounter = function useCounter() {
+  return React.useState(0);
+};
+
+exports.cjsLabel = function cjsLabel() {
+  return "cjsLabel";
+};`,
+      // A store that node_modules links to under another name.
+      "apps/web/node_modules.nosync/linked-lib/package.json": libPackageJson("linked-lib"),
+      "apps/web/node_modules.nosync/linked-lib/index.js": libWithHook("linkedLabel"),
+      "apps/web/packages/x/node_modules/nested-lib/package.json": libPackageJson("nested-lib"),
+      "apps/web/packages/x/node_modules/nested-lib/index.js": libWithHook("nestedLabel"),
+      "apps/web/packages/x/index.ts": `export { nestedLabel } from "nested-lib";`,
+      "apps/web/src/index.tsx": `export default { app: { framework: "react" } };`,
+      "apps/web/pages/index.tsx": `import { hoistedLabel } from "hoisted-lib";
+import { looseLabel } from "loose-lib.js";
+import { isoLabel } from "iso-lib";
+import { cjsLabel } from "cjs-lib";
+import { linkedLabel } from "linked-lib";
+import { nestedLabel } from "../packages/x";
+import Counter from "../components/Counter";
+
+export default function IndexPage() {
+  return (
+    <ul>
+      <li>{hoistedLabel()}</li>
+      <li>{looseLabel()}</li>
+      <li>{isoLabel()}</li>
+      <li>{cjsLabel()}</li>
+      <li>{linkedLabel()}</li>
+      <li>{nestedLabel()}</li>
+      <li>
+        <Counter />
+      </li>
+    </ul>
+  );
+}`,
+      "apps/web/components/Counter.tsx": `"use client";
+import { useCounter } from "hoisted-lib";
+
+export default function Counter() {
+  const [count] = useCounter();
+  return <p>{"count=" + count}</p>;
+}`,
+      "apps/web/package.json": JSON.stringify({ name: "web", version: "1.0.0" }),
+    });
+    const appDir = path.join(dir, "apps", "web");
+    symlinkSync(
+      path.join(dir, "node_modules", ".bun", "iso-lib@1.0.0", "node_modules", "iso-lib"),
+      path.join(dir, "node_modules", "iso-lib"),
+      "junction",
+    );
+    symlinkSync(path.join(appDir, "node_modules.nosync"), path.join(appDir, "node_modules"), "junction");
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(appDir)
+      .env(bunEnv)
+      .throws(false);
+
+    expect({ useStateErrors: filesWithUseStateError(stderr.toString(), dir), exitCode }).toEqual({
+      useStateErrors: [],
+      exitCode: 0,
+    });
+    // The server component calls the exports that use no hook. The client component calls the hook.
+    expect(await Bun.file(path.join(appDir, "dist", "index.html")).text()).toContain(
+      "<ul><li>hoistedLabel</li><li>looseLabel</li><li>isoLabel</li><li>cjsLabel</li><li>linkedLabel</li><li>nestedLabel</li><li><p>count=0</p></li></ul>",
+    );
+  });
+
+  test.concurrent("useState that a package calls in a server component fails the build at render", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-package-useState-called", {
+      "node_modules/hoisted-lib/package.json": libPackageJson("hoisted-lib"),
+      "node_modules/hoisted-lib/index.js": libWithHook("hoistedLabel"),
+      "apps/web/src/index.tsx": `export default { app: { framework: "react" } };`,
+      "apps/web/pages/index.tsx": `import { useCounter } from "hoisted-lib";
+
+export default function IndexPage() {
+  const [count] = useCounter();
+  return <p>{"count=" + count}</p>;
+}`,
+      "apps/web/package.json": JSON.stringify({ name: "web", version: "1.0.0" }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(path.join(dir, "apps", "web"))
+      .env(bunEnv)
+      .throws(false);
+
+    expect({ useStateErrors: filesWithUseStateError(stderr.toString(), dir), exitCode }).toEqual({
+      useStateErrors: [],
+      exitCode: 1,
+    });
+    // The stack frame of the call that failed.
+    expect(normalizePath(stderr.toString())).toContain("node_modules/hoisted-lib/index.js:4:10)");
   });
 
   test("importing useState from client component", async () => {

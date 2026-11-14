@@ -159,6 +159,8 @@ fn has_non_value_syntax(value: &[u8], syntax: Syntax) -> bool {
         |byte: u8| bun_core::strings::is_regexp_word_byte(byte) || byte == b'-' || byte >= 0x80;
     // The number of open `(`.
     let mut depth = 0u32;
+    // Set once a `url(` has no `)` after it. No later one has either.
+    let mut is_url_unclosed = false;
     let mut at = 0;
     while let Some(&byte) = value.get(at) {
         let next = value.get(at + 1).copied();
@@ -179,7 +181,11 @@ fn has_non_value_syntax(value: &[u8], syntax: Syntax) -> bool {
             b'@' if value[at..].starts_with(b"@prettier-placeholder-") => {}
             b'@' if syntax != Syntax::Less || next == Some(b'{') => break,
             b'(' if at >= 3 && value[at - 3..at].eq_ignore_ascii_case(b"url") => {
-                at += bun_core::strings::index_of_char_usize(&value[at..], b')').unwrap_or(0);
+                if !is_url_unclosed {
+                    let close = bun_core::strings::index_of_char_usize(&value[at..], b')');
+                    is_url_unclosed = close.is_none();
+                    at += close.unwrap_or(0);
+                }
             }
             // Bare parentheses are only fine inside a function's parentheses.
             b'(' if syntax != Syntax::Scss

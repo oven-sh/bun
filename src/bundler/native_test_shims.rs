@@ -39,7 +39,6 @@ not_called_by_tests! {
     __bun_jsc_bytecode_link_encoder_add_module
     __bun_jsc_bytecode_link_encoder_add_internal_module_from_source
     __bun_jsc_bytecode_link_encoder_add_internal_module
-    __bun_dispatch__TranspilerCacheImpl__Jsc__get
     __bun_dispatch__JsEventLoop__Jsc__tick
     __bun_dispatch__JsEventLoop__Jsc__js_poster
     __bun_dispatch__JsEventLoop__Jsc__auto_tick

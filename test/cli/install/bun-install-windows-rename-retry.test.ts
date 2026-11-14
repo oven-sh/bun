@@ -16,14 +16,23 @@
 // The isolated linker retries one more rename: it moves an installed
 // project-local package aside before it links it again. If that rename fails it
 // links in place, so the install succeeds either way.
+//
+// One rename replaces a file: bun writes its own `config` into a cached git
+// clone before it runs git there. That one is refused for as long as a handle
+// without FILE_SHARE_DELETE is open on the `config` itself. Windows Server 2019
+// also refuses it for as long as a handle with DELETE access is open on the
+// clone folder.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { release } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const PKG = "av-test-pkg";
+const GIT_PKG = "av-test-git-pkg";
 const ENV = "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS";
 const HOLD_MS = 2000;
 
@@ -99,7 +108,7 @@ function serveRegistry(stallTarballUntil?: Promise<void>) {
   return server;
 }
 
-function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number) {
+function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number, fileName = "") {
   const proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -107,6 +116,7 @@ function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number) {
       watchDir,
       subdirFilter,
       String(holdMs),
+      ...(fileName ? [fileName] : []),
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -176,6 +186,38 @@ function scaffold(name: string, bunfig: string, packageJson: Record<string, unkn
 }
 
 const registryBunfig = (port: number) => `[install]\nregistry = "http://localhost:${port}/"\n`;
+
+const gitEnv = {
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+// A repository with one commit, to depend on through its `file:` URL.
+async function makeGitRepo() {
+  const dir = tempDir("rename-retry-git-repo", {
+    "package.json": JSON.stringify({ name: GIT_PKG, version: "1.0.0" }),
+    "index.js": `module.exports = "from git";\n`,
+  });
+  for (const args of [
+    ["init", "-q"],
+    ["add", "."],
+    ["commit", "-q", "-m", "first"],
+  ]) {
+    await using proc = Bun.spawn({
+      cmd: ["git", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, ...gitEnv },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed:\n${stderr}`);
+  }
+  return dir;
+}
 
 const modes = [
   { mode: "default budget outlasts a 2s hold", budget: undefined, holdMs: HOLD_MS },
@@ -272,6 +314,87 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
       }
     }
     expect(held, "the fixture never held the staging directory").toBe(true);
+  });
+
+  // The clone is in the cache, and its `config` holds a setting that is not bun's, like the `config` of a clone that
+  // an older bun left there. So the install has to replace the file before it runs `git fetch` in the clone.
+  //
+  // The replace is refused while a handle without FILE_SHARE_DELETE is open on the `config`: Windows 11 answers
+  // STATUS_SHARING_VIOLATION (EBUSY), Windows Server 2019 STATUS_ACCESS_DENIED (EPERM).
+  //
+  // Windows Server 2019 (10.0.17763) also refuses it, with STATUS_SHARING_VIOLATION, while a handle with DELETE
+  // access is open on the folder of the clone. The install that renamed the clone into the cache has such a handle
+  // until it closes it. Windows 11 (10.0.26100) does not refuse it. No other version was measured, so the cases
+  // with the folder held run on 10.0.17763 only.
+  //
+  // The fixture holds its handle until it is stopped. An install that waits keeps the file that is to replace
+  // `config` next to it, and one that is not refused renames that file at once.
+  const waits = [
+    { mode: "the install waits until the handle is closed", budget: undefined, sameText: false },
+    { mode: `${ENV}=0 fails at once and names the variable`, budget: "0", sameText: false },
+  ];
+  test.each([
+    ...waits.map(wait => ({ ...wait, held: "config", errno: "E(BUSY|PERM)" })),
+    ...(release() === "10.0.17763" ? waits.map(wait => ({ ...wait, held: "folder", errno: "EBUSY" })) : []),
+    // Another install of the same dependency writes the same text. The holder shares write access.
+    { mode: "the same text in the file ends the wait", budget: undefined, sameText: true, held: "config", errno: "" },
+  ])("config of a cached git clone, $held held: $mode", async ({ budget, sameText, held, errno }) => {
+    using repo = await makeGitRepo();
+    using s = scaffold("rename-retry-git-config", "", {
+      dependencies: { [GIT_PKG]: `git+${pathToFileURL(String(repo))}` },
+    });
+    const env = { ...s.env, ...gitEnv };
+    expect(await runInstall(s.project, env)).toMatchObject({ exitCode: 0 });
+
+    const [cloneName] = readdirSync(s.cache).filter(name => name.endsWith(".git"));
+    const clone = join(s.cache, cloneName);
+    const config = join(clone, "config");
+    const written = readFileSync(config, "utf8");
+    writeFileSync(config, written + "[core]\n\tfilemode = false\n");
+    rmSync(join(s.project, "node_modules"), { recursive: true, force: true });
+    rmSync(join(s.project, "bun.lock"));
+    const temporaryFiles = () => readdirSync(clone).filter(name => name.endsWith(".tmp"));
+
+    // The clone already exists, so the fixture holds it before the install starts.
+    const blocker = spawnBlocker(s.cache, ".git", 60_000, held === "folder" ? ":folder" : held);
+    await blocker.held;
+
+    let exited = false;
+    const install = runInstall(s.project, { ...env, [ENV]: budget }).finally(() => (exited = true));
+    let waited = false;
+    let blockerOut = "";
+    if (budget === undefined) {
+      // The same temporary file, seen twice, is one that a refused rename left there.
+      let seen: string | undefined;
+      while (!exited && !waited) {
+        const [temporary] = temporaryFiles();
+        waited = temporary !== undefined && temporary === seen;
+        seen = temporary;
+        if (!waited) await Bun.sleep(5);
+      }
+      if (sameText) writeFileSync(config, written);
+      else blockerOut = await blocker.finish();
+    }
+    const result = await install;
+    blockerOut ||= await blocker.finish();
+    expect(blockerOut).toContain(`HELD ${held === "folder" ? clone : config}`);
+
+    if (budget === undefined) {
+      expect({ waited, exitCode: result.exitCode, stderr: result.stderr }).toMatchObject({ waited: true, exitCode: 0 });
+      expect(readFileSync(config, "utf8")).toBe(written);
+      expect(existsSync(join(s.project, "node_modules", GIT_PKG, "index.js"))).toBe(true);
+    } else {
+      const refused = new RegExp(
+        `^error: writing "config" for "${GIT_PKG}" failed: ${errno}: .*\\(NtSetInformationFile\\(\\)\\) ` +
+          `\\(gave up after retrying for \\d+ms; .* Set ${ENV} to wait longer\\)$`,
+      );
+      expect({
+        exitCode: result.exitCode,
+        error: result.stderr.split(/\r?\n/).find(line => line.includes('writing "config"')) ?? result.stderr,
+      }).toEqual({ exitCode: 1, error: expect.stringMatching(refused) });
+    }
+    // The temporary file that was to replace `config` is not left behind.
+    expect(temporaryFiles()).toEqual([]);
   });
 
   // The held file is not one of the package's: it is gone if the old directory was moved aside

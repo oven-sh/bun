@@ -66,7 +66,7 @@ describe.concurrent("configVersion", () => {
           },
         },
         "packages": {
-          "dep": ["dep@file:dep", {}],
+          "dep": ["dep@file:dep", { "version": "1.0.0" }],
         }
       }
       "
@@ -124,7 +124,7 @@ describe.concurrent("configVersion", () => {
         "packages": {
           "pkg1": ["pkg1@workspace:packages/pkg1"],
 
-          "pkg1/dep": ["dep@file:dep", {}],
+          "pkg1/dep": ["dep@file:dep", { "version": "1.0.0" }],
         }
       }
       "

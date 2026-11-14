@@ -400,7 +400,7 @@ describe.concurrent("basic", () => {
           "x": "file:../x2",
         },
         "packages": {
-          "x": ["x@file:../x2", {}],
+          "x": ["x@file:../x2", { "version": "2.0.0" }],
         }
       }"
     `);

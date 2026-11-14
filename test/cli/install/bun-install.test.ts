@@ -13676,7 +13676,7 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
     expect(first.exitCode).toBe(0);
     const lockfile = await file(join(String(dir), "project", "bun.lock")).text();
     expect(lockfile).toContain('"name": "a:b"');
-    expect(lockfile).toContain('"dep": ["lib@file:../lib", {}]');
+    expect(lockfile).toContain('"dep": ["lib@file:../lib", { "version": "1.0.0" }]');
 
     const second = await install(String(dir), "--frozen-lockfile");
     expect(second.err).not.toContain("Ignoring lockfile");
@@ -14603,7 +14603,7 @@ registry = "${ctx.registry_url}"
       }
 
       const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
-      expect(lock).toContain('"pkg-a/shared": ["shared@file:../shared", {}]');
+      expect(lock).toContain('"pkg-a/shared": ["shared@file:../shared", { "version": "1.0.0" }]');
     },
   );
 
@@ -14682,9 +14682,9 @@ registry = "${ctx.registry_url}"
           },
         },
         "packages": {
-          "pkg-a": ["pkg-a@file:pkg-a", { "dependencies": { "shared": "1.0.0" } }],
+          "pkg-a": ["pkg-a@file:pkg-a", { "version": "1.0.0", "dependencies": { "shared": "1.0.0" } }],
 
-          "pkg-a/shared": ["shared@file:vendor/shared", {}],
+          "pkg-a/shared": ["shared@file:vendor/shared", { "version": "2.0.0" }],
         }
       }"
     `);
@@ -14718,7 +14718,7 @@ registry = "${ctx.registry_url}"
         expect(out).toContain("2 packages installed");
         expect(urls.sort()).toEqual([`${ctx.registry_url}is-even`, `${ctx.registry_url}is-even-1.0.0.tgz`]);
         expect(await file(join(ctx.package_dir, "bun.lock")).text()).toContain(
-          `"is-even/is-odd": ["is-odd@file:vendor/is-odd", {}]`,
+          `"is-even/is-odd": ["is-odd@file:vendor/is-odd", { "version": "9.9.9" }]`,
         );
         await expectVendoredIsOddLinked(ctx.package_dir);
 
@@ -15485,13 +15485,13 @@ it.concurrent("installs file: dependencies that depend on each other", async () 
         },
       },
       "packages": {
-        "a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+        "a": ["a@file:packages/a", { "version": "1.0.0", "dependencies": { "b": "file:../b" } }],
 
-        "b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+        "b": ["b@file:packages/b", { "version": "1.0.0", "dependencies": { "a": "file:../a" } }],
 
-        "a/b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+        "a/b": ["b@file:packages/b", { "version": "1.0.0", "dependencies": { "a": "file:../a" } }],
 
-        "b/a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+        "b/a": ["a@file:packages/a", { "version": "1.0.0", "dependencies": { "b": "file:../b" } }],
       }
     }"
   `);
@@ -15530,13 +15530,13 @@ it.concurrent(
         },
       },
       "packages": {
-        "a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+        "a": ["a@file:packages/a", { "version": "1.0.0", "dependencies": { "b": "file:../b" } }],
 
-        "b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+        "b": ["b@file:packages/b", { "version": "1.0.0", "dependencies": { "a": "file:../a" } }],
 
-        "a/b": ["b@file:packages/b", { "dependencies": { "a": "file:../a" } }],
+        "a/b": ["b@file:packages/b", { "version": "1.0.0", "dependencies": { "a": "file:../a" } }],
 
-        "b/a": ["a@file:packages/a", { "dependencies": { "b": "file:../b" } }],
+        "b/a": ["a@file:packages/a", { "version": "1.0.0", "dependencies": { "b": "file:../b" } }],
       }
     }"
   `);
@@ -15610,11 +15610,11 @@ it.concurrent(
         },
       },
       "packages": {
-        "lib": ["lib@file:vendor/lib", { "dependencies": { "shared": "file:../shared" } }],
+        "lib": ["lib@file:vendor/lib", { "version": "1.0.0", "dependencies": { "shared": "file:../shared" } }],
 
-        "shared": ["shared@file:vendor/shared", { "dependencies": { "nested": "file:../nested" } }],
+        "shared": ["shared@file:vendor/shared", { "version": "1.0.0", "dependencies": { "nested": "file:../nested" } }],
 
-        "lib/shared": ["shared@file:vendor/shared", { "dependencies": { "nested": "file:../nested" } }],
+        "lib/shared": ["shared@file:vendor/shared", { "version": "1.0.0", "dependencies": { "nested": "file:../nested" } }],
 
         "shared/nested": ["nested@file:vendor/nested", {}],
 
@@ -15700,7 +15700,7 @@ it.concurrent("keeps a registry package's own file: folder apart from the root's
     // two rows, so two packages
     const lock = await file(join(ctx.package_dir, "bun.lock")).text();
     expect(lock.split("\n").filter(line => line.includes(`["x@file:x"`))).toEqual([
-      `    "x": ["x@file:x", { "hasInstallScript": true }],`,
+      `    "x": ["x@file:x", { "version": "1.0.0", "hasInstallScript": true }],`,
       `    "foo/x": ["x@file:x", {}],`,
     ]);
   } finally {
@@ -15822,8 +15822,10 @@ describe.concurrent("file: tarball declared by a file: folder dependency", () =>
       expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
       // The lockfile records the path as declared; the name in front of it is
       // read from the tarball that was extracted.
-      expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "file:./tool.tgz" } }]');
-      expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+      expect(lockfile).toContain(
+        '"lib": ["lib@file:vendor/lib", { "version": "1.0.0", "dependencies": { "tool": "file:./tool.tgz" } }]',
+      );
+      expect(lockfile).toContain('"tool": ["bar@./tool.tgz", { "version": "0.0.2" }, "sha512-');
     });
   }
 
@@ -15842,8 +15844,10 @@ describe.concurrent("file: tarball declared by a file: folder dependency", () =>
 
     const { installed, lockfile } = await installAndRequireLib(String(dir), "hoisted");
     expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
-    expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "^1.0.0" } }]');
-    expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+    expect(lockfile).toContain(
+      '"lib": ["lib@file:vendor/lib", { "version": "1.0.0", "dependencies": { "tool": "^1.0.0" } }]',
+    );
+    expect(lockfile).toContain('"tool": ["bar@./tool.tgz", { "version": "0.0.2" }, "sha512-');
   });
 });
 
@@ -15888,7 +15892,7 @@ for (const [first, second] of [
       expect(exitCode).toBe(0);
       const lockfile = Bun.JSONC.parse(await file(join(projectDir, "bun.lock")).text()) as any;
       expect(lockfile.packages).toEqual({
-        [fileAlias]: ["shared@file:../shared", { dependencies: { extra: "file:../app/extra" } }],
+        [fileAlias]: ["shared@file:../shared", { version: "1.0.0", dependencies: { extra: "file:../app/extra" } }],
         [`${fileAlias}/extra`]: ["extra@file:extra", {}],
         [linkAlias]: ["shared@link:../shared", {}],
       });

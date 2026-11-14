@@ -116,6 +116,33 @@ fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
     }
 }
 
+/// Longer than node-semver's `MAX_LENGTH` is a version to no package manager: recorded as none.
+pub(crate) fn recordable_version(version: &[u8]) -> &[u8] {
+    if version.len() > 256 { b"" } else { version }
+}
+
+/// The `version` of the package.json at `path` on disk, empty when it has none or does not parse.
+pub(crate) fn package_json_version_on_disk(path: &[u8]) -> Box<[u8]> {
+    let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), path) else {
+        return Box::default();
+    };
+    initialize_store();
+    let source = bun_ast::Source::init_path_string(path, contents.as_slice());
+    let mut log = bun_ast::Log::init();
+    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(&source, &mut log) else {
+        return Box::default();
+    };
+    Box::from(package_json_version(&json.root, &bun_alloc::Arena::new()))
+}
+
+/// The `version` string of a package.json, empty when it has none.
+pub(crate) fn package_json_version<'b>(json: &Expr, bump: &'b bun_alloc::Arena) -> &'b [u8] {
+    (json.as_property(b"version"))
+        .and_then(|version| version.expr.as_utf8(bump))
+        .map(recordable_version)
+        .unwrap_or_default()
+}
+
 /// Returns the path in the form that `Version.value.folder` has in local packages, or `None` if it
 /// doesn't fit in `buf`.
 pub(crate) fn folder_relative_to_top_level_dir<'a>(
@@ -904,6 +931,8 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
+    /// The same for the `version` of a `file:` folder, which the lockfile row records.
+    pub(crate) folder_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
     /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
@@ -954,6 +983,7 @@ impl DiffSummary {
             || self.removed_trusted_dependencies
             || self.patched_dependencies_changed
             || self.workspace_versions_changed
+            || self.folder_versions_changed
     }
 
     #[inline]
@@ -1345,6 +1375,7 @@ impl Diff {
                 let mut workspace_hooks_only = false;
                 let update_mapping = 'update_mapping: {
                     if let Some(diff) = &folder_diff {
+                        summary.folder_versions_changed |= diff.folder_versions_changed;
                         workspace_hooks_only = !diff.changes_dependencies();
                         break 'update_mapping !diff.changes_resolutions();
                     }
@@ -1695,7 +1726,7 @@ impl Diff {
         {
             return Ok(None);
         }
-        Self::generate_inner(
+        let mut summary = Self::generate_inner(
             pm,
             log,
             from_lockfile,
@@ -1705,8 +1736,29 @@ impl Diff {
             false,
             None,
             removed_names,
-        )
-        .map(Some)
+        )?;
+        // The row records the version. A changed one is rewritten, as a workspace's is. A row
+        // from before the version was recorded gets it with the next write.
+        let to_version = folder_pkg
+            .meta
+            .package_json_version
+            .slice(to_lockfile.buffers.string_bytes.as_slice());
+        let from_version = from_pkg
+            .meta
+            .package_json_version
+            .slice(from_lockfile.buffers.string_bytes.as_slice());
+        if to_version != from_version {
+            summary.folder_versions_changed = !from_version.is_empty();
+            let to_version = to_version.to_vec();
+            let mut builder = from_lockfile.string_builder();
+            builder.count(&to_version);
+            builder.allocate()?;
+            let version = builder.append::<String>(&to_version);
+            builder.clamp();
+            from_lockfile.packages.items_meta_mut()[from_package_id as usize]
+                .package_json_version = version;
+        }
+        Ok(Some(summary))
     }
 
     #[cold]
@@ -2582,13 +2634,12 @@ impl Package<u64> {
             }
         }
 
-        if !FEATURES.is_main {
-            if let Some(version_q) = json.as_property(b"version") {
-                if let Some(version_str) = version_q.expr.as_utf8(&bump) {
-                    string_builder.count(version_str);
-                }
-            }
-        }
+        let version: &[u8] = if FEATURES.is_main {
+            b""
+        } else {
+            package_json_version(&json, &bump)
+        };
+        string_builder.count(version);
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
                 if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
@@ -2938,6 +2989,9 @@ impl Package<u64> {
         if !FEATURES.is_main {
             if !resolver.is_void() {
                 self.resolution = resolver.resolve(&mut string_builder, &json)?;
+            }
+            if resolver.is_void() || self.resolution.tag.records_package_json_version() {
+                self.meta.package_json_version = string_builder.append::<String>(version);
             }
         } else {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
@@ -3432,6 +3486,13 @@ impl Package<u64> {
         }
 
         string_builder.clamp();
+
+        // A folder is parsed with these features only when the root or a workspace declares it.
+        if FEATURES.is_main || (FEATURES.is_workspace && !resolver.is_void()) {
+            lockfile.index_local_sources(self.dependencies, true)?;
+        } else if FEATURES.is_folder && !resolver.is_void() {
+            lockfile.index_local_sources(self.dependencies, false)?;
+        }
         Ok(())
     }
 }

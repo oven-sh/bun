@@ -3018,7 +3018,7 @@ no-deps@^1.0.0:
 
     expectLocalPathsInstalled(String(dir));
     expect(await lockPackages(String(dir))).toStrictEqual({
-      "bare": ["bare@file:bare", { dependencies: { "no-deps": "^1.0.0" } }],
+      "bare": ["bare@file:bare", { version: "3.2.1", dependencies: { "no-deps": "^1.0.0" } }],
       "linked": ["linked@link:./linked", {}],
       "linked-dir": ["linked-dir@link:./linked-dir", {}],
       "no-deps": ["no-deps@1.0.0", "", {}, integrity],
@@ -3084,7 +3084,7 @@ no-deps@^1.0.0:
 
     expect(await lockPackages(String(dir))).toStrictEqual({
       "a": ["a@workspace:packages/a"],
-      "a/filed": ["filed@file:filed", { dependencies: { "no-deps": "^1.0.0" } }],
+      "a/filed": ["filed@file:filed", { version: "4.0.0", dependencies: { "no-deps": "^1.0.0" } }],
       "linked": ["linked@link:./linked", {}],
       "near": ["near@link:./packages/a/near", {}],
       "no-deps": ["no-deps@1.0.0", "", {}, integrity],
@@ -3724,10 +3724,10 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
       : [];
 
   test.each([
-    ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n'],
-    ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n'],
-    ["./vendor/t", 't@./vendor/t:\n  version "1.0.0"\n'],
-  ])("the bins of %s are linked and recorded", async (range, entry) => {
+    ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n', { bin: { t: "cli.js" } }],
+    ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n', { version: "1.0.0", bin: { t: "cli.js" } }],
+    ["./vendor/t", 't@./vendor/t:\n  version "1.0.0"\n', { version: "1.0.0", bin: { t: "cli.js" } }],
+  ])("the bins of %s are linked and recorded", async (range, entry, info) => {
     using server = await serve([]);
     const project = () =>
       tempDir("yarn-migration-folder-bins", {
@@ -3740,7 +3740,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     using saved = project();
     const install = await bun(String(saved), server.url, "install");
     expect(errors(install.stderr)).toEqual([]);
-    expect(lockPackages(String(saved)).t[1]).toEqual({ bin: { t: "cli.js" } });
+    expect(lockPackages(String(saved)).t[1]).toEqual(info);
     expect(bins(String(saved))).toEqual(["t"]);
     expect(install.exitCode).toBe(0);
 

@@ -689,7 +689,9 @@ test.concurrent("a folder dependency without a package.json name is stored under
   expect(exitCode).toBe(0);
 
   // The entry bun wrote loads again (runBunInstall fails on "warn: Ignoring lockfile").
-  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"folder-dep": ["pkg-1@file:pkg-1", {}]');
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+    '"folder-dep": ["pkg-1@file:pkg-1", { "version": "1.0.0" }]',
+  );
   await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
 });
 

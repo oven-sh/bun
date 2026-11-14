@@ -6,7 +6,7 @@ use bun_semver::String;
 use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
 
 // TODO: when we bump the lockfile version, we should reorder this to:
-// id(32), arch(16), os(16), id(8), man_dir(8), has_install_script(8), integrity(72 align 8)
+// id(32), arch(16), os(16), id(8), package_json_version(8), has_install_script(8), integrity(72 align 8)
 // should allow us to remove padding bytes
 
 // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
@@ -25,7 +25,9 @@ pub struct Meta {
 
     pub(crate) id: PackageID,
 
-    pub(crate) man_dir: String,
+    /// The package.json `version` of a tarball or `file:` folder package. Empty when none was
+    /// read, or when the package.json has none. Parsed by `Lockfile::recorded_version`.
+    pub(crate) package_json_version: String,
     pub(crate) integrity: Integrity,
 
     /// Shouldn't be used directly. Use `Meta.has_install_script()` and
@@ -38,6 +40,9 @@ pub struct Meta {
 
     pub(crate) _padding_integrity: [u8; 2],
 }
+
+// A slot that no older bun assigned, so it is empty in every older `bun.lockb`.
+const _: () = assert!(core::mem::offset_of!(Meta, package_json_version) == 12);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -58,7 +63,7 @@ impl Default for Meta {
             libc: Libc::NONE,
             _padding_libc: 0,
             id: INVALID_PACKAGE_ID,
-            man_dir: String::default(),
+            package_json_version: String::default(),
             integrity: Integrity::default(),
             has_install_script: HasInstallScript::False,
             _padding_integrity: [0; 2],
@@ -93,7 +98,13 @@ impl Meta {
     // `StringBuilder`, so take it directly instead of a placeholder trait that
     // nothing implements.
     pub(crate) fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
-        builder.count(self.man_dir.slice(buf));
+        builder.count(self.package_json_version.slice(buf));
+    }
+
+    /// The package.json `version` of a tarball or `file:` folder package, if one was read.
+    pub(crate) fn recorded_version<'a>(&'a self, buf: &'a [u8]) -> Option<&'a [u8]> {
+        let version = self.package_json_version.slice(buf);
+        (!version.is_empty()).then_some(version)
     }
 
     pub(crate) fn init() -> Meta {
@@ -110,7 +121,7 @@ impl Meta {
     ) -> Meta {
         Meta {
             id,
-            man_dir: builder.append::<String>(self.man_dir.slice(buf)),
+            package_json_version: builder.append::<String>(self.package_json_version.slice(buf)),
             integrity: self.integrity,
             arch: self.arch,
             os: self.os,

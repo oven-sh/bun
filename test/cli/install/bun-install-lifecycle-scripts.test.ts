@@ -1887,7 +1887,7 @@ describe("the trusted set", () => {
       }).toEqual({
         "lifecycle-postinstall": { hasInstallScript: true },
         "no-deps": {},
-        folder: { hasInstallScript: true },
+        folder: { version: "1.0.0", hasInstallScript: true },
       });
 
       for (const args of [["install"], ["install", "--frozen-lockfile"], ["ci"]]) {
@@ -1903,7 +1903,9 @@ describe("the trusted set", () => {
     test.concurrent("a bun.lock from before is installed as it is", async () => {
       using ctx = await project(linker, files);
       expect((await bun(ctx, ["install"])).exitCode).toBe(0);
-      const lock = (await lockOf(ctx)).replaceAll(`{ "hasInstallScript": true }`, "{}");
+      const lock = (await lockOf(ctx))
+        .replaceAll(`{ "hasInstallScript": true }`, "{}")
+        .replaceAll(`, "hasInstallScript": true }`, " }");
       expect(lock).not.toContain("hasInstallScript");
       await write(join(ctx.packageDir, "bun.lock"), lock);
 

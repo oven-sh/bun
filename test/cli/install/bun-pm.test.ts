@@ -155,8 +155,8 @@ it("should list all dependencies", async () => {
 
 // A tarball package's label is the URL it was installed from, which has no length
 // limit. `--all` prints a label in two places: the header of a package that has its own
-// nested node_modules (moo, whose bar/baz conflict with the root's), and the line of a
-// package that has none (bar).
+// nested node_modules (moo, whose baz conflicts with the root's), and the line of a
+// package that has none (bar). moo's bar@0.0.2 shares the root's tarball of that version.
 it("should list all dependencies when a resolution is longer than 512 bytes", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, latest: "0.0.3" }));
@@ -201,7 +201,6 @@ it("should list all dependencies when a resolution is longer than 512 bytes", as
 ├── bar@${barUrl}
 ├── baz@0.0.5
 └── moo@${mooUrl}
-    ├── bar@0.0.2
     └── baz@0.0.3
 `);
   expect(exitCode).toBe(0);

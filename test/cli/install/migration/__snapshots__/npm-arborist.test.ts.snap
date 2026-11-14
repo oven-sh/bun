@@ -3816,13 +3816,13 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "j": ["j@file:../i/j", { "dependencies": { "k": "" } }],
+    "j": ["j@file:../i/j", { "version": "1.0.0", "dependencies": { "k": "" } }],
 
     "k": ["k@1.0.0", "http://localhost:1/k/-/k-1.0.0.tgz", {}, ""],
 
-    "o": ["o@file:../m/node_modules/n/o", {}],
+    "o": ["o@file:../m/node_modules/n/o", { "version": "1.0.0" }],
 
-    "o2": ["o2@file:../m/node_modules/n/o2", {}],
+    "o2": ["o2@file:../m/node_modules/n/o2", { "version": "1.0.0" }],
 
     "x": ["x@1.0.0", "http://localhost:1/x/-/x-1.0.0.tgz", {}, ""],
   }
@@ -3878,7 +3878,7 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "a": ["a@file:a", {}],
+    "a": ["a@file:a", { "version": "1.0.0" }],
   }
 }
 "

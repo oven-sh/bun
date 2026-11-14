@@ -262,6 +262,8 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
 }
 ```
 
+A package that the root, a workspace, or a `file:` folder of theirs installs from a tarball or a `file:` folder also satisfies the other packages that depend on that name, when the `version` in its `package.json` satisfies their range. As in npm, `bun install` then installs one copy and does not ask the registry for the name. A range that the version does not satisfy is resolved from the registry as usual.
+
 ---
 
 ## Installation strategies

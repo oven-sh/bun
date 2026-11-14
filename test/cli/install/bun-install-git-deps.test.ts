@@ -409,7 +409,11 @@ test.concurrent(
     const locked = Object.fromEntries(
       letters.map(l => [
         nameOf(l),
-        [`${nameOf(l)}@${urlOf(l)}`, l === "a" ? { dependencies: transitive } : {}, integrityOf(tarballs.get(l)!)],
+        [
+          `${nameOf(l)}@${urlOf(l)}`,
+          { version: "1.0.0", ...(l === "a" ? { dependencies: transitive } : {}) },
+          integrityOf(tarballs.get(l)!),
+        ],
       ]),
     );
 
@@ -940,7 +944,7 @@ test.concurrent(
     };
     const row = (name: string, dependencies?: Record<string, string>) => [
       `${name}@${urlOf(name)}`,
-      dependencies ? { dependencies } : {},
+      { version: "1.0.0", ...(dependencies ? { dependencies } : {}) },
       integrityOf(tarballs[`/${name}.tgz`]),
     ];
 

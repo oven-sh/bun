@@ -1368,7 +1368,7 @@ describe.concurrent("version-scoped targets", () => {
       expect(await packageSeenBy(dir, "packages/a", "my-alias")).toBe("no-deps@1.0.1");
       expect(await packageSeenBy(dir, "packages/b", "my-alias")).toBe("no-deps@1.0.1");
       const text = await lock(dir);
-      expect(text).toContain(`"my-alias": ["no-deps@${tarball}", {}, "sha512-`);
+      expect(text).toContain(`"my-alias": ["no-deps@${tarball}", { "version": "1.0.1" }, "sha512-`);
       expect(text).not.toContain('/my-alias": [');
       await installNoChanges(dir);
       await installNoChanges(dir, "--frozen-lockfile");
@@ -2073,9 +2073,9 @@ describe.concurrent("lockfile", () => {
             },
           },
           "packages": {
-            "x": ["x@file:../x", {}],
+            "x": ["x@file:../x", { "version": "1.0.0" }],
 
-            "y": ["y@file:y", {}],
+            "y": ["y@file:y", { "version": "1.0.0" }],
           }
         }"
       `);
@@ -2104,7 +2104,7 @@ describe.concurrent("lockfile", () => {
             },
           },
           "packages": {
-            "y": ["y@file:y", {}],
+            "y": ["y@file:y", { "version": "1.0.0" }],
           }
         }"
       `);

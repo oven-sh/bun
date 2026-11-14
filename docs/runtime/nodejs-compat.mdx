@@ -377,6 +377,8 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`process`](https://nodejs.org/api/process.html)
 
+Heap usage statistics include allocations since the most recent garbage collection. `process.memoryUsage()` and `Worker.getHeapStatistics()` use the same measurement.
+
 🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented: `buffer`, `config`, `constants`, `crypto/x509`, `fs`, `http_parser`, `natives`, `tty_wrap`, `util` and `uv` are available, the rest throw. Setting `process.title` is a no-op on macOS & Linux. `getActiveResourcesInfo()`, `_getActiveHandles()` and `_getActiveRequests()` always return an empty array, `setSourceMapsEnabled()` is a no-op, and `process.report.writeReport()` writes nothing. Missing `sourceMapsEnabled` and `addUncaughtExceptionCaptureCallback`.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)

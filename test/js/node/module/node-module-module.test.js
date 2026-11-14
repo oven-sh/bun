@@ -46,7 +46,7 @@ describe.concurrent("node-module-module", () => {
     expect(Module._stat(undefined)).toBe(-1);
   });
 
-  test("syncBuiltinESMExports updates existing builtin bindings", async () => {
+  test.concurrent("syncBuiltinESMExports updates existing builtin bindings", async () => {
     const source = String.raw`
       import assert from "node:assert/strict";
       import { createRequire, syncBuiltinESMExports } from "node:module";
@@ -109,7 +109,7 @@ describe.concurrent("node-module-module", () => {
     `;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--eval", source],
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -118,7 +118,7 @@ describe.concurrent("node-module-module", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "synced\n", stderr: "", exitCode: 0 });
   });
 
-  test("syncBuiltinESMExports preserves CommonJS-first builtin loading", async () => {
+  test.concurrent("syncBuiltinESMExports preserves CommonJS-first builtin loading", async () => {
     const source = String.raw`
       import assert from "node:assert/strict";
       import { createRequire, syncBuiltinESMExports } from "node:module";
@@ -134,7 +134,7 @@ describe.concurrent("node-module-module", () => {
     `;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--eval", source],
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -143,7 +143,7 @@ describe.concurrent("node-module-module", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "required first\n", stderr: "", exitCode: 0 });
   });
 
-  test("syncBuiltinESMExports handles node-prefixed builtin names", async () => {
+  test.concurrent("syncBuiltinESMExports handles node-prefixed builtin names", async () => {
     const source = String.raw`
       import assert from "node:assert/strict";
       import { createRequire, syncBuiltinESMExports } from "node:module";
@@ -159,7 +159,7 @@ describe.concurrent("node-module-module", () => {
     `;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--eval", source],
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -168,7 +168,7 @@ describe.concurrent("node-module-module", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "prefixed\n", stderr: "", exitCode: 0 });
   });
 
-  test("syncBuiltinESMExports snapshots getters before updating bindings", async () => {
+  test.concurrent("syncBuiltinESMExports snapshots getters before updating bindings", async () => {
     const source = String.raw`
       import assert from "node:assert/strict";
       import { createRequire, syncBuiltinESMExports } from "node:module";
@@ -192,7 +192,7 @@ describe.concurrent("node-module-module", () => {
     `;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--eval", source],
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

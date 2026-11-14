@@ -701,7 +701,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
         let encoding;
         if (options) {
           if (typeof options === "string") encoding = options;
-          else encoding = options?.encoding;
+          else if (!$isCallable(options)) encoding = options?.encoding;
           if (encoding) {
             $bindgen("node_util_binding.bind.ts", "assertEncodingValid")(encoding);
           }

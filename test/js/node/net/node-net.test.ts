@@ -1229,6 +1229,7 @@ describe("a socket made with a signal", () => {
       "the socket under a TLS socket: the callback of a write before the connection",
       "the socket under a TLS socket that comes a tick later: the callback of a write that waits for the peer",
       "the socket under a TLS socket: the listener that makes the TLS socket",
+      "the socket under a TLS socket: the callback of a write that waits for the peer and makes the TLS socket",
     ];
     expect(await runFixture(group)).toEqual({
       stdout: [...rows.flatMap(name => [`uncaught Error: ${name}`, `${name}: open`]), "exit code 1"],
@@ -1252,11 +1253,18 @@ describe("a socket made with a signal", () => {
     });
   });
 
+  // An accepted socket has the handlers of its server, which every socket of that server has.
   it.concurrent("a TLS socket over a socket that a server accepted leaves the handlers of that server", async () => {
+    const name = "an accepted socket under a TLS socket: the callback of a write that waits for the peer";
     expect(await runFixture("a TLS socket over a socket that a server accepted")).toEqual({
-      stdout: ['the next socket of the server got "from the server"', "exit code 0"],
+      stdout: [
+        'the next socket of the server got "from the server"',
+        `uncaught Error: ${name}`,
+        `${name}: open`,
+        "exit code 1",
+      ],
       stderr: "",
-      exitCode: 0,
+      exitCode: 1,
     });
   });
 

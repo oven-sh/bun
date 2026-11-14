@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e151a35155db3aae23a8ea5d54ac43c208e42bbd797335658b3eecb12fd1c43d.
+// Written against that file with the SHA-256 e9072283e758fb7568b16162757adf9739d78c37318e96e48c1ec5508f5ad9aa.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -671,7 +671,7 @@ const kOwesRawClose = Symbol("kOwesRawClose");
 const kReadError = Symbol("kReadError");
 // The verdict on the peer let the session through, so the application can have written over it.
 const kSessionAccepted = Symbol("kSessionAccepted");
-// On a socket made with a `signal` that is not aborted yet: its handlers report what a listener of the caller throws.
+// On a socket made with a `signal` that is not aborted yet, and on the socket under such a TLS socket: what a listener of the caller throws is reported.
 const kReportsThrows = Symbol("kReportsThrows");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
@@ -876,7 +876,8 @@ function linkUpgraded(self: $Node.TLSSocket, connection: $Node.Socket) {
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
-  if (self[kReportsThrows] && isSocket && !connection[kReportsThrows]) reportThrowsUnder(connection);
+  // Its 'error' goes on to `self`, where the listener that addAbortSignal() added takes it. Its handlers stay: the catch blocks that test the marker report.
+  if (self[kReportsThrows] && isSocket) connection[kReportsThrows] = true;
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
@@ -1024,26 +1025,10 @@ function reportingHandlers<Handlers extends object>(handlers: Handlers): Handler
 function reportThrowsOn(socket: $Node.Socket) {
   const handlers = socket[khandlers];
   socket[kReportsThrows] = true;
-  return (socket[khandlers] =
+  socket[khandlers] =
     handlers === SocketHandlers2
       ? (signalHandlers ??= reportingHandlers(SocketHandlers2))
-      : reportingHandlers(handlers));
-}
-// onUpgradedError gives the 'error' of the socket under a TLS socket to the TLS socket, where the listener that addAbortSignal() added takes it.
-function reportThrowsUnder(connection: $Node.Socket) {
-  const handle = connection._handle;
-  const data = handle?.data;
-  let handlers: object;
-  if (data == null || (data as ConnectData).self === connection) {
-    handlers = reportThrowsOn(connection);
-  } else if (data === connection && !connection.isServer) {
-    // connect({ fd }) made this handle. An accepted one has the table of its listener, for every socket of that listener.
-    connection[kReportsThrows] = true;
-    handlers = signalFdHandlers ??= reportingHandlers(SocketHandlers);
-  } else {
-    return;
-  }
-  if (data != null) handle!.reload({ socket: handlers });
+      : reportingHandlers(handlers);
 }
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd(this: $Node.Socket) {
@@ -1292,7 +1277,13 @@ const SocketHandlers = {
         self._unrefTimer();
         self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
-        callback(null);
+        try {
+          callback(null);
+        } catch (e) {
+          // The socket under a TLS socket made with a `signal` has the marker, and its handlers are not wrapped.
+          if (!self[kReportsThrows]) throw e;
+          reportError(e);
+        }
       } else {
         self._pendingData = null;
       }
@@ -2165,7 +2156,13 @@ const SocketHandlers2 = {
         self._unrefTimer();
         self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
-        callback(null);
+        try {
+          callback(null);
+        } catch (e) {
+          // The socket under a TLS socket made with a `signal` has the marker, and its handlers are not wrapped.
+          if (!self[kReportsThrows]) throw e;
+          reportError(e);
+        }
       } else {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
@@ -4146,7 +4143,7 @@ function afterConnect(
       if (!self[kReportsThrows]) throw e;
       // Node has not started to read, and so does not hold the loop. Its TLS socket starts from a 'connect' listener.
       if (!self._readableState.reading && !(self.encrypted && connectListenersRan)) readStop(self, self._handle);
-      // A listener can have put a TLS socket made with a `signal` over this one. The handler that called this does not report then.
+      // The handlers of the socket under a TLS socket made with a `signal` are not wrapped, so the report is here.
       reportError(e);
       return;
     }

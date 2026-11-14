@@ -381,6 +381,15 @@ const groups = {
           over();
           thrower();
         }),
+      "the socket under a TLS socket: the callback of a write that waits for the peer and makes the TLS socket": (
+        under,
+        over,
+        thrower,
+      ) =>
+        under.write(Buffer.alloc(8 * 1024 * 1024), () => {
+          over();
+          thrower();
+        }),
     };
     for (const [name, arm] of Object.entries(rows)) {
       // No row waits for the handshake: the peer only reads.
@@ -455,6 +464,23 @@ const groups = {
     console.log(`the next socket of the server got "${received}"`);
     over.destroy();
     first.destroy();
+    // The write is in flight when the TLS socket takes the accepted socket, so TLS runs over that socket as a stream.
+    const name = "an accepted socket under a TLS socket: the callback of a write that waits for the peer";
+    const third = connect().on("error", () => {});
+    const under = await new Promise(resolve => server.once("connection", resolve));
+    let secure;
+    await new Promise(resolve => {
+      under.write(Buffer.alloc(8 * 1024 * 1024), () => {
+        // Two turns of the event loop are past every tick that can report the throw.
+        setImmediate(() => setImmediate(resolve));
+        throw new Error(name);
+      });
+      secure = tls.connect({ socket: under, signal: new AbortController().signal }).resume();
+      third.resume();
+    });
+    console.log(`${name}: ${secure.destroyed || under.destroyed ? "destroyed" : "open"}`);
+    secure.destroy();
+    third.destroy();
     server.close();
   },
   // The callback of net.connect() sends its socket to a child process. The peer sends back what it gets.

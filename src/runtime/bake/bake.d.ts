@@ -228,10 +228,10 @@ declare module "bun" {
        *
        * `register(component, uniqueId: string): void`
        * Called on every function that starts with an uppercase letter. These
-       * may or may not be components, but they are always functions.
+       * may or may not be components. The value of a call such as `memo(fn)` is registered too.
        *
        * `createSignatureFunctionForTransform(): ReactRefreshSignatureFunction`
-       * TODO: document. A passing no-op for this api is `return () => {}`
+       * Called for each function that calls a hook. A passing no-op for this api is `return x => x`
        *
        * @default "react-refresh/runtime"
        */

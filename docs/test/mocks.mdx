@@ -539,14 +539,14 @@ As in Vitest, `vi.doMock()` leaves a module that's already imported as it is. Wh
 
 In a file with hoisted calls, Bun turns the other imports into `await import()` and reads them through the module namespace, so they stay live. The exceptions are imports from `bun:test`, `vitest`, `@jest/globals` and `bun`, imports with attributes, `import defer`, `export ... from`, and imports the file re-exports. Those stay static.
 
-Bun does the same in a test file or a `--preload` script that has no hoisted call, if it imports `vitest` or runs with `globals = "vitest"`. Vitest runs each import before it looks at the next one, so a module that the file imports first can mock what the next import loads:
+Bun does the same in a test file or a `--preload` script that has no hoisted call, if it imports `vitest` or runs with `globals = "vitest"`. It only does so when the file has two or more imports, not counting those from `bun:test`, `vitest` and `@jest/globals`. Vitest runs each import before it looks at the next one, so a module that the file imports first can mock what the next import loads:
 
 ```ts title="cart.test.ts" icon="/icons/typescript.svg"
 import "./mocks"; // calls vi.mock("./tax", ...)
 import { total } from "./cart"; // imports "./tax", and gets the mock
 ```
 
-As in Vitest, an import of a name that the module doesn't export is `undefined` in such a file, and not a `SyntaxError`.
+Where Bun turns an import into `await import()`, a name that the module doesn't export is `undefined`, as in Vitest and in Jest with Babel, and not a `SyntaxError`. That holds in every file with a hoisted call, whether it imports from `bun:test`, `@jest/globals` or `vitest`. For a name that a mock's factory didn't return, see [Getters and Missing Exports](#getters-and-missing-exports).
 
 To mock a module for every test file, use `--preload` to load your mocks before your tests run.
 

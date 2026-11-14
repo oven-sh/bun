@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
+import zlib from "node:zlib";
 import {
   cartesian,
   clearProxyEnv,
@@ -424,4 +425,114 @@ describe("HTTP/2 not offered through proxy", () => {
       }
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A compressed body that is damaged inside whole HTTP framing. The client
+// ends the request itself when its decoder fails. Through a tunnel that close
+// must not read as the origin ending a complete body.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("damaged compressed body through a CONNECT tunnel", () => {
+  const payload = Buffer.alloc(108_000, "line of an honest download\n");
+
+  const codecs = {
+    gzip: { compress: zlib.gzipSync, error: "ZlibError" },
+    deflate: { compress: zlib.deflateSync, error: "ZlibError" },
+    br: { compress: zlib.brotliCompressSync, error: "BrotliDecompressionError" },
+    zstd: { compress: zlib.zstdCompressSync, error: "ZstdDecompressionError" },
+  } as const;
+  type Encoding = keyof typeof codecs;
+  type Framing = "chunked" | "close-delimited";
+
+  const damages = {
+    /** The whole stream. */
+    none: (stream: Buffer) => stream,
+    /** The stream stops in the middle. */
+    cut: (stream: Buffer) => stream.subarray(0, stream.length >> 1),
+    /** One bit of the trailing checksum is flipped: CRC-32 for gzip, Adler-32 for deflate. */
+    checksum: (stream: Buffer, encoding: Encoding) => {
+      const damaged = Buffer.from(stream);
+      damaged[damaged.length - (encoding === "gzip" ? 5 : 1)] ^= 1;
+      return damaged;
+    },
+    /** Not a compressed stream at all. */
+    garbage: () => Buffer.from("this is no compressed stream at all"),
+  };
+  type Damage = keyof typeof damages;
+
+  /**
+   * An https origin that answers with the response head, then holds the body
+   * until `release()`. The caller releases it once `fetch()` has resolved, so
+   * the body reaches the client in a socket read of its own.
+   */
+  async function createHeldBodyOrigin(encoding: Encoding, framing: Framing, body: Buffer) {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const server = tls.createServer(tlsCert, sock => {
+      sock.on("error", () => {});
+      sock.once("data", async () => {
+        sock.write(
+          `HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\n` +
+            (framing === "chunked" ? "Transfer-Encoding: chunked\r\n\r\n" : "Connection: close\r\n\r\n"),
+        );
+        await released;
+        if (framing === "chunked") {
+          // The framing is whole: one chunk, then the last chunk.
+          sock.write(
+            Buffer.concat([Buffer.from(`${body.length.toString(16)}\r\n`), body, Buffer.from("\r\n0\r\n\r\n")]),
+          );
+        } else {
+          sock.end(body);
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      url: `https://localhost:${(server.address() as net.AddressInfo).port}`,
+      release,
+      async [Symbol.asyncDispose]() {
+        server.close();
+      },
+    };
+  }
+
+  /** How reading the body through the tunnel ends: with this many bytes, or with this error code. */
+  async function readBody(encoding: Encoding, framing: Framing, damage: Damage, proxyTls: boolean) {
+    const body = damages[damage](codecs[encoding].compress(payload), encoding);
+    await using origin = await createHeldBodyOrigin(encoding, framing, body);
+    await using proxy = await createAdversarialProxy({ tls: proxyTls });
+    const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
+    expect(proxy.connectCount()).toBe(1);
+    origin.release();
+    try {
+      return { bytes: (await res.arrayBuffer()).byteLength };
+    } catch (e) {
+      return { error: errcode(e) };
+    }
+  }
+
+  const cells: Array<{ encoding: Encoding; damage: Damage }> = [
+    ...cartesian({ encoding: ["gzip", "deflate", "br", "zstd"], damage: ["none", "cut", "garbage"] } as const),
+    // Only gzip and deflate end in a checksum.
+    ...cartesian({ encoding: ["gzip", "deflate"], damage: ["checksum"] } as const),
+  ];
+
+  for (const { encoding, damage } of cells) {
+    for (const framing of ["chunked", "close-delimited"] as const) {
+      test.concurrent(`${encoding}, ${framing}, ${damage}`, async () => {
+        expect(await readBody(encoding, framing, damage, false)).toEqual(
+          damage === "none" ? { bytes: payload.length } : { error: codecs[encoding].error },
+        );
+      });
+    }
+  }
+
+  // The failure closes the socket to the proxy: one case for each kind, in each body stage.
+  test.concurrent("https proxy: gzip, chunked, cut", async () => {
+    expect(await readBody("gzip", "chunked", "cut", true)).toEqual({ error: "ZlibError" });
+  });
+  test.concurrent("https proxy: gzip, close-delimited, garbage", async () => {
+    expect(await readBody("gzip", "close-delimited", "garbage", true)).toEqual({ error: "ZlibError" });
+  });
 });

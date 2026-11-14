@@ -36,10 +36,16 @@ pub(crate) struct Archive {
 }
 
 impl Archive {
-    /// Borrow the backing `RefPtr<Store>`.
-    #[inline]
-    pub(crate) fn store_ref(&self) -> &RefPtr<Store> {
-        &self.store
+    /// The bytes of the archive as `Bun.write` writes them: the store itself (no copy) when there is no
+    /// compression, otherwise the compressed bytes, as `blob()` and `Archive.write` produce them.
+    pub(crate) fn to_blob_for_write(&self, global: &JSGlobalObject) -> JsResult<Blob> {
+        match &self.compress {
+            Compression::None => Ok(Blob::init_with_store(self.store.clone(), global)),
+            Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
+                Ok(data) => Ok(Blob::create_with_bytes_and_allocator(data, global, false)),
+                Err(e) => Err(global.throw_value(e.to_js(global))),
+            },
+        }
     }
 }
 

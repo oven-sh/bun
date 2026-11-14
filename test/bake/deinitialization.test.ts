@@ -309,7 +309,9 @@ test.skipIf(isWindows)("a client that leaves while the page of a failed bundle i
       });
 
       const sock = net.connect("run/dev.sock", () => sock.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n"));
-      const status = await new Promise(resolve => {
+      const status = await new Promise((resolve, reject) => {
+        sock.on("error", reject);
+        sock.on("close", () => resolve("closed without a response"));
         sock.once("data", d => {
           sock.destroy();
           resolve(d.toString("latin1").split("\\r\\n")[0]);

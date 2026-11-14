@@ -172,7 +172,7 @@ pub struct Options<'a> {
 
     pub transform_only: bool,
 
-    /// `None` leaves `import.meta.glob()` calls untouched.
+    /// `None` replaces no `import.meta.glob()` call.
     pub import_meta_glob: Option<crate::ImportMetaGlobHost>,
 
     /// Used for inlining the state of import.meta.main during visiting

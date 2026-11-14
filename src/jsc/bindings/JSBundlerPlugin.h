@@ -20,6 +20,14 @@ namespace Bun {
 
 using namespace JSC;
 
+// Which AsyncLocalStorage stores a plugin object's hooks run in. Mirrors `PluginAsyncContext` in JSBundler.rs.
+enum class BundlerPluginAsyncContext : uint8_t {
+    // Those the event loop has when it calls the hook.
+    None = 0,
+    // Those that are current when the plugin object is made: the hooks continue that call.
+    Caller = 1,
+};
+
 class BundlerPlugin final {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.

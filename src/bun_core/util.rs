@@ -3474,7 +3474,7 @@ pub mod base64 {
     }
 }
 
-/// A C string that is zeroed up to its first NUL before it is freed. A slice of them is a `char **`.
+/// A C string that is zeroed before it is freed. A slice of them is a `char **`.
 #[repr(transparent)]
 pub struct SensitiveCString(core::ptr::NonNull<core::ffi::c_char>);
 
@@ -3486,6 +3486,7 @@ unsafe impl Sync for SensitiveCString {}
 impl SensitiveCString {
     /// The string ends at the first NUL in `bytes`.
     pub fn new(bytes: &[u8]) -> Self {
+        let bytes = crate::slice_to_nul(bytes);
         let Some(p) = core::ptr::NonNull::new(bun_alloc::default_alloc::malloc(bytes.len() + 1))
         else {
             crate::out_of_memory();

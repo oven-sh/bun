@@ -731,6 +731,7 @@ test.concurrent.each([
   ["key", "{ key: latin1 }", "ERR_OSSL_PEM_NO_START_LINE"],
   ["key in a 16-bit string", "{ key: utf16 }", "ERR_OSSL_PEM_NO_START_LINE"],
   ["key in a Buffer", "{ key: bytes }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key after a NUL", "{ key: afterNul }", "ERR_OSSL_PEM_NO_START_LINE"],
   ["key in a file", `{ key: Bun.file("small") }`, "ERR_OSSL_PEM_NO_START_LINE"],
   ["key in a file larger than the first read", `{ key: Bun.file("large") }`, "ERR_OSSL_PEM_NO_START_LINE"],
   ["passphrase", `{ ...${JSON.stringify(tlsCert)}, passphrase: latin1 }`, undefined],
@@ -742,8 +743,9 @@ test.concurrent.each([
       "-e",
       `
         const bytes = Buffer.alloc(3000, "K");
-        // A global, so that the string itself is never freed.
+        // Globals, so that they are never freed themselves.
         globalThis.latin1 = bytes.toString("latin1");
+        globalThis.afterNul = Buffer.alloc(3000, "K").fill(0, 1, 2);
         const utf16 = Buffer.alloc(6000, "K\\0").fill("\\u2603", 5998, 6000, "utf16le").toString("utf16le");
         function isInFreedMemory() {
           const blocks = [3000, 3001, 6000, 256 * 1024, 300_000].flatMap(size =>

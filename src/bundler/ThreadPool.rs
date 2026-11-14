@@ -99,7 +99,7 @@ impl ThreadPool {
         // pool is stored as `*mut` in the struct anyway, so keep it raw
         // end-to-end.
         worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
-    ) -> Result<ThreadPool, bun_alloc::AllocError> {
+    ) -> ThreadPool {
         // The pool is `heap::alloc`'d (global
         // heap), so `deinit()` must `heap::take` it back; record ownership.
         let owned = worker_pool.is_none();
@@ -119,7 +119,7 @@ impl ThreadPool {
         };
         let mut this = Self::init_with_pool(v2, pool);
         this.worker_pool_is_owned = owned;
-        Ok(this)
+        this
     }
 
     pub(crate) fn init_with_pool(
@@ -384,7 +384,7 @@ impl ThreadPool {
         // SAFETY: `worker` is freshly heap-allocated and exclusive on this
         // thread until published via the map (already inserted above, but no
         // other thread looks it up under a different `id`).
-        // `deinit_without_freeing_arena` reads every entry, so it must not run
+        // `BundleV2::drop` reads every entry, so it must not run
         // while a task is in here. It waits for the source map tasks itself. Its
         // callers `wait_for_parse` first, except when `enqueue_entry_points_*`
         // returns an error, which only a failed allocation makes it do.
@@ -448,7 +448,7 @@ pub struct Worker {
     pub(crate) arena: bun_ptr::BackRef<ThreadLocalArena>,
 
     /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
-    /// `Worker` it creates (workers are torn down in `deinit_without_freeing_arena`
+    /// `Worker` it creates (workers are torn down in `BundleV2::drop`
     /// before the bundle is dropped). `BackRef` so call sites read
     /// `worker.ctx.field` via safe `Deref` instead of open-coding a raw deref.
     pub(crate) ctx: bun_ptr::BackRef<BundleV2<'static>>,

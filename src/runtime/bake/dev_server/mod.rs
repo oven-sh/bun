@@ -378,14 +378,14 @@ pub(crate) enum TestingBatchEvents {
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
 pub(crate) struct CurrentBundle {
-    /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
+    /// The `BundleV2<'static>`: `dyn`, so trimming the bundler takes its drop along. Drops before `_heap`.
     /// Note: `'static` is a stand-in for the DevServer-self lifetime —
     /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
     /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
     /// (stable address, never moved post-init). Threading a real `'dev` would
     /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
     /// already encodes that contract.
-    pub(crate) _bv2: Box<BundleV2<'static>>,
+    pub(crate) _bv2: Box<dyn ::core::any::Any>,
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
     pub(crate) _heap: Box<bun_alloc::MimallocArena>,

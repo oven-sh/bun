@@ -197,11 +197,19 @@ impl Device {
 
     /// `start` hands the wait to Dawn, and returns what that waits for.
     pub(super) fn wait_for_queue(self: &Rc<Self>, start: impl FnOnce(QueueWait) -> Serial) {
+        let wait = self.add_queue_wait();
+        self.set_serial_of_queue_wait(wait.id, start(wait));
+    }
+
+    fn add_queue_wait(self: &Rc<Self>) -> QueueWait {
         let id = self.last_queue_wait.get().wrapping_add(1);
         self.last_queue_wait.set(id);
         self.queue_waits.borrow_mut().insert(id, Serial::default());
         let device = Rc::clone(self);
-        let serial = start(QueueWait { device, id });
+        QueueWait { device, id }
+    }
+
+    fn set_serial_of_queue_wait(&self, id: u32, serial: Serial) {
         if let Some(entry) = self.queue_waits.borrow_mut().get_mut(&id) {
             *entry = serial;
         }

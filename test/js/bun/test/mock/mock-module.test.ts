@@ -3783,6 +3783,11 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             exports: { import: "./index.mjs" },
           }),
           "node_modules/esm-only/index.mjs": `export const which = "real esm";`,
+          "node_modules/cjs-only/package.json": JSON.stringify({
+            name: "cjs-only",
+            exports: { require: "./index.cjs" },
+          }),
+          "node_modules/cjs-only/index.cjs": `module.exports = { which: "real cjs" };`,
           "name-first.test.js": file("byName", "byPath", ["by name", "by path"], ["by name", "real cjs"]),
           "path-first.test.js": file("byPath", "byName", ["by name", "by name"], ["real esm", "real cjs"]),
           "esm-only.test.js": `
@@ -3793,8 +3798,18 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               expect(() => require("esm-only")).toThrow("Cannot find module");
             });
           `,
+          "cjs-only.test.js": `
+            import { expect, jest, mock, test } from "bun:test";
+            test("a mock of a name that only require() resolves answers an import too, and jest.unmock() ends it for both", async () => {
+              mock.module("cjs-only", () => ({ which: "mock" }));
+              expect([require("cjs-only").which, (await import("cjs-only")).which]).toEqual(["mock", "mock"]);
+              jest.unmock("cjs-only");
+              expect(require("cjs-only").which).toBe("real cjs");
+              await expect(import("cjs-only")).rejects.toThrow("Cannot find package");
+            });
+          `,
         },
-        3,
+        4,
         args,
       );
     },

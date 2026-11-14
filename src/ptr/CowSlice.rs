@@ -69,12 +69,6 @@ impl Flags {
     }
 
     #[inline]
-    fn set_len(&mut self, len: usize) {
-        debug_assert!(len <= Self::LEN_MASK);
-        self.0 = (self.0 & Self::IS_OWNED_BIT) | (len & Self::LEN_MASK);
-    }
-
-    #[inline]
     fn set_is_owned(&mut self, v: bool) {
         if v {
             self.0 |= Self::IS_OWNED_BIT;
@@ -251,26 +245,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             #[cfg(debug_assertions)]
             debug: self.debug,
         }
-    }
-
-    /// Returns a new string that borrows a subslice of this string.
-    ///
-    /// This is the Cow-equivalent of `&str[start..end]`.
-    ///
-    /// When `end` is `None`, the subslice will end at the end of the string.
-    /// `end` must be less than or equal to `self.len`, and greater than or
-    /// equal to `start`. The borrowed string should be dropped so that debug
-    /// assertions get performed.
-    pub fn borrow_subslice(&self, start: usize, end: Option<usize>) -> Self {
-        let end_ = end.unwrap_or(self.flags.len());
-        // Asserting the sentinel is present at `end_` would force a
-        // `PartialEq + Default` bound on every caller, so the `Z = true` path
-        // skips that debug assertion.
-        let mut result = self.borrow();
-        // SAFETY: const semantics are enforced by is_owned flag; `start <= end_ <= len`.
-        result.ptr = unsafe { self.ptr.add(start) };
-        result.flags.set_len(end_ - start);
-        result
     }
 
     /// Make this Cow `owned` by duplicating its borrowed data. Panics if

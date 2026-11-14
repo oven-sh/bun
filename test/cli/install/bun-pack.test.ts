@@ -4080,6 +4080,11 @@ describe.concurrent("files", () => {
       ["*.txt", "sub", "!(a).txt"],
       ["a.txt", "b.txt", "sub/b.txt"],
     ],
+    // after `./` the `!` does not start the entry, so `!(a)` is a group and the entry includes
+    [
+      ["*.txt", "./!(a).txt"],
+      ["(a).txt", "a.txt", "b.txt"],
+    ],
     // this spelling packed the same before
     [
       ["*.txt", "![(]a).txt"],
@@ -4099,6 +4104,61 @@ describe.concurrent("files", () => {
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
     expect(tarballEntries(join(dir, "pack-files-excluded-paren-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...expected.map(name => `package/${name}`),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The `!` of `./!x` and `/!x` does not start the entry, so it is a character of the name and the entry includes.
+  // Every list is what `npm pack` 11.16.0 and 12.2.2 pack for the same `files`, but for the two rows that say so.
+  test.each([
+    [["./!x"], ["!x"]],
+    [["/!x"], ["!x"]],
+    [["./!d"], ["!d/keep.js"]],
+    [["/!d/keep.js"], ["!d/keep.js"]],
+    [
+      ["*", "./!x"],
+      ["!d/keep.js", "!x", "a/!foo/keep.js", "a/bar/keep.js", "x"],
+    ],
+    [
+      ["*", "!/!x"],
+      ["!d/keep.js", "a/!foo/keep.js", "a/bar/keep.js", "x"],
+    ],
+    // `!(` after `./` starts a group
+    [["./!(a)/**"], ["!d/keep.js"]],
+    // Not npm's list: a pattern of `files` that matches a directory packs all of it.
+    [["./!(x)/"], ["!d/keep.js", "a/!foo/keep.js", "a/bar/keep.js"]],
+    // these packed the same before
+    [["!x"], []],
+    [
+      ["*", "!x"],
+      ["!d/keep.js", "!x", "a/!foo/keep.js", "a/bar/keep.js"],
+    ],
+    // npm 12.2.2 leaves `!x` out here
+    [
+      ["*", "!./!x"],
+      ["!d/keep.js", "!x", "a/!foo/keep.js", "a/bar/keep.js", "x"],
+    ],
+    [["a", "!a/!foo"], ["a/bar/keep.js"]],
+    // the entry is `x` once its path is normalized, so it still includes
+    [
+      ["*", "!/../x"],
+      ["!d/keep.js", "!x", "a/!foo/keep.js", "a/bar/keep.js", "x"],
+    ],
+  ])("a name that begins with `!`: %j", async (files, expected) => {
+    using dir = tempDir("pack-files-bang-name", {
+      "package.json": JSON.stringify({ name: "pack-files-bang-name", version: "1.0.0", files }),
+      "!d/keep.js": "x",
+      "!x": "x",
+      "a/!foo/keep.js": "x",
+      "a/bar/keep.js": "x",
+      "x": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-files-bang-name-1.0.0.tgz"))).toEqual([
       "package/package.json",
       ...expected.map(name => `package/${name}`),
     ]);
@@ -4548,6 +4608,127 @@ describe.concurrent(".gitignore/.npmignore", () => {
         expect(await packed(ignoreFile, ignore, files)).toEqual(["package.json", ...expected]);
       });
     });
+
+    // npm and git read only the `!` that starts a line as a negation. A `!` that starts a later path segment, or that
+    // follows the leading `/`, is a character of a name. For npm, `!(` starts a group there.
+    // Every list is what `npm pack` 11.16.0 and 12.2.2 pack for the same ignore file, but for the test that says so.
+    describe.each([".npmignore", ".gitignore"])(
+      "a `!` that does not start the line is a character (%s)",
+      ignoreFile => {
+        const files = {
+          "!d/keep.js": "x",
+          "!x": "x",
+          "a/!foo/keep.js": "x",
+          "a/!foo/other.js": "x",
+          "a/bar/keep.js": "x",
+          "a/other.js": "x",
+          "x": "x",
+        };
+        const all = Object.keys(files);
+
+        test.each([
+          ["*\n!a/!*/keep.js\n", ["a/!foo/keep.js"]],
+          ["*\n!*/!*/keep.js\n", ["a/!foo/keep.js"]],
+          ["*\n!a/!*/**\n", ["a/!foo/keep.js", "a/!foo/other.js"]],
+          ["*\n!a/!!(bar)/keep.js\n", ["a/!foo/keep.js"]],
+          ["*\n!/!x\n", ["!x"]],
+          ["*\n!/!d/keep.js\n", ["!d/keep.js"]],
+          ["/!x\n", all.filter(name => name !== "!x")],
+          ["/!d/\n", all.filter(name => name !== "!d/keep.js")],
+          // `/!x` names the file `!x`. It does not take back the line above it.
+          ["x\n/!x\n", all.filter(name => name !== "x" && name !== "!x")],
+          // 1.4.3 packed this list. Then `!foo` was read as "not foo", and `!keep.js` applied in a/bar too.
+          ["a/bar/\n!keep.js\n!a/!foo/x\n", all.filter(name => name !== "a/bar/keep.js")],
+          // these packed the same before
+          ["*\n!a/!(bar)/keep.js\n", ["a/!foo/keep.js"]],
+          ["*\n!a/\\!foo/keep.js\n", ["a/!foo/keep.js"]],
+          ["*\n/!a/!*/keep.js\n", []],
+          ["/\\!x\n", all.filter(name => name !== "!x")],
+          ["/!(x)\n", ["x"]],
+        ])("%j", async (ignore, expected) => {
+          expect(await packed(ignoreFile, ignore, files)).toEqual(["package.json", ...expected]);
+        });
+
+        // A walk into one of the other directories would read its ignore file and pack its keep.js.
+        test("a directory that the segment does not name is not walked", async () => {
+          const tree = {
+            ...files,
+            "a/!bar/keep.js": "x",
+            "a/!foobar/keep.js": "x",
+            [`!d/${ignoreFile}`]: "!keep.js\n",
+            [`a/!bar/${ignoreFile}`]: "!keep.js\n",
+            [`a/!foobar/${ignoreFile}`]: "!keep.js\n",
+            [`a/bar/${ignoreFile}`]: "!keep.js\n",
+          };
+          expect(await packed(ignoreFile, "*\n!a/!foo/keep.js\n", tree)).toEqual(["package.json", "a/!foo/keep.js"]);
+          expect(await packed(ignoreFile, "*\n!a/!f*/keep.js\n", tree)).toEqual([
+            "package.json",
+            "a/!foo/keep.js",
+            "a/!foobar/keep.js",
+          ]);
+        });
+
+        test("a segment that starts with two `!`", async () => {
+          const tree = { ...files, "a/!!z/keep.js": "x", [`a/!foo/${ignoreFile}`]: "!keep.js\n" };
+          expect(await packed(ignoreFile, "*\n!a/!!*/keep.js\n", tree)).toEqual(["package.json", "a/!!z/keep.js"]);
+          expect(await packed(ignoreFile, "*\n!a/!!z/keep.js\n", tree)).toEqual(["package.json", "a/!!z/keep.js"]);
+        });
+
+        test("in the ignore file of a subdirectory", async () => {
+          expect(await packed(`a/${ignoreFile}`, "*\n!/!foo/keep.js\n", files)).toEqual([
+            "package.json",
+            "!d/keep.js",
+            "!x",
+            "a/!foo/keep.js",
+            "x",
+          ]);
+          expect(await packed(`a/${ignoreFile}`, "/!foo\n", files)).toEqual([
+            "package.json",
+            "!d/keep.js",
+            "!x",
+            "a/bar/keep.js",
+            "a/other.js",
+            "x",
+          ]);
+        });
+
+        test('below a directory that "files" includes', async () => {
+          using dir = tempDir("pack-ignore-bang-files", {
+            "package.json": JSON.stringify({
+              name: "pack-ignore-bang-files",
+              version: "1.0.0",
+              files: ["a", "!a/!foo"],
+            }),
+            [`a/${ignoreFile}`]: "!/!foo/keep.js\n",
+            "a/!foo/keep.js": "x",
+            "a/!foo/other.js": "x",
+            "a/bar/keep.js": "x",
+            "a/other.js": "x",
+          });
+          const { err, exitCode } = await runPack(dir);
+          expect(err).toBe("");
+          expect(tarballEntries(join(dir, "pack-ignore-bang-files-1.0.0.tgz"))).toEqual([
+            "package/package.json",
+            "package/a/!foo/keep.js",
+            "package/a/bar/keep.js",
+            "package/a/other.js",
+          ]);
+          expect(exitCode).toBe(0);
+        });
+
+        // Not npm's list: npm packs all of `a` here, because the rule `a` does not match the files of the directory.
+        test("the rest of the directory is still excluded", async () => {
+          const tree = { ...files, [`a/bar/${ignoreFile}`]: "!keep.js\n" };
+          expect(await packed(ignoreFile, "a\n!a/!*/keep.js\n", tree)).toEqual([
+            "package.json",
+            "!d/keep.js",
+            "!x",
+            "a/!foo/keep.js",
+            "x",
+          ]);
+        });
+      },
+    );
   });
 
   // The usual monorepo: one .gitignore, at the root, that names the folder its packages build into.

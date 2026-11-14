@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 50b7ac378d041b3d738e773074e4c242caebc1e2bdac4e79f7b215b9bd054bf8.
+// Written against that file with the SHA-256 950be96b5a600e0ed914ed4e4b68cf944876d2ae49b7126fa5e3064c0445f816.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -750,8 +750,7 @@ function failRejectedWrite(self: $Node.Socket) {
   failWriteWith(self, er, self[kwriteCallback]);
   return true;
 }
-// Node completes a write in a callback of its own, so what that throws ends nothing else. This one can run under a
-// destroy() that an 'uncaughtException' listener made: the report waits for that call to return.
+// This can run under a destroy() that an 'uncaughtException' listener made, so the report waits for that call to return.
 function failWriteCallbackOf(self: $Node.Socket, callback: WriteCallback, er: Error) {
   try {
     callback(er);
@@ -2130,8 +2129,7 @@ const SocketHandlers2 = {
     try {
       socket.data.req = undefined;
     } catch (e) {
-      // A listener sent the socket to another process, which took `data` off the handle. Node keeps it until the ack:
-      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/child_process.js#L93-L109
+      // A listener sent the socket to another process, which took `data` off the handle.
       if (!self[kReportsThrows]) throw e;
     }
   },
@@ -2486,8 +2484,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
 
   if (signal) {
     if (signal.aborted) {
-      // addAbortSignal() would destroy the socket at once, and the connect() that follows un-destroys it and dials:
-      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
+      // addAbortSignal() would destroy the socket at once, and the connect() that follows would un-destroy it and dial.
       process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
     } else {
       // Node's Duplex constructor does this: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/duplex.js#L123-L124
@@ -4143,8 +4140,7 @@ function afterConnect(
       self.emit("ready");
     } catch (e) {
       if (!self[kReportsThrows]) throw e;
-      // Node has not started to read, and so does not hold the loop. Its TLS socket starts from a 'connect' listener:
-      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L598-L616
+      // Node has not started to read, and so does not hold the loop. Its TLS socket starts from a 'connect' listener.
       if (!self._readableState.reading && !(self.encrypted && connectListenersRan)) readStop(self, self._handle);
       // A listener can have put a TLS socket made with a `signal` over this one. The handler that called this does not report then.
       reportError(e);

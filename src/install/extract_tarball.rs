@@ -329,9 +329,10 @@ impl ExtractTarball {
                                 libdeflate::Encoding::Gzip,
                             );
                             // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to `extract_to_dir`.
+                            // than one member is left to `extract_to_dir`, which also counts the layers.
                             if result.status == libdeflate::Status::Success
                                 && result.read == tgz_bytes.len()
+                                && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list)
                             {
                                 decompressed_in_memory = true;
                             }

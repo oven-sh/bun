@@ -563,6 +563,26 @@ snapshots:
   });
 });
 
+test.concurrent("a bundler option in bunfig.toml is not validated before a lifecycle script", async () => {
+  using dir = tempDir("lifecycle-bundler-option", {
+    "bunfig.toml": `external = ["a*b*"]`,
+    "package.json": JSON.stringify({ dependencies: { dep: "file:./dep" }, trustedDependencies: ["dep"] }),
+    "dep/package.json": JSON.stringify({ name: "dep", scripts: { postinstall: "echo ran > ran.txt" } }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: String(dir),
+    env: baseEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(existsSync(join(String(dir), "node_modules", "dep", "ran.txt"))).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

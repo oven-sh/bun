@@ -206,12 +206,15 @@ impl History {
         ) else {
             return Ok(());
         };
-        self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
-
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
+        let file = Self::open_file(path.as_bytes(), sys::O::RDONLY);
+        let content: Box<[u8]> = match file.and_then(|file| file.read_to_end()) {
             sys::Result::Ok(bytes) => bytes.into(),
+            // No history yet: `save` creates the file.
+            sys::Result::Err(err) if err.get_errno() == sys::E::ENOENT => Box::default(),
+            // `file_path` stays unset, so `save` does not replace what was not read.
             sys::Result::Err(_) => return Ok(()),
         };
+        self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         for line in strings::split(&content, b"\n") {
             if !line.is_empty() {
@@ -220,12 +223,23 @@ impl History {
         }
 
         // Trim to max size
-        while self.entries.len() > MAX_HISTORY_SIZE {
-            let _ = self.entries.remove(0);
-        }
+        let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
+        self.entries.drain(..excess);
 
         self.position = self.entries.len();
         Ok(())
+    }
+
+    /// Opens the history file. Only a regular file is accepted, and a FIFO must not block the open.
+    fn open_file(path: &[u8], flags: i32) -> sys::Result<sys::File> {
+        // On Windows, `O_NONBLOCK` makes the handle asynchronous, and `write` fails on it.
+        let without_waiting = if cfg!(unix) { sys::O::NONBLOCK } else { 0 };
+        let flags = flags | without_waiting | sys::O::NOCTTY | sys::O::CLOEXEC;
+        let file = sys::File::openat(Fd::cwd(), path, flags, 0o600)?;
+        match file.kind()? {
+            sys::FileKind::File => Ok(file),
+            _ => Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open)),
+        }
     }
 
     fn save(&mut self) {
@@ -249,8 +263,8 @@ impl History {
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
-            sys::Result::Ok(fd) => sys::File::from_fd(fd),
+        let file = match Self::open_file(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC) {
+            sys::Result::Ok(file) => file,
             sys::Result::Err(_) => return,
         };
         #[cfg(unix)]

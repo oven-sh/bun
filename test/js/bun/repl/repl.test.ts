@@ -1,7 +1,27 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
+import { mkfifo } from "mkfifo";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  lstatSync,
+  openSync,
+  readSync,
+  statSync,
+  symlinkSync,
+  writeSync,
+} from "node:fs";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -22,6 +42,8 @@ async function runRepl(
     cwd?: string;
     /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
     home?: string;
+    /** Who the REPL runs as. See `unprivilegedSpawnOptions` in harness. */
+    user?: { uid?: number; gid?: number };
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number; outputs: string[] }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
@@ -44,6 +66,7 @@ async function runRepl(
       HOME: home,
       USERPROFILE: home,
     },
+    ...options.user,
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1870,6 +1893,276 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
 
     expect(await Bun.file(historyPath).text()).toBe(`1 + 1\n${secret}\n`);
     expect(statSync(historyPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+// Startup reads $HOME/.bun_repl_history and exit rewrites it, both without any
+// output. What is at that path must not hang the REPL, and the REPL must not
+// change what it could not read. See History::load and History::open_file in
+// src/runtime/cli/repl.rs.
+describe.concurrent("REPL history file", () => {
+  // MAX_HISTORY_SIZE in src/runtime/cli/repl.rs.
+  const maxEntries = 1000;
+
+  type Session = Awaited<ReturnType<typeof runRepl>>;
+  const outcome = ({ outputs, stderr, exitCode }: Session) => ({ outputs, stderr, exitCode });
+
+  // Runs one session that evaluates `2 + 2` on top of the given history file
+  // and returns the lines the REPL saved back. Since only entries that were
+  // loaded get saved, this shows exactly what was loaded.
+  async function loadAndSave(home: string) {
+    const { outputs, stderr, exitCode } = await runRepl(["2 + 2", ".exit"], { home });
+    expect({ outputs, stderr, exitCode }).toEqual({ outputs: ["4"], stderr: "", exitCode: 0 });
+    const saved = await Bun.file(path.join(home, ".bun_repl_history")).text();
+    return saved.split("\n");
+  }
+
+  // The file permission tests above skip Windows, so this is the test that
+  // shows history persists there.
+  test("a second session loads what the first one saved", async () => {
+    using dir = tempDir("repl-history-two-sessions", {});
+    const home = String(dir);
+    const historyPath = path.join(home, ".bun_repl_history");
+
+    const first = await runRepl(["1 + 1", ".exit"], { home });
+    const afterFirst = await Bun.file(historyPath).text();
+    // `.history` lists what this session loaded, whatever it saves later.
+    const second = await runRepl([".history", "2 + 2", ".exit"], { home });
+    const afterSecond = await Bun.file(historyPath).text();
+
+    expect({ first: outcome(first), afterFirst, second: outcome(second), afterSecond }).toEqual({
+      first: { outputs: ["2"], stderr: "", exitCode: 0 },
+      afterFirst: "1 + 1\n",
+      second: { outputs: ["Command History:\n     1  1 + 1", "4"], stderr: "", exitCode: 0 },
+      afterSecond: "1 + 1\n2 + 2\n",
+    });
+  });
+
+  test("keeps the newest entries of a file with more than the maximum", async () => {
+    const lines = Array.from({ length: maxEntries + 200 }, (_, i) => `entry_${i}`);
+    using dir = tempDir("repl-history-many", { ".bun_repl_history": lines.join("\n") + "\n" });
+
+    // The newest maxEntries lines are loaded; adding `2 + 2` evicts the oldest of them.
+    expect(await loadAndSave(String(dir))).toEqual([...lines.slice(lines.length - maxEntries + 1), "2 + 2", ""]);
+  });
+
+  // Runs `.history` on top of the given history file. It lists the last 20
+  // entries with their numbers, so it shows how many entries the session
+  // loaded without a save in between.
+  async function listHistory(history: string) {
+    using dir = tempDir("repl-history-list", { ".bun_repl_history": history });
+    const { outputs, stderr, exitCode } = await runRepl([".history", ".exit"], { home: String(dir) });
+    const [heading, ...listed] = (outputs[0] ?? "").split("\n").map(line => line.trim());
+    return { heading, first: listed[0], last: listed.at(-1), listed: listed.length, stderr, exitCode };
+  }
+
+  test.each([maxEntries - 1, maxEntries, maxEntries + 1, maxEntries + 200])(
+    "loads the newest entries of a file with %d",
+    async count => {
+      const lines = Array.from({ length: count }, (_, i) => `entry_${i}`);
+      const loaded = Math.min(count, maxEntries);
+      expect(await listHistory(lines.join("\n") + "\n")).toEqual({
+        heading: "Command History:",
+        first: `${loaded - 19}  entry_${count - 20}`,
+        last: `${loaded}  entry_${count - 1}`,
+        listed: 20,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // With one `remove(0)` per entry over the maximum, this load takes longer
+  // than the test may run.
+  test("loads a file with half a million lines", async () => {
+    const older = Buffer.alloc(2 * 500_000, "x\n").toString();
+    const lines = Array.from({ length: maxEntries }, (_, i) => `entry_${i}`);
+    expect(await listHistory(older + lines.join("\n") + "\n")).toEqual({
+      heading: "Command History:",
+      first: `${maxEntries - 19}  entry_${maxEntries - 20}`,
+      last: `${maxEntries}  entry_${maxEntries - 1}`,
+      listed: 20,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A limit on the bytes that are read would cut this entry and, at the next
+  // save, erase every entry before it.
+  test("keeps the entries before one that is longer than 4 MiB", async () => {
+    const longEntry = Buffer.alloc(4 * 1024 * 1024 + 1024, "x").toString();
+    using dir = tempDir("repl-history-long-entry", {
+      ".bun_repl_history": `older_one\nolder_two\n${longEntry}\n`,
+    });
+
+    const saved = await loadAndSave(String(dir));
+    expect(saved.map(line => (line === longEntry ? "<long entry>" : line))).toEqual([
+      "older_one",
+      "older_two",
+      "<long entry>",
+      "2 + 2",
+      "",
+    ]);
+  });
+
+  // Skipped on Windows: making a symlink needs a privilege there.
+  test.skipIf(isWindows)("reads and writes through a symlink to a regular file", async () => {
+    using dir = tempDir("repl-history-symlink", { "real_history": "old_entry\n" });
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    symlinkSync("real_history", historyPath);
+
+    const { outputs, stderr, exitCode } = await runRepl([".history", "2 + 2", ".exit"], { home: String(dir) });
+
+    expect({
+      outputs,
+      stderr,
+      exitCode,
+      target: await Bun.file(path.join(String(dir), "real_history")).text(),
+      stillSymlink: lstatSync(historyPath).isSymbolicLink(),
+    }).toEqual({
+      outputs: ["Command History:\n     1  old_entry", "4"],
+      stderr: "",
+      exitCode: 0,
+      target: "old_entry\n2 + 2\n",
+      stillSymlink: true,
+    });
+  });
+
+  // A line for the REPL that puts something else in the place of the history
+  // file. The session has read a regular file by then, so only the open in
+  // `save` meets what is there now.
+  const replaceHistoryFile = (historyPath: string, replacement: string) =>
+    `require("node:fs").rmSync(${JSON.stringify(historyPath)}); ${replacement}; "replaced"`;
+
+  // Skipped on Windows: FIFOs do not exist in its filesystem namespace.
+  test.skipIf(isWindows)("a FIFO at the history path does not hang the startup", async () => {
+    using dir = tempDir("repl-history-fifo", {});
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    mkfifo(historyPath);
+
+    // Nothing ever opens the other end of the FIFO: a blocking open() while
+    // loading history at startup hangs the REPL until the test times out.
+    const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home: String(dir) });
+
+    expect({ outputs, stderr, exitCode, stillFifo: statSync(historyPath).isFIFO() }).toEqual({
+      outputs: ["2"],
+      stderr: "",
+      exitCode: 0,
+      stillFifo: true,
+    });
+  });
+
+  // Skipped on Windows: FIFOs do not exist in its filesystem namespace.
+  test.skipIf(isWindows)("a FIFO that takes the place of the history file does not hang the exit", async () => {
+    using dir = tempDir("repl-history-fifo-late", { ".bun_repl_history": "old_entry\n" });
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    const makeFifo = `require("node:child_process").execFileSync("mkfifo", [${JSON.stringify(historyPath)}])`;
+
+    // Nothing ever opens the other end of the FIFO: a blocking open() while
+    // saving at exit hangs the REPL until the test times out.
+    const { outputs, stderr, exitCode } = await runRepl([replaceHistoryFile(historyPath, makeFifo), ".exit"], {
+      home: String(dir),
+    });
+
+    expect({ outputs, stderr, exitCode, stillFifo: statSync(historyPath).isFIFO() }).toEqual({
+      outputs: ['"replaced"'],
+      stderr: "",
+      exitCode: 0,
+      stillFifo: true,
+    });
+  });
+
+  // Skipped on Windows: FIFOs do not exist in its filesystem namespace.
+  test.skipIf(isWindows)("a FIFO that has a reader keeps its mode and receives nothing", async () => {
+    using dir = tempDir("repl-history-fifo-reader", {});
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    mkfifo(historyPath);
+    chmodSync(historyPath, 0o644);
+    // Both ends are open here, so an open of the FIFO for writing succeeds at once.
+    const fifo = openSync(historyPath, constants.O_RDWR | constants.O_NONBLOCK);
+    try {
+      const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home: String(dir) });
+
+      // What the REPL wrote into the FIFO, if anything, comes out before this.
+      writeSync(fifo, "end");
+      const received = Buffer.alloc(64);
+      const length = readSync(fifo, received);
+      expect({
+        outputs,
+        stderr,
+        exitCode,
+        mode: statSync(historyPath).mode & 0o777,
+        received: received.toString("utf8", 0, length),
+      }).toEqual({ outputs: ["2"], stderr: "", exitCode: 0, mode: 0o644, received: "end" });
+    } finally {
+      closeSync(fifo);
+    }
+  });
+
+  // A device node of the test's own, with the numbers of /dev/null on Linux.
+  // Only root can make one, and only root can change the mode of one.
+  const makeNullDevice = (file: string) =>
+    Bun.spawnSync({ cmd: ["mknod", "-m", "666", file, "c", "1", "3"] }).exitCode === 0;
+  const canMakeDevices = (() => {
+    if (!isLinux || !isRoot) return false;
+    using dir = tempDir("repl-history-device-probe", {});
+    return makeNullDevice(path.join(String(dir), "null"));
+  })();
+
+  // `ln -s /dev/null ~/.bun_repl_history` is how a user turns the history off.
+  // Saving there as root set the mode of the device to 0600 for everyone.
+  test.skipIf(!canMakeDevices)("a device behind the history path keeps its mode", async () => {
+    using dir = tempDir("repl-history-device", {});
+    const device = path.join(String(dir), "null");
+    expect(makeNullDevice(device)).toBe(true);
+    symlinkSync("null", path.join(String(dir), ".bun_repl_history"));
+
+    const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home: String(dir) });
+
+    expect({ outputs, stderr, exitCode, mode: statSync(device).mode & 0o777 }).toEqual({
+      outputs: ["2"],
+      stderr: "",
+      exitCode: 0,
+      mode: 0o666,
+    });
+  });
+
+  test.skipIf(!canMakeDevices)("a device that takes the place of the history file keeps its mode", async () => {
+    using dir = tempDir("repl-history-device-late", { ".bun_repl_history": "old_entry\n" });
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    const device = path.join(String(dir), "null");
+    expect(makeNullDevice(device)).toBe(true);
+    const makeSymlink = `require("node:fs").symlinkSync("null", ${JSON.stringify(historyPath)})`;
+
+    const { outputs, stderr, exitCode } = await runRepl([replaceHistoryFile(historyPath, makeSymlink), ".exit"], {
+      home: String(dir),
+    });
+
+    expect({ outputs, stderr, exitCode, mode: statSync(device).mode & 0o777 }).toEqual({
+      outputs: ['"replaced"'],
+      stderr: "",
+      exitCode: 0,
+      mode: 0o666,
+    });
+  });
+
+  // Skipped on Windows: it has no mode bits that make a file unreadable.
+  test.skipIf(isWindows)("does not replace a history file that it cannot read", async () => {
+    using dir = tempDir("repl-history-unreadable", { ".bun_repl_history": "old_one\nold_two\n" });
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    // Writable and not readable: the load fails, and an exit that saved anyway would keep only `2 + 2`.
+    chmodSync(historyPath, 0o200);
+    using user = unprivilegedSpawnOptions(String(dir));
+
+    const { outputs, stderr, exitCode } = await runRepl(["2 + 2", ".exit"], { home: String(dir), user });
+
+    chmodSync(historyPath, 0o600);
+    expect({ outputs, stderr, exitCode, history: await Bun.file(historyPath).text() }).toEqual({
+      outputs: ["4"],
+      stderr: "",
+      exitCode: 0,
+      history: "old_one\nold_two\n",
+    });
   });
 });
 

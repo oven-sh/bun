@@ -738,10 +738,7 @@ impl DevServer {
                 return Err(err);
             }
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                // `print_error_like_object_to_console` needs `&mut VM`, so cast
-                // the shared borrow through a raw pointer (single-threaded JS).
-                self.vm_mut()
+                self.vm()
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }

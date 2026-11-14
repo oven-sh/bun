@@ -42,7 +42,7 @@ pub struct JSMySQLConnection {
     js_value: JsCell<JsRef>,
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
 
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
@@ -59,7 +59,7 @@ impl Drop for JSMySQLConnection {
     fn drop(&mut self) {
         self.timers.stop();
         let ctx = self.vm_ctx();
-        self.poll_ref.with_mut(|p| p.unref(ctx));
+        self.poll_ref.unref(ctx);
         self.unregister_auto_flusher();
     }
 }
@@ -237,9 +237,9 @@ impl JSMySQLConnection {
             if self.connection.get().status == my_sql_connection::Status::Connected
                 && self.connection.get().is_idle()
             {
-                self.poll_ref.with_mut(|p| p.unref(ctx));
+                self.poll_ref.unref(ctx);
             } else {
-                self.poll_ref.with_mut(|p| p.r#ref(ctx));
+                self.poll_ref.r#ref(ctx);
             }
             return;
         }
@@ -247,7 +247,7 @@ impl JSMySQLConnection {
             self.js_value.with_mut(|r| r.downgrade());
         }
         let ctx = self.vm_ctx();
-        self.poll_ref.with_mut(|p| p.unref(ctx));
+        self.poll_ref.unref(ctx);
     }
 
     pub(crate) fn create_connection<'a>(
@@ -274,13 +274,12 @@ impl JSMySQLConnection {
         column_transform: Option<JsLocal<'a, Callable>>,
     ) -> JsResult<JSValue> {
         let global_object = cx.global();
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
         let port = port as i32;
         // The connection is the calling script's.
         let context = global_object.bun_vm().context_of_caller();
         let Some(args) = ConnectionCtorArgs::parse(
             global_object,
-            &mut *vm,
             hostname,
             ssl_mode,
             tls.to_js(),
@@ -316,10 +315,8 @@ impl JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            vm: BackRef::new(VirtualMachine::get()),
+            poll_ref: KeepAlive::default(),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
                 username,
@@ -389,7 +386,7 @@ impl JSMySQLConnection {
                 .set_socket(AnySocket::SocketTcp(socket));
         }
         this.reset_connection_timeout();
-        this.poll_ref.with_mut(|p| p.r#ref(vm.vm_ctx()));
+        this.poll_ref.r#ref(vm.vm_ctx());
         let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
         this.js_value

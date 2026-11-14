@@ -85,7 +85,7 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
     this.abort_handle.leave();
-    this.poll_ref.with_mut(|p| p.disable());
+    this.poll_ref.disable();
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
     // The descriptor dies with the socket: prune the registry entry so a
@@ -514,14 +514,13 @@ pub(crate) struct UDPSocket {
     pub(crate) config: JsCell<UDPSocketConfig>,
 
     pub(crate) socket: Cell<Option<*mut uws::udp::Socket>>,
-    pub(crate) loop_: *mut uws::Loop,
 
     // Read-only back-reference to the owning JS global; the VM/global strictly
     // outlives every socket it creates.
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
     connect_info: Cell<Option<ConnectInfo>>,
@@ -580,9 +579,8 @@ impl UDPSocket {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(cx.global()),
-            loop_: uws::Loop::get(),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
@@ -661,9 +659,10 @@ impl UDPSocket {
             None => None,
         };
 
+        let loop_ = uws::Loop::get();
         let created = if let Some(fd) = config.fd {
             uws::udp::Socket::create_from_fd(
-                this.loop_,
+                loop_,
                 on_data,
                 on_drain,
                 on_close,
@@ -675,7 +674,7 @@ impl UDPSocket {
             )
         } else {
             uws::udp::Socket::create(
-                this.loop_,
+                loop_,
                 on_data,
                 on_drain,
                 on_close,
@@ -783,7 +782,7 @@ impl UDPSocket {
         // Disarm the error-path guard.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             cx.global(),
             js_value,
@@ -801,7 +800,7 @@ impl UDPSocket {
         };
         let callback = js::on_error_get_cached(this_value).unwrap_or_default();
         let global_this = self.global_this.get();
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
 
         // The `err` check below tests the *argument* (usually a freshly built
         // SystemError, never a termination); it says nothing about the VM's
@@ -1508,12 +1507,12 @@ impl UDPSocket {
 
     pub(crate) fn r#ref(&self) {
         if !self.closed.get() {
-            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         }
     }
 
     pub(crate) fn unref(&self) {
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn close(&self) {
@@ -1678,7 +1677,7 @@ impl Drop for UDPSocket {
             }
             uws::udp::Socket::opaque_mut(socket).close();
         }
-        this.poll_ref.with_mut(|p| p.disable());
+        this.poll_ref.disable();
     }
 }
 

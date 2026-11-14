@@ -24,6 +24,7 @@
 #include <errno.h>
 #ifndef WIN32
 #include <fcntl.h>
+#include <poll.h>
 #endif
 
 int us_socket_local_port(struct us_socket_t *s) {
@@ -98,6 +99,10 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+    /* A deferred close has a deadline of its own, which its owner does not put off. */
+    if (s->ssl && s->ssl_close_after_spill) {
+        return;
+    }
     if (seconds) {
         s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {
@@ -381,6 +386,22 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
+
+#ifndef WIN32
+void us_socket_read_now(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return;
+    }
+    struct pollfd pollfd = { .fd = us_poll_fd(&s->p), .events = POLLIN };
+    int hangup = poll(&pollfd, 1, 0) == 1 && (pollfd.revents & POLLHUP);
+
+    /* A callback can tick the loop, which must not free the socket that this dispatch still reads. */
+    struct us_loop_t *loop = s->group->loop;
+    loop->data.tick_depth++;
+    us_internal_dispatch_ready_poll(&s->p, 0, hangup ? LIBUS_POLL_HANGUP : 0, LIBUS_SOCKET_READABLE);
+    loop->data.tick_depth--;
+}
+#endif
 
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)

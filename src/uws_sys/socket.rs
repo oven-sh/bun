@@ -355,6 +355,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    #[cfg(not(windows))]
+    pub fn read_now(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).read_now();
+        }
+    }
+
     /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
     pub fn close_now(&self) {
         match self.socket {
@@ -760,7 +767,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
     pub fn from_fd<This>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         k: SocketKind,
         handle: Fd,
         this: *mut This,
@@ -793,7 +800,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
     /// Replaces the deleted `connectAnon`/`connectPtr`.
     pub fn connect_group<Owner>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         raw_host: &[u8],
@@ -849,7 +856,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     pub fn connect_unix_group<Owner>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
@@ -882,12 +889,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// `&mut Owner` here would alias any live `&mut` the caller already holds).
     pub fn adopt_group<Owner>(
         tcp: *mut us_socket_t,
-        g: *mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         owner: *mut Owner,
         set_socket_field: impl FnOnce(*mut Owner, Self),
     ) -> bool {
-        // SAFETY: `tcp` and `g` are non-null FFI handles; ext sizes are word-sized.
+        // SAFETY: `tcp` is a non-null FFI handle; ext sizes are word-sized.
         let new_s = unsafe {
             sock_c::us_socket_adopt(
                 tcp,
@@ -915,15 +922,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 }
 
-/// Residual raw FFI: `adopt` takes a raw `*mut SocketGroup` from a caller
-/// that already holds it as raw, and `SocketGroup` is a sized `#[repr(C)]`
-/// mirror (not an opaque ZST), so `opaque_deref_mut` can't help.
 mod sock_c {
     use super::{SocketGroup, us_socket_t};
     unsafe extern "C" {
         pub(super) fn us_socket_adopt(
             s: *mut us_socket_t,
-            group: *mut SocketGroup,
+            group: *const SocketGroup,
             kind: u8,
             old_ext_size: i32,
             ext_size: i32,

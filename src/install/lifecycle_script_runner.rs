@@ -21,11 +21,6 @@ use bun_spawn::{
 };
 #[cfg(unix)]
 use bun_sys::Fd;
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
-// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
-// `BufferedReaderParent::loop_` expects.
 
 bun_output::declare_scope!(Script, visible);
 
@@ -540,11 +535,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             return;
         }
 
-        let Some(process) = &self.process else {
+        let Some(status) = self.process.as_ref().and_then(|p| p.status()) else {
             return;
         };
-        let status = process.status.clone();
-        self.handle_exit(status);
+        self.handle_exit(status.clone());
     }
 
     /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
@@ -733,7 +727,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 #[cfg(windows)]
                 windows: bun_spawn::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
+                    loop_: bun_event_loop::EventLoopHandle::from_any(&(*manager).event_loop),
                     ..Default::default()
                 },
 
@@ -850,22 +844,26 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
             }
 
-            let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
+            let event_loop = bun_event_loop::EventLoopHandle::from_any(&(*manager).event_loop);
             debug_assert!((*this).process.is_none(), "forgot to call `reset_polls`");
-            let process: *mut Process = (*this)
+            let process = (*this)
                 .process
                 .insert(spawned.to_process_handle(event_loop))
-                .as_ptr();
+                .this_ptr();
             // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
             // we hold no live `&mut Self` here, so the synchronous `on_exit`
             // dispatch below may reenter `on_process_exit` through it without
             // aliasing. It outlives `process`.
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
+            process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
-            if let Err(err) = (*process).watch_or_reap() {
-                if !(*process).has_exited() {
+            if let Err(err) = Process::watch_or_reap(process) {
+                if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    (*process).on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
+                    Process::on_exit(
+                        process,
+                        Status::Err(err),
+                        &bun_core::ffi::zeroed::<Rusage>(),
+                    );
                 }
             }
 
@@ -1100,13 +1098,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// This function may free the *LifecycleScriptSubprocess
-    pub(crate) fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
-        if self.process.as_ref().map(ProcessHandle::as_ptr) != Some(proc) {
-            bun_core::debug_warn!(
-                "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
-            );
-            return;
-        }
+    pub(crate) fn on_process_exit(&mut self) {
         self.has_called_process_exit = true;
         self.maybe_finished();
     }
@@ -1285,8 +1277,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, rusage),
+        on_process_exit(_status, _rusage) => (*this).on_process_exit(),
     }
 }
 
@@ -1306,7 +1297,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
-        &mut (*(*this).manager.as_ptr()).event_loop,
+        &(*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();
 }
 

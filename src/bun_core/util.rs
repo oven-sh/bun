@@ -953,26 +953,6 @@ impl Fd {
         Fd(Self::WINDOWS_CWD)
     }
 
-    /// Whether this is the process's stdin/stdout/stderr.
-    #[cfg(not(windows))]
-    #[inline]
-    pub const fn is_stdio(self) -> bool {
-        matches!(self.0, 0..=2)
-    }
-    #[cfg(windows)]
-    pub fn is_stdio(self) -> bool {
-        // Cache check first (matches `to_uv_index`): the cache reflects what the
-        // process saw at startup, even after `SetStdHandle`/`AllocConsole`.
-        if self == Self::stdin() || self == Self::stdout() || self == Self::stderr() {
-            return true;
-        }
-        // Cache may not be populated yet; fall back to a live `GetStdHandle`.
-        let handle = self.native();
-        fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle)
-            || fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle)
-            || fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle)
-    }
-
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
     #[cfg(not(windows))]
     #[inline]
@@ -4493,6 +4473,7 @@ pub mod spawn_ffi {
             pid: *mut c_int,
             path: *const c_char,
             request: *const BunSpawnRequest,
+            pending_fork: *const core::ffi::c_void,
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> isize;
@@ -4596,6 +4577,7 @@ fn spawn_sync_inherit_impl(
                 &raw mut pid,
                 exe,
                 &raw const req,
+                core::ptr::null(),
                 ptrs.as_ptr(),
                 environ,
             );

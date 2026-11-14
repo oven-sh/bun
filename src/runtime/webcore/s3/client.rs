@@ -510,7 +510,7 @@ pub(crate) fn writable_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -537,8 +537,7 @@ pub(crate) fn writable_stream(
     let task = unsafe { &*task_ptr };
     task.root.set(core::ptr::NonNull::new(task_ptr));
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
@@ -897,7 +896,7 @@ pub(crate) fn upload_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -923,8 +922,7 @@ pub(crate) fn upload_stream(
     let task = unsafe { &*task_ptr };
     task.root.set(core::ptr::NonNull::new(task_ptr));
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 

@@ -17,7 +17,6 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
@@ -1179,76 +1178,34 @@ impl PackageManager {
     /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
     /// receives the raw `*mut`;
     /// `event_loop.wakeup()` is the cross-thread signal and is
-    /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
-    /// covers only the event-loop field, never the whole `PackageManager`.
+    /// internally synchronized; the borrow covers only the event-loop field.
     ///
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub(crate) unsafe fn wake_raw(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
-        // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
+        // only form field pointers via `addr_of!` (no whole-struct
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
                 // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
                 (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
-            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            (*core::ptr::addr_of!((*this).event_loop)).wakeup();
             if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
                 crate::auto_installer::Parked::wake_all();
             }
         }
     }
 
-    /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
-    /// `is_done_fn` body in this crate reborrows the *whole* `PackageManager`
-    /// from a raw pointer stashed in `C` (`&mut *closure.manager`). If this
-    /// were a `&mut self` method, that whole-struct Unique retag would pop
-    /// `self`'s tag (and the `&mut self.event_loop` borrow `tick` holds) under
-    /// Stacked Borrows, making the next loop-iteration deref UB.
-    ///
-    /// SAFETY: `this` must be valid for `&mut` access between callback
-    /// invocations; while `is_done_fn` runs, the callback owns the unique
-    /// `&mut PackageManager` and `sleep_until`/`tick_raw` hold no borrow.
-    pub(crate) unsafe fn sleep_until<C>(
-        this: *mut PackageManager,
-        closure: &mut C,
-        is_done_fn: fn(&mut C) -> bool,
-    ) {
+    /// Runs the event loop until `is_done`.
+    pub(crate) fn sleep_until(&mut self, mut is_done: impl FnMut(&mut Self) -> bool) {
         Output::flush();
-        // `AnyEventLoop::tick_raw` takes the type-erased
-        // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
-        // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
-        struct Erased<'c, C> {
-            ctx: &'c mut C,
-            is_done: fn(&mut C) -> bool,
+        while !is_done(self) {
+            // No task reads it. It lets `self` escape, because exit handlers write to the manager.
+            let ctx = core::ptr::from_mut(self).cast::<c_void>();
+            self.event_loop.tick(ctx);
         }
-        fn trampoline<C>(p: *mut c_void) -> bool {
-            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below, which
-            // nothing else touches until `tick_raw` returns.
-            let erased = unsafe { bun_ptr::callback_ctx::<Erased<'_, C>>(p) };
-            (erased.is_done)(erased.ctx)
-        }
-        let mut erased = Erased {
-            ctx: closure,
-            is_done: is_done_fn,
-        };
-        // Derive the event-loop pointer through `this`'s raw provenance (NOT
-        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
-        // and survives the callback's `&mut *this` retag.
-        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
-        // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
-        // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
-        // calls (never across them), so the callback's `&mut PackageManager`
-        // never overlaps a live `&mut AnyEventLoop`.
-        unsafe {
-            AnyEventLoop::tick_raw(
-                event_loop,
-                (&raw mut erased).cast::<c_void>(),
-                trampoline::<C>,
-            )
-        };
     }
 
     pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
@@ -2434,7 +2391,7 @@ pub fn init(
         let this_cwd: &[u8];
         let mut created_package_json = false;
         let mut walk = PackageJsonWalk::new(original_cwd);
-        let child_json: bun_sys::File = 'child: {
+        let child_json: Option<bun_sys::File> = 'child: {
             // --dry-run and --no-save clear `Do::WRITE_PACKAGE_JSON` once the options load.
             let need_write = subcommand.writes_package_json(cli.positionals.len() > 1)
                 && !cli.dry_run
@@ -2453,7 +2410,7 @@ pub fn init(
                 match opened {
                     Ok(f) => {
                         this_cwd = without_trailing_slash_windows_path(dir);
-                        break 'child f;
+                        break 'child Some(f);
                     }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
                     Err(e) if e.get_errno() == bun_sys::E::EACCES => {
@@ -2497,7 +2454,7 @@ pub fn init(
                 )?;
                 this_cwd = original_cwd;
                 no_project = true;
-                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                break 'child None;
             }
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 && cli.filters.is_empty() {
@@ -2507,14 +2464,14 @@ pub fn init(
                     // `bun add <pkg>` works in an empty directory.
                     this_cwd = original_cwd;
                     created_package_json = true;
-                    break 'child attempt_to_create_package_json_and_open()?;
+                    break 'child Some(attempt_to_create_package_json_and_open()?);
                 }
             }
             if cli.no_project_ok {
                 // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
                 this_cwd = original_cwd;
                 no_project = true;
-                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                break 'child None;
             }
             return Err(crate::Error::MissingPackageJSON);
         };
@@ -2556,7 +2513,6 @@ pub fn init(
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
                 // The root was found above the path as the user typed it. The root reads the
                 // workspace's package.json under that path, so the same spelling is used here.
@@ -2565,7 +2521,7 @@ pub fn init(
                     push_package_json(&mut typed);
                     original_package_json_path_buf = typed;
                 }
-                break 'root_package_json_file json_file;
+                break 'root_package_json_file Some(json_file);
             }
         }
 
@@ -2605,7 +2561,7 @@ pub fn init(
     };
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.
-    let _ = root_package_json_file.close();
+    drop(root_package_json_file);
 
     let top_level_dir = fs.top_level_dir();
     // Returns the resolver's BSSMap-owned
@@ -2721,15 +2677,11 @@ pub fn init(
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        // `r#loop()` returns the process-global `*mut uws::Loop`; build the
-        // handle from `&mut manager.event_loop` and write it back as the loop's
+        // Build the handle from `manager.event_loop` and write it back as the loop's
         // parent so uSockets timers / lifecycle subprocess waiters can find the
         // mini event loop on tick.
         let uws_loop = manager.event_loop.r#loop();
-        // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
-        // the handle's backref is `manager.event_loop`, owned by the singleton.
-        let uws_loop = unsafe { &*uws_loop };
-        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        EventLoopHandle::from_any(&manager.event_loop).set_as_parent_of(uws_loop);
     }
     {
         // make sure folder packages can find the root package without creating a new one
@@ -2756,22 +2708,11 @@ pub fn init(
     // Set the thread-local global to point at the embedded mini loop
     // (`bun_event_loop::mini_event_loop::GLOBAL`).
     {
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
+        // SAFETY: singleton fully initialized and never freed; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
-            let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
-            // Set ONLY `MiniEventLoop.global`,
-            // NOT `globalInitialized`. The distinction is load-bearing: a later
-            // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
-            // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
-            // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
-            // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
-            // `init_global`'s uv-loop setup. The shell's IOWriter then opens
-            // stdout/stderr against an under-initialised loop → EBADF (exit 9).
-            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+            // This loop has no `env`, so a later `init_global` makes its own.
+            mini_event_loop::GLOBAL.with(|g| g.set(Some(mini)));
         }
     }
     {

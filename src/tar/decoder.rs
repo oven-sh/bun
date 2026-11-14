@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::gzip::{self, Progress};
 use crate::output::Output as _;
-use crate::reader::{Entry, Event, Options, Poll, Reader};
+use crate::reader::{Dialect, Entry, Event, Options, Poll, Reader};
 
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L306
 const BLOCK: usize = 64 * 1024;
@@ -262,6 +262,10 @@ impl<'a> MemoryDecoder<'a> {
             decoder: Decoder::new(options, false)?,
             holes: 0,
         };
+        let max_layers = match options.dialect {
+            Dialect::General => MAX_LAYERS,
+            Dialect::Npm => 1,
+        };
         loop {
             let rest = data.get(this.pos..).unwrap_or_default();
             let layers = &mut this.decoder.layers;
@@ -276,7 +280,7 @@ impl<'a> MemoryDecoder<'a> {
                 this.decoder.layers.pop();
                 break;
             }
-            if top >= MAX_LAYERS {
+            if top >= max_layers {
                 return Err(Error::TooManyLayers);
             }
             let rest = data.get(this.pos..).unwrap_or_default();

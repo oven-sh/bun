@@ -61,6 +61,13 @@ const tracked: Set<string> | null = (() => {
 const BANNED =
   /let\s+(?:mut\s+)?\w+\s*(?::[^=;{}]*)?=\s*unsafe\s*\{\s*&mut\s+\*(?:this|ctx|p|ptr|self_ptr|this_ptr|raw|task|handle|data|context|user_data|parent|client|ws|req|resp|socket)\b\s*\}\s*;/g;
 
+// Script re-enters the VM through `VirtualMachine::get()`, so it has no exclusive borrow of any length.
+const EXCLUSIVE_VM =
+  /&\s*(?:'\w+\s+)?mut\s+(?:(?:\w+::)*VirtualMachine(?:Ref)?\b|\*(?:\w+::)*get_mut_ptr\(|\*(?:jsc_)?vm(?:_ptr|_instance)?\b(?!\s*[.(]))/g;
+const VM_IMPL = /^impl(?:<[^>]*>)? (?:[\w:]+ for )?(?:\w+::)*VirtualMachine \{\n(?:(?!\}).*\n)*\}/gm;
+const EXCLUSIVE_SELF =
+  /^ {4}(?:pub(?:\(\w+\))? )?(?:(?:const|unsafe|extern "C") )*fn \w+(?:<.*>)?\(\s*&(?:'\w+ )?mut self\b|&(?:'\w+ )?mut Self\b(?!::)/gm;
+
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape, with a stated reason. Empty by design — the whole tree is at zero.
 // Prefer converting over adding an entry here.
@@ -68,6 +75,8 @@ const ALLOW: Record<string, number> = {};
 
 const counts: Record<string, number> = {};
 const offenders: string[] = [];
+const exclusiveVm: string[] = [];
+let vmImpls = 0;
 let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
@@ -88,6 +97,12 @@ for (const abs of rustSources) {
       offenders.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
     }
   }
+  if (!stripped.includes("VirtualMachine")) continue;
+  for (const m of stripped.matchAll(EXCLUSIVE_VM)) exclusiveVm.push(`${source}: ${m[0]}`);
+  for (const [body] of stripped.matchAll(VM_IMPL)) {
+    vmImpls++;
+    for (const m of body.matchAll(EXCLUSIVE_SELF)) exclusiveVm.push(`${source}: ${m[0].replace(/\s+/g, " ")}`);
+  }
 }
 
 test("scans a non-empty set of tracked Rust sources", () => {
@@ -98,6 +113,11 @@ test("scans a non-empty set of tracked Rust sources", () => {
 
 test("fn-long `&mut *<callback param>` reborrow is banned", () => {
   expect(offenders).toEqual([]);
+});
+
+test("`VirtualMachine` is never borrowed exclusively", () => {
+  expect(vmImpls).toBeGreaterThan(0);
+  expect(exclusiveVm).toEqual([]);
 });
 
 test("allowlisted files still carry exactly their documented count", () => {

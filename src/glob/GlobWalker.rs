@@ -74,10 +74,16 @@ pub trait Accessor {
     /// symlinked directory is reported as `Directory`, never `SymLink`), so the
     /// Directory descent arm must run the followed-link ancestor check itself.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
+    /// The walker looks a Literal component up by name, and does not list its parent.
+    const LOOKUP_BY_NAME: bool = false;
     type Handle: AccessorHandle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
 
     fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
+    /// A handle for `openat`, `statat` and `lstatat` only, where `open` has no read permission.
+    fn open_search(path: &ZStr) -> Result<Maybe<Self::Handle>, Error> {
+        Self::open(path)
+    }
     fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
     fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
@@ -163,11 +169,19 @@ impl Accessor for SyscallAccessor {
     // readdir / lstat report symlinks as `SymLink`, so every symlinked
     // directory flows through the (already checked) Symlink work-item arm.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = false;
+    // Not on Windows: `lstatat` follows links there, and a lookup takes 8.3 and other-case names.
+    const LOOKUP_BY_NAME: bool = cfg!(not(windows));
     type Handle = SyscallHandle;
     type DirIter = SyscallDirIter;
 
     fn open(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
         Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(|fd| SyscallHandle { value: fd }))
+    }
+
+    /// `O_PATH` on Linux, `O_SEARCH` on macOS. Both are 0 on FreeBSD, where this is `open`.
+    fn open_search(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
+        Ok(Syscall::open(path, O::DIRECTORY | O::PATH | O::SEARCH, 0)
+            .map(|fd| SyscallHandle { value: fd }))
     }
 
     fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
@@ -351,6 +365,8 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub(crate) walker: &'a mut GlobWalker<A, SENTINEL>,
     pub(crate) iter_state: IterState<A>,
     pub(crate) cwd_fd: A::Handle,
+    /// Why the cwd cannot be listed, when `cwd_fd` is only the base of lookups.
+    cwd_open_err: Option<SysError>,
     /// This is to make sure in debug/tests that we are closing file descriptors
     /// We should only have max 2 open at a time. One for the cwd, and one for the
     /// directory being iterated on.
@@ -372,6 +388,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             walker,
             iter_state: IterState::GetNext,
             cwd_fd: A::Handle::EMPTY,
+            cwd_open_err: None,
             #[cfg(debug_assertions)]
             fds_open: 0,
             #[cfg(windows)]
@@ -485,7 +502,23 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_path_z = ZStr::from_buf(&self.walker.path_buf[..], root_path_len);
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
-                return Ok(Err(err.with_path(&self.walker.path_buf[..root_path_len])));
+                let err = err.with_path(&self.walker.path_buf[..root_path_len]);
+                // Search permission is enough until the walk has to list the cwd: `err` then.
+                let base = if A::LOOKUP_BY_NAME && !was_absolute && err.get_errno() == E::EACCES {
+                    A::open_search(root_path_z)?.ok()
+                } else {
+                    None
+                };
+                let Some(fd) = base else {
+                    return Ok(Err(err));
+                };
+                // `O_PATH` also opens a directory that cannot be entered.
+                if A::statat(fd, bun_core::zstr!(".")).is_err() {
+                    let _ = A::close(fd);
+                    return Ok(Err(err));
+                }
+                self.cwd_open_err = Some(err);
+                fd
             }
             Ok(fd) => fd,
         };
@@ -586,7 +619,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // Single-index sets (the initial WorkItem) may point to Dot/DotBack
         // or collapsible `**` runs. Multi-index sets only arise mid-traversal
         // after `**/X` boundaries and are already past any Dots.
-        let active: ComponentSet = 'set: {
+        let mut active: ComponentSet = 'set: {
             if work_item.active.count() == 1 {
                 let single: u32 =
                     u32::try_from(work_item.active.find_first_set().unwrap()).expect("int cast");
@@ -617,6 +650,28 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             work_item.active
         };
 
+        // The target of a followed link that the Symlink arm did not open.
+        let unopened_link = A::LOOKUP_BY_NAME
+            && work_item.fd.is_none()
+            && self.walker.followed_links.len() > work_item.followed_links_len;
+
+        // The pattern names the next level. A work item with a handle is a link target to list.
+        let mut descended = false;
+        if A::LOOKUP_BY_NAME
+            && work_item.fd.is_none()
+            && let Some(literal) = self.walker.lone_literal(&active)
+        {
+            match self.descend_by_name(literal, &mut dir_path_buf, &mut dir_path_len)? {
+                Err(err) => return Ok(Err(err)),
+                Ok(Descent::Done) => return Ok(Ok(())),
+                Ok(Descent::List(next)) => {
+                    // The component moves on only when the path does.
+                    descended = next != literal;
+                    active = self.walker.single_set(next);
+                }
+            }
+        }
+
         // SAFETY: dir_path_buf[dir_path_len] == 0 written above (or by collapse_dots)
         let dir_path = ZStr::from_buf(&dir_path_buf[..], dir_path_len);
 
@@ -625,25 +680,28 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             if let Some(fd) = work_item.fd {
                 break 'fd fd;
             }
-            if ROOT {
-                if had_dot_dot {
-                    break 'fd match A::openat(self.cwd_fd, dir_path)? {
-                        Err(err) => {
-                            return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
-                        }
-                        Ok(fd_) => {
-                            self.bump_open_fds();
-                            fd_
-                        }
-                    };
+            if ROOT && !had_dot_dot && !descended {
+                if let Some(err) = self.cwd_open_err.take() {
+                    return Ok(Err(err));
                 }
-
                 at_cwd = true;
                 break 'fd self.cwd_fd;
             }
 
             match A::openat(self.cwd_fd, dir_path)? {
                 Err(err) => {
+                    // Passed over, as a link that the Symlink arm cannot open.
+                    if unopened_link
+                        && !descended
+                        && !self.walker.error_on_broken_symlinks
+                        && matches!(
+                            err.get_errno(),
+                            E::EACCES | E::ENOENT | E::ENOTDIR | E::ELOOP
+                        )
+                    {
+                        self.iter_state = IterState::GetNext;
+                        return Ok(Ok(()));
+                    }
                     return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
                 Ok(fd_) => {
@@ -684,11 +742,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     Ok(stat) => stat,
                 };
                 self.close_disallowing_cwd(fd);
-                let mode = stat_result.st_mode as u32;
-                let matches = (S::ISDIR(mode) && !self.walker.only_files)
-                    || S::ISREG(mode)
-                    || !self.walker.only_files;
-                if matches {
+                if self.walker.matches_named(&stat_result) {
                     if let Some(path) = self
                         .walker
                         .prepare_matched_path(&pathz[..pathz.len() - 1], dir_path.as_bytes())?
@@ -741,6 +795,116 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         });
 
         Ok(Ok(()))
+    }
+
+    /// The directory that the link leads to, opened only to be `listed`. `None`: not a directory.
+    fn probe_link(
+        cwd_fd: A::Handle,
+        listed: bool,
+        path: &ZStr,
+    ) -> Result<Maybe<Option<LinkedDir<A>>>, Error> {
+        if !listed {
+            match A::statat(cwd_fd, path) {
+                Ok(stat) if S::ISDIR(stat.st_mode as u32) => {
+                    return Ok(Ok(Some(LinkedDir::Named(stat))));
+                }
+                Ok(_) => return Ok(Ok(None)),
+                Err(_) => {}
+            }
+        }
+        Ok(match A::openat(cwd_fd, path)? {
+            Ok(fd) => Ok(Some(LinkedDir::Open(fd))),
+            Err(err) if err.get_errno() == E::ENOTDIR => Ok(None),
+            Err(err) => Err(err),
+        })
+    }
+
+    /// Looks the Literal levels from `idx` up by name, and moves `buf[..len]` down into them.
+    fn descend_by_name(
+        &mut self,
+        mut idx: u32,
+        buf: &mut PathBuffer,
+        len: &mut usize,
+    ) -> Result<Maybe<Descent>, Error> {
+        let cwd_fd = self.cwd_fd;
+        let walker = &mut *self.walker;
+        let last = walker.pattern_components.len() - 1;
+        self.iter_state = IterState::GetNext;
+        loop {
+            let name = walker.pattern_components[idx as usize].pattern_slice(&walker.pattern);
+            // A lookup cannot take an empty name, a NUL, or a path longer than the buffer.
+            if name.is_empty()
+                || strings::contains_char(name, 0)
+                || *len + 1 + name.len() >= buf.len()
+            {
+                break;
+            }
+            let is_last = idx as usize == last;
+            if !is_last && (walker.is_ignored)(name) {
+                return Ok(Ok(Descent::Done));
+            }
+            let end = append_name(buf, *len, name);
+            let name_start = end - name.len();
+            // SAFETY: append_name NUL-terminated buf at end
+            let child = ZStr::from_buf(&buf[..], end);
+
+            if is_last {
+                let stat = match A::statat(cwd_fd, child) {
+                    Ok(stat) => stat,
+                    Err(e) if e.get_errno() == E::ENOENT => return Ok(Ok(Descent::Done)),
+                    Err(_) => break,
+                };
+                if walker.matches_named(&stat)
+                    && let Some(path) =
+                        walker.prepare_matched_path(&buf[name_start..end], &buf[..*len])?
+                {
+                    self.iter_state = IterState::Matched(path);
+                }
+                return Ok(Ok(Descent::Done));
+            }
+
+            let stat = match A::lstatat(cwd_fd, child) {
+                Ok(stat) => stat,
+                Err(e) if e.get_errno() == E::ENOENT => return Ok(Ok(Descent::Done)),
+                Err(_) => break,
+            };
+            match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
+                bun_sys::FileKind::Directory => {}
+                bun_sys::FileKind::SymLink => {
+                    let active = walker.single_set(idx);
+                    walker.push_symlink_work_item(&buf[..*len], &buf[name_start..end], active)?;
+                    return Ok(Ok(Descent::Done));
+                }
+                _ => return Ok(Ok(Descent::Done)),
+            }
+
+            if walker.absolute {
+                // `join` normalizes, as for a directory that a listing finds. It never lengthens.
+                let joined = walker.join(&[&buf[..*len], &buf[name_start..end]])?;
+                let joined = work_item_logical_path(&joined);
+                buf[..joined.len()].copy_from_slice(joined);
+                buf[joined.len()] = 0;
+                *len = joined.len();
+            } else {
+                *len = end;
+            }
+
+            // `..` matters to the caller only at the cwd, and this is below it.
+            let mut had_dot_dot = false;
+            idx = match walker.skip_special_components(idx + 1, len, buf, &mut had_dot_dot) {
+                Err(e) => return Ok(Err(e)),
+                Ok(next) => next,
+            };
+            if idx as usize > last {
+                return Ok(Ok(Descent::Done));
+            }
+            if walker.pattern_components[idx as usize].syntax_hint != SyntaxHint::Literal {
+                break;
+            }
+        }
+        // `append_name` can have written over the end of the directory path.
+        buf[*len] = 0;
+        Ok(Ok(Descent::List(idx)))
     }
 
     /// Compute an optional NtQueryDirectoryFile FileName filter for the current
@@ -890,12 +1054,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             self.iter_state = IterState::GetNext;
-                            let maybe_dir_fd: Option<A::Handle> =
-                                match A::openat(self.cwd_fd, symlink_full_path_z)? {
-                                    Err(err) => 'brk: {
-                                        if err.get_errno() == E::ENOTDIR {
-                                            break 'brk None;
-                                        }
+                            let listed = self.walker.lists_link_target(&active);
+                            let maybe_dir: Option<LinkedDir<A>> =
+                                match Self::probe_link(self.cwd_fd, listed, symlink_full_path_z)? {
+                                    Err(err) => {
                                         if self.walker.error_on_broken_symlinks {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
                                                 &err,
@@ -914,13 +1076,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         }
                                         continue 'outer;
                                     }
-                                    Ok(fd) => {
-                                        self.bump_open_fds();
-                                        Some(fd)
+                                    Ok(dir) => {
+                                        if matches!(dir, Some(LinkedDir::Open(_))) {
+                                            self.bump_open_fds();
+                                        }
+                                        dir
                                     }
                                 };
 
-                            let Some(dir_fd) = maybe_dir_fd else {
+                            let Some(dir) = maybe_dir else {
                                 // Symlink target is a file
                                 if self.walker.eval_file(&active, entry_name) {
                                     match self.walker.prepare_matched_path_symlink(
@@ -936,34 +1100,38 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let mut add_dir: bool = false;
                             let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
                             let mut followed_link: Option<FollowedLink> = None;
-                            let descend = child.count() != 0
-                                && if self.walker.followed_links.is_empty() {
-                                    // No followed ancestor exists, so this descent
-                                    // cannot be a cycle: defer identifying the target
-                                    // (record its logical path) so the walk performs
-                                    // no stat unless a nested followed link needs it.
-                                    followed_link = Some(FollowedLink::Pending(dupe_z(
-                                        symlink_full_path_z.as_bytes(),
-                                    )));
-                                    true
-                                } else {
-                                    match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
-                                        Ok(target) => {
-                                            self.walker.resolve_pending_followed_links(self.cwd_fd);
-                                            match self
-                                                .walker
-                                                .check_followed_link(FollowedLink::Target(target))
-                                            {
-                                                Some(link) => {
-                                                    followed_link = Some(link);
-                                                    true
-                                                }
-                                                None => false,
-                                            }
-                                        }
-                                        Err(_) => true,
+                            let descend = child.count() != 0 && {
+                                // No followed ancestor, so no cycle: the stat of the target waits.
+                                let target = match &dir {
+                                    LinkedDir::Named(target) => Some(Ok(*target)),
+                                    LinkedDir::Open(_) if self.walker.followed_links.is_empty() => {
+                                        None
+                                    }
+                                    LinkedDir::Open(dir_fd) => {
+                                        Some(A::statat(*dir_fd, ZStr::from_slice_with_nul(b".\0")))
                                     }
                                 };
+                                match target {
+                                    None => {
+                                        followed_link = Some(FollowedLink::Pending(dupe_z(
+                                            symlink_full_path_z.as_bytes(),
+                                        )));
+                                        true
+                                    }
+                                    Some(Ok(target)) => {
+                                        self.walker.resolve_pending_followed_links(self.cwd_fd);
+                                        followed_link = self
+                                            .walker
+                                            .check_followed_link(FollowedLink::Target(target));
+                                        followed_link.is_some()
+                                    }
+                                    Some(Err(_)) => true,
+                                }
+                            };
+                            let dir_fd = match dir {
+                                LinkedDir::Open(dir_fd) => Some(dir_fd),
+                                LinkedDir::Named(_) => None,
+                            };
                             if descend {
                                 self.walker.push_work_item(
                                     WorkItem::new_with_fd(
@@ -974,7 +1142,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     ),
                                     followed_link,
                                 );
-                            } else {
+                            } else if let Some(dir_fd) = dir_fd {
                                 self.close_disallowing_cwd(dir_fd);
                             }
 
@@ -1258,6 +1426,26 @@ enum FollowedLink {
     RealPath(Box<[u8]>),
 }
 
+/// How `descend_by_name` leaves a work item.
+enum Descent {
+    /// The walk of the work item is over, and `iter_state` is set.
+    Done,
+    /// The directory is listed for this component: a wildcard, or a name that no lookup answers.
+    List(u32),
+}
+
+/// The directory that a followed link leads to.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value on the stack of the Symlink arm; a boxed stat is an allocation per link"
+)]
+enum LinkedDir<A: Accessor> {
+    /// Opened, to be listed.
+    Open(A::Handle),
+    /// Not opened: the walk looks the level below it up by name.
+    Named(Stat),
+}
+
 impl FollowedLink {
     /// `Pending` entries are resolved to `Target` before any comparison; one
     /// that cannot be resolved never matches (the descent proceeds).
@@ -1308,10 +1496,10 @@ impl<A: Accessor> WorkItem<A> {
         path: Box<[u8]>,
         active: ComponentSet,
         kind: WorkItemKind,
-        fd: A::Handle,
+        fd: Option<A::Handle>,
     ) -> Self {
         Self {
-            fd: Some(fd),
+            fd,
             ..Self::new(path, active, kind)
         }
     }
@@ -1667,6 +1855,33 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
 
         Ok(component_idx)
+    }
+
+    /// Whether what the last component names is a match.
+    fn matches_named(&self, stat: &Stat) -> bool {
+        S::ISREG(stat.st_mode as u32) || !self.only_files
+    }
+
+    /// The index of the component when `active` is one Literal.
+    fn lone_literal(&self, active: &ComponentSet) -> Option<u32> {
+        if active.count() != 1 {
+            return None;
+        }
+        let idx = active.find_first_set()?;
+        (self.pattern_components[idx].syntax_hint == SyntaxHint::Literal).then_some(idx as u32)
+    }
+
+    /// False when the level below a followed link is looked up by name: its target is not opened.
+    fn lists_link_target(&self, active: &ComponentSet) -> bool {
+        if !A::LOOKUP_BY_NAME || active.count() != 1 {
+            return true;
+        }
+        let Some(idx) = active.find_first_set() else {
+            return true;
+        };
+        let below = self.pattern_components.get(idx + 1);
+        self.pattern_components[idx].syntax_hint == SyntaxHint::Double
+            || below.is_none_or(|below| below.syntax_hint != SyntaxHint::Literal)
     }
 
     fn match_pattern_dir(
@@ -2261,6 +2476,19 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Free functions
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// `buf[..len]`, a separator, `name` and a NUL, as `join` spells a child. Returns the new length.
+fn append_name(buf: &mut PathBuffer, len: usize, name: &[u8]) -> usize {
+    let sep = len != 0 && !bun_core::path_sep::is_sep_native(buf[len - 1]);
+    let start = len + usize::from(sep);
+    let end = start + name.len();
+    if sep {
+        buf[len] = bun_paths::SEP;
+    }
+    buf[start..end].copy_from_slice(name);
+    buf[end] = 0;
+    end
+}
 
 pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];

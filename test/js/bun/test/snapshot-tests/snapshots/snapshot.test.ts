@@ -2418,6 +2418,191 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });
 
+  // Bun 1.4.4 wrote formats/bun-1.4.4/print-throws*.fixture.js. It ran no getter at a key and no `toJSON` to print
+  // a value. The format of the test does, and throws. To add a case, run it under that version.
+  describe("inline, of a value that the format of its test cannot print", () => {
+    const fixtures = [
+      ["print-throws.fixture.js", 15, 19],
+      ["print-throws-bun-format.fixture.js", 4, 4],
+    ] as const;
+    function copy() {
+      const dir = tempDir("snapshot-print-throws", {});
+      cpSync(join(import.meta.dir, "..", "formats", "bun-1.4.4"), String(dir), { recursive: true });
+      return dir;
+    }
+    const contentsOf = (dir: unknown) =>
+      Object.fromEntries(
+        (readdirSync(String(dir), { recursive: true }) as string[])
+          .filter(name => name.includes(".fixture.") || name.endsWith(".test.js"))
+          .sort()
+          .map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
+      );
+    const helpers = `
+        const marker = new Error("not ready");
+        const caught = f => { try { f(); } catch (error) { return error; } };
+        let calls = 0;
+        const bad = () => ({ ok: 1, get bad() { calls++; throw marker; } });
+        const proxy = () => new Proxy({}, { ownKeys() { calls++; throw marker; } });
+        const index = () => Object.defineProperty([], 0, { get() { calls++; throw marker; } });
+        const tagged = () => ({ get [Symbol.toStringTag]() { calls++; throw marker; } });
+        const thrower = error => () => { throw error; };
+      `;
+    const olderBun = '`\n{\n  "bad": [native code],\n  "ok": 1,\n}\n`';
+
+    test.each(
+      fixtures.flatMap(([fixture, ...counts]) => ["true", "false"].map(CI => [fixture, CI, ...counts] as const)),
+    )("%s: what Bun 1.4.4 wrote passes, and is left alone (CI: %s)", async (fixture, CI, tests, snapshots) => {
+      using dir = copy();
+      const before = contentsOf(dir);
+      const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI }, "./" + fixture);
+      expect({ pass, fail, stderr: fail ? stderr : "" }).toEqual({ pass: tests, fail: 0, stderr: "" });
+      expect(stderr).toContain(` ${snapshots} snapshots, `);
+      expect(contentsOf(dir)).toEqual(before);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(fixtures)(
+      "%s: --update-snapshots fails with what the print throws, and changes no byte",
+      async (fixture, tests) => {
+        using dir = copy();
+        const before = contentsOf(dir);
+        const args = ["--update-snapshots", "./" + fixture];
+        const { pass, fail, stderr, exitCode } = await runTests(String(dir), { CI: "false" }, ...args);
+        expect({ pass, fail }).toEqual({ pass: 0, fail: tests });
+        expect(stderr).toContain("error: not ready");
+        expect(contentsOf(dir)).toEqual(before);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test("any other text, and none, throws what the print threw, after one more print of the value", async () => {
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": `
+            import { test, expect } from "vitest";
+            ${helpers}
+            // A serializer that takes no value of the file changes nothing.
+            expect.addSnapshotSerializer({ test: value => value === "no value", serialize: () => "" });
+            test("what an older Bun wrote, through an expect that it did not have", ({ expect: ofTest }) => {
+              ofTest(bad()).toMatchInlineSnapshot(${olderBun});
+              expect.soft(bad()).toMatchInlineSnapshot(${olderBun});
+            });
+            test("another text, and none", ({ expect: ofTest }) => {
+              const thrown = [
+                caught(() => expect(bad()).toMatchInlineSnapshot(\`other\`)),
+                caught(() => expect(bad()).toMatchInlineSnapshot()),
+                caught(() => expect([bad()]).toMatchInlineSnapshot(\`other\`)),
+                caught(() => expect(bad()).toMatchInlineSnapshot({ ok: expect.any(Number) }, \`other\`)),
+                caught(() => expect(thrower(bad())).toThrowErrorMatchingInlineSnapshot(\`other\`)),
+                caught(() => ofTest(bad()).toMatchInlineSnapshot(\`other\`)),
+              ];
+              expect(thrown.map(value => value === marker)).toEqual(thrown.map(() => true));
+              // Property matchers that fail are no print that throws.
+              const unmatched = caught(() => expect(bad()).toMatchInlineSnapshot({ ok: expect.any(String) }, ${olderBun}));
+              expect(unmatched.message).toStartWith("expect(received).toMatchInlineSnapshot(propertyMatchers)");
+            });
+            test("one more print", () => {
+              const counted = call => { calls = 0; return [caught(call) === marker, calls]; };
+              // It prints as an older Bun did: through a Proxy, an index and Symbol.toStringTag, and through no getter at a key.
+              expect([
+                counted(() => expect(proxy()).toMatchInlineSnapshot(\`other\`)),
+                counted(() => expect(index()).toMatchInlineSnapshot(\`other\`)),
+                counted(() => expect(tagged()).toMatchInlineSnapshot(\`other\`)),
+                counted(() => expect(bad()).toMatchInlineSnapshot(\`other\`)),
+                counted(() => expect(proxy()).toMatchInlineSnapshot()),
+                counted(() => expect(index()).toMatchInlineSnapshot()),
+                counted(() => expect(tagged()).toMatchInlineSnapshot()),
+              ]).toEqual([[true, 2], [true, 2], [true, 2], [true, 1], [true, 1], [true, 1], [true, 1]]);
+            });
+            test("a new snapshot beside them", () => { expect("new").toMatchSnapshot(); });
+          `,
+      });
+      const before = contentsOf(dir);
+      const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+      expect({ pass, stderr: pass === 4 ? "" : stderr }).toEqual({ pass: 4, stderr: "" });
+      expect(stderr).toContain("snapshots: 2 passed, 1 added");
+      expect(contentsOf(dir)).toEqual(before);
+      expect(exitCode).toBe(0);
+    });
+
+    test("another text fails the test with the error of the print, its frames and no diff", async () => {
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": `
+            import { test, expect } from "vitest";
+            const bad = () => ({ ok: 1, get bad() { throw new Error("not ready"); } });
+            test("another text", () => { expect(bad()).toMatchInlineSnapshot(\`other\`); });
+          `,
+      });
+      const before = contentsOf(dir);
+      const { fail, stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+      expect(stderr).toContain("error: not ready\n      at bad (");
+      expect(stderr).not.toContain("Received");
+      expect(contentsOf(dir)).toEqual(before);
+      expect({ fail, exitCode }).toEqual({ fail: 1, exitCode: 1 });
+    });
+
+    test("what a snapshot serializer throws is reported, also over what an older Bun wrote", async () => {
+      const file = (module: string) => `
+          import { test, expect } from ${JSON.stringify(module)};
+          const error = f => { try { f(); return "no error"; } catch (error) { return error.name + ": " + error.message; } };
+          test("t", () => {
+            console.log(JSON.stringify({
+              number: error(() => {
+                expect.addSnapshotSerializer({ test: value => value === "number", serialize: () => 5 });
+                expect("number").toMatchInlineSnapshot(\`"number"\`);
+              }),
+              test: error(() => {
+                expect.addSnapshotSerializer({ test(value) { if (value === "test") throw new RangeError("in test()"); }, serialize: () => "" });
+                expect(["test"]).toMatchInlineSnapshot(\`\n[\n  "test",\n]\n\`);
+              }),
+              serialize: error(() => {
+                expect.addSnapshotSerializer({ test: value => value === "serialize", serialize() { throw new RangeError("in serialize()"); } });
+                expect({ a: "serialize" }).toMatchInlineSnapshot(\`\n{\n  "a": "serialize",\n}\n\`);
+              }),
+              forever: error(() => {
+                expect.addSnapshotSerializer({ test: value => value === "forever", serialize: (value, ...rest) => rest.pop()(value, ...rest) });
+                expect("forever").toMatchInlineSnapshot(\`"forever"\`);
+              }),
+            }));
+          });
+        `;
+      const { log, stderr, exitCode } = await logOf({ "a.test.js": file("bun:test"), "b.test.js": file("vitest") });
+      const reported = {
+        number: "TypeError: A snapshot serializer must return a string, received number",
+        test: "RangeError: in test()",
+        serialize: "RangeError: in serialize()",
+        forever: "RangeError: Maximum call stack size exceeded.",
+      };
+      expect(log.map(line => JSON.parse(line))).toEqual([reported, reported]);
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    test("passes in a concurrent group, through the expect of the test and through the imported one", async () => {
+      using dir = tempDir("snapshot-print-throws", {
+        "a.test.js": `
+            import { describe, test } from "vitest";
+            ${helpers}
+            describe.concurrent("group", () => {
+              test("one", ({ expect }) => { expect(bad()).toMatchInlineSnapshot(${olderBun}); });
+              test("two", ({ expect }) => { expect(bad()).toMatchInlineSnapshot(${olderBun}); });
+            });
+          `,
+        "b.test.js": `
+            import { test, expect } from "bun:test";
+            const revoked = () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy; };
+            const value = () => ({ get proxy() { return revoked(); } });
+            test.concurrent("one", () => { expect(value()).toMatchInlineSnapshot(\`\n{\n  "proxy": [native code],\n}\n\`); });
+            test.concurrent("two", () => { expect(value()).toMatchInlineSnapshot(\`\n{\n  "proxy": [native code],\n}\n\`); });
+          `,
+      });
+      const before = contentsOf(dir);
+      const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+      expect({ pass, stderr: pass === 4 ? "" : stderr }).toEqual({ pass: 4, stderr: "" });
+      expect(stderr).toContain(" 4 snapshots, ");
+      expect(contentsOf(dir)).toEqual(before);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("passes when it is what an older Bun wrote for a mock function or a class that native code makes", async () => {
     const printed = `{\n  "Buffer": [class Function],\n  "Response": [class Response],\n  "URL": [class Function],\n  "mock": [class Function],\n}`;
     const { log, stderr, exitCode } = await logOf({

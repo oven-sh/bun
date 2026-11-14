@@ -614,10 +614,9 @@ impl ReadableStream {
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
-        // same `waiting_for_on_reader_done` flag; `on_reader_done` releases.
+        // same `io_ref`; `on_reader_done` releases.
         if !source.context.reader().is_done() {
-            source.context.waiting_for_on_reader_done.set(true);
-            source.increment_count();
+            source.context.io_ref.set(Some(source.context.ref_guard()));
         }
 
         Ok(stream)
@@ -858,7 +857,7 @@ pub struct NewSource<C: SourceContext> {
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
-    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
+    /// native I/O ref is held (FileReader `io_ref`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
@@ -1114,7 +1113,7 @@ impl<C: SourceContext> NewSource<C> {
     pub fn increment_count(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
-        // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
+        // `io_ref`). Root the wrapper so
         // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {

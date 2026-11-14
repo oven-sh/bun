@@ -1053,65 +1053,63 @@ fn open(
     } = params.strings;
     let carries_cancel_request = params.cancel.is_some();
 
-    let ptr: *mut PostgresSQLConnection =
-        bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
-            socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
-                socket: uws::InternalSocket::Detached,
-            })),
-            status: Cell::new(Status::Connecting),
-            ref_count: Cell::new(1),
-            write_buffer: JsCell::new(OffsetByteList::default()),
-            read_buffer: JsCell::new(OffsetByteList::default()),
-            last_message_start: Cell::new(0),
-            requests: JsCell::new(PostgresRequest::Queue::new()),
-            pipelined_requests: Cell::new(0),
-            nonpipelinable_requests: Cell::new(0),
-            pending_requests: Cell::new(0),
-            advancing: Cell::new(false),
-            poll_ref: KeepAlive::default(),
-            global_object: BackRef::new(global_object),
-            vm: BackRef::new(VirtualMachine::get()),
-            statements: JsCell::new(StatementCache::default()),
-            prepared_statement_id: Cell::new(0),
-            transaction_status: Cell::new(b'I'),
-            js_value: JsCell::new(crate::jsc::JsRef::empty()),
-            backend_key_data: Cell::new(None),
-            cancel_target: JsCell::new(params.cancel),
-            database,
-            user: username,
-            password,
-            scram_password,
-            path,
-            options,
-            options_buf,
-            authentication_state: JsCell::new(AuthenticationState::Pending),
-            secure: params.secure,
-            tls_config: params.tls_config,
-            tls_status: Cell::new(if params.ssl_mode != SSLMode::Disable {
-                TLSStatus::Pending
-            } else {
-                TLSStatus::None
-            }),
-            ssl_mode: params.ssl_mode,
-            channel_binding: params.channel_binding,
-            flags: Cell::new(if params.use_unnamed_prepared_statements {
-                ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
-            } else {
-                ConnectionFlags::empty()
-            }),
-            timers: ConnectionTimers::new(
-                params.idle_timeout_ms,
-                params.connection_timeout_ms,
-                params.max_lifetime_ms,
-                EventLoopTimerTag::PostgresSQLConnectionTimeout,
-                EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
-            ),
-            auto_flush_registered: Cell::new(false),
-            channel_names: JsCell::new(Vec::new()),
-            copy_out: JsCell::new(Vec::new()),
-        }));
-
-    let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+    let this = RefPtr::new(PostgresSQLConnection {
+        socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
+            socket: uws::InternalSocket::Detached,
+        })),
+        status: Cell::new(Status::Connecting),
+        ref_count: Cell::new(1),
+        write_buffer: JsCell::new(OffsetByteList::default()),
+        read_buffer: JsCell::new(OffsetByteList::default()),
+        last_message_start: Cell::new(0),
+        requests: JsCell::new(PostgresRequest::Queue::new()),
+        pipelined_requests: Cell::new(0),
+        nonpipelinable_requests: Cell::new(0),
+        pending_requests: Cell::new(0),
+        advancing: Cell::new(false),
+        poll_ref: KeepAlive::default(),
+        global_object: BackRef::new(global_object),
+        vm: BackRef::new(VirtualMachine::get()),
+        statements: JsCell::new(StatementCache::default()),
+        prepared_statement_id: Cell::new(0),
+        transaction_status: Cell::new(b'I'),
+        js_value: JsCell::new(crate::jsc::JsRef::empty()),
+        backend_key_data: Cell::new(None),
+        cancel_target: JsCell::new(params.cancel),
+        database,
+        user: username,
+        password,
+        scram_password,
+        path,
+        options,
+        options_buf,
+        authentication_state: JsCell::new(AuthenticationState::Pending),
+        secure: params.secure,
+        tls_config: params.tls_config,
+        tls_status: Cell::new(if params.ssl_mode != SSLMode::Disable {
+            TLSStatus::Pending
+        } else {
+            TLSStatus::None
+        }),
+        ssl_mode: params.ssl_mode,
+        channel_binding: params.channel_binding,
+        flags: Cell::new(if params.use_unnamed_prepared_statements {
+            ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
+        } else {
+            ConnectionFlags::empty()
+        }),
+        timers: ConnectionTimers::new(
+            params.idle_timeout_ms,
+            params.connection_timeout_ms,
+            params.max_lifetime_ms,
+            EventLoopTimerTag::PostgresSQLConnectionTimeout,
+            EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
+        ),
+        auto_flush_registered: Cell::new(false),
+        channel_names: JsCell::new(Vec::new()),
+        copy_out: JsCell::new(Vec::new()),
+    });
+    let ptr = this.as_ptr();
 
     {
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
@@ -1139,19 +1137,14 @@ fn open(
             )
         };
 
-        this.socket.set(Socket::SocketTcp(match result {
-            Ok(s) => s,
-            Err(err) => {
-                // SAFETY: fresh allocation, sole ref.
-                drop(unsafe { bun_core::heap::take(ptr) });
-                return Err(err);
-            }
-        }));
+        this.socket.set(Socket::SocketTcp(result?));
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
     this.reset_connection_timeout();
     this.poll_ref.ref_(this.vm_ctx());
+    // The wrapper takes the ref.
+    let this = this.into_this_ptr();
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
     this.js_value

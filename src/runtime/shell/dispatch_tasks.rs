@@ -9,6 +9,9 @@
 //! resume the parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
+use crate::shell::states::expansion::Expansion;
+use bun_collections::smallvec::SmallVec;
+use bun_core::strings;
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
@@ -59,13 +62,28 @@ pub(crate) enum ShellGlobErr {
     Unknown(crate::Error),
 }
 
+/// One word of a glob task.
+pub(crate) enum ShellGlobJob {
+    /// The script wrote no `*` in the word: it is argv as it is.
+    Final(Vec<u8>),
+    /// `meta_offsets` are the bytes of `word` that the script wrote as pattern syntax. `matches` is for the task.
+    Pattern {
+        word: Vec<u8>,
+        meta_offsets: Vec<u32>,
+        matches: Vec<Vec<u8>>,
+    },
+}
+
+/// The words of a glob task in argv order: the brace variants of a word, or the word when no brace expanded.
+pub(crate) type ShellGlobJobs = SmallVec<[ShellGlobJob; 1]>;
+
 /// Glob-expansion task run off the JS thread during word expansion.
 #[repr(C)]
 pub(crate) struct ShellGlobTask {
     pub task: ShellTask,
     pub expansion: NodeId,
-    pub walker: bun_glob::BunGlobWalkerZ,
-    pub result: Vec<Vec<u8>>,
+    pub jobs: ShellGlobJobs,
+    pub cwd: Vec<u8>,
     pub err: Option<ShellGlobErr>,
 }
 
@@ -89,19 +107,40 @@ impl bun_event_loop::Taskable for ShellGlobTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) {
-        match Self::walk_impl(&mut this.walker, &mut this.result) {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => this.err = Some(ShellGlobErr::Syscall(e)),
-            Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
+        let mut next = 0;
+        while next < this.jobs.len() {
+            let len = Self::shared_walk_len(&this.jobs[next..]);
+            let jobs = &mut this.jobs[next..next + len];
+            next += len;
+            // The VM releases the completion unrun, so the walks that are left have no reader.
+            if this.task.cancelled() {
+                return;
+            }
+            let err = match Self::walk_impl(jobs, &this.cwd) {
+                Ok(Ok(())) => continue,
+                // A directory that the word names is not there: the matches so far are all of them.
+                Ok(Err(e)) if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+                    continue;
+                }
+                Ok(Err(e)) => ShellGlobErr::Syscall(e),
+                Err(e) => ShellGlobErr::Unknown(e),
+            };
+            // The jobs of a walk that failed have no match. The error is for a word in which no job has one.
+            for job in jobs {
+                if let ShellGlobJob::Pattern { matches, .. } = job {
+                    matches.clear();
+                }
+            }
+            this.err.get_or_insert(err);
         }
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
         let mut me = unsafe { bun_core::heap::take(this) };
-        crate::shell::states::expansion::Expansion::on_glob_walk_done(
+        Expansion::on_glob_walk_done(
             interp,
             me.expansion,
-            core::mem::take(&mut me.result),
+            core::mem::take(&mut me.jobs),
             me.err.take(),
         );
     }
@@ -113,15 +152,16 @@ impl ShellGlobTask {
     pub(crate) fn create_and_schedule(
         interp: &Interpreter,
         expansion: NodeId,
-        walker: bun_glob::BunGlobWalkerZ,
+        jobs: ShellGlobJobs,
+        cwd: Vec<u8>,
     ) {
         let mut task = ShellTask::new(interp.event_loop);
         task.interp = interp.as_ctx_ptr();
         let this = bun_core::heap::alloc(ShellGlobTask {
             task,
             expansion,
-            walker,
-            result: Vec::new(),
+            jobs,
+            cwd,
             err: None,
         });
         // SAFETY: `this` is a fresh heap allocation embedding `ShellTask` at
@@ -129,11 +169,99 @@ impl ShellGlobTask {
         unsafe { ShellTask::schedule::<ShellGlobTask>(this) };
     }
 
+    /// Where the last path component of `path` starts.
+    fn last_component_start(path: &[u8]) -> usize {
+        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+        strings::last_index_of_any(path, separators).map_or(0, |separator| separator + 1)
+    }
+
+    /// What jobs must have in common to share a walk, or `None` for a job that the walker reads in another way in a group.
+    fn shared_prefix(job: &ShellGlobJob) -> Option<(&[u8], &[u32])> {
+        let ShellGlobJob::Pattern {
+            word, meta_offsets, ..
+        } = job
+        else {
+            return None;
+        };
+        let start = Self::last_component_start(word);
+        let (prefix_meta, last_meta) = meta_offsets
+            .split_at(meta_offsets.partition_point(|&offset| (offset as usize) < start));
+        let last = &word[start..];
+        let splits_a_group = last_meta
+            .iter()
+            .any(|&offset| word[offset as usize] != b'*');
+        let is_globstar = last_meta
+            .iter()
+            .zip(last_meta.iter().skip(1))
+            .any(|(star, next)| star + 1 == *next);
+        let names_dot_files = last.first() == Some(&b'.');
+        if last.is_empty()
+            || splits_a_group
+            || is_globstar
+            || names_dot_files
+            || !bun_core::is_all_ascii(last)
+        {
+            return None;
+        }
+        Some((&word[..start], prefix_meta))
+    }
+
+    /// How many jobs at the front of `jobs` one walk serves: `src/{*.ts,*.tsx}` reads `src` once for `src/*.{ts,tsx}`.
+    fn shared_walk_len(jobs: &[ShellGlobJob]) -> usize {
+        let shared = match jobs {
+            [first, _, ..] => Self::shared_prefix(first),
+            _ => None,
+        };
+        let Some(shared) = shared else {
+            return 1;
+        };
+        1 + jobs[1..]
+            .iter()
+            .take_while(|job| Self::shared_prefix(job) == Some(shared))
+            .count()
+    }
+
+    /// One walk for `jobs`: one job, or the jobs that `shared_walk_len` put together.
     fn walk_impl(
-        walker: &mut bun_glob::BunGlobWalkerZ,
-        result: &mut Vec<Vec<u8>>,
+        jobs: &mut [ShellGlobJob],
+        cwd: &[u8],
     ) -> Result<bun_sys::Result<()>, crate::Error> {
-        let mut iter = bun_glob::walk::Iterator::new(walker);
+        let mut patterns: SmallVec<[Vec<u8>; 1]> = SmallVec::new();
+        let mut results: SmallVec<[&mut Vec<Vec<u8>>; 1]> = SmallVec::new();
+        for job in jobs {
+            if let ShellGlobJob::Pattern {
+                word,
+                meta_offsets,
+                matches,
+            } = job
+            {
+                patterns.push(Expansion::neutralize_glob_metachars(word, meta_offsets));
+                results.push(matches);
+            }
+        }
+        let Some(first) = patterns.first() else {
+            return Ok(Ok(()));
+        };
+        // The patterns of a shared walk are the same before `last`, where their last path component starts.
+        let mut last = 0;
+        let mut group: Vec<u8> = Vec::new();
+        if patterns.len() > 1 {
+            last = Self::last_component_start(first);
+            group.extend_from_slice(&first[..last]);
+            for (i, pattern) in patterns.iter().enumerate() {
+                group.push(if i == 0 { b'{' } else { b',' });
+                group.extend_from_slice(&pattern[last..]);
+            }
+            group.push(b'}');
+        }
+        let pattern: &[u8] = if patterns.len() > 1 { &group } else { first };
+        let mut walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
+            pattern, cwd, false, false, false, false, false, None,
+        )? {
+            Ok(walker) => walker,
+            Err(e) => return Ok(Err(e)),
+        };
+        let mut iter = bun_glob::walk::Iterator::new(&mut walker);
         if let Err(e) = iter.init()? {
             return Ok(Err(e));
         }
@@ -149,7 +277,17 @@ impl ShellGlobTask {
                     } else {
                         &path[..]
                     };
-                    result.push(bytes.to_vec());
+                    if let [result] = &mut results[..] {
+                        result.push(bytes.to_vec());
+                        continue;
+                    }
+                    // A path of a shared walk is a match of each job whose own last component matches its name.
+                    let name = &bytes[Self::last_component_start(bytes)..];
+                    for (pattern, result) in patterns.iter().zip(results.iter_mut()) {
+                        if bun_glob::r#match(&pattern[last..], name).matches() {
+                            result.push(bytes.to_vec());
+                        }
+                    }
                 }
             }
         }

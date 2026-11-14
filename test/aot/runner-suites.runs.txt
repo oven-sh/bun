@@ -20,6 +20,22 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 # Compiled links X to the mock, which has no exports yet: "Cannot access '<name>' before initialization", or the original never runs. With import() for vi.importActual() compiled is right.
 # These: what a running factory loads is a copy of its own in plain. The copy sees the original, and the importers that wait for the mock get another instance, which sees the mock.
 # Compiled has the one instance and hands the factory's to the importers.
+# These: a factory imports a module that waits for the factory's own mock. The compiled copy never ends its load, so it runs fewer files than the plain copy.
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the factory loads the module with import() under --isolate
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the factory loads the module with vi.importActual()
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at Promise.all() of import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at a .then() of import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at an async function that awaits import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at an import statement beside a hoisted vi.mock(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at an import statement beside vi.hoisted(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at await import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at for await over import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait begins inside a test, after jest.doMock(), while a server listens
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait begins inside a test, after mock.module(), while a server listens
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait begins inside a test, after vi.doMock(), while a server listens
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait goes through a module that re-exports it
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait goes through a second module that waits for the first
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait goes through a statement of a module between them
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 # These: require(), jest.requireActual() or jest.createMockFromModule() meets a factory that awaits. Plain throws "require() async module". Compiled answers.

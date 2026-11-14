@@ -96,6 +96,25 @@ test/js/bun/test/mock/mock-hoist.test.ts: imports that stay static > export from
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: ["--isolate"]
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: []
+# The next one: two files with hoisted mocks. In a compiled run the file that mocks the path reads the mock from its own import of it, and in a plain run the original.
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which does not wait for the factory > a module whose import() of the path began before the mock was made stays the one instance
+# These: a factory imports a module that waits for the factory's own mock. `bun test` gives the factory that module before its exports are set. A compiled module is not handed out so: the load never ends.
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > a const of the module that the factory reads at once is not set yet, and the error names the module
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the factory loads the module with import() under --isolate
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the factory loads the module with vi.importActual()
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at Promise.all() of import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at a .then() of import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at an async function that awaits import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at an import statement beside a hoisted vi.mock(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at an import statement beside vi.hoisted(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at await import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the module waits at for await over import(): it runs once, and the factory gets it before its exports are set
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait begins inside a test, after jest.doMock(), while a server listens
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait begins inside a test, after mock.module(), while a server listens
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait begins inside a test, after vi.doMock(), while a server listens
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait goes through a module that re-exports it
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait goes through a second module that waits for the first
+test/js/bun/test/mock/mock-module.test.ts: a factory that imports a module which waits for the factory's mock > the wait goes through a statement of a module between them
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing

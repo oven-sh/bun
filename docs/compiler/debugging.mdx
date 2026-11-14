@@ -189,10 +189,11 @@ A test of how your code copes with one of these has to run under `bun test`.
 
 ### Module mocks
 
-`mock.module()`, `vi.mock()`, `jest.mock()` and `spyOn()` on a module's exports work as in [`bun test`](/test/mocks), with two differences.
+`mock.module()`, `vi.mock()`, `jest.mock()` and `spyOn()` on a module's exports work as in [`bun test`](/test/mocks), with three differences.
 
 - A file's top-level code runs once. When a mock ends, `bun test` runs the files that imported the mocked module again at their next import. With `--aot` their imports follow the change, but `export const reading = "read " + level` keeps what it computed from the mock, in the next test file too. Read the import inside a function, or run with `--isolate`. The run ends with a list of these files.
 - The original of a mocked module runs from source, not compiled. That goes for `importOriginal()`, `vi.importActual()`, `jest.requireActual()` and a mock that has no factory. The tests still work, but that code isn't what your executable runs.
+- A mock factory that imports a module which waits for the factory's own mock gets that module in `bun test`, before its exports are set. With `--aot` the test file fails with `never finished loading`.
 
 ## Run under the compiler's rules
 

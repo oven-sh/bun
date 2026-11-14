@@ -763,8 +763,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         self.dev_incremental_result()
                             .client_components_added
                             .push(ServerFileIndex::init(file_index.get()));
-                    } else if self.bundled_files.values()[file_index.get() as usize]
-                        .is_client_component_boundary
+                    } else if !is_ssr_graph
+                        && self.bundled_files.values()[file_index.get() as usize]
+                            .is_client_component_boundary
                     {
                         // SAFETY: cross-graph access via `owner()`. We hold
                         // `&mut self` (server_graph); `client_graph` and
@@ -774,13 +775,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         let key = bun_ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
-                        let client_index =
-                            client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                                bun_core::Output::panic(format_args!(
-                                    "Client graph's SCB was already deleted",
-                                ))
-                            });
-                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
+                        if let Some(client_index) = client_graph.get_file_index(key.slice()) {
+                            let i = client_index.get() as usize;
+                            if client_graph.edge_lists[i].first_dep.is_some() {
+                                // Another client component imports it.
+                                client_graph.bundled_files.values_mut()[i].is_hmr_root = false;
+                            } else {
+                                client_graph
+                                    .disconnect_and_delete_file(directory_watchers, client_index);
+                            }
+                        }
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()
@@ -1202,13 +1206,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     );
                     // SAFETY: cross-graph sibling access; `server_graph` disjoint.
                     let server_graph = unsafe { &mut (*dev).server_graph };
-                    let index = server_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Server Incremental Graph is missing component for {:?}",
-                            bstr::BStr::new(key.slice()),
-                        ))
-                    });
-                    server_graph.trace_dependencies(index, gts, goal, index)?;
+                    if let Some(index) = server_graph.get_file_index(key.slice()) {
+                        server_graph.trace_dependencies(index, gts, goal, index)?;
+                    }
                 } else if let Some(route_bundle_index) = html_rbi {
                     // HTML modified or asset modified → hard reload; else soft.
                     let hard = from_file_index == file_index
@@ -1274,13 +1274,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     );
                     // SAFETY: disjoint sibling `client_graph`.
                     let client_graph = unsafe { &mut (*dev).client_graph };
-                    let index = client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Client Incremental Graph is missing component for {:?}",
-                            bstr::BStr::new(key.slice()),
-                        ))
-                    });
-                    client_graph.trace_imports(index, gts, goal)?;
+                    if let Some(index) = client_graph.get_file_index(key.slice()) {
+                        client_graph.trace_imports(index, gts, goal)?;
+                    }
 
                     if cfg!(debug_assertions) && kind == FileKind::Css {
                         // Server CSS files never have imports.

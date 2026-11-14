@@ -1510,6 +1510,35 @@ devTest("barrel optimization: a save of one importer of a barrel does not evalua
     await c.expectMessage("app v3 ALPHA other(BETA) helper(BETA) call 3");
   },
 });
+for (const separateSSRGraph of [false, true]) {
+  // A client component that another one imports stays in the browser graph without its directive.
+  devTest(`use client is removed from a file that a client component imports (separateSSRGraph: ${separateSSRGraph})`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+    },
+    files: {
+      "A.ts": `"use client"; import { B } from "./B"; export const A = "A" + B;`,
+      "B.ts": `"use client"; export const B = "B1";`,
+      "routes/index.ts": `
+        import * as A from "../A";
+        import * as B from "../B";
+        export default () => new Response(Object.keys(A).join() + " " + Object.keys(B).join());
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("A B");
+      await dev.write("B.ts", `export const B = "B2";`);
+      await dev.fetch("/").equals("A B");
+      await dev.write("B.ts", `"use client"; export const B = "B3";`);
+      await dev.fetch("/").equals("A B");
+      await dev.write("A.ts", `"use client"; export const A = "A alone";`);
+      await dev.write("B.ts", `export const B = "B4";`);
+      await dev.fetch("/").equals("A B");
+    },
+  });
+}
+
 // Pins a known cost. The first request for /other makes a build in which the barrel has one more
 // re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
 // counter.ts runs again at that request, which imports it, and its count starts over.

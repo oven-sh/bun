@@ -778,6 +778,64 @@ devTest("virtual module that a client component without imports starts to import
   },
 });
 
+// A page of a `clientPages` router starts its own tab, also where another page imports it.
+devTest("virtual module that a page which another page imports starts to import is in the hot update", {
+  framework: {
+    fileSystemRouterTypes: [
+      { ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts", clientPages: true },
+    ],
+  },
+  pluginFile: `
+    export default [
+      {
+        name: "virtual",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => {
+            return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+            return { contents: "export const one = 1;", loader: "js" };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "client.ts": `import "bun:bake/client";`,
+    "routes/index.ts": `
+      export const name = "index";
+      export default () => new Response(name);
+    `,
+    "routes/about.ts": `
+      import { one } from "virtual:one";
+      import { name } from "./index";
+      export default () => new Response(name + one);
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/about").equals("index1");
+    await dev.fetch("/").equals("index");
+    const { promise: update, resolve, reject } = Promise.withResolvers<string>();
+    dev.on("hmr", (data: Uint8Array) => {
+      const message = Buffer.from(data).toString("latin1");
+      if (message[0] === "u") resolve(message);
+      if (message[0] === "e") reject(new Error("the edit does not bundle: " + message));
+    });
+    dev.socket!.addEventListener("close", () => reject(new Error("the dev server closed the socket")));
+    dev.socket!.send("sher");
+    await dev.write(
+      "routes/index.ts",
+      `
+        import { one } from "virtual:one";
+        export const name = "index" + one;
+        export default () => new Response(name);
+      `,
+    );
+    const modules = [...(await update).matchAll(/^  "([^"\n]+)": \[/gm)].map(match => match[1]);
+    expect(modules.sort()).toEqual(["routes/index.ts", "virtual:one"]);
+  },
+});
+
 // A file that starts to import a module the page already holds must not make
 // the client run that module again.
 devTest("adding an import of a module the page already holds does not re-run it", {

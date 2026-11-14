@@ -543,36 +543,65 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// Once the edges are up to date. A page whose file has a new import may not have the imported module, nor what
     /// that module imports. What such a page did not reach before goes back into the chunk. The imports of a file that
     /// is new to the graph do not count by themselves: an open page has that file only through a new import of another file.
+    ///
+    /// `page_files`: the files that pages start from which other files can import too.
     pub(crate) fn restore_newly_imported_files(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
+        page_files: &[FileIndex<SIDE>],
     ) -> Result<(), bun_alloc::AllocError> {
         debug_assert!(matches!(SIDE, Side::Client));
-        if self.new_edges.is_empty() {
-            return Ok(());
-        }
+        let new_edges = core::mem::take(&mut self.new_edges);
+        let left_out = core::mem::take(&mut self.unchanged_files);
         let files_len = self.bundled_files.count();
         let mut first_bundled = DynamicBitSetUnmanaged::init_empty(files_len)?;
         for file in &self.first_bundled_files {
             first_bundled.set(file.get() as usize);
         }
         let mut is_new_edge = DynamicBitSetUnmanaged::init_empty(self.edges.len())?;
-        for edge_index in &self.new_edges {
+        let mut newly_imported = Vec::new();
+        for edge_index in &new_edges {
             is_new_edge.set(edge_index.get() as usize);
-        }
-        let left_out = core::mem::take(&mut self.unchanged_files);
-        let mut restored = DynamicBitSetUnmanaged::init_empty(files_len)?;
-        for edge_index in core::mem::take(&mut self.new_edges) {
             let edge = self.edges[edge_index.get() as usize];
-            if first_bundled.is_set(edge.dependency.get() as usize) {
+            if !first_bundled.is_set(edge.dependency.get() as usize) {
+                newly_imported.push(edge);
+            }
+        }
+        let is_any_left_out = |files: &DynamicBitSetUnmanaged| {
+            left_out
+                .iter()
+                .any(|file| files.is_set(file.get() as usize))
+        };
+        let needed_by_any =
+            self.files_imported_by(newly_imported.iter().map(|edge| edge.imported), None)?;
+        if !is_any_left_out(&needed_by_any) {
+            return Ok(());
+        }
+        let mut is_page_file = DynamicBitSetUnmanaged::init_empty(files_len)?;
+        for file in page_files {
+            is_page_file.set(file.get() as usize);
+        }
+        let mut restored = DynamicBitSetUnmanaged::init_empty(files_len)?;
+        let mut reached_from: ArrayHashMap<FileIndex<SIDE>, DynamicBitSetUnmanaged> =
+            ArrayHashMap::default();
+        newly_imported.sort_unstable_by_key(|edge| edge.dependency.get());
+        for of_one_file in newly_imported.chunk_by(|a, b| a.dependency.get() == b.dependency.get())
+        {
+            let needed =
+                self.files_imported_by(of_one_file.iter().map(|edge| edge.imported), None)?;
+            if !is_any_left_out(&needed) {
                 continue;
             }
-            let needed = self.files_imported_by(edge.imported, None)?;
-            for root in self.roots_that_reached(edge.dependency, &is_new_edge)? {
-                let reached = self.files_imported_by(root, Some(&is_new_edge))?;
+            let importer = of_one_file[0].dependency;
+            for root in self.roots_that_reached(importer, &is_new_edge, &is_page_file)? {
+                let found = reached_from.get_or_put(root)?;
+                if !found.found_existing {
+                    *found.value_ptr =
+                        self.files_imported_by(core::iter::once(root), Some(&is_new_edge))?;
+                }
                 for file in &left_out {
                     let i = file.get() as usize;
-                    if needed.is_set(i) && !reached.is_set(i) {
+                    if needed.is_set(i) && !found.value_ptr.is_set(i) {
                         restored.set(i);
                     }
                 }
@@ -586,15 +615,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// `file` and everything it imports, at any depth.
+    /// `files` and everything they import, at any depth.
     fn files_imported_by(
         &self,
-        file: FileIndex<SIDE>,
+        files: impl Iterator<Item = FileIndex<SIDE>>,
         except: Option<&DynamicBitSetUnmanaged>,
     ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
         let mut seen = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
-        seen.set(file.get() as usize);
-        let mut queue = vec![file];
+        let mut queue: Vec<FileIndex<SIDE>> = files.collect();
+        for file in &queue {
+            seen.set(file.get() as usize);
+        }
         while let Some(importer) = queue.pop() {
             let mut it = self.edge_lists[importer.get() as usize].first_import;
             while let Some(edge_index) = it {
@@ -613,11 +644,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(seen)
     }
 
-    /// The html files, client roots and entry points that import `file`, at any depth.
+    /// The html files, client roots, page files and entry points that import `file`, at any depth.
     fn roots_that_reached(
         &self,
         file: FileIndex<SIDE>,
         except: &DynamicBitSetUnmanaged,
+        is_page_file: &DynamicBitSetUnmanaged,
     ) -> Result<Vec<FileIndex<SIDE>>, bun_alloc::AllocError> {
         let mut seen = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
         seen.set(file.get() as usize);
@@ -639,8 +671,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     queue.push(edge.dependency);
                 }
             }
-            let info = &self.bundled_files.values()[imported.get() as usize];
-            if !has_importer || info.is_hmr_root || info.is_special_framework_file {
+            let i = imported.get() as usize;
+            if !has_importer || self.bundled_files.values()[i].is_hmr_root || is_page_file.is_set(i)
+            {
                 roots.push(imported);
             }
         }

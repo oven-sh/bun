@@ -621,7 +621,11 @@ fn finalize_bundle_inner(
             entry_index,
         )?;
     }
-    dev.client_graph.restore_newly_imported_files(&mut ctx)?;
+    if !dev.client_graph.new_edges.is_empty() {
+        let page_files = dev.client_files_of_framework_pages();
+        dev.client_graph
+            .restore_newly_imported_files(&mut ctx, &page_files)?;
+    }
 
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()

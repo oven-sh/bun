@@ -7,6 +7,11 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+# These: a function of another module calls vi.doMock() for a loaded module while the body of a module that imports it runs (see runner-suites.known.txt). Plain leaves
+# the module as it is, so `{ spy: true }` loads an instance of its own, and a helper that require()s the module stays loaded. Compiled updates the module in place:
+# it loads no second instance, and runs that helper again for the next test file.
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > but not a helper that gets the module from require()
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > with { spy: true }, which spies on an instance of its own, from bun:test
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails

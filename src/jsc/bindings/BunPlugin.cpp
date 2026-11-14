@@ -4563,8 +4563,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
+// Whether the body of a source text module has begun. Interpreter::executeModuleProgram() moves the state on from Init there, and nothing moves it back.
+// A status of Evaluating doesn't tell: it also covers a module that waits for its imports.
+static bool hasBegunBody(JSC::CyclicModuleRecord* module)
+{
+    auto* sourceText = dynamicDowncast<JSC::JSModuleRecord>(module);
+    return sourceText && sourceText->internalField(JSC::AbstractModuleRecord::Field::State).get() != JSC::jsNumber(static_cast<int32_t>(JSC::AbstractModuleRecord::State::Init));
+}
+
 // Whether a module that Vitest doesn't externalize is linked to `record` and has yet to run. `running` is the one that asks.
-__attribute__((minsize)) static bool hasUnevaluatedImporter(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
+// With `begun`, a module whose body has begun doesn't count, and is named there: it imported `record` before the call, and keeps it.
+__attribute__((minsize)) static bool hasUnevaluatedImporter(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running, Vector<String>* begun)
 {
     for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
         auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
@@ -4574,8 +4583,12 @@ __attribute__((minsize)) static bool hasUnevaluatedImporter(Zig::GlobalObject* g
         if (key == running || isExternalizedByVitest(globalObject, key))
             continue;
         for (auto& loaded : importer->loadedModules().values()) {
-            if (loaded.m_module.get() == record)
+            if (loaded.m_module.get() != record)
+                continue;
+            if (!begun || !hasBegunBody(importer))
                 return true;
+            begun->append(key);
+            break;
         }
     }
     return false;
@@ -6077,8 +6090,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool remainsOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile);
     bool keepsLoadedModule = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!loadedByTestFile || remainsOriginal || isDoMock);
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
-    if (keepsLoadedModule && loaded.esmNamespace && hasUnevaluatedImporter(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
-        keepsLoadedModule = false;
+    if (keepsLoadedModule && loaded.esmNamespace) {
+        // Only vi.doMock() passes over the modules whose body has begun. A function that wraps vi.mock() has updated a loaded package in place since before vi.doMock() existed.
+        Vector<String> begunImporters;
+        keepsLoadedModule = !hasUnevaluatedImporter(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe), isDoMock ? &begunImporters : nullptr);
+        // The body of one of them may be what mocks, through a function of another file. Like the file of the call, it has to run again for the next test file that imports it.
+        if (keepsLoadedModule)
+            globalObject->onLoadPlugins.mockingModules.addAll(begunImporters);
+    }
 #if ENABLE(AOT)
     // stashLoadedModule() evicts the original that the preload's mock has required, and the mock as its requirer.
     if (keepsLoadedModule && remainsOriginal && previous && previous->isFromPreload && !isPreviousMockKeyEmpty && loaded.compiledModule && JSC::AOT::tryEvictRequirerOfOriginal(globalObject, *loaded.compiledModule))

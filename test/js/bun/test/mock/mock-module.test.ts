@@ -2504,6 +2504,521 @@ test.concurrent.each(["bun:test", "vitest"])(
   },
 );
 
+// A module's body runs after its imports. Once it has begun, the module keeps what it imported under vi.doMock(), whichever file holds the call.
+describe.concurrent("vi.doMock() of a loaded module while the body of a module that imports it runs", () => {
+  const flavors = ["bun:test", "vitest"];
+  const dep = `export const who = () => "real";`;
+  const preload = `import { vi } from "bun:test"; globalThis.mockModuleOfPreload = (path, factory) => { vi.doMock(path, factory); };`;
+  const helper = (from: string, mockModule = `(path, factory) => { vi.doMock(path, factory); }`) =>
+    `import { vi } from ${JSON.stringify(from)}; export const mockModule = ${mockModule};`;
+  const inFolder = (folder: string, files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([path, text]) => [`${folder}/${path}`, text]));
+  const packages = {
+    "node_modules/mocked-package/package.json": `{ "name": "mocked-package", "type": "module", "main": "index.js" }`,
+    "node_modules/mocked-package/index.js": dep,
+    "node_modules/mocked-commonjs-package/package.json": `{ "name": "mocked-commonjs-package", "main": "index.js" }`,
+    "node_modules/mocked-commonjs-package/index.js": `exports.who = () => "real";`,
+  };
+  // `read` is what the module that ran its body reads from `name`. The factory waits for the next import().
+  const realThenMock = (name: string, read: string, real = "real") => `
+    expect([${read}, factory.mock.calls.length]).toEqual([${JSON.stringify(real)}, 0]);
+    expect([(await import(${JSON.stringify(name)})).who(), factory.mock.calls.length]).toEqual(["mock", 1]);
+  `;
+  const viaFunction = `mockModule("./dep", factory);`;
+  const viaPreload = `globalThis.mockModuleOfPreload(join(import.meta.dir, "dep.ts"), factory);`;
+  // A test file that imports `name`, as does "./user", which it imports too. `mocks` runs in its body, and `expects` in its test.
+  const layout = (
+    from: string,
+    {
+      mocks = viaFunction,
+      name = "./dep",
+      imports = `import { mockModule } from "./wrap";`,
+      expects = realThenMock(name, `who() + " " + via()`, "real real"),
+    } = {},
+  ) => ({
+    "dep.ts": dep,
+    "user.ts": `import { who } from ${JSON.stringify(name)}; export const via = () => who();`,
+    "wrap.ts": helper(from),
+    "layout.test.ts": `
+      import { expect, test, vi } from ${JSON.stringify(from)};
+      import { join } from "node:path";
+      ${imports}
+      import { who } from ${JSON.stringify(name)};
+      import { via } from "./user";
+      const factory = vi.fn(() => ({ who: () => "mock" }));
+      ${mocks}
+      test("what was imported stays, and the next import() gets the mock", async () => {
+        ${expects}
+      });
+    `,
+  });
+  // A helper that imports "./dep" and mocks it in its body: `mocks` is the end of that body.
+  const helperFiles = (from: string, mocks = viaFunction, imports = `import { mockModule } from "./wrap";`) => ({
+    "dep.ts": dep,
+    "wrap.ts": helper(from),
+    "mocks.ts": `
+      import { vi } from ${JSON.stringify(from)};
+      import { join } from "node:path";
+      ${imports}
+      import { who } from "./dep";
+      export const factory = vi.fn(() => ({ who: () => "mock" }));
+      export const read = () => who();
+      ${mocks}
+    `,
+  });
+  const helperLayout = (from: string, mocks?: string, name = "./mocks", imports?: string) => ({
+    ...helperFiles(from, mocks, imports),
+    "layout.test.ts": `
+      import { expect, test } from ${JSON.stringify(from)};
+      import { factory, read } from ${JSON.stringify(name)};
+      test("what the helper imported stays, and the next import() gets the mock", async () => {
+        ${realThenMock("./dep", "read()")}
+      });
+    `,
+  });
+
+  const layouts = (from: string): Record<string, Record<string, string>> => ({
+    "function": layout(from),
+    "function-that-ends-in-the-call": {
+      ...layout(from),
+      "wrap.ts": helper(from, `(path, factory) => vi.doMock(path, factory)`),
+    },
+    // No frame of the function is left on the stack at the call.
+    "function-that-is-left-by-a-tail-call": {
+      ...layout(from),
+      "wrap.ts": `import { vi } from ${JSON.stringify(from)}; const { doMock } = vi; export const mockModule = (path, factory) => doMock(path, factory);`,
+    },
+    "function-of-a-commonjs-module": {
+      ...layout(from, { imports: `import { mockModule } from "./wrap.cjs";` }),
+      "wrap.cjs": `const { vi } = require("bun:test"); exports.mockModule = (path, factory) => { vi.doMock(path, factory); };`,
+    },
+    "function-of-a-preload": layout(from, { mocks: viaPreload, imports: "" }),
+    "package": layout(from, { mocks: `mockModule("mocked-package", factory);`, name: "mocked-package" }),
+    "commonjs-package": layout(from, {
+      mocks: `mockModule("mocked-commonjs-package", factory);`,
+      name: "mocked-commonjs-package",
+      expects: `
+        ${realThenMock("mocked-commonjs-package", `who() + " " + via()`, "real real")}
+        expect(require("mocked-commonjs-package").who()).toBe("mock");
+      `,
+    }),
+    // The preload has loaded "./dep", and no test file before this one.
+    "loaded-by-a-preload": {
+      ...layout(from, {
+        expects: `
+          ${realThenMock("./dep", `who() + " " + via()`, "real real")}
+          expect(globalThis.depOfPreload.who()).toBe("real");
+        `,
+      }),
+      "next.test.ts": `
+        import { expect, test } from ${JSON.stringify(from)};
+        import * as dep from "./dep";
+        test("the next test file gets the module that the preload loaded", () => {
+          expect([dep.who(), dep === globalThis.depOfPreload]).toEqual(["real", true]);
+        });
+      `,
+    },
+    // No function of another module: the body that calls vi.doMock() runs while the body of the test file is below it on the stack.
+    "required": {
+      ...layout(from, { mocks: `globalThis.factoryOfRequired = factory; require("./mocks.ts");`, imports: "" }),
+      "mocks.ts": `import { vi } from ${JSON.stringify(from)}; vi.doMock("./dep", globalThis.factoryOfRequired); export {};`,
+    },
+    // The first of two factories is never called.
+    "mocked-twice": layout(from, {
+      mocks: `const first = vi.fn(); mockModule("./dep", first); mockModule("./dep", factory);`,
+      expects: `
+        ${realThenMock("./dep", `who() + " " + via()`, "real real")}
+        expect(first).not.toHaveBeenCalled();
+      `,
+    }),
+    // A factory that throws fails the import() that calls it, not the test file that mocks.
+    "factory-that-throws": layout(from, {
+      mocks: `mockModule("./dep", () => { throw new Error("from the factory"); });`,
+      expects: `
+        expect(who() + " " + via()).toBe("real real");
+        await expect(import("./dep")).rejects.toThrow("from the factory");
+      `,
+    }),
+    "without-a-factory": layout(from, {
+      mocks: `mockModule("./dep");`,
+      expects: `
+        const automock = await import("./dep");
+        expect([vi.isMockFunction(automock.who), automock.who(), vi.isMockFunction(who), who() + " " + via()]).toEqual([true, undefined, false, "real real"]);
+      `,
+    }),
+    "spy": layout(from, {
+      mocks: `mockModule("./dep", { spy: true });`,
+      expects: `
+        const spied = await import("./dep");
+        expect([vi.isMockFunction(spied.who), spied.who(), vi.isMockFunction(who), who() + " " + via()]).toEqual([true, "real", false, "real real"]);
+      `,
+    }),
+    // The original that the factory gets is the loaded module.
+    "factory-that-imports-the-original": layout(from, {
+      mocks: `let original; mockModule("./dep", async importOriginal => ({ ...(original = await importOriginal()), extra: "mock" }));`,
+      expects: `
+        expect(who() + " " + via()).toBe("real real");
+        const mocked = await import("./dep");
+        expect([mocked.extra, mocked.who, original.who]).toEqual(["mock", who, who]);
+      `,
+    }),
+    // The body that runs is a helper's, not the test file's.
+    "helper": helperLayout(from),
+    "helper-that-awaits-after-the-call": helperLayout(from, `${viaFunction} await 0;`),
+    // Under this key the helper isn't the file that holds the call.
+    "helper-imported-with-a-query": helperLayout(from, `vi.doMock("./dep", factory);`, "./mocks.ts?v", ""),
+    // Only vi.importActual() has loaded "./dep" when the helper imports it.
+    "helper-of-a-module-that-importactual-loaded": {
+      ...helperFiles(from),
+      "layout.test.ts": `
+        import { expect, test, vi } from ${JSON.stringify(from)};
+        const actual = await vi.importActual("./dep");
+        const { factory, read } = await import("./mocks");
+        test("what vi.importActual() returned and what the helper imported stay, and the next import() gets the mock", async () => {
+          ${realThenMock("./dep", `actual.who() + " " + read()`, "real real")}
+        });
+      `,
+    },
+    // The body of "./member" has ended, and the module isn't evaluated until the root of its cycle is.
+    "import-cycle": {
+      "dep.ts": dep,
+      "member.ts": `import { who } from "./dep"; import "./root"; export const read = () => who();`,
+      "root.ts": `
+        import { vi } from ${JSON.stringify(from)};
+        import { read } from "./member";
+        export const factory = vi.fn(() => ({ who: () => "mock" }));
+        vi.doMock("./dep", factory);
+        export { read };
+      `,
+      "layout.test.ts": `
+        import { expect, test } from ${JSON.stringify(from)};
+        import { factory, read } from "./root";
+        test("what the member imported stays, and the next import() gets the mock", async () => {
+          ${realThenMock("./dep", "read()")}
+        });
+      `,
+    },
+    // The body of "./member" waits at its await while "./mocks", the next import of the root of its cycle, runs.
+    "import-cycle-with-a-member-that-awaits": {
+      "dep.ts": dep,
+      "member.ts": `import { who } from "./dep"; import "./root"; await 0; export const read = () => who();`,
+      "mocks.ts": `
+        import { vi } from ${JSON.stringify(from)};
+        export const factory = vi.fn(() => ({ who: () => "mock" }));
+        vi.doMock("./dep", factory);
+      `,
+      "root.ts": `export { read } from "./member"; export { factory } from "./mocks";`,
+      "layout.test.ts": `
+        import { expect, test } from ${JSON.stringify(from)};
+        import { factory, read } from "./root";
+        test("what the member imported stays, and the next import() gets the mock", async () => {
+          ${realThenMock("./dep", "read()")}
+        });
+      `,
+    },
+  });
+
+  // The test files run in the order of their paths, one test each.
+  async function expectLayoutsToPass(from: string, folders: string[], args: string[] = []) {
+    const all = layouts(from);
+    const files = {
+      "preload.ts": folders.includes("loaded-by-a-preload")
+        ? `${preload} globalThis.depOfPreload = await import("./loaded-by-a-preload/dep.ts");`
+        : preload,
+      ...packages,
+      ...Object.assign({}, ...folders.map(folder => inFolder(folder, all[folder]))),
+    };
+    const testFiles = Object.keys(files)
+      .filter(path => path.endsWith(".test.ts"))
+      .sort()
+      .map(path => `./${path}`);
+    await expectFixturesToPass(files, testFiles.length, [...args, "--preload", "./preload.ts", ...testFiles]);
+  }
+
+  // From "vitest" the imports of a test file run one at a time, so no module is linked to what the file imports when its body mocks.
+  test.each(flavors)("the body of the test file keeps what it imported, from %s", async from => {
+    await expectLayoutsToPass(from, [
+      "function",
+      "function-that-ends-in-the-call",
+      "function-that-is-left-by-a-tail-call",
+      "function-of-a-commonjs-module",
+      "function-of-a-preload",
+      "package",
+      "commonjs-package",
+      "loaded-by-a-preload",
+      "required",
+      "mocked-twice",
+      "factory-that-throws",
+      "without-a-factory",
+      "factory-that-imports-the-original",
+    ]);
+  });
+
+  // A test of its own for test/aot/runner-suites.runs.txt, which goes by the name of a test: only here does a run under --aot load fewer files than a plain run.
+  test.each(flavors)("with { spy: true }, which spies on an instance of its own, from %s", async from => {
+    await expectLayoutsToPass(from, ["spy"]);
+  });
+
+  test.each(flavors)("the body of a helper keeps what it imported, from %s", async from => {
+    await expectLayoutsToPass(from, [
+      "helper",
+      "helper-that-awaits-after-the-call",
+      "helper-of-a-module-that-importactual-loaded",
+      "import-cycle",
+      "import-cycle-with-a-member-that-awaits",
+    ]);
+  });
+
+  // A project of its own: under --aot one import with a query changes how every file of a project is compiled.
+  test.each(flavors)(
+    "the body of a helper that is imported with a query keeps what it imported, from %s",
+    async from => {
+      await expectLayoutsToPass(from, ["helper-imported-with-a-query"]);
+    },
+  );
+
+  // With --isolate=modules each test file has a loader of its own, whose modules the rule goes through.
+  test.each(isolationFlags.slice(1))(
+    "the body of the test file and of a helper keep what they imported %j",
+    async args => {
+      await expectLayoutsToPass("bun:test", ["function", "helper"], args);
+    },
+  );
+
+  // The mock ends with the test file. The helper whose body mocked runs again for the next file that imports it, and mocks again.
+  describe("a helper that mocked mocks again for the next test file that imports it", () => {
+    const testFile = (imports: string, read: string, expected: string, name = "./dep", declare = "test") => `
+      import { expect, test } from "bun:test";
+      ${imports}
+      ${declare}("what the file reads", async () => {
+        expect([${read}, (await import(${JSON.stringify(name)})).who()]).toEqual(${expected});
+      });
+    `;
+    const testFiles = (helperName: string, name = "./dep") => {
+      const importsHelper = `import { read } from ${JSON.stringify(helperName)};`;
+      return {
+        "1-mocks.test.ts": testFile(importsHelper, "read()", `["real", "mock"]`, name),
+        "2-plain.test.ts": testFile(`import { who } from ${JSON.stringify(name)};`, "who()", `["real", "real"]`, name),
+        "3-mocks.test.ts": testFile(importsHelper, "read()", `["real", "mock"]`, name),
+      };
+    };
+    // The files of a shape run in the order of their names.
+    async function expectShapesToPass(shapes: Record<string, Record<string, string>>, args: string[] = []) {
+      const names = ["1-mocks", "2-plain", "3-mocks"];
+      await expectFixturesToPass(
+        {
+          "preload.ts": preload,
+          ...packages,
+          ...Object.assign({}, ...Object.entries(shapes).map(([shape, files]) => inFolder(shape, files))),
+        },
+        names.length * Object.keys(shapes).length,
+        [
+          ...args,
+          "--preload",
+          "./preload.ts",
+          ...Object.keys(shapes).flatMap(shape => names.map(name => `./${shape}/${name}.test.ts`)),
+        ],
+      );
+    }
+
+    test.each(isolationFlags)("through a function of another module %j", async args => {
+      await expectShapesToPass({ "function": { ...testFiles("./mocks"), ...helperFiles("bun:test") } }, args);
+    });
+
+    test("through a function of another module, for a package", async () => {
+      await expectShapesToPass({
+        "package": {
+          ...testFiles("./mocks", "mocked-package"),
+          "wrap.ts": helper("bun:test"),
+          "mocks.ts": `
+            import { mockModule } from "./wrap";
+            import { who } from "mocked-package";
+            mockModule("mocked-package", () => ({ who: () => "mock" }));
+            export const read = () => who();
+          `,
+        },
+      });
+    });
+
+    test("through a function of a preload", async () => {
+      await expectShapesToPass({
+        "function-of-a-preload": { ...testFiles("./mocks"), ...helperFiles("bun:test", viaPreload, "") },
+      });
+    });
+
+    test("imported with a query", async () => {
+      await expectShapesToPass({
+        "helper-imported-with-a-query": {
+          ...testFiles("./mocks.ts?v"),
+          ...helperFiles("bun:test", `vi.doMock("./dep", factory);`, ""),
+        },
+      });
+    });
+
+    // Such a helper is no module that imports "./dep", so nothing names it as one whose body mocked. It stays loaded, and the third file reads ["real", "real", "real"].
+    test("but not a helper that gets the module from require()", async () => {
+      const requiresHelper = (helperName: string, declare?: string) =>
+        testFile(
+          `import { who } from "./dep"; const { read } = require(${JSON.stringify(helperName)});`,
+          "who(), read()",
+          `["real", "real", "mock"]`,
+          "./dep",
+          declare,
+        );
+      const shape = (helperName: string, helperFile: string, text: string) => ({
+        "dep.ts": dep,
+        [helperFile]: text,
+        "1-mocks.test.ts": requiresHelper(helperName),
+        "2-plain.test.ts": testFile(`import { who } from "./dep";`, "who()", `["real", "real"]`),
+        "3-mocks.test.ts": requiresHelper(helperName, "test.failing"),
+      });
+      const mocks = `globalThis.mockModuleOfPreload(require("node:path").join(__dirname, "dep.ts"), () => ({ who: () => "mock" }));`;
+      await expectShapesToPass({
+        "commonjs-helper": shape(
+          "./mocks.cjs",
+          "mocks.cjs",
+          `const dep = require("./dep.ts"); ${mocks} exports.read = () => dep.who();`,
+        ),
+        "helper-that-requires": shape(
+          "./mocks.ts",
+          "mocks.ts",
+          `const dep = require("./dep.ts"); ${mocks} export const read = () => dep.who();`,
+        ),
+      });
+    });
+  });
+
+  // One module that has yet to run decides for all. With "bun:test" the imports of the test file are all linked before the first of them runs,
+  // so the mock reaches that module by an update of "./dep" in place, which the helper reads too. With "vitest" they run one at a time: the helper keeps
+  // what it imported, and the module that runs later loads the mock.
+  test.each([
+    ["bun:test", `["mock", "mock", 1]`, `["mock", "mock", 1]`],
+    ["vitest", `["real", "real", 0]`, `["real", "mock", 0]`],
+  ])(
+    "a module that has yet to run beside a helper whose body mocks, from %s",
+    async (from, besideTestFile, besideLaterImport) => {
+      const files = {
+        ...helperFiles(from, `${viaFunction} export const callsInBody = factory.mock.calls.length;`),
+        "user.ts": `import { who } from "./dep"; export const via = () => who();`,
+      };
+      await expectFixturesToPass(
+        {
+          ...inFolder("test-file-that-imports-the-module-too", {
+            ...files,
+            "layout.test.ts": `
+            import { expect, test } from ${JSON.stringify(from)};
+            import { who } from "./dep";
+            import { callsInBody, read } from "./mocks";
+            test("what the test file and the helper read", () => expect([who(), read(), callsInBody]).toEqual(${besideTestFile}));
+          `,
+          }),
+          ...inFolder("later-import-of-the-test-file", {
+            ...files,
+            "layout.test.ts": `
+            import { expect, test } from ${JSON.stringify(from)};
+            import { callsInBody, read } from "./mocks";
+            import { via } from "./user";
+            test("what the helper and the later import read", () => expect([read(), via(), callsInBody]).toEqual(${besideLaterImport}));
+          `,
+          }),
+        },
+        2,
+      );
+    },
+  );
+
+  // With "bun:test" the imports of the test file are all linked before the first of them runs, so the mock reaches "./user" by an update of "./dep" in place.
+  // With "vitest" they run one at a time, and "./user" loads the mock.
+  test.each([
+    ["bun:test", `["mock", "mock"]`, `["mock", "mock", 1]`, `["real", "real", "real"]`],
+    ["vitest", `["real", "mock"]`, `["real", "real", 0]`, `["real", "mock", "mock"]`],
+  ])("what stays, from %s", async (from, yetToRun, aroundMock, waiting) => {
+    const inPlace = (mockModule: string) => ({
+      ...layout(from),
+      "wrap.ts": `import { jest, mock } from "bun:test"; export const mockModule = ${mockModule};`,
+      "layout.test.ts": `
+        import { expect, test } from ${JSON.stringify(from)};
+        import { mockModule } from "./wrap";
+        import { who } from "./dep";
+        import { via } from "./user";
+        mockModule("./dep", () => ({ who: () => "mock" }));
+        test("the loaded module is updated in place", () => {
+          expect([who(), via()]).toEqual(["mock", "mock"]);
+        });
+      `,
+    });
+    await expectFixturesToPass(
+      {
+        ...packages,
+        // A module that has yet to run gets the mock.
+        ...inFolder("yet-to-run", {
+          "dep.ts": dep,
+          "user.ts": `import { who } from "./dep"; export const via = () => who();`,
+          "wrap.ts": helper(from),
+          "mocks.ts": `import { mockModule } from "./wrap"; mockModule("./dep", () => ({ who: () => "mock" }));`,
+          "linked.test.ts": `
+            import { expect, test } from ${JSON.stringify(from)};
+            import { who } from "./dep";
+            import "./mocks";
+            import { via } from "./user";
+            test("the mock", () => expect([who(), via()]).toEqual(${yetToRun}));
+          `,
+        }),
+        // The body of "./calls" runs first and calls a function of "./holds", which holds the call and has yet to run. "./holds" keeps what it imports.
+        ...inFolder("function-of-a-module-that-has-yet-to-run", {
+          "dep.ts": dep,
+          "holds.ts": `
+            import { vi } from ${JSON.stringify(from)};
+            import { who } from "./dep";
+            import "./calls";
+            export function mockIt() { vi.doMock("./dep", () => ({ who: () => "mock" })); }
+            export const read = () => who();
+          `,
+          "calls.ts": `import { mockIt } from "./holds"; mockIt();`,
+          "layout.test.ts": `
+            import { expect, test } from ${JSON.stringify(from)};
+            import { read } from "./holds";
+            test("the module that holds the call keeps the real module", async () => {
+              expect([read(), (await import("./dep")).who()]).toEqual(["real", "mock"]);
+            });
+          `,
+        }),
+        // A module that waits for an import at a top-level await is passed over, though its body has yet to begin. In Vitest it loads the mock.
+        ...inFolder("module-that-waits-at-a-top-level-await", {
+          "dep.ts": dep,
+          "wrap.ts": helper(from),
+          "early.ts": `
+            import { join } from "node:path";
+            import { mockModule } from "./wrap";
+            queueMicrotask(() => mockModule(join(import.meta.dir, "dep.ts"), () => ({ who: () => "mock" })));
+          `,
+          "slow.ts": `await 0; export {};`,
+          "user.ts": `import "./slow"; import { who } from "./dep"; export const atBody = who(); export const via = () => who();`,
+          "layout.test.ts": `
+            import { expect, test } from ${JSON.stringify(from)};
+            import { who } from "./dep";
+            import "./early";
+            import { atBody, via } from "./user";
+            test("what the module that waited reads", () => expect([who(), atBody, via()]).toEqual(${waiting}));
+          `,
+        }),
+        // A function around vi.mock() updates a loaded package in place, as it does in 1.4. jest.doMock() and mock.module() always do.
+        ...inFolder("function-around-mock-of-a-package", {
+          ...layout(from, {
+            mocks: `mockModule("mocked-package", factory);`,
+            name: "mocked-package",
+            expects: `expect([who(), via(), factory.mock.calls.length]).toEqual(${aroundMock});`,
+          }),
+          "wrap.ts": helper(from, `(path, factory) => { vi.mock(path, factory); }`),
+        }),
+        ...inFolder("jest-domock", inPlace(`(path, factory) => { jest.doMock(path, factory); }`)),
+        ...inFolder("mock-module", inPlace(`(path, factory) => { mock.module(path, factory); }`)),
+      },
+      6,
+    );
+  });
+});
+
 describe.concurrent("resetModules", () => {
   test.each(isolationFlags)("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
     const counted = (name: string) => `globalThis.${name} = (globalThis.${name} ?? 0) + 1;`;

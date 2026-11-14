@@ -1,0 +1,61 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# function Heir(a, b) { Base.call(this, a); this.b = b; }
+# function quiet(count) { var total = 0; for (var i = 0; i < count; i++) { var item = new Heir(i, 2); total += item.second() + item.a; } return total; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { if (i === 5) change(Base, Heir); var item = new Heir(i, 2); total += item.second() + item.a; } return total; }
+# Base.prototype.first = function () { return this.a; };
+# Object.setPrototypeOf(Heir.prototype, Base.prototype);
+# Heir.prototype.second = function () { return this.b + this.first(); };
+# print(quiet(5));
+# print(run(10));
+# print(quiet(5));
+# print(report());
+# -- end of source
+# f3 = quiet
+# Base makes no object of its own: it is only called by Heir. Its guards begin with those of Heir, so what begins the guards of Heir in front of the loop says that those of Base have begun too,
+# and the read of `Base.call` begins nothing in the turn.
+# RUN(BEGINS): walk f3 mechanisms=all
+# BEGINS: BeginMemberGuards
+# BEGINS: ) isInLoop=true isLoopHead=true
+# BEGINS-NOT: BeginMemberGuards
+# BEGINS: Return
+# RUN: run-in-shell globalThis.hits = 0; globalThis.change = () => { }; globalThis.report = () => globalThis.hits;
+# CHECK: 30
+# CHECK-NEXT: 110
+# CHECK-NEXT: 30
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+# In the run METHOD another function lies under `first` on the prototype of Base from turn five on.
+# RUN(METHOD): run-in-shell globalThis.hits = 0; globalThis.change = (base) => { base.prototype.first = function () { globalThis.hits++; return 100; }; }; globalThis.report = () => globalThis.hits;
+# METHOD: 30
+# METHOD-NEXT: 575
+# METHOD-NEXT: 520
+# METHOD-NEXT: 10
+# METHOD-NEXT: exited with 0
+# In the run SETTER an accessor lies under `b` on the prototype of Base from turn five on.
+# RUN(SETTER): run-in-shell globalThis.hits = 0; globalThis.change = (base) => { Object.defineProperty(base.prototype, "b", { get() { return 7; }, set(value) { globalThis.hits++; }, configurable: true }); }; globalThis.report = () => globalThis.hits;
+# SETTER: 30
+# SETTER-NEXT: 135
+# SETTER-NEXT: 55
+# SETTER-NEXT: 10
+# SETTER-NEXT: exited with 0
+# In the run OWNCALL a `call` of its own lies on Base from turn five on. It counts the keys that the object has when it arrives: none.
+# RUN(OWNCALL): run-in-shell globalThis.hits = 0; globalThis.change = (base) => { base.call = function (self, a) { globalThis.hits += Object.keys(self).length + 1; self.a = a + 1; }; }; globalThis.report = () => globalThis.hits;
+# OWNCALL: 30
+# OWNCALL-NEXT: 120
+# OWNCALL-NEXT: 40
+# OWNCALL-NEXT: 10
+# OWNCALL-NEXT: exited with 0
+# In the run LINK the prototype of Heir stands below another object from turn five on.
+# RUN(LINK): run-in-shell globalThis.hits = 0; globalThis.change = (base, heir) => { Object.setPrototypeOf(heir.prototype, { first() { globalThis.hits++; return 50; } }); }; globalThis.report = () => globalThis.hits;
+# LINK: 30
+# LINK-NEXT: 325
+# LINK-NEXT: 270
+# LINK-NEXT: 10
+# LINK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.hits = 0; globalThis.change = (base) => { base.prototype.first = function () { globalThis.hits++; return 100; }; }; globalThis.report = () => globalThis.hits;
+# CHECKED: 30
+# CHECKED-NEXT: 575
+# CHECKED-NEXT: 520
+# CHECKED-NEXT: 10
+# CHECKED-NEXT: exited with 0

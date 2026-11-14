@@ -14,15 +14,15 @@ pub struct DynamicImportChunkname {
     chunk_substr_regex: Option<Regex>,
 }
 
-const NO_COMMENT: Message = Message::new("", "dynamic imports require a leading comment with the webpack chunkname");
-const LINE_COMMENT: Message =
-    Message::new("", "dynamic imports require a /* foo */ style comment, not a // foo comment");
-const NOT_PADDED: Message = Message::new("", "dynamic imports require a block comment padded with spaces - /* foo */");
-const INVALID_SYNTAX: Message = Message::new("", "dynamic imports require a \"webpack\" comment with valid syntax");
-const EAGER_WITH_NAME: Message = Message::new("", "dynamic imports using eager mode do not need a webpackChunkName");
-const REMOVE_CHUNK_NAME: Message = Message::new("", "Remove webpackChunkName");
-const REMOVE_MODE: Message = Message::new("", "Remove webpackMode");
-const NO_CHUNK_NAME: Message = Message::new("", "dynamic imports require a leading comment in the form /*{{format}}*/");
+const NO_COMMENT: &Message = &Message::new("", "dynamic imports require a leading comment with the webpack chunkname");
+const LINE_COMMENT: &Message =
+    &Message::new("", "dynamic imports require a /* foo */ style comment, not a // foo comment");
+const NOT_PADDED: &Message = &Message::new("", "dynamic imports require a block comment padded with spaces - /* foo */");
+const INVALID_SYNTAX: &Message = &Message::new("", "dynamic imports require a \"webpack\" comment with valid syntax");
+const EAGER_WITH_NAME: &Message = &Message::new("", "dynamic imports using eager mode do not need a webpackChunkName");
+const REMOVE_CHUNK_NAME: &Message = &Message::new("", "Remove webpackChunkName");
+const REMOVE_MODE: &Message = &Message::new("", "Remove webpackMode");
+const NO_CHUNK_NAME: &Message = &Message::new("", "dynamic imports require a leading comment in the form /*{{format}}*/");
 
 static PADDED_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r"/^ (\S[\s\S]+\S) $/"));
 static COMMENT_STYLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {

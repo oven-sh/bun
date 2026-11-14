@@ -6,10 +6,10 @@ pub struct ConsistentTypeDefinitions {
     prefers_type: bool,
 }
 
-const INTERFACE_OVER_TYPE: Message =
-    Message::new("interfaceOverType", "Use an `interface` instead of a `type`.");
-const TYPE_OVER_INTERFACE: Message =
-    Message::new("typeOverInterface", "Use a `type` instead of an `interface`.");
+const INTERFACE_OVER_TYPE: &Message =
+    &Message::new("interfaceOverType", "Use an `interface` instead of a `type`.");
+const TYPE_OVER_INTERFACE: &Message =
+    &Message::new("typeOverInterface", "Use a `type` instead of an `interface`.");
 
 fn is_within_declare_global(statement: Stmt) -> bool {
     Node::Stmt(statement).ancestors().any(|ancestor| match ancestor {

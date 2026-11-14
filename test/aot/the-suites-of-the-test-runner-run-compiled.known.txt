@@ -1,0 +1,9 @@
+# The cases of ./the-suites-of-the-test-runner-run-compiled.suites.txt that end otherwise under `bun test --aot` than under `bun test`: what each of the two runs prints for the case. A line goes out with what makes the two alike.
+# stack.test.ts: a frame of a stack trace bears the name that you wrote, not one that defineProperty() laid over it, as docs/compiler/compatibility.mdx says.
+bun test: (pass) name property is used for function calls in Bun.inspect
+bun test: (pass) name property is used for function calls in Error.stack
+bun test --aot: (fail) name property is used for function calls in Bun.inspect
+bun test --aot: (fail) name property is used for function calls in Error.stack
+# describe.test.ts: `const MyClass = class {}` in a function, used once. The transpiler of `bun test` lays the class into its use, where it gets no name. Compiled it is called MyClass, as the language says.
+bun test: (pass) blocks should handle a number, string, anonymous class, named class, or function for the first arg > Should also pass
+bun test --aot: (pass) blocks should handle a number, string, anonymous class, named class, or function for the first arg > MyClass > Should also pass

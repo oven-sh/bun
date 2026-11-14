@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow reassigning exceptions in `catch` clauses.
 pub struct NoExAssign;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Do not assign to the exception parameter.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Do not assign to the exception parameter.");
 
 impl Rule for NoExAssign {
     const META: Meta = Meta::eslint("no-ex-assign", Kind::Problem).recommended();

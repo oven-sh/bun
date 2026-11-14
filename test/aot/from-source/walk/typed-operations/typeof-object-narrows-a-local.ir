@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# "use strict";
+# function above(v) { if (typeof v !== "object" || v === null) return 0; return Object.getPrototypeOf(v) === Object.prototype ? 1 : 2; }
+# const list = [{ a: 1 }, null, 5, [], "x", Object.create(null)];
+# let sum = 0;
+# for (let i = 0; i < 12; i++) sum += above(list[i % 6]);
+# print(sum);
+# -- end of source
+# Behind both tests it is an object: the row for objects is called, with its code in line.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: AnyReceiver
+# CHECK: : object{{*}} = Narrowed
+# CHECK: TryCallInline {{*}}inlineBuiltin=GetPrototypeOf
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 10

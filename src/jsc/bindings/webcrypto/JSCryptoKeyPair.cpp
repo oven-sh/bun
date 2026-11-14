@@ -45,12 +45,12 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     if (!IDLInterface<CryptoKey>::isNullValue(dictionary.privateKey)) {
         auto privateKeyValue = toJS<IDLInterface<CryptoKey>>(lexicalGlobalObject, globalObject, throwScope, IDLInterface<CryptoKey>::extractValueFromNullable(dictionary.privateKey));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "privateKey"_s), privateKeyValue);
+        Bun::putDirectNamed(vm, result, "privateKey"_s, privateKeyValue);
     }
     if (!IDLInterface<CryptoKey>::isNullValue(dictionary.publicKey)) {
         auto publicKeyValue = toJS<IDLInterface<CryptoKey>>(lexicalGlobalObject, globalObject, throwScope, IDLInterface<CryptoKey>::extractValueFromNullable(dictionary.publicKey));
         RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "publicKey"_s), publicKeyValue);
+        Bun::putDirectNamed(vm, result, "publicKey"_s, publicKeyValue);
     }
     return result;
 }

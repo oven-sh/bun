@@ -1,0 +1,12 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Some = { x?: number; y?: number; z?: number; p?: number };
+# function both(first: Some, second: Some) { const made = { x: 0, ...first, y: 1, ...second, z: 2 }; return Object.keys(made).join() + ":" + made.x + made.y + made.z; }
+# let text = "";
+# for (let i = 0; i < 3; i++) text = both({ z: 9, y: 8, x: 7 }, { x: i }) + " " + both({ y: 8 }, { p: 1, y: 2, x: 3 });
+# print(text);
+# -- end of source
+# Written names and copies in turns, all in one run: a name that is laid again keeps the place of the first and takes the value of the last.
+# RUN: run-in-shell
+# CHECK: x,z,y:212 x,y,p,z:322
+# CHECK-NEXT: exited with 0

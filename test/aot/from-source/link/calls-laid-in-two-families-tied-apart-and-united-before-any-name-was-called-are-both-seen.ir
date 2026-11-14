@@ -1,0 +1,39 @@
+# -- source: calls-laid-in-two-families-tied-apart-and-united-before-any-name-was-called-are-both-seen.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a1() { return 1; }
+# function a2() { return 2; }
+# function a3() { return 3; }
+# function a4() { return 4; }
+# function a5() { return directBoth(either(hidden(), 0)) + directThird(pickThird(4)); }
+# function b1() { return 10; }
+# function b2() { return 20; }
+# function b3() { return 30; }
+# function b4() { return 40; }
+# function b5() { return 50; }
+# function c1() { return 100; }
+# function c2() { return 200; }
+# function c3() { return 300; }
+# function c4() { return 400; }
+# function c5() { return byName(either(hidden(), 2), new Box(30)) + byName(either(!hidden(), 2), new Box(40)); }
+# a3.call = function (box) { box.count = "text"; return "first"; };
+# b3.call = function (box) { box.note = "text"; return "second"; };
+# function byName(handed, box) { const answer = handed.call(box); return answer + "," + typeof box.count + "," + typeof box.note + ";"; }
+# function pick(i) { return i === 0 ? a1 : i === 1 ? a2 : i === 2 ? a3 : i === 3 ? a4 : a5; }
+# function pickOther(i) { return i === 0 ? b1 : i === 1 ? b2 : i === 2 ? b3 : i === 3 ? b4 : b5; }
+# function pickThird(i) { return i === 0 ? c1 : i === 1 ? c2 : i === 2 ? c3 : i === 3 ? c4 : c5; }
+# function either(flag, i) { return flag ? pick(i) : pickOther(i); }
+# function directFirst(handed) { return handed(); }
+# function directSecond(handed) { return handed(); }
+# function directBoth(handed) { return handed(); }
+# function directThird(handed) { return handed(); }
+# let sum = "";
+# for (let i = 0; i < 5; i++) sum += directSecond(pickOther(i)) + ";";
+# for (let i = 0; i < 5; i++) sum += directFirst(pick(i)) + ";";
+# print(sum);
+# -- end of source
+# L0 = Box. Two families are called directly, each at a place of its own: each pool is tied. One of the first five, reached only there, lets them meet: the pools are tied to one while nobody has asked a name of either. The call by name is reached later still, through a third family: the pool that is kept answers for the functions that were tied to the other.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, 2147483647]|string
+# FIELDS: "note" proven=int[0, 2147483647]|string
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => true;
+# ANSWERS: 10;20;30;40;50;1;2;3;4;1first,string,number;second,number,string;;

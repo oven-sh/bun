@@ -1,0 +1,12 @@
+{
+  "why": "nobody awaits the call that the tests leave in flight: on a busy machine `bun test` now and then says more, or less",
+  "printed": [
+    "the test ends",
+    "the file below runs",
+    "the body of the file begins: its own"
+  ],
+  "tests": [
+    "(pass) the call is left in flight"
+  ],
+  "exitCode": 0
+}

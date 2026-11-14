@@ -28,7 +28,7 @@ if [ ! -x "$prefix/bin/brew" ]; then
 fi
 eval "$("$prefix/bin/brew" shellenv)"
 
-if [ ! -x /usr/local/bin/bun ]; then
+if [ "$(/usr/local/bin/bun --version 2>/dev/null)" != "$bun_version" ]; then
   fetch "https://github.com/oven-sh/bun/releases/download/bun-v$bun_version/bun-darwin-$target.zip" "$tmp/bun.zip" "$bun_sha256"
   unzip -q "$tmp/bun.zip" -d "$tmp"
   sudo mkdir -p /usr/local/bin

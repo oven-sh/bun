@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// element from `filter(...)`.
 pub struct PreferArrayFind;
 
-const PREFER_ARRAY_FIND: Message = Message::new("", "Prefer `find` over filtering and accessing the first result.");
+const PREFER_ARRAY_FIND: &Message = &Message::new("", "Prefer `find` over filtering and accessing the first result.");
 
 impl Rule for PreferArrayFind {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion).with_types("prefer-find");

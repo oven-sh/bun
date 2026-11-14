@@ -1,13 +1,13 @@
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
-    self as jsc, AutoFlush, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
+    self as jsc, AutoFlush, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
 };
 use bun_boringssl as BoringSSL;
@@ -91,7 +91,7 @@ pub struct PostgresSQLConnection {
     pub(crate) pending_requests: Cell<u32>,
     advancing: Cell<bool>,
 
-    pub(crate) poll_ref: JsCell<KeepAlive>,
+    pub(crate) poll_ref: KeepAlive,
     pub(crate) global_object: BackRef<JSGlobalObject>,
     vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<StatementCache>,
@@ -174,11 +174,8 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
-        // `free_sensitive`: the connection options carry the password.
-        for b in self.options_buf.iter_mut() {
-            // SAFETY: plain byte write; volatile so it is not elided.
-            unsafe { core::ptr::write_volatile(b, 0) };
-        }
+        // The connection options carry the password.
+        bun_alloc::secure_zero(&mut self.options_buf);
     }
 }
 
@@ -197,8 +194,8 @@ impl PostgresSQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop_mut()
+    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
+        VirtualMachine::get().event_loop()
     }
 
     #[inline]
@@ -382,7 +379,7 @@ impl PostgresSQLConnection {
         self.reset_connection_timeout();
         if status == Status::Connected {
             self.update_flags(|f| f.insert(ConnectionFlags::ON_CONNECT_PENDING));
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.unref(self.vm_ctx());
         }
         self.update_has_pending_activity();
     }
@@ -425,9 +422,9 @@ impl PostgresSQLConnection {
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_query_running() && self.write_buffer.get().remaining().is_empty()));
         if idle {
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.unref(self.vm_ctx());
         } else {
-            self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+            self.poll_ref.r#ref(self.vm_ctx());
         }
     }
 
@@ -562,7 +559,7 @@ impl PostgresSQLConnection {
         self.unregister_auto_flusher();
         let event_loop = self.event_loop();
         event_loop.enter();
-        self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        self.poll_ref.unref(self.vm_ctx());
         fail(self);
         event_loop.exit();
     }
@@ -630,7 +627,7 @@ impl PostgresSQLConnection {
             };
         }
 
-        self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+        self.poll_ref.r#ref(self.vm_ctx());
         self.update_has_pending_activity();
 
         if matches!(
@@ -842,40 +839,60 @@ impl PostgresSQLConnection {
     }
 }
 
-#[bun_jsc::host_fn(export = "PostgresSQLConnection__createInstance")]
-pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let vm = global_object.bun_vm().as_mut();
+pub(crate) fn create_connection<'a>(
+    cx: &mut JsScope<'a>,
+    hostname: &[u8],
+    port: f64,
+    username: &[u8],
+    password: &[u8],
+    database: &[u8],
+    ssl_mode: u8,
+    tls: JsLocal<'a>,
+    query: &[u8],
+    path: &[u8],
+    on_connected: JsLocal<'a, Callable>,
+    on_disconnected: JsLocal<'a, Callable>,
+    idle_timeout: f64,
+    connection_timeout: f64,
+    max_lifetime: f64,
+    use_unnamed_prepared_statements: bool,
+    _: JsLocal<'a>,
+    on_retire: Option<JsLocal<'a, Callable>>,
+    _: JsLocal<'a>,
+    channel_binding: u8,
+    column_transform: Option<JsLocal<'a, Callable>>,
+    scram_password: &[u8],
+) -> JsResult<JSValue> {
+    let global_object = cx.global();
+    let vm = global_object.bun_vm();
+    let port = port as i32;
     // The connection is the calling script's.
-    let context = global_object.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
-    let Some(args) = ConnectionCtorArgs::parse(global_object, &mut *vm, arguments)? else {
+    let context = global_object.bun_vm().context_of_caller();
+    let Some(args) = ConnectionCtorArgs::parse(
+        global_object,
+        hostname,
+        ssl_mode,
+        tls.to_js(),
+        idle_timeout,
+        connection_timeout,
+        max_lifetime,
+    )?
+    else {
         return Ok(JSValue::ZERO);
     };
     let (secure, tls_config) = (args.secure, args.tls_config);
     // Next to `rejectUnauthorized: false` it is not asked, as in Node.
-    let check_server_identity = server_identity::callback_of(global_object, arguments[6])?
+    let check_server_identity = server_identity::callback_of(global_object, tls.to_js())?
         .filter(|_| verifies_certificate(&tls_config, args.ssl_mode));
-    let channel_binding = ChannelBinding::from_js(global_object, callframe.argument(18))?;
-
-    let options_str = arguments[7].to_bun_string(global_object)?;
-    let scram_password_str = callframe.argument(20).to_bun_string(global_object)?;
-    let (username, password, scram_password, database, options, path) = (
-        args.username_str.to_utf8(),
-        args.password_str.to_utf8(),
-        scram_password_str.to_utf8(),
-        args.database_str.to_utf8(),
-        options_str.to_utf8(),
-        args.path_str.to_utf8(),
-    );
 
     // Reject null bytes in connection parameters to prevent Postgres startup
     // message parameter injection (null bytes act as field terminators in the
     // wire protocol's key\0value\0 format).
     for (entry, name) in [
-        (username.slice(), &b"username"[..]),
-        (password.slice(), b"password"),
-        (database.slice(), b"database"),
-        (path.slice(), b"path"),
+        (username, &b"username"[..]),
+        (password, b"password"),
+        (database, b"database"),
+        (path, b"path"),
     ] {
         if !entry.is_empty() && strings::contains_char(entry, 0) {
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -885,33 +902,32 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         }
     }
 
-    let hostname = args.hostname_str.to_utf8();
     open(
         global_object,
         vm.postgres_socket_group::<false>(context),
         ConnectParams {
-            hostname: hostname.slice(),
-            port: args.port,
+            hostname,
+            port,
             strings: ConnectionStrings::new(
-                username.slice(),
-                password.slice(),
-                scram_password.slice(),
-                database.slice(),
-                options.slice(),
-                path.slice(),
+                username,
+                password,
+                scram_password,
+                database,
+                query,
+                path,
             ),
             secure,
             tls_config: Rc::new(tls_config),
             ssl_mode: args.ssl_mode,
-            channel_binding,
+            channel_binding: ChannelBinding::ALL[usize::from(channel_binding)],
             idle_timeout_ms: args.idle_timeout_ms,
             connection_timeout_ms: args.connection_timeout_ms,
             max_lifetime_ms: args.max_lifetime_ms,
-            use_unnamed_prepared_statements: arguments[14].as_boolean(),
-            on_connect: arguments[9],
-            on_close: arguments[10],
-            on_retire: callframe.argument(16),
-            column_transform: callframe.argument(19),
+            use_unnamed_prepared_statements,
+            on_connect: on_connected.to_js(),
+            on_close: on_disconnected.to_js(),
+            on_retire: on_retire.map(JsLocal::to_js),
+            column_transform: column_transform.map(JsLocal::to_js),
             check_server_identity,
             cancel: None,
         },
@@ -919,18 +935,18 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     .map_err(|_| {
         let mut message: Vec<u8> = Vec::new();
         use std::io::Write as _;
-        let _ = if path.slice().is_empty() {
+        let _ = if path.is_empty() {
             write!(
                 &mut message,
                 "Failed to connect to {}:{}",
-                bstr::BStr::new(hostname.slice()),
-                args.port
+                bstr::BStr::new(hostname),
+                port
             )
         } else {
             write!(
                 &mut message,
                 "Failed to connect to {}",
-                bstr::BStr::new(path.slice())
+                bstr::BStr::new(path)
             )
         };
         global_object.throw_value(postgres_error_to_js(
@@ -999,8 +1015,8 @@ struct ConnectParams<'a> {
     use_unnamed_prepared_statements: bool,
     on_connect: JSValue,
     on_close: JSValue,
-    on_retire: JSValue,
-    column_transform: JSValue,
+    on_retire: Option<JSValue>,
+    column_transform: Option<JSValue>,
     check_server_identity: Option<JSValue>,
     cancel: Option<CancelTarget>,
 }
@@ -1023,7 +1039,7 @@ impl CancelTarget {
 
 fn open(
     global_object: &JSGlobalObject,
-    group: &mut uws::SocketGroup,
+    group: &uws::SocketGroup,
     params: ConnectParams<'_>,
 ) -> Result<JSValue, uws::ConnectError> {
     let ConnectionStrings {
@@ -1052,11 +1068,9 @@ fn open(
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
             advancing: Cell::new(false),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             global_object: BackRef::new(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
+            vm: BackRef::new(VirtualMachine::get()),
             statements: JsCell::new(StatementCache::default()),
             prepared_statement_id: Cell::new(0),
             transaction_status: Cell::new(b'I'),
@@ -1137,18 +1151,18 @@ fn open(
 
     // only call toJS if connectUnixAnon does not fail immediately
     this.reset_connection_timeout();
-    this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
+    this.poll_ref.ref_(this.vm_ctx());
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
     this.js_value
         .set(crate::jsc::JsRef::init_strong(js_value, global_object));
     js::onconnect_set_cached(js_value, global_object, params.on_connect);
-    if params.column_transform.is_callable() {
-        js::column_transform_set_cached(js_value, global_object, params.column_transform);
+    if let Some(column_transform) = params.column_transform {
+        js::column_transform_set_cached(js_value, global_object, column_transform);
     }
     js::onclose_set_cached(js_value, global_object, params.on_close);
-    if params.on_retire.is_callable() {
-        js::onretire_set_cached(js_value, global_object, params.on_retire);
+    if let Some(on_retire) = params.on_retire {
+        js::onretire_set_cached(js_value, global_object, on_retire);
     }
     if let Some(callback) = params.check_server_identity {
         js::check_server_identity_set_cached(js_value, global_object, callback);
@@ -1228,7 +1242,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 impl PostgresSQLConnection {
     pub fn r#ref(&self) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        self.poll_ref.with_mut(|p| p.ref_(self.vm_ctx()));
+        self.poll_ref.ref_(self.vm_ctx());
         self.update_has_pending_activity();
     }
 
@@ -1317,7 +1331,7 @@ impl PostgresSQLConnection {
         let socket = *self.socket.get();
         if !socket.is_closed() {
             // event loop need to be alive to close the socket
-            self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
+            self.poll_ref.ref_(self.vm_ctx());
             // will unref on socket close
             socket.close_now();
         }
@@ -1524,8 +1538,8 @@ impl PostgresSQLConnection {
                 use_unnamed_prepared_statements: false,
                 on_connect: JSValue::ZERO,
                 on_close: JSValue::ZERO,
-                on_retire: JSValue::UNDEFINED,
-                column_transform: JSValue::UNDEFINED,
+                on_retire: None,
+                column_transform: None,
                 check_server_identity: self.check_server_identity_callback(),
                 cancel: Some(CancelTarget {
                     session: self.ref_guard(),

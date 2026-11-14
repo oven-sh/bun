@@ -6,6 +6,9 @@ use crate::atom::known;
 use crate::hir::*;
 use bun_core::strings;
 
+#[cfg(test)]
+mod tests;
+
 /// JavaScript's own modifiers (`ModifierFlagsJavaScript`). `checkJSSyntax` reports the others.
 const JAVASCRIPT_MODIFIERS: Flags = Flags::EXPORT
     .union(Flags::STATIC)
@@ -58,6 +61,8 @@ pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
     for (stmt, id) in file.stmts.iter().zip(0..) {
         let modifier_span = file.stmt_modifiers(StmtId(id));
         match stmt.kind {
+            // Synthesized from a tag of a JSDoc comment.
+            _ if file.is_in_jsdoc(stmt.start) => {}
             StmtKind::Module(module) if !matches!(file[module].name, ModuleName::Ident(_)) => {
                 found.push((stmt.start, 8006, "module"));
             }
@@ -83,11 +88,11 @@ pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
     }
     for param in file.params.iter() {
         let name = file[param.pat];
-        if matches!(name.kind, PatKind::Ident(known::this)) {
+        if matches!(name.kind, PatKind::Ident(known::this)) && !file.is_in_jsdoc(name.pos) {
             found.push((name.pos, 1003, ""));
         }
     }
-    for member in file.members.iter() {
+    for member in file.members.iter().filter(|it| !file.is_in_jsdoc(it.start)) {
         let allowed = match member.kind {
             // `static async constructor() {}` is a method.
             MemberKind::Method | MemberKind::Constructor => Flags::STATIC | Flags::ASYNC,

@@ -664,7 +664,11 @@ pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 hir::PropKey::Computed(e) => {
                     may_repeat |= matches!(
                         hir.exprs.get(e.idx()).map(|it| it.kind),
-                        Some(hir::ExprKind::Null | hir::ExprKind::BigInt(_) | hir::ExprKind::Regex)
+                        Some(
+                            hir::ExprKind::Null
+                                | hir::ExprKind::BigInt(_)
+                                | hir::ExprKind::Regex { .. }
+                        )
                     );
                 }
                 hir::PropKey::Private(_) => {}

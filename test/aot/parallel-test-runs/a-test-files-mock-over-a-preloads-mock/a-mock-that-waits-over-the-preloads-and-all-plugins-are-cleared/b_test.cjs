@@ -1,0 +1,9 @@
+const { test, vi, mock, jest } = require("bun:test");
+const NAME = "pack/lib.cjs";
+const ask = async () => { try { const it = require(NAME); return it.a + " " + it.n; } catch (error) { return error.name; } };
+const say = (at, ...all) => console.log("SAID", at, globalThis.runsOfLib, ...all);
+let handle;
+test("b", async () => {
+  handle = vi.doMock(NAME, () => ({ a: "theirs", n: -3 }));
+  Bun.plugin.clearAll(); say("cleared", await ask(), await ask());
+});

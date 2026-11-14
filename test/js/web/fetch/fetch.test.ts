@@ -2772,7 +2772,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -2801,7 +2801,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";

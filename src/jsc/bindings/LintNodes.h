@@ -26,10 +26,13 @@ struct LintNodeState {
         Espree,
         Oxlint,
         OxlintJavaScript,
+        TypeScriptWithStartEnd,
     };
-    static constexpr size_t layoutKinds = 4;
-    // The last has those of `Oxlint`.
+    static constexpr size_t layoutKinds = 5;
+    // The first three. `OxlintJavaScript` has those of `Oxlint`, `TypeScriptWithStartEnd` those of `TypeScript`.
     static constexpr size_t visitorKeyKinds = 3;
+    static bool isTypeScript(LayoutKind kind) { return kind == TypeScript || kind == TypeScriptWithStartEnd; }
+    static bool isOxlint(LayoutKind kind) { return kind == Oxlint || kind == OxlintJavaScript; }
     // What is in a property, if it isn't the field with that number.
     enum What : uint32_t {
         Type = 0xF0,
@@ -80,12 +83,8 @@ struct LintNodeState {
     // Asks Rust. Something has to be handled at the time. Returns false if the answer isn't as expected.
     bool load(JSC::JSGlobalObject*, LintHost*);
 
-    LayoutKind kindFor(bool isEspree, bool isOxlint, bool shortensNodes) const
-    {
-        if (isOxlint)
-            return shortensNodes ? OxlintJavaScript : Oxlint;
-        return isEspree ? Espree : TypeScript;
-    }
+    // The layout of the nodes of the current file.
+    static LayoutKind kindFor(const LintHost*);
 
     size_t typeCount() const { return m_typeNames.size(); }
     const Layout& layout(LayoutKind kind, uint8_t type) const { return m_layouts[kind][type]; }

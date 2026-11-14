@@ -8,7 +8,7 @@ use bun_lint::utils::visible::is_visibly_dom_node;
 /// `.getElementsByTagName()`.
 pub struct PreferQuerySelector;
 
-const PREFER_QUERY_SELECTOR: Message = Message::new("", "Prefer `.{{good_method}}()` over `.{{bad_method}}()`.");
+const PREFER_QUERY_SELECTOR: &Message = &Message::new("", "Prefer `.{{good_method}}()` over `.{{bad_method}}()`.");
 
 const METHODS: [&str; 4] = ["getElementById", "getElementsByClassName", "getElementsByTagName", "getElementsByName"];
 

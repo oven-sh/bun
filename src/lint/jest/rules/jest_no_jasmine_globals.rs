@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct NoJasmineGlobals;
 
 /// The quotes are part of oxlint's message.
-const ILLEGAL_USAGE: Message = Message::new("", "\"Illegal usage of {{what}}\"");
+const ILLEGAL_USAGE: &Message = &Message::new("", "\"Illegal usage of {{what}}\"");
 
 /// (name, `{{what}}` in the message, `help` text)
 const NON_JASMINE_PROPERTY_NAMES: [(&str, &str, &str); 4] = [

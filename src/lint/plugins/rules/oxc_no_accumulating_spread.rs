@@ -7,8 +7,8 @@ use bun_lint_oxlint::ast_util::{static_property_info, static_string};
 /// Prevents using object or array spreads on accumulators in `Array.prototype.reduce()` and in loops.
 pub struct NoAccumulatingSpread;
 
-const REDUCE_SPREAD: Message = Message::new("reduceSpread", "Do not spread accumulators in Array.prototype.reduce()");
-const LOOP_SPREAD: Message = Message::new("loopSpread", "Do not spread accumulators in loops");
+const REDUCE_SPREAD: &Message = &Message::new("reduceSpread", "Do not spread accumulators in Array.prototype.reduce()");
+const LOOP_SPREAD: &Message = &Message::new("loopSpread", "Do not spread accumulators in loops");
 
 /// A spread of an accumulator in a loop.
 struct InLoop<'a> {

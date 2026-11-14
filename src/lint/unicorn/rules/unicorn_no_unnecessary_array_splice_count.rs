@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// `Array#toSpliced()`. With `SLICE`: as the second argument of `slice(...)`.
 pub struct NoUnnecessaryArraySpliceCount<const SLICE: bool = false>;
 
-const DELETE_COUNT: Message = Message::new("", "Passing `{{arg_str}}` as the `deleteCount` argument is unnecessary.");
-const END: Message = Message::new("", "Passing `{{arg_str}}` as the `end` argument is unnecessary.");
+const DELETE_COUNT: &Message = &Message::new("", "Passing `{{arg_str}}` as the `deleteCount` argument is unnecessary.");
+const END: &Message = &Message::new("", "Passing `{{arg_str}}` as the `end` argument is unnecessary.");
 
 impl<const SLICE: bool> NoUnnecessaryArraySpliceCount<SLICE> {
     const METHODS: &[&str] = if SLICE { &["slice"] } else { &["splice", "toSpliced"] };

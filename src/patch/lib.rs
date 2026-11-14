@@ -134,10 +134,10 @@ fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
 /// can be stale.
 fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
     // One fd for the read and the write-back, so nothing can be swapped in between them.
-    let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
+    let (file_fd, size) = open_target_file(parent, base, sys::O::RDWR, 0)?;
     let _close_file = sys::CloseOnDrop::new(file_fd);
 
-    if stat.st_size as u64 > MAX_PATCH_TARGET_BYTES {
+    if size > MAX_PATCH_TARGET_BYTES {
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).into());
     }
     let filebuf: Vec<u8> = sys::File::borrow(&file_fd)
@@ -393,35 +393,28 @@ fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error
 }
 
 /// Only accepts a regular file with one hard link, because a second link could reach the inode from
-/// outside the patch directory.
+/// outside the patch directory. Returns the descriptor and the size.
 fn open_target_file(
     parent: Fd,
     base: &ZStr,
     flags: i32,
     mode: sys::Mode,
-) -> sys::Result<(Fd, sys::Stat)> {
+) -> sys::Result<(Fd, u64)> {
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
     // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
     let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
-    let fd = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
-        .map_err(|e| symlink_component_err(parent, base, e))?;
-    let stat = match sys::fstat(fd) {
-        Ok(st) => st,
-        Err(e) => {
-            fd.close();
-            return Err(e);
-        }
-    };
+    let file = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
+        .map_err(|e| symlink_component_err(parent, base, e))
+        .map(sys::File::from_fd)?;
+    let stat = sys::fstat(file.fd())?;
     if !sys::S::ISREG(stat.st_mode as u32) {
-        fd.close();
         return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
     }
     if stat.st_nlink > 1 {
-        fd.close();
         return Err(sys::Error::from_code(sys::E::EMLINK, sys::Tag::open));
     }
-    Ok((fd, stat))
+    Ok((file.into_raw(), stat.st_size as u64))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1395,7 +1388,7 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop,
+    loop_: &bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, GitDiffEnv) {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
@@ -1512,7 +1505,7 @@ pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop,
+    loop_: &bun_event_loop::AnyEventLoop,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];

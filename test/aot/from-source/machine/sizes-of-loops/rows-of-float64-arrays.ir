@@ -1,0 +1,23 @@
+# f1 = turn
+# -- source: rows-of-float64-arrays.ts
+# const rows: Float64Array[] = [];
+# for (let r = 0; r < 16; r++) rows.push(new Float64Array(64));
+# function turn(i: number): number {
+#   let sum = i & 1;
+#   for (let r = 0; r < rows.length; r++) {
+#     const row = rows[r]!;
+#     for (let c = 0; c < row.length; c++) sum += row[c]!;
+#   }
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 10 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 12, patches 0, moves 0, unlikely 6 ; loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:13,5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 13
+# X64-NEXT: loop: at most 5

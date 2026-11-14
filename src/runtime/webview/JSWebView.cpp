@@ -4,6 +4,7 @@
 // transport singletons live in the backend files.
 
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "JSWebView.h"
 #include "ChromeBackend.h"
 #include "WebKitBackend.h"
@@ -147,6 +148,7 @@ JSWebView::~JSWebView()
 
 void JSWebView::destroy(JSCell* cell)
 {
+    BUN_REMOVABLE_DEFINITION(WebView, JSWebView::destroy);
     static_cast<JSWebView*>(cell)->~JSWebView();
 }
 

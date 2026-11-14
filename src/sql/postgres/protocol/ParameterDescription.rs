@@ -27,22 +27,12 @@ impl ParameterDescription {
 
         let data = reader.read(n * core::mem::size_of::<Int4>())?;
         // `defer data.deinit()` — handled by Drop.
-        let input_params = to_int32_slice(data.slice());
+        let (input_params, _) = data.slice().as_chunks::<{ size_of::<Int4>() }>();
         debug_assert_eq!(input_params.len(), parameters.len());
         for (src, dest) in input_params.iter().zip(parameters.iter_mut()) {
-            *dest = Int4::from_ne_bytes(*src).swap_bytes();
+            *dest = Int4::from_be_bytes(*src);
         }
 
         Ok(Self { parameters })
     }
-}
-
-// Rust cannot form an unaligned `&[i32]`, so we reinterpret as `&[[u8; 4]]`
-// (align 1) and let the caller `from_ne_bytes` each element.
-fn to_int32_slice(slice: &[u8]) -> &[[u8; core::mem::size_of::<Int4>()]] {
-    // `[u8; 4]` has align 1 and is `AnyBitPattern`, so this is a safe bytemuck
-    // cast. Truncate any trailing `len % 4` bytes first (cast_slice would
-    // panic on a remainder).
-    let n = core::mem::size_of::<Int4>();
-    bun_core::cast_slice(&slice[..slice.len() - slice.len() % n])
 }

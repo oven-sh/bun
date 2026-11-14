@@ -1,28 +1,23 @@
-// Trace-events agent: category registry, in-memory event buffer, and the
-// `node_trace.${rotation}.log` writer. Everything trace_events-related funnels
-// through here — `node:trace_events`, `internal/test/binding`, and the
-// `internal/process/pre_execution` bootstrap.
-//
-// Phase B note (fs/http/net/console/promises/threadpool/worker emitters):
-// require this module and call `emitEvent(ph, cat, name, id, data)` after
-// checking `isCategoryGroupEnabled(cat)`. `cat` may be a compound string like
-// "node,node.fs,node.fs.sync" — the event is recorded when any comma-separated
-// component is enabled, and the cat string is written to the file verbatim.
+// Trace-events agent: who enables categories, the instrumentation of other modules, and the `node_trace.${rotation}.log` writer.
 // Worker support: call `setTid(n)` before emitting to tag events with a
 // non-main thread id.
-
-// Enabled categories with refcounts. Insertion-ordered, so CLI categories
-// (enabled first, at bootstrap) come first in getEnabledCategories().
-const categoryRefs = new Map<string, number>();
+const {
+  categoryRefs,
+  events,
+  now,
+  setTid,
+  getTid,
+  isCategoryGroupEnabled,
+  emitEvent,
+  emitEventWithArgs,
+} = require("internal/trace_event_recorder");
 // Live one-byte views handed out by getCategoryEnabledBuffer(); byte 0 is 1
 // while the category is enabled.
 const categoryBuffers = new Map<string, Uint8Array>();
 // Categories that were enabled at least once (for one-shot synthetic events).
 const everEnabled = new Set<string>();
 
-const events: object[] = [];
 let activated = false;
-let tid = 1;
 let initialTitle: string | undefined;
 let filePattern: string | null = null;
 let nextAsyncId = 2;
@@ -60,27 +55,8 @@ const kThreadpoolSyncCat = "node,node.threadpoolwork,node.threadpoolwork.sync";
 const kEnvironmentCat = "node,node.environment";
 const kBootstrapCat = "node,node.bootstrap";
 
-function now(): number {
-  // Trace-event timestamps are in microseconds.
-  return Math.round(performance.now() * 1000);
-}
-
-function setTid(value: number) {
-  tid = value;
-}
-
 function isTraceCategoryEnabled(category: string): boolean {
   return categoryRefs.$has(category);
-}
-
-function isCategoryGroupEnabled(cat: string): boolean {
-  if (categoryRefs.size === 0) return false;
-  if (categoryRefs.$has(cat)) return true;
-  if (!cat.includes(",")) return false;
-  for (const part of cat.split(",")) {
-    if (categoryRefs.$has(part)) return true;
-  }
-  return false;
 }
 
 function enableCategories(categories: string[]) {
@@ -138,28 +114,6 @@ function getCategoryEnabledBuffer(category: string): Uint8Array {
     categoryBuffers.$set(category, buffer);
   }
   return buffer;
-}
-
-function emitEvent(ph: string, cat: string, name: string, id?: number, data?: unknown) {
-  emitEventWithArgs(ph, cat, name, id, data === undefined ? {} : { data });
-}
-
-// Like `emitEvent`, but `args` lands at the top level of the event's `args`
-// object instead of under `args.data`. Node's native TRACE_EVENT macros
-// (e.g. the pipe connect event in pipe_wrap.cc) emit their key/value pairs
-// this way, and tests assert e.g. `trace.args.path_type` directly.
-function emitEventWithArgs(ph: string, cat: string, name: string, id?: number, args?: unknown) {
-  const event: Record<string, unknown> = {
-    pid: process.pid,
-    tid,
-    ts: now(),
-    ph,
-    cat,
-    name,
-  };
-  if (id !== undefined) event.id = "0x" + id.toString(16);
-  event.args = args === undefined ? {} : args;
-  events.push(event);
 }
 
 // internalBinding('trace_events').trace(phase, cat, name, id, data) — phase is
@@ -268,7 +222,7 @@ function flushImpl() {
     // The pid component keeps a concurrent traced process (or a stale part
     // from a killed previous run) in the same cwd from being merged by it.
     try {
-      require("node:fs").writeFileSync(`${fileName}.${process.pid}.${tid}.part`, JSON.stringify(events));
+      require("node:fs").writeFileSync(`${fileName}.${process.pid}.${getTid()}.part`, JSON.stringify(events));
     } catch {
       // Best-effort, like the main-thread write below.
     }
@@ -305,7 +259,7 @@ function flushImpl() {
     // Synthetic stand-in for V8 GC trace events — JSC has no V8 tracing.
     events.push({
       pid: process.pid,
-      tid,
+      tid: getTid(),
       ts: now(),
       ph: "I",
       cat: "v8",
@@ -354,10 +308,10 @@ function mergeWorkerParts(fileName: string) {
 function emitMetadata(target: object[] = events) {
   const ts = 0;
   const pid = process.pid;
-  function meta(name: string, args: unknown, metaTid: number = tid) {
+  function meta(name: string, args: unknown, metaTid: number = getTid()) {
     target.push({ pid, tid: metaTid, ts, ph: "M", cat: "__metadata", name, args });
   }
-  meta("thread_name", { name: "JavaScriptMainThread" }, tid);
+  meta("thread_name", { name: "JavaScriptMainThread" }, getTid());
   meta("thread_name", { name: "PlatformWorkerThread" }, kPlatformWorkerTid);
   meta("version", { node: process.versions.node });
   const release: Record<string, unknown> = { name: process.release.name };
@@ -474,8 +428,11 @@ function installTimerInstrumentation() {
   globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
 }
 
+/** Whatever function is wrapped so that its calls leave events: the arguments are passed on as they come. */
+type Wrapped = (...args: any[]) => unknown;
+
 function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInterval: boolean): T {
-  function wrapped(callback, delay, ...args) {
+  function wrapped(callback: Wrapped, delay: unknown, ...args: unknown[]) {
     let span: { id: number; open: boolean } | null = null;
     if (typeof callback === "function" && isCategoryGroupEnabled(kAsyncHooksCat)) {
       const asyncId = nextAsyncId++;
@@ -486,7 +443,7 @@ function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInt
       });
       const inner = callback;
       const capturedSpan = span;
-      callback = function (...callbackArgs) {
+      callback = function (this: unknown, ...callbackArgs: unknown[]) {
         try {
           return inner.$apply(this, callbackArgs);
         } finally {
@@ -515,7 +472,7 @@ function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInt
   return wrapped as T;
 }
 
-function wrapClearFunction(original) {
+function wrapClearFunction(original: (timer: any) => void) {
   function wrapped(timer) {
     if (typeof timer === "object" && timer !== null) {
       const span = timer[kTimerSpan];
@@ -644,8 +601,8 @@ function installFsInstrumentation() {
   }
 }
 
-function wrapFsSyncMethod(original, names: string[]) {
-  return function (...args) {
+function wrapFsSyncMethod(original: Wrapped, names: string[]) {
+  return function (this: unknown, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsSyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("B", kFsSyncCat, "fs.sync." + names[i]);
     try {
@@ -660,13 +617,13 @@ function emitFsAsyncEnd(names: string[]) {
   for (let i = names.length - 1; i >= 0; i--) emitEvent("e", kFsAsyncCat, names[i]);
 }
 
-function wrapFsAsyncMethod(original, names: string[]) {
-  return function (...args) {
+function wrapFsAsyncMethod(original: Wrapped, names: string[]) {
+  return function (this: unknown, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
-    let result;
+    let result: { then?(onFulfilled: (value: unknown) => unknown, onRejected: (error: unknown) => unknown): unknown };
     try {
-      result = original.$apply(this, args);
+      result = original.$apply(this, args) as typeof result;
     } catch (err) {
       // Balance the 'b' events when the binding throws synchronously
       // (e.g. argument validation), mirroring wrapFsSyncMethod's finally.
@@ -693,8 +650,8 @@ function wrapFsAsyncMethod(original, names: string[]) {
 }
 
 // The callback arm of the binding (`xCb(callback, ...args)`): the span ends when the operation calls back.
-function wrapFsCallbackMethod(original, names: string[]) {
-  return function (callback, ...args) {
+function wrapFsCallbackMethod(original: Wrapped, names: string[]) {
+  return function (this: unknown, callback: Wrapped, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, arguments);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
     try {
@@ -780,7 +737,7 @@ function installRejectionInstrumentation() {
     if (!isCategoryGroupEnabled(kRejectionsCat)) return;
     events.push({
       pid: process.pid,
-      tid,
+      tid: getTid(),
       ts: now(),
       ph: "C",
       cat: kRejectionsCat,
@@ -826,15 +783,15 @@ function installThreadpoolInstrumentation() {
   }
 }
 
-function wrapThreadpoolMethod(original, traceName: string) {
-  return function (...args) {
-    const callback = args[args.length - 1];
+function wrapThreadpoolMethod(original: Wrapped, traceName: string) {
+  return function (this: unknown, ...args: unknown[]) {
+    const callback = args[args.length - 1] as Wrapped;
     if (typeof callback !== "function") return original.$apply(this, args);
     const asyncEnabled = isCategoryGroupEnabled(kThreadpoolAsyncCat);
     const syncEnabled = isCategoryGroupEnabled(kThreadpoolSyncCat);
     if (!asyncEnabled && !syncEnabled) return original.$apply(this, args);
     if (asyncEnabled) emitEvent("b", kThreadpoolAsyncCat, traceName);
-    args[args.length - 1] = function (...callbackArgs) {
+    args[args.length - 1] = function (this: unknown, ...callbackArgs: unknown[]) {
       if (syncEnabled) {
         emitEvent("b", kThreadpoolSyncCat, traceName);
         emitEvent("e", kThreadpoolSyncCat, traceName);

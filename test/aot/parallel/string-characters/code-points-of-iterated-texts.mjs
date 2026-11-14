@@ -1,0 +1,5 @@
+function sum(text) { let sum = 0, wide = 0; for (const character of text) { const code = character.codePointAt(0); if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) continue; if (code > 0xffff) wide++; sum = (sum * 31 + code + character.length) | 0; } return sum + ":" + wide; }
+function first(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum = (sum * 7 + (list[i].codePointAt(0) ?? -1) + (list[i].charCodeAt(0) || 0)) | 0; return sum; }
+function mixed(text) { const out = []; for (const character of text) out.push(character.codePointAt(), character.codePointAt(0), character.codePointAt(1), character.charCodeAt(0), character.charCodeAt()); return out.join(); }
+const texts = ["", "a", "plain text", "\x00\x1f\x7f\x9f\xa0", "éĀ", "\u{1f0a1}\u{1f0b2}", "\ud800", "\udc00x\ud83c", "a\u{1f600}b\ud83d", "x".repeat(70) + "\u{10ffff}"];
+for (let turn = 0; turn < 3; turn++) for (const text of texts) console.log(sum(text), first([...text]), first(text.split("")), mixed(text), first([text, text + "z", "z" + text, text.slice(1)]));

@@ -1,0 +1,28 @@
+# `list.length === 0` in front of a branch, of a receiver of which nothing is known: the read and the comparison are one call, and the answer comes in the flags.
+# The place holds no test of the result for an int32 and no arm for a length that is a number and no int32: the stub holds what the general read finds against the integer itself.
+# It goes for the integers from 0 to 7, written on either side, for `!==` too; a greater integer, a length that is kept, and a comparison that is no condition of a branch read the length as before.
+# f1 = isEmpty, f2 = isNotTwo, f3 = isSeven, f4 = isEight, f5 = keeps, f6 = says
+# -- source: main.js
+# function isEmpty(thing) { if (thing.length === 0) return 1; return 2; }
+# function isNotTwo(thing) { if (2 !== thing.length) return 1; return 2; }
+# function isSeven(thing) { return thing.length === 7 ? "seven" : "other"; }
+# function isEight(thing) { if (thing.length === 8) return 1; return 2; }
+# function keeps(thing) { const length = thing.length; if (length === 1) return length; return 0; }
+# function says(thing) { return thing.length === 1; }
+# sink(isEmpty, isNotTwo, isSeven, isEight, keeps, says);
+# -- end of source
+# RUN: bytes f1:Body mechanisms=all
+# CHECK: argument thunk 0 LengthIs count 0
+# RUN(OTHERSIDE): bytes f2:Body mechanisms=all
+# OTHERSIDE: argument thunk 0 LengthIs count 2
+# RUN(SEVEN): bytes f3:Body mechanisms=all
+# SEVEN: LengthIs count 7
+# RUN(EIGHT): bytes f4:Body mechanisms=all
+# EIGHT-NOT: LengthIs
+# EIGHT: GetLengthAtSite
+# RUN(KEPT): bytes f5:Body mechanisms=all
+# KEPT-NOT: LengthIs
+# KEPT: GetLengthAtSite
+# RUN(SAID): bytes f6:Body mechanisms=all
+# SAID-NOT: LengthIs
+# SAID: GetLengthAtSite

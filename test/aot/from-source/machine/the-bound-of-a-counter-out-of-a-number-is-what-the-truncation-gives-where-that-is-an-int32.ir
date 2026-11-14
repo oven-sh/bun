@@ -1,0 +1,34 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function less(to: number): number { let s = 0; for (let i = 0; i < to; i++) { s += i; if (i > 40) break; } return s; }
+# function greater(from: number, to: number): number { let s = 0; for (let i = from; i > to; i--) { s += i; if (i < -40) break; } return s; }
+# const bounds: number[] = [0, -0, 3, 3.5, 2.9999999, -0.5, NaN, Infinity, -Infinity, 2147483647, 2147483648, 2147483647.5, -2147483649, 9007199254740992, 4611686018427387904, 1e300, -1e300, 5e-324];
+# for (const to of bounds) print(less(+to), greater(5, +to));
+# -- end of source
+# `i < to`, to a number in a float register: in front of the loop the number is made an integer bound: rounded up or down and truncated. NaN and what lies beyond 2^62 were then chosen for by three choices with their constants, at every entry: 14 instructions and 76 bytes,
+# though the walk asks next whether the bound is an int32. What the truncation gives is taken where it is an int32 (NaN and what lies outside truncate to none); the rest is left to the run time on a way of its own.
+# f1 = less
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0 15
+# CHECK-NEXT: 0 15
+# CHECK-NEXT: 3 9
+# CHECK-NEXT: 6 9
+# CHECK-NEXT: 3 12
+# CHECK-NEXT: 0 15
+# CHECK-NEXT: 0 0
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 0 -846
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 0 -846
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 861 0
+# CHECK-NEXT: 0 -846
+# CHECK-NEXT: 0 15
+# CHECK-NEXT: exited with 0
+# RUN(EMIT): emit f1:Body mechanisms=all
+# EMIT: = Ceil(
+# EMIT-NOT: Int64 {{*}}= Select(
+# EMIT: = SExt32(

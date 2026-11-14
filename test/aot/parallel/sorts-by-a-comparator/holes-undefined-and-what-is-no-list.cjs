@@ -1,0 +1,12 @@
+// Lists with holes and undefined, lists of a subclass, proxies, frozen lists and objects like lists are sorted by a function.
+const z = JSON.parse("[0]")[0], out = [], say = (f) => { try { return String(f()); } catch (e) { return e.name + ":" + e.message; } };
+const mk = (n, g) => { const l = []; for (let i = 0; i < n; i++) l.push(g(i)); return l; }, show = (l) => l.length + "[" + Array.from({ length: Math.min(l.length, 40) }, (_, i) => (i in l ? (Object.is(l[i], -0) ? "-0" : typeof l[i] === "object" && l[i] ? l[i].k + "#" + l[i].id : String(l[i])) : "_")).join() + "]";
+const table = { up: (a, b) => a - b, down: (a, b) => b - a, k: (a, b) => a.k - b.k, none: () => 0 }, name = (s) => JSON.parse('["' + s + '"]')[0];
+const sizes = [2, 7, 11, 12, 13, 24, 63, 64, 65, 130];
+for (const n of [5, 12, 40]) { const l = mk(n, (i) => (i % 4 === 1 ? undefined : i * 5 % 17)); for (let i = 0; i < n; i += 3) delete l[i]; l.length = n + 4; out.push(show(l.sort(table[name("up")]))); const d = mk(n, (i) => i * 5 % 17 + 0.5); delete d[2]; d.length = n + 2; out.push(show(d.sort(table[name("down")]))); }
+class Own extends Array {} const own = Own.from(mk(14, (i) => -i)); out.push(show(own.sort(table[name("up")])), own instanceof Own); const named = mk(14, (i) => -i); named.tag = "t"; out.push(show(named.sort(table[name("up")])), named.tag);
+for (const x of [new Proxy(mk(14, (i) => -i), {}), Object.freeze(mk(14, (i) => -i)), Object.seal(mk(14, (i) => -i)), Object.preventExtensions(mk(14, (i) => -i))]) out.push(say(() => show(x.sort(table[name("up")]))));
+const like = { length: 14 }; for (let i = 0; i < 14; i++) like[i] = -i; out.push(say(() => show(Array.prototype.sort.call(like, table[name("up")])))); out.push(say(() => Array.prototype.sort.call("ba", table.up)), say(() => Array.prototype.sort.call(null, table.up)));
+const fixed = mk(14, (i) => -i); Object.defineProperty(fixed, "length", { writable: false }); out.push(say(() => show(fixed.sort(table[name("up")])))); for (const f of [table.up.bind(null), new Proxy(table.up, {}), new Intl.Collator("en", { numeric: true }).compare, Function.prototype.call.bind(function (a) { return this === undefined ? 1 : 0; }), class {}, {}, 0, "x", true]) out.push(say(() => show(mk(14, (i) => -i).sort([f][z]))));
+const s = Array.prototype.sort; out.push(show(Reflect.apply(s, mk(14, (i) => -i), [table[name("up")]])), show(s.call(mk(14, (i) => -i), table[name("up")])), show(mk(14, (i) => -i).sort(table[name("up")], 1, 2)), show(mk(14, (i) => i).sort(...[table[name("down")]])));
+console.log(out.join("\n"));

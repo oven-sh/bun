@@ -1,0 +1,24 @@
+# -- source: main.mjs
+# import { C } from "./m.mjs";
+# print("main: " + typeof C);
+# -- source: m.mjs
+# export * from "./n.mjs";
+# export class C { run() { return 1; } }
+# -- source: n.mjs
+# export * from "./m.mjs";
+# import * as self from "./n.mjs";
+# export const own = 1;
+# function look(namespace, key) { try { return typeof namespace[key]; } catch (error) { return "dead zone"; } }
+# print("C: " + look(self, id("C")));
+# -- end of source
+# m.mjs has begun and not finished while n.mjs runs, which shows the exports of m.mjs through `export *`: C is in its dead zone. The run time serves the read under a computed name by the record of the export:
+# it takes what the variable holds for the value of the binding. So the variable of an export is not born standing for its class: it is stored where the class is written.
+# That no read comes in front of the store is Link's word on compiled reads alone.
+# RUN(VARIABLES): plan variables mechanisms=all
+# VARIABLES: variable g1 Statics JSValue Plain
+# RUN(SHELL): run-in-shell
+# SHELL: C: dead zone
+# SHELL-NEXT: main: function
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: C: dead zone
+# CLOSED-NEXT: main: function

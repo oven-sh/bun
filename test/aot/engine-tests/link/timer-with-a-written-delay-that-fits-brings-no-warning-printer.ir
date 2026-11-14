@@ -1,0 +1,39 @@
+# setTimeout(() => {}, 1)
+# A timer warns about a delay that is negative, too long or no number: native code then calls createOnWarning() and initializeNextTickQueue() of the library. The table has two rows for the call. The one for a delay that fits
+# says that it runs no code, and the two functions hang on the timer under the condition that a call of it runs other code. The delay is written in the call, so Link knows that the first row takes it.
+# If Link took the condition for one that may hold, or an integer for one that may lie outside the row's range, a program of one line would hold the printer of warnings, the queue of ticks and all that they load.
+# The controls: timer-with-a-written-delay-below-zero-brings-the-warning-printer.ir, timer-with-a-delay-that-nobody-knows-brings-the-warning-printer.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+# CHECK: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setTimeout" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetTimeout) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Integer integer=1
+    v5 = Call v2, -, v3, v4 calleeName="setTimeout"
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

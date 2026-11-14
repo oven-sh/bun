@@ -2,6 +2,7 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec as BumpVec;
+use bun_alloc::AstAlloc;
 use bun_ast::ImportRecord;
 use bun_core::strings;
 
@@ -9,7 +10,7 @@ use crate::css_parser as css;
 use crate::values as css_values;
 
 use crate::{Location, PrintErr, PrintResult};
-use css_values::ident::DashedIdent;
+use css_values::ident::{DashedIdent, IdentOrRef};
 
 // Byte-oriented writer (writeAll/writeByte/print equivalents).
 use bun_io::Write;
@@ -22,17 +23,11 @@ pub struct PrinterOptions<'a> {
     pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
     pub targets: Targets,
-    /// Whether to analyze dependencies (i.e. `@import` and `url()`).
-    /// If true, the dependencies are returned as part of the
-    /// [ToCssResult](super::stylesheet::ToCssResult).
-    ///
-    /// When enabled, `@import` and `url()` dependencies
-    /// are replaced with hashed placeholders that can be replaced with the final
-    /// urls later (after bundling).
-    pub analyze_dependencies: Option<css::dependencies::DependencyOptions>,
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
+    /// The indent of the output, for text that goes inside a block.
+    pub indent: u32,
 }
 
 impl<'a> PrinterOptions<'a> {
@@ -48,8 +43,8 @@ impl<'a> PrinterOptions<'a> {
                 browsers: None,
                 ..Targets::default()
             },
-            analyze_dependencies: None,
             pseudo_classes: None,
+            indent: 0,
         }
     }
 }
@@ -83,17 +78,17 @@ pub use css::targets::Features;
 
 #[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
-    pub import_records: &'a [ImportRecord],
+    pub import_records: &'a [ImportRecord<'a>],
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
-    pub ast_unique_key_for_additional_file: &'a [&'a [u8]],
+    pub ast_unique_key_for_additional_file: &'a [Box<[u8], AstAlloc>],
 }
 
 impl<'a> ImportInfo<'a> {
     /// Only safe to use when outside the bundler. As in, the import records
     /// were not resolved to source indices. This will out-of-bounds otherwise.
-    pub fn init_outside_of_bundler(records: &'a [ImportRecord]) -> ImportInfo<'a> {
+    pub fn init_outside_of_bundler(records: &'a [ImportRecord<'a>]) -> ImportInfo<'a> {
         ImportInfo {
             import_records: records,
             ast_urls_for_css: &[],
@@ -112,8 +107,6 @@ impl<'a> ImportInfo<'a> {
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
 pub struct Printer<'a> {
-    // #[cfg(feature = "sourcemap")]
-    pub(crate) sources: Option<&'a Vec<Box<[u8]>>>,
     pub dest: &'a mut dyn Write,
     pub(crate) loc: Location,
     pub(crate) indent_amt: u32,
@@ -129,17 +122,13 @@ pub struct Printer<'a> {
     /// they are skipped while this is set and emitted once in the final pass,
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
+    /// The last thing printed is a nested declaration with no `;` yet.
+    pub(crate) pending_semicolon: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
-    pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
-    pub(crate) remove_imports: bool,
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub(crate) pseudo_classes: Option<PseudoClasses<'a>>,
-    // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
-    // unsafe variance cast — see the SAFETY note there) and always restores the parent
-    // before that frame returns; never stash `ctx` beyond the `with_context` call.
-    pub(crate) ctx: Option<&'a css::StyleContext<'a>>,
     /// Number of parent-selector substitutions performed for `&` while
     /// serializing the current rule prelude with compiled nesting (targets
     /// without CSS nesting support). Reset per prelude (in
@@ -147,6 +136,8 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub(crate) nesting_expansions: u32,
+    /// In the `<scope-end>` or the block of an `@scope` rule.
+    pub(crate) in_scope_rule: bool,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -189,14 +180,6 @@ impl<'a> Printer<'a> {
         symbols.get_const(final_ref).unwrap().original_name.slice()
     }
 
-    pub(crate) fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &'a [u8] {
-        if ident.is_ident() {
-            // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
-            return unsafe { crate::arena_str(ident.as_ident().unwrap().v) };
-        }
-        self.lookup_symbol(ident.as_ref().unwrap())
-    }
-
     // The `Write` trait exposes `written_len()` directly
     // (Vec<u8> / MutableString / counting sinks override it, others panic).
     #[inline]
@@ -210,21 +193,6 @@ impl<'a> Printer<'a> {
     #[inline]
     pub(crate) fn bytes_written(&self) -> usize {
         Self::get_written_amt(self.dest)
-    }
-
-    /// Returns the current source filename that is being printed.
-    pub(crate) fn filename(&self) -> &[u8] {
-        if let Some(sources) = self.sources {
-            if (self.loc.source_index as usize) < sources.len() {
-                return sources[self.loc.source_index as usize].as_ref();
-            }
-        }
-        b"unknown.css"
-    }
-
-    /// Returns whether the indent level is greater than one.
-    pub(crate) fn is_nested(&self) -> bool {
-        self.indent_amt > 2
     }
 
     /// Add an error related to std lib fmt errors
@@ -244,26 +212,12 @@ impl<'a> Printer<'a> {
         PrintErr::CSSPrintError
     }
 
-    /// Returns an error of the given kind at the provided location in the current source file.
-    pub(crate) fn new_error(
-        &mut self,
-        kind: css::PrinterErrorKind,
-        maybe_loc: Option<css::dependencies::Location>,
-    ) -> PrintResult<()> {
+    /// Returns an error of the given kind.
+    pub(crate) fn new_error(&mut self, kind: css::PrinterErrorKind) -> PrintResult<()> {
         debug_assert!(self.error_kind.is_none());
-        self.error_kind = Some(css::PrinterError {
-            kind,
-            loc: maybe_loc.map(|loc| css::ErrorLocation {
-                filename: std::ptr::from_ref::<[u8]>(self.filename()),
-                line: loc.line - 1,
-                column: loc.column,
-            }),
-        });
+        self.error_kind = Some(css::PrinterError { kind, loc: None });
         Err(PrintErr::CSSPrintError)
     }
-
-    // deinit() dropped — scratchbuf/dependencies are arena-backed
-    // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
     pub fn new(
@@ -276,20 +230,9 @@ impl<'a> Printer<'a> {
         symbols: &'a SymbolMap,
     ) -> Self {
         Printer {
-            sources: None,
             dest,
             minify: options.minify,
             targets: options.targets,
-            dependencies: if options.analyze_dependencies.is_some() {
-                Some(BumpVec::new_in(arena))
-            } else {
-                None
-            },
-            remove_imports: options
-                .analyze_dependencies
-                .as_ref()
-                .map(|d| d.remove_imports)
-                .unwrap_or(false),
             pseudo_classes: options.pseudo_classes,
             import_info,
             scratchbuf,
@@ -301,38 +244,39 @@ impl<'a> Printer<'a> {
                 column: 1,
             },
             symbols,
-            indent_amt: 0,
+            indent_amt: options.indent,
             line: 0,
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
             skip_prefixed_nested_rules: false,
+            pending_semicolon: false,
             in_calc: false,
             css_module: None,
-            ctx: None,
             nesting_expansions: 0,
+            in_scope_rule: false,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }
     }
 
     #[inline]
-    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
-        if let Some(info) = &self.import_info {
-            return Ok(info.import_records);
-        }
-        Err(self.add_no_import_record_error())
-    }
-
-    #[inline]
-    pub(crate) fn import_record(&mut self, import_record_idx: u32) -> PrintResult<&ImportRecord> {
+    pub(crate) fn import_record(
+        &mut self,
+        import_record_idx: u32,
+    ) -> PrintResult<&'a ImportRecord<'a>> {
         if let Some(info) = &self.import_info {
             return Ok(&info.import_records[import_record_idx as usize]);
         }
         Err(self.add_no_import_record_error())
     }
 
+    /// The second value tells whether the URL is a placeholder, which the bundler replaces with
+    /// the path of the copied file after printing.
     #[inline]
-    pub(crate) fn get_import_record_url(&mut self, import_record_idx: u32) -> PrintResult<&[u8]> {
+    pub(crate) fn get_import_record_url(
+        &mut self,
+        import_record_idx: u32,
+    ) -> PrintResult<(&'a [u8], bool)> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };
@@ -367,21 +311,17 @@ impl<'a> Printer<'a> {
                     Some(i) => &suffix[i as usize..],
                     None => b"",
                 };
-                return Ok(with_suffix(urls_for_css, fragment));
+                return Ok((with_suffix(urls_for_css, fragment), false));
             }
             // It is a chunk URL (copied asset): keep the full `?query#fragment`.
-            let unique_key_for_additional_file =
-                import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
+            let unique_key_for_additional_file: &'a [u8] =
+                &import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
-                return Ok(with_suffix(unique_key_for_additional_file, suffix));
+                return Ok((with_suffix(unique_key_for_additional_file, suffix), true));
             }
         }
         // External URL stays as-is
-        Ok(record.path.text)
-    }
-
-    pub(crate) fn context(&self) -> Option<&css::StyleContext<'a>> {
-        self.ctx
+        Ok((record.path.text, false))
     }
 }
 
@@ -516,51 +456,29 @@ impl<'a> Printer<'a> {
         str_
     }
 
-    pub(crate) fn write_ident_or_ref(
-        &mut self,
-        ident: css_values::ident::IdentOrRef,
-        handle_css_module: bool,
-    ) -> PrintResult<()> {
-        if !handle_css_module {
-            if let Some(identifier) = ident.as_ident() {
-                return self.serialize_identifier(identifier.v());
-            } else {
-                let ref_ = ident.as_ref().unwrap();
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                // Copy out the arena slice before re-borrowing &mut self.
-                let name = symbol.original_name.slice();
-                return self.serialize_identifier(name);
-            }
-        }
+    /// An `Ident` prints as written. A `Ref` is a local name of a CSS module and prints hashed.
+    pub(crate) fn write_ident_or_ref(&mut self, ident: IdentOrRef) -> PrintResult<()> {
+        let ref_ = match ident {
+            IdentOrRef::Ident(identifier) => return self.serialize_identifier(identifier.v),
+            IdentOrRef::Ref(ref_) => ref_,
+        };
 
         if self.local_names.is_none() {
-            if let Some(ref_) = ident.as_ref() {
-                let ref_ = self.symbols.follow(ref_);
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                let name: &'a [u8] = symbol.original_name.slice();
-                return self.write_ident(name, true);
-            }
+            let ref_ = self.symbols.follow(ref_);
+            let Some(symbol) = self.symbols.get_const(ref_) else {
+                return Err(self.add_fmt_error());
+            };
+            return self.write_ident(symbol.original_name.slice(), true);
         }
 
-        // `lookup_ident_or_ref` returns an `'a`-lifetime slice (arena/symbol-table),
-        // independent of the `&self` borrow, so no clone is needed before re-borrowing
-        // `&mut self` for the writer.
-        let str_: &'a [u8] = self.lookup_ident_or_ref(ident);
-        self.serialize_identifier(str_)
+        let name: &'a [u8] = self.lookup_symbol(ref_);
+        self.serialize_identifier(name)
     }
 
     /// Writes a CSS identifier to the underlying destination, escaping it
     /// as appropriate. If the `css_modules` option was enabled, then a hash
-    /// is added, and the mapping is added to the CSS module.
-    pub(crate) fn write_ident(
-        &mut self,
-        ident: &'a [u8],
-        handle_css_module: bool,
-    ) -> PrintResult<()> {
+    /// is added.
+    pub(crate) fn write_ident(&mut self, ident: &[u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
                 // Copy the `'a`-lifetime references out of `css_module` up front so
@@ -602,33 +520,17 @@ impl<'a> Printer<'a> {
                             err = Some(PrintErr::CSSPrintError);
                         }
                     });
-                if let Some(e) = err {
-                    return Err(e);
-                }
-
-                let src_idx = self.loc.source_index;
-                self.css_module
-                    .as_mut()
-                    .unwrap()
-                    .add_local(arena, ident, ident, src_idx);
-                return Ok(());
+                return err.map_or(Ok(()), Err);
             }
         }
 
         self.serialize_identifier(ident)
     }
 
-    pub(crate) fn write_dashed_ident(
-        &mut self,
-        ident: &DashedIdent,
-        is_declaration: bool,
-    ) -> PrintResult<()> {
+    pub(crate) fn write_dashed_ident(&mut self, ident: &DashedIdent) -> PrintResult<()> {
         self.write_str(b"--")?;
 
-        // NOTE: cannot use `ident.v()` here — `add_dashed` requires `&'a [u8]`
-        // (arena lifetime), but the safe accessor ties the borrow to `&ident`.
-        // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
-        let ident_v: &'a [u8] = unsafe { crate::arena_str(ident.v) };
+        let ident_v = ident.v;
 
         let dashed_idents = match &self.css_module {
             Some(m) => m.config.dashed_idents,
@@ -670,14 +572,6 @@ impl<'a> Printer<'a> {
             );
             if let Some(e) = err {
                 return Err(e);
-            }
-
-            if is_declaration {
-                let src_idx = self.loc.source_index;
-                self.css_module
-                    .as_mut()
-                    .unwrap()
-                    .add_dashed(arena, ident_v, src_idx);
             }
         }
 
@@ -746,6 +640,7 @@ impl<'a> Printer<'a> {
         self.write_char(b'{')?;
         self.indent();
         f(self)?;
+        self.pending_semicolon = false;
         self.dedent();
         self.newline()?;
         self.write_char(b'}')
@@ -793,51 +688,6 @@ impl<'a> Printer<'a> {
         F: FnMut(&mut Self, I::Item) -> PrintResult<()>,
     {
         self.write_separated(iter, |d| d.delim(b',', false), f)
-    }
-
-    pub(crate) fn with_context<C, F>(
-        &mut self,
-        selectors: &css::SelectorList,
-        closure: C,
-        func: F,
-    ) -> PrintResult<()>
-    where
-        F: FnOnce(C, &mut Self) -> PrintResult<()>,
-    {
-        let parent = if let Some(ctx) = self.ctx {
-            self.ctx = None;
-            Some(ctx)
-        } else {
-            None
-        };
-
-        let ctx = css::StyleContext { selectors, parent };
-
-        // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
-        // soundness relies on restoring `parent` before this frame returns.
-        // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
-        // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
-        // `StyleContext<'a>` share layout; only the borrow-checker tag differs).
-        self.ctx = Some(unsafe { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a>>() });
-        let res = func(closure, self);
-        self.ctx = parent;
-
-        res
-    }
-
-    pub(crate) fn with_cleared_context<C, F>(&mut self, closure: C, func: F) -> PrintResult<()>
-    where
-        F: FnOnce(C, &mut Self) -> PrintResult<()>,
-    {
-        let parent = if let Some(ctx) = self.ctx {
-            self.ctx = None;
-            Some(ctx)
-        } else {
-            None
-        };
-        let res = func(closure, self);
-        self.ctx = parent;
-        res
     }
 
     /// Increases the current indent level.

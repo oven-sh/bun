@@ -307,9 +307,7 @@ mod linux_impl {
         timeout: Option<u64>,
     ) -> Result<(), TimeoutError> {
         use bun_sys::linux;
-        // SAFETY: ts is fully initialized below before being passed to the kernel when
-        // timeout.is_some(); when timeout is None we pass null and ts is never read.
-        let mut ts: linux::timespec = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut ts = linux::timespec { sec: 0, nsec: 0 };
         if let Some(timeout_ns) = timeout {
             ts.sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
             ts.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
@@ -395,7 +393,6 @@ mod freebsd_impl {
         timeout: Option<u64>,
     ) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;
-        // SAFETY: all-zero is a valid `_umtx_time` (POD).
         let mut tm: libc::_umtx_time = bun_core::ffi::zeroed();
         let mut tm_ptr: *mut c_void = core::ptr::null_mut();
 

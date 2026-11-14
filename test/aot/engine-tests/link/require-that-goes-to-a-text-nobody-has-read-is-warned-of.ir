@@ -1,0 +1,21 @@
+# const vm = require("node:vm"); vm.runInNewContext(text, { require });
+# The text names the file that it loads, and nobody has read the text: the executable refuses what was not compiled into it. The build cannot know the name, so it says once, of no place, that a loader has left.
+# OPTIONS: exclude=CodeOutsideImage
+# DIAGNOSTIC: RequirePassedToUnseenCode 1
+# RUN: link functions mechanisms=all
+# CHECK: function f0
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="require" declared={type=anything}}]
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeVm
+    v1 = PropGet v0 key="runInNewContext"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="text" [isFreeName]
+    v4 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v1, v0, v3, v5
+    Return v6
+}

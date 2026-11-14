@@ -39,7 +39,7 @@ const stringFromCharCode = String.fromCharCode;
  * @param {String} type The error type.
  * @returns {Error} Throws a `RangeError` with the applicable error message.
  */
-function error(type) {
+function error(type: string): never {
   throw new RangeError(errors[type]);
 }
 
@@ -53,7 +53,7 @@ function error(type) {
  * @returns {String} A new string of characters returned by the callback
  * function.
  */
-function mapDomain(domain, callback) {
+function mapDomain(domain: string, callback: (label: string) => string) {
   const parts = domain.split("@");
   let result = "";
   if (parts.length > 1) {
@@ -82,7 +82,7 @@ function mapDomain(domain, callback) {
  * @param {String} string The Unicode input string (UCS-2).
  * @returns {Array} The new array of code points.
  */
-function ucs2decode(string) {
+function ucs2decode(string: string) {
   const output: number[] = [];
   let counter = 0;
   const length = string.length;
@@ -126,7 +126,7 @@ const ucs2encode = codePoints => String.fromCodePoint(...codePoints);
  * representing integers) in the range `0` to `base - 1`, or `base` if
  * the code point does not represent a value.
  */
-const basicToDigit = function (codePoint) {
+const basicToDigit = function (codePoint: number) {
   if (codePoint >= 0x30 && codePoint < 0x3a) {
     return 26 + (codePoint - 0x30);
   }
@@ -150,7 +150,7 @@ const basicToDigit = function (codePoint) {
  * used; else, the lowercase form is used. The behavior is undefined
  * if `flag` is non-zero and `digit` has no uppercase form.
  */
-const digitToBasic = function (digit, flag) {
+const digitToBasic = function (digit: number, flag: number) {
   //  0..25 map to ASCII a..z or A..Z
   // 26..35 map to ASCII 0..9
   return digit + 22 + 75 * +(digit < 26) - (+(flag != 0) << 5);
@@ -161,7 +161,7 @@ const digitToBasic = function (digit, flag) {
  * https://tools.ietf.org/html/rfc3492#section-3.4
  * @private
  */
-const adapt = function (delta, numPoints, firstTime) {
+const adapt = function (delta: number, numPoints: number, firstTime: boolean) {
   let k = 0;
   delta = firstTime ? floor(delta / damp) : delta >> 1;
   delta += floor(delta / numPoints);
@@ -363,7 +363,7 @@ const encode = function (input_: string) {
  * @returns {String} The Unicode representation of the given Punycode
  * string.
  */
-const toUnicode = function (input) {
+const toUnicode = function (input: string) {
   return mapDomain(input, function (string) {
     return regexPunycode.test(string) ? decode(string.slice(4).toLowerCase()) : string;
   });
@@ -380,7 +380,7 @@ const toUnicode = function (input) {
  * @returns {String} The Punycode representation of the given domain name or
  * email address.
  */
-const toASCII = function (input) {
+const toASCII = function (input: string) {
   return mapDomain(input, function (string) {
     return regexNonASCII.test(string) ? "xn--" + encode(string) : string;
   });

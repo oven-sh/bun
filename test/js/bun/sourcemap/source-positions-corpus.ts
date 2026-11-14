@@ -52,7 +52,7 @@ export const cases: Record<string, Case> = {
  4|function add(n: number) {
  4|  total += n;
  -|}
- 1|for (let i = 0; i < 3; i++) {
+ 4|for (let i = 0; i < 3; i++) {
  3|  add(i);
  -|}
  1|add(1);
@@ -230,7 +230,7 @@ export const cases: Record<string, Case> = {
  2|for (const item of list) ({
  2|  two: item.two,
  2|}).two;
- 1|for (const item of list) {
+ 2|for (const item of list) {
  2|  twice(item.one ?? 0);
  -|}
  1|function early() {
@@ -381,7 +381,7 @@ export const cases: Record<string, Case> = {
     functions: "1/1",
     lines: `
  3|function f() {}
- 1|for (let i = 0; i < 3; i++) {
+ 4|for (let i = 0; i < 3; i++) {
  3|  if (i > 5)
  0|    break;
  3|  if (i === 1)
@@ -414,7 +414,7 @@ export const cases: Record<string, Case> = {
     lines: `
  9|function g() {}
  1|let n = 0;
- 1|for (const key in { a: 1, b: 2, c: 3 }) {
+ 3|for (const key in { a: 1, b: 2, c: 3 }) {
  3|  n++;
  -|}
  1|g();
@@ -422,11 +422,11 @@ export const cases: Record<string, Case> = {
  0|  n++;
  -|}
  1|g();
- 1|for (const value of [1, 2]) {
+ 2|for (const value of [1, 2]) {
  2|  n++;
  -|}
  1|g();
- 1|while (n > 3) {
+ 3|while (n > 3) {
  2|  n--;
  -|}
  1|g();
@@ -434,8 +434,8 @@ export const cases: Record<string, Case> = {
  0|  n--;
  -|}
  1|g();
- 1|outer: for (let i = 0; i < 2; i++) {
- 2|  for (let j = 0; j < 3; j++) {
+ 3|outer: for (let i = 0; i < 2; i++) {
+ 4|  for (let j = 0; j < 3; j++) {
  4|    if (j === 1) {
  2|      continue outer;
  -|    }
@@ -652,7 +652,7 @@ export const cases: Record<string, Case> = {
  1|  throws();
  1|} catch {}
  1|function continues() {
- 1|  for (let i = 0; i < 3; i++) {
+ 4|  for (let i = 0; i < 3; i++) {
  3|    try {
  3|      continue;
  3|    } finally {

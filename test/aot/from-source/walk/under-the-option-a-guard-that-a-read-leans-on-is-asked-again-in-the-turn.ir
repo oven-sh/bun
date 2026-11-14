@@ -1,0 +1,34 @@
+# -- source: main.js
+# class Crate { constructor(tag) { this.tag = tag; } }
+# function mark(item, note) { item.note = note; }
+# function watch(item, above, turns, when) {
+#   let found = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     if (item.note !== undefined) found++;
+#     if (turn === when) above.note = "above";
+#   }
+#   return found;
+# }
+# const spare = new Crate("spare");
+# mark(spare, "own");
+# const one = new Crate("one"), two = new Crate("two");
+# print(watch(one, new Crate("other"), 20, 5), watch(one, Crate.prototype, 20, 5), watch(two, spare, 20, 99), two.note, Object.keys(one).join());
+# -- end of source
+# f2 = watch. The program of a-guard-that-a-read-leans-on-is-asked-again-in-the-turn-under-its-own-word.ir.
+# A read of a slot that may be empty skips the lookup on the prototype chain where the walk's state remembers that the class guard holds.
+# That guard is tested again before the read, and the process ends if it does not hold.
+# This happens with testing=CheckWalkAtRunTime, and also with testing=CheckProofsAtRunTime, which --aot-harden=proof-checks enables.
+# The reason is that a guard that had been invalidated unnoticed is how a silent miscompilation got past the proof checks.
+# With the two fixes of that miscompilation reverted, six of its ten programs silently print wrong results with the option, and crash with a named error once the guard is tested again.
+# Fault injection, testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards: the effects entry of PutSlotOrAdd falsely claims that the operation invalidates no guard.
+# The second version of the loop tests the guard once, in the preheader, and its iteration relies on that. The test that is built again is in the iteration.
+# RUN(OPTION): walk f2 mechanisms=all testing=UnderstateEffects:Operation/PutSlotOrAdd/MemberGuards,CheckProofsAtRunTime
+# OPTION: isLoopHead=true
+# OPTION: isLoopHead=true
+# OPTION: [[again]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L0 key="note"}]
+# OPTION-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact
+# OPTION: = GetSlotOrUndefined {{*}} key="note"
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
+# RIGHT: 0 14 20 above tag
+# RIGHT-NEXT: exited with 0
+# RIGHT-NEXT: the source prints the same

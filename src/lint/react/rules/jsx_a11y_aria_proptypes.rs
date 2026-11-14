@@ -8,7 +8,7 @@ use std::borrow::Cow;
 /// Enforces that elements do not use invalid ARIA state and property values.
 pub struct AriaProptypes;
 
-const ARIA_PROPTYPES: Message = Message::new("", "This is not a valid ARIA state and property value for '{{prop_name}}'.");
+const ARIA_PROPTYPES: &Message = &Message::new("", "This is not a valid ARIA state and property value for '{{prop_name}}'.");
 
 impl Rule for AriaProptypes {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-proptypes", Kind::Problem);

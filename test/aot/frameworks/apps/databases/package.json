@@ -1,0 +1,18 @@
+{
+  "name": "databases",
+  "private": true,
+  "dependencies": {
+    "@types/pg": "8.23.1",
+    "bullmq": "6.5.3",
+    "drizzle-orm": "0.45.4",
+    "ioredis": "6.0.0",
+    "kysely": "0.29.7",
+    "mongoose": "9.11.4",
+    "mysql2": "3.24.6",
+    "pg": "8.23.1",
+    "reflect-metadata": "0.2.2",
+    "sequelize": "6.37.8",
+    "sql.js": "1.15.2",
+    "typeorm": "1.1.2"
+  }
+}

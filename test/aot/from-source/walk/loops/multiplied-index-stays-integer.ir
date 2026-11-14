@@ -1,0 +1,21 @@
+# `place` comes round as `2 * place + 1`, that plus one, or itself, and the product is held below a length: the first guess is that it is an int32.
+# No turn turns it into a double and no back edge asks for an int32. The typed copy asks the list once in front.
+# A sum held below a length needs no such guess (sum), and a counter that goes down to a constant is bounded by no length (down).
+# -- source: main.js
+# function sift(heap, from, size) { let place = from; for (;;) { let greatest = place; const left = 2 * place + 1, right = left + 1; if (left < size && heap[left] > heap[greatest]) greatest = left; if (right < size && heap[right] > heap[greatest]) greatest = right; if (greatest === place) return; const moved = heap[place]; heap[place] = heap[greatest]; heap[greatest] = moved; place = greatest; } }
+# function sum(bytes) { let found = 0; for (let at = 0; at + 2 < bytes.length; at += 3) found = (found + bytes[at] + bytes[at + 1] * 2) | 0; return found; }
+# function down(list, wanted) { let i = list.length - 1; do { if (list[i] === wanted) break; } while (--i >= 0); return i; }
+# const heap = [0.5, 7.5, 3.5, 9.5, 1.5, 8.5, 2.5, 6.5, 4.5]; for (let place = heap.length >> 1; place >= 0; place--) sift(heap, place, heap.length); console.log(heap.join(), sum(new Uint8Array(7)), down(JSON.parse("[28,56,25]"), 30));
+# -- end of source
+# RUN(SIFT): walk f1:Body mechanisms=all
+# SIFT-LABEL: code f1:Body
+# SIFT: i32 @Int32) isInLoop=true isLoopHead=true
+# SIFT-NOT: int|whole
+# SIFT-NOT: testedType=i32
+# SIFT: = PutDoubleIndex
+# SIFT: = PutDoubleIndex
+# RUN(SUM): walk f2:Body mechanisms=all
+# SUM: isInsideView
+# SUM-NOT: 4294967294] @Int64) {{*}}isLoopHead=true
+# RUN(DOWN): walk f3:Body mechanisms=all
+# DOWN-NOT: 4294967294] @Int64) {{*}}isLoopHead=true

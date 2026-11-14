@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Require `for-in` loops to include an `if` statement.
 pub struct GuardForIn;
 
-const WRAP: Message = Message::new(
+const WRAP: &Message = &Message::new(
     "wrap",
     "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype.",
 );

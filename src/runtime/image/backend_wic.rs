@@ -946,10 +946,10 @@ fn load_factory() {
 unsafe extern "system" {
     fn OpenClipboard(hwnd: *mut c_void) -> c_int;
     fn CloseClipboard() -> c_int;
-    fn IsClipboardFormatAvailable(format: c_uint) -> c_int;
+    safe fn IsClipboardFormatAvailable(format: c_uint) -> c_int;
     fn GetClipboardData(format: c_uint) -> *mut c_void;
     fn RegisterClipboardFormatA(name: *const core::ffi::c_char) -> c_uint;
-    fn GetClipboardSequenceNumber() -> u32;
+    safe fn GetClipboardSequenceNumber() -> u32;
 }
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -965,23 +965,18 @@ const CF_DIBV5: c_uint = 17;
 const NAMED_FORMATS: [&CStr; 4] = [c"PNG", c"image/png", c"JFIF", c"image/webp"];
 
 pub(crate) fn clipboard_change_count() -> i64 {
-    // SAFETY: GetClipboardSequenceNumber has no preconditions.
-    unsafe { GetClipboardSequenceNumber() as i64 }
+    GetClipboardSequenceNumber() as i64
 }
 
 pub(crate) fn has_clipboard_image() -> bool {
     // IsClipboardFormatAvailable doesn't require OpenClipboard.
-    // SAFETY: no preconditions.
-    if unsafe { IsClipboardFormatAvailable(CF_DIBV5) } != 0
-        || unsafe { IsClipboardFormatAvailable(CF_DIB) } != 0
-    {
+    if IsClipboardFormatAvailable(CF_DIBV5) != 0 || IsClipboardFormatAvailable(CF_DIB) != 0 {
         return true;
     }
     for name in NAMED_FORMATS {
         // SAFETY: name is a static NUL-terminated C string.
         let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
-        // SAFETY: no preconditions.
-        if id != 0 && unsafe { IsClipboardFormatAvailable(id) } != 0 {
+        if id != 0 && IsClipboardFormatAvailable(id) != 0 {
             return true;
         }
     }

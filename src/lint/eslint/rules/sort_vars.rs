@@ -8,7 +8,7 @@ pub struct SortVars {
     ignore_case: bool,
 }
 
-const SORT_VARS: Message = Message::new(
+const SORT_VARS: &Message = &Message::new(
     "sortVars",
     "Variables within the same declaration block should be sorted alphabetically.",
 );

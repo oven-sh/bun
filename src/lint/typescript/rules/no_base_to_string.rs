@@ -15,11 +15,11 @@ pub struct NoBaseToString {
     check_unknown: bool,
 }
 
-const BASE_ARRAY_JOIN: Message = Message::new(
+const BASE_ARRAY_JOIN: &Message = &Message::new(
     "baseArrayJoin",
     "Using `join()` for {{name}} {{certainty}} use Object's default stringification format ('[object Object]') when stringified.",
 );
-const BASE_TO_STRING: Message = Message::new(
+const BASE_TO_STRING: &Message = &Message::new(
     "baseToString",
     "'{{name}}' {{certainty}} use Object's default stringification format ('[object Object]') when stringified.",
 );
@@ -519,7 +519,7 @@ impl NoBaseToString {
         certainty
     }
 
-    fn report<'a>(node: Expr<'a>, message: Message, certainty: Usefulness, cx: &Cx<'a, Self>) {
+    fn report<'a>(node: Expr<'a>, message: &'static Message, certainty: Usefulness, cx: &Cx<'a, Self>) {
         let certainty = match certainty {
             Usefulness::Always => return,
             Usefulness::Never => "will",

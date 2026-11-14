@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow returning values from setters.
 pub struct NoSetterReturn;
 
-const RETURNS_VALUE: Message = Message::new("returnsValue", "Setter cannot return a value.");
+const RETURNS_VALUE: &Message = &Message::new("returnsValue", "Setter cannot return a value.");
 
 /// ESLint's `isSetter`: a setter of an object literal or a class, or the `set` of a property descriptor. oxlint ignores
 /// property descriptors.

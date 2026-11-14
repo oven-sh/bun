@@ -10,7 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 bun_core.workspace = true
+bun_highway.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true

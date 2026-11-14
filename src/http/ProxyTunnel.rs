@@ -351,7 +351,7 @@ fn on_handshake(
     if first_report {
         this.state.response_stage = HTTPStage::ProxyHeaders;
         this.state.request_stage = HTTPStage::ProxyHeaders;
-        this.state.request_sent_len = 0;
+        this.state.rewind_request_head();
     }
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
@@ -827,6 +827,6 @@ impl ProxyTunnel {
         client.flags.proxy_tunneling = false;
         client.state.request_stage = HTTPStage::ProxyHeaders;
         client.state.response_stage = HTTPStage::ProxyHeaders;
-        client.state.request_sent_len = 0;
+        client.state.rewind_request_head();
     }
 }

@@ -1,0 +1,13 @@
+# The same behind super(): the fields of the heir, what the decorator of the last one adds, then the parameter property.
+# LIBRARY: own
+# -- source: main.ts
+# declare function publish(run: (count: number) => string): void;
+# const seen: string[] = [];
+# function late(_: undefined, context: ClassFieldDecoratorContext) { context.addInitializer(function (this: any) { seen.push("added:" + this.count + "," + this.depth); }); }
+# class Below { depth = 7; }
+# class Crate extends Below { @late width = 1; constructor(public count = 5) { seen.push("front"); super(); seen.push("behind:" + this.count); } }
+# function run(count: number) { const crate = new Crate(count); return seen.join(" ") + " " + crate.count; }
+# publish(run);
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(3)); };
+# SHELL: front added:undefined,7 behind:3 3

@@ -68,6 +68,8 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
         return {};
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     // Calculate the length needed for the result
     size_t bufLen = EC_POINT_point2oct(group, pubKey, form, nullptr, 0, nullptr);
     if (bufLen == 0) {

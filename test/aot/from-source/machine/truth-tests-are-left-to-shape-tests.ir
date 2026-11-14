@@ -1,0 +1,16 @@
+# The truth of a value that is asked for its structure next is left to the structure's test: an object of the expected class is asked for nothing else.
+# RUN(EVENT): compile TruthTestsDeferredToShapeTests mechanisms=all
+# EVENT: statistic TruthTestsDeferredToShapeTests 1
+# -- source: truths.ts
+# class Node1 { kind: number; flags: number; parent: Node1 | undefined; constructor(kind: number, flags: number, parent: Node1 | undefined) { this.kind = kind; this.flags = flags; this.parent = parent; } }
+# class Named extends Node1 { text: string; constructor(kind: number, flags: number, parent: Node1 | undefined) { super(kind, flags, parent); this.text = "b"; } }
+# declare function walkUp(node: Node1): Node1;
+# declare function sink(...values: unknown[]): void;
+# function combined(node: Node1): number {
+#     node = walkUp(node);
+#     let flags = 0;
+#     if (node && node.kind === 262) { flags |= node.flags; node = node.parent!; }
+#     return flags;
+# }
+# sink(combined, Node1, Named, new Named(1, 2, new Node1(1, 2, undefined)));
+# -- end of source

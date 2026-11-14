@@ -21,8 +21,8 @@ pub struct NoNoninteractiveElementInteractions {
     handler_exceptions: NamesByElement,
 }
 
-const NO_NONINTERACTIVE_ELEMENT_INTERACTIONS: Message =
-    Message::new("", "Non-interactive elements should not be assigned mouse or keyboard event listeners.");
+const NO_NONINTERACTIVE_ELEMENT_INTERACTIONS: &Message =
+    &Message::new("", "Non-interactive elements should not be assigned mouse or keyboard event listeners.");
 
 impl Rule for NoNoninteractiveElementInteractions {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-noninteractive-element-interactions", Kind::Problem);

@@ -3,7 +3,7 @@ import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
-const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
+const { FileHandle, kRef, kUnref, kFd } = (require("node:fs/promises") as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
   readonly kUnref: unique symbol;
@@ -37,6 +37,9 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
 type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
+
+const isWindows = process.platform === "win32";
+const windowsHandleToFd = $bindgen("node_fs_binding.bind.ts", "windowsHandleToFd");
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
@@ -91,8 +94,11 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void
 }
 
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (typeof p !== "string") {
+    const path = require("internal/url").toPathIfFileURL(p);
+    if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+    return path;
+  }
   return require("node:path").resolve(p);
 }
 
@@ -130,6 +136,24 @@ function getStreamOptions(options, defaultOptions = {}) {
   return options;
 }
 
+// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/lib/internal/fs/streams.js#L169
+function validateWindowsHandle(windowsHandle: unknown, fd, customFs): asserts windowsHandle is bigint {
+  if (fd != null) {
+    throw $ERR_INCOMPATIBLE_OPTION_PAIR('Option "windowsHandle" cannot be used in combination with option "fd"');
+  }
+  if (!isWindows) {
+    throw $ERR_FEATURE_UNAVAILABLE_ON_PLATFORM(
+      "The feature windowsHandle is unavailable on the current platform, which is being used to run Node.js",
+    );
+  }
+  if (customFs) {
+    throw $ERR_METHOD_NOT_IMPLEMENTED("windowsHandle with fs");
+  }
+  if (typeof windowsHandle !== "bigint") {
+    throw $ERR_INVALID_ARG_TYPE("options.windowsHandle", "bigint", windowsHandle);
+  }
+}
+
 function ReadStream(this: FSStream, path, options): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(path, options);
@@ -140,9 +164,12 @@ function ReadStream(this: FSStream, path, options): void {
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, end = Infinity } = options;
+  let { fd, autoClose, fs: customFs, start, end = Infinity, windowsHandle } = options;
 
-  if (fd == null) {
+  if (windowsHandle != null) {
+    validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fs;
+  } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
     this.path = getValidatedPath(path);
@@ -204,6 +231,12 @@ function ReadStream(this: FSStream, path, options): void {
       throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
+
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Readable.$call(this, options);
   return this as unknown as void;
@@ -353,7 +386,7 @@ function close(stream, err, cb) {
     return;
   }
 
-  if (!stream.fd) {
+  if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync(stream.fd, flushErr => {
@@ -383,8 +416,11 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, flush } = options;
-  if (fd == null) {
+  let { fd, autoClose, fs: customFs, start, flush, windowsHandle } = options;
+  if (windowsHandle != null) {
+    validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fs;
+  } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
     // Internal $fastPath callers (writableFromFileSink) discard .path; do not
@@ -484,6 +520,12 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
       this._construct = undefined;
     }
   }
+
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Writable.$call(this, options);
 

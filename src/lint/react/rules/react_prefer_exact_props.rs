@@ -11,8 +11,8 @@ use bun_lint::utils::estree_compat::estree_parent;
 pub struct PreferExactProps;
 
 // Upstream's `flow` message and its component checks only apply to Flow types, which no parser here produces.
-const PROP_TYPES: Message =
-    Message::new("propTypes", "Component propTypes should be exact by using {{exactPropWrappers}}.");
+const PROP_TYPES: &Message =
+    &Message::new("propTypes", "Component propTypes should be exact by using {{exactPropWrappers}}.");
 
 impl Rule for PreferExactProps {
     const META: Meta = Meta::plugin(Plugin::React, "prefer-exact-props", Kind::None);

@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow empty images
 pub struct NoEmptyImages;
 
-const EMPTY_IMAGE: Message = Message::new("emptyImage", "Unexpected empty image found.");
+const EMPTY_IMAGE: &Message = &Message::new("emptyImage", "Unexpected empty image found.");
 
 impl Rule for NoEmptyImages {
     const META: Meta = meta("no-empty-images").recommended();

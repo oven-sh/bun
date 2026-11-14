@@ -7,26 +7,22 @@ const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/valid
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
-/** Implemented natively. */
-interface StatWatcherHandle {
-  ref();
-  unref();
-  close();
-}
+type AnyStats = $Node.Stats | $Node.BigIntStats;
+type StatListener = (current: AnyStats, previous: AnyStats) => void;
 
 function emitStop(self: StatWatcher) {
   self.emit("stop");
 }
 
 class StatWatcher extends EventEmitter {
-  _handle: StatWatcherHandle | null;
+  _handle: $Bindgen.StatWatcher | null;
 
-  constructor(path, options) {
+  constructor(path: string, options: $Node.WatchFileOptions | undefined) {
     super();
     this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
   }
 
-  #onChange(curr, prev) {
+  #onChange(curr: AnyStats, prev: AnyStats) {
     this.emit("change", curr, prev);
   }
 
@@ -59,7 +55,7 @@ class StatWatcher extends EventEmitter {
 // The watcher is the owner's (its context made it, and dispose() closes it), so sharing one between
 // owners would let one graph's dispose() silence everybody else's listeners, and keep a disposed
 // graph's listener running on a watcher somebody else made.
-const realmStatWatchers = new Map();
+const realmStatWatchers = new Map<string, StatWatcher>();
 const graphStatWatchers = new WeakMap<object, Map<string, StatWatcher>>();
 function statWatchersOfCaller(): Map<string, StatWatcher> {
   const graph = AsyncContextFrame.currentGraph();
@@ -69,7 +65,11 @@ function statWatchersOfCaller(): Map<string, StatWatcher> {
   return watchers;
 }
 
-function watchFile(filename, options, listener) {
+function watchFile(
+  filename: string | URL,
+  options: $Node.WatchFileOptions | StatListener | undefined,
+  listener?: StatListener,
+) {
   filename = getValidatedPath(filename);
 
   if (typeof options === "function") {
@@ -91,7 +91,7 @@ function watchFile(filename, options, listener) {
   return stat;
 }
 
-function unwatchFile(filename, listener) {
+function unwatchFile(filename: string | URL, listener?: StatListener) {
   filename = getValidatedPath(filename);
 
   const statWatchers = statWatchersOfCaller();

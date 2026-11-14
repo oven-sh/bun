@@ -5,9 +5,9 @@ use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
-use bun_jsc::{
-    CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult,
-};
+use bun_jsc::{FetchHeaders, HTTPHeaderName, JSGlobalObject, JsError, JsResult};
+
+use crate::generated_bindgen::headers_jsc::{H2LiveCounts, H3LiveCounts};
 
 /// `Headers` indexes its buffer with `u32` `StringPointer`s, so the total size can't exceed `u32::MAX`.
 fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
@@ -130,65 +130,18 @@ pub fn from_fetch_headers(
     Ok(headers)
 }
 
-struct H2TestingAPIs;
-
-impl H2TestingAPIs {
-    // No attribute needed — generate-js2native.ts scans by signature shape.
-    fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        use bun_http::h2_client;
-        let obj = JSValue::create_empty_object(global, 2);
-        // h2 atomics
-        // are `AtomicI32` (signed) so no widening.
-        obj.put(
-            global,
-            b"sessions",
-            JSValue::js_number_from_int32(h2_client::live_sessions.load(Ordering::Relaxed)),
-        );
-        obj.put(
-            global,
-            b"streams",
-            JSValue::js_number_from_int32(h2_client::live_streams.load(Ordering::Relaxed)),
-        );
-        Ok(obj)
+pub(crate) fn h2_live_counts() -> H2LiveCounts {
+    use bun_http::h2_client;
+    H2LiveCounts {
+        sessions: h2_client::live_sessions.load(Ordering::Relaxed),
+        streams: h2_client::live_streams.load(Ordering::Relaxed),
     }
 }
 
-struct H3TestingAPIs;
-
-impl H3TestingAPIs {
-    /// Named distinctly from H2's `live_counts` because generate-js2native.ts
-    /// mangles `[^A-Za-z]` to `_`, so the H2 and H3 client paths produce
-    /// the same path prefix and the function name has to differ.
-    fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        use bun_http::h3_client;
-        let obj = JSValue::create_empty_object(global, 2);
-        // h3 atomics are `AtomicU32`; widen to u64 for `js_number_from_uint64`.
-        obj.put(
-            global,
-            b"sessions",
-            JSValue::js_number_from_uint64(u64::from(
-                h3_client::live_sessions.load(Ordering::Relaxed),
-            )),
-        );
-        obj.put(
-            global,
-            b"streams",
-            JSValue::js_number_from_uint64(u64::from(
-                h3_client::live_streams.load(Ordering::Relaxed),
-            )),
-        );
-        Ok(obj)
+pub(crate) fn h3_live_counts() -> H3LiveCounts {
+    use bun_http::h3_client;
+    H3LiveCounts {
+        sessions: h3_client::live_sessions.load(Ordering::Relaxed),
+        streams: h3_client::live_streams.load(Ordering::Relaxed),
     }
-}
-
-/// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
-/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` them (associated fns aren't importable items).
-#[inline]
-pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    H2TestingAPIs::live_counts(global, frame)
-}
-#[inline]
-pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    H3TestingAPIs::quic_live_counts(global, frame)
 }

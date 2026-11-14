@@ -1,0 +1,16 @@
+# -- source: a-name-read-off-what-is-one-literal-or-a-number-asks-the-cell.cjs
+# 'use strict';
+# var S = 0, turns = JSON.parse("4");
+# function fill() { S = { BEGIN: 1, TEXT: 2, END: 3 }; }
+# function told(state) { var n = 0; for (var i = 0; i < turns; i++) { switch (state) { case S.BEGIN: n += 1; break; case S.TEXT: n += 20; break; case S.END: n += 300; break; default: n += 4000; } } return n; }
+# fill(); print(told(1), told(2), told(3), told(9));
+# -- end of source
+# S begins as a number and is later given one literal. What is proven of it is `undefined|number|L0`; what is expected of it is a number, for so it begins. A name read off a number has no typed form, so every label of the switch was a
+# closed read of a value of which not even "it is a cell" was known: half the run of a parser that keeps its states so. Where nothing at all was proven of S and the literal merely expected, the same read was one operation: a proof gave
+# dearer code than no proof. Of what is proven to be layouts or primitives, a read by name expects the layouts: one test of the cell, the slot behind it, the closed read as the other way.
+# f1 = fill, f2 = told
+# RUN(READ): walk f2 mechanisms=all
+# REQUIRES(READ): as-written
+# READ: = GetValueAtSiteOrAbsent {{*}} key="TEXT"
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 4 80 1200 16000

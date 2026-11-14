@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 /// `reportErrors`. Reported at `declaration.source`, with `source.value` and [`ExportMap::errors_text`] as data.
-pub(crate) const PARSE_ERRORS: Message = Message::new(
+pub(crate) const PARSE_ERRORS: &Message = &Message::new(
     "",
     "Parse errors in imported module '{{source}}': {{errors}}",
 );

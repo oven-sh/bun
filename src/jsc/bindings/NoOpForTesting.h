@@ -1,3 +1,3 @@
 namespace Bun {
-JSC::JSObject* createNoOpForTesting(JSC::JSGlobalObject* globalObject);
+JSC::JSValue createNoOpForTesting(JSC::JSGlobalObject* globalObject);
 }

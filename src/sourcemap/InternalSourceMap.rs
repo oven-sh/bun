@@ -144,6 +144,8 @@ pub struct ObjectBrace {
 
 const _: () = assert!(size_of::<ObjectBrace>() == 16);
 
+bun_core::impl_pod!(SyncEntry, ObjectBrace);
+
 impl SyncEntry {
     #[inline]
     fn less_or_equal(self, line: i32, col: i32) -> bool {
@@ -420,10 +422,9 @@ mod win_hdr {
 
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
-// `bytes` is a raw pointer into the blob, like `InternalSourceMap` itself. It's valid while the blob is live.
 #[derive(Copy, Clone)]
-struct WindowReader {
-    bytes: *const [u8],
+struct WindowReader<'a> {
+    bytes: &'a [u8],
     gen_col_pos: usize,
     orig_line_exc_pos: usize,
     orig_col_exc_pos: usize,
@@ -439,38 +440,30 @@ struct WindowReader {
     delta_idx: u8,
 }
 
-impl WindowReader {
-    /// An empty window. `done()` is true, so nothing reads `bytes`.
-    const DANGLING: WindowReader = WindowReader {
-        bytes: ptr::slice_from_raw_parts(ptr::null(), 0),
-        gen_col_pos: 0,
-        orig_line_exc_pos: 0,
-        orig_col_exc_pos: 0,
-        gen_line_exc_pos: 0,
-        src_idx_exc_pos: 0,
-        gen_line_mask: 0,
-        orig_line_eq_mask: 0,
-        orig_col_eq_mask: 0,
-        src_idx_eq_mask: 0,
-        count: 0,
-        flags: 0,
-        gen_line_exc_next_idx: 0,
-        delta_idx: 0,
-    };
-
-    #[inline]
-    fn bytes<'a>(&self) -> &'a [u8] {
-        // returns an unbound lifetime so callers can mutate other
-        // `self` fields while holding the slice — `self.bytes` is a raw `*const [u8]`
-        // pointing into the blob, not into `self`, so this is sound.
-        // SAFETY: `bytes` was set from `InternalSourceMap.stream()` which is
-        // valid for the lifetime of the blob; readers are only used while the
-        // blob is live.
-        unsafe { &*self.bytes }
+impl<'a> WindowReader<'a> {
+    /// A reader of `bytes` with an empty window.
+    fn new(bytes: &'a [u8]) -> WindowReader<'a> {
+        WindowReader {
+            bytes,
+            gen_col_pos: 0,
+            orig_line_exc_pos: 0,
+            orig_col_exc_pos: 0,
+            gen_line_exc_pos: 0,
+            src_idx_exc_pos: 0,
+            gen_line_mask: 0,
+            orig_line_eq_mask: 0,
+            orig_col_eq_mask: 0,
+            src_idx_eq_mask: 0,
+            count: 0,
+            flags: 0,
+            gen_line_exc_next_idx: 0,
+            delta_idx: 0,
+        }
     }
 
     /// Returns `None` if the window at `start` extends past the end of `bytes`. The reader is then `done()`.
-    fn parse(&mut self, bytes: &[u8], start: usize) -> Option<()> {
+    fn parse(&mut self, start: usize) -> Option<()> {
+        let bytes = self.bytes;
         // Keep the reader empty until the whole window is validated.
         self.count = 0;
         self.delta_idx = 0;
@@ -480,7 +473,6 @@ impl WindowReader {
         let len_at = |off: usize| ((fixed >> (8 * off)) & 0xffff) as usize;
         let flags = (fixed >> (8 * win_hdr::FLAGS_OFF)) as u8;
 
-        self.bytes = std::ptr::from_ref::<[u8]>(bytes);
         self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
         self.orig_line_exc_pos = self.gen_col_pos + len_at(win_hdr::GEN_COL_LEN_OFF);
         self.orig_col_exc_pos = self.orig_line_exc_pos + len_at(win_hdr::ORIG_LINE_LEN_OFF);
@@ -538,7 +530,7 @@ impl WindowReader {
     fn apply_next(&mut self, state: &mut State) -> Option<()> {
         let delta_idx = self.delta_idx;
         self.delta_idx = delta_idx + 1;
-        let bytes = self.bytes();
+        let bytes = self.bytes;
 
         let mut d_gen_line: i32 = test_bit(self.gen_line_mask, delta_idx) as i32;
         let d_gen_col = read_varint(bytes, &mut self.gen_col_pos)?;
@@ -577,7 +569,7 @@ impl WindowReader {
         d_orig_line: &mut i32,
         state: &mut State,
     ) -> Option<()> {
-        let bytes = self.bytes();
+        let bytes = self.bytes;
         if self.gen_line_exc_next_idx == delta_idx {
             let mut p = self.gen_line_exc_pos + 1;
             *d_gen_line = read_varint(bytes, &mut p)?;
@@ -622,11 +614,11 @@ impl InternalSourceMap {
         self,
         sync_idx: u32,
         state: &mut State,
-        reader: &mut WindowReader,
+        reader: &mut WindowReader<'_>,
     ) -> Option<()> {
         let se = self.sync_entry(sync_idx as usize);
         *state = se.to_state();
-        reader.parse(self.stream(), se.byte_offset as usize)
+        reader.parse(se.byte_offset as usize)
     }
 
     /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
@@ -638,7 +630,7 @@ impl InternalSourceMap {
         let sync_idx = self.locate_window(target_line, target_col)?;
 
         let mut state = State::default();
-        let mut reader = WindowReader::DANGLING;
+        let mut reader = WindowReader::new(self.stream());
         self.seed_window(sync_idx, &mut state, &mut reader)?;
 
         let mut best = state;
@@ -663,9 +655,10 @@ impl InternalSourceMap {
 impl InternalSourceMap {
     /// Every mapping, in generated order.
     pub(crate) fn for_each(self, mut each: impl FnMut(Mapping)) {
+        let stream = self.stream();
         for idx in 0..self.sync_count() {
             let mut state = State::default();
-            let mut reader = WindowReader::DANGLING;
+            let mut reader = WindowReader::new(stream);
             if self.seed_window(idx, &mut state, &mut reader).is_none() {
                 return;
             }
@@ -682,9 +675,7 @@ impl InternalSourceMap {
 
     pub fn for_each_object_brace(self, mut each: impl FnMut(ObjectBrace)) {
         for bytes in self.object_braces() {
-            // SAFETY: `ObjectBrace` is #[repr(C)] POD, four i32s, and `bytes` has its size. The
-            // blob is byte-addressed, so read unaligned.
-            each(unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<ObjectBrace>()) });
+            each(bun_core::read_prefix::<ObjectBrace>(bytes).unwrap());
         }
     }
 
@@ -701,10 +692,11 @@ impl InternalSourceMap {
         let mut prev = SourceMapState::default();
         let mut generated_line: i32 = 0;
 
+        let stream = self.stream();
         let mut idx: u32 = 0;
         while idx < n_sync {
             let mut state = State::default();
-            let mut reader = WindowReader::DANGLING;
+            let mut reader = WindowReader::new(stream);
             if self.seed_window(idx, &mut state, &mut reader).is_none() {
                 return;
             }
@@ -1072,10 +1064,12 @@ impl Builder {
         if self.finalized.is_none() {
             self.flush_window();
 
-            let sync_bytes = self.sync_entries.len() * size_of::<SyncEntry>();
+            let sync_entries = bun_core::slice_as_bytes(&self.sync_entries);
+            let sync_bytes = sync_entries.len();
             let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
             let object_braces_offset = stream_offset as usize + self.win_stream.len();
-            let object_braces_bytes = self.object_braces.len() * size_of::<ObjectBrace>();
+            let object_braces = bun_core::slice_as_bytes(&self.object_braces);
+            let object_braces_bytes = object_braces.len();
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
@@ -1102,24 +1096,11 @@ impl Builder {
             );
             blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
             if sync_bytes > 0 {
-                // SAFETY: SyncEntry is #[repr(C)] POD with no padding (size==24,
-                // 6×4-byte fields); reinterpreting as bytes is sound.
-                let src = unsafe {
-                    core::slice::from_raw_parts(self.sync_entries.as_ptr().cast::<u8>(), sync_bytes)
-                };
-                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(src);
+                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(sync_entries);
             }
             blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
                 .copy_from_slice(&self.win_stream);
-            // SAFETY: ObjectBrace is #[repr(C)] POD with no padding (size==16, 4×4-byte fields);
-            // reinterpreting as bytes is sound.
-            let src = unsafe {
-                core::slice::from_raw_parts(
-                    self.object_braces.as_ptr().cast::<u8>(),
-                    object_braces_bytes,
-                )
-            };
-            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(src);
+            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(object_braces);
             blob[total - STREAM_TAIL_PAD..total].fill(0);
 
             self.win_stream = Vec::new();

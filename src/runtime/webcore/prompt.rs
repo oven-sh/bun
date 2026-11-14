@@ -1,23 +1,19 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-#[bun_jsc::host_fn(export = "WebCore__alert")]
-fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
+pub(crate) fn alert(message: Option<&[u8]>) {
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
-    if has_message {
-        let message = arguments[0].to_utf8(global)?;
-
-        if !message.slice().is_empty() {
+    if let Some(message) = message {
+        if !message.is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
             // *  We skip step 3 because they are already done in most terminals by default.
 
@@ -25,15 +21,15 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // *  We just don't do this because it's not necessary.
 
             // 5. Show message to the user, treating U+000A LF as a line break.
-            if output.write_all(message.slice()).is_err() {
+            if output.write_all(message).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return.
-                return Ok(JSValue::UNDEFINED);
+                return;
             }
         }
     }
 
     if output
-        .write_all(if has_message {
+        .write_all(if message.is_some() {
             b" [Enter] " as &[u8]
         } else {
             b"Alert [Enter] "
@@ -41,7 +37,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return.
-        return Ok(JSValue::UNDEFINED);
+        return;
     }
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
@@ -59,27 +55,20 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
-
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(export = "WebCore__confirm")]
-fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
+pub(crate) fn confirm(message: Option<&[u8]>) -> bool {
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
 
-    if has_message {
+    if let Some(message) = message {
         // 2. Set message to the result of normalizing newlines given message.
         // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments[0].to_utf8(global)?;
-
-        if output.write_all(message.slice()).is_err() {
+        if output.write_all(message).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(JSValue::FALSE);
+            return false;
         }
     }
 
@@ -87,7 +76,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     //    and ask the user to respond with a positive or negative
     //    response.
     if output
-        .write_all(if has_message {
+        .write_all(if message.is_some() {
             b" [y/N] " as &[u8]
         } else {
             b"Confirm [y/N] "
@@ -95,7 +84,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
-        return Ok(JSValue::FALSE);
+        return false;
     }
 
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
@@ -106,7 +95,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
-        return Ok(JSValue::FALSE);
+        return false;
     };
 
     // 7. Invoke WebDriver BiDi user prompt closed with this, and true if
@@ -114,34 +103,34 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // *  Not relevant in a server context.
 
     match first_byte {
-        b'\n' => return Ok(JSValue::FALSE),
+        b'\n' => return false,
         b'\r' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
-                return Ok(JSValue::FALSE);
+                return false;
             };
             if next_byte == b'\n' {
-                return Ok(JSValue::FALSE);
+                return false;
             }
         }
         b'y' | b'Y' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
 
-                return Ok(JSValue::FALSE);
+                return false;
             };
 
             if next_byte == b'\n' {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
-                return Ok(JSValue::TRUE);
+                return true;
             } else if next_byte == b'\r' {
                 // Check Windows style
                 let Ok(second_byte) = reader.take_byte() else {
-                    return Ok(JSValue::FALSE);
+                    return false;
                 };
                 if second_byte == b'\n' {
-                    return Ok(JSValue::TRUE);
+                    return true;
                 }
             }
         }
@@ -156,241 +145,230 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // 8. If the user responded positively, return true; otherwise, the user
     //    responded negatively: return false.
-    Ok(JSValue::FALSE)
+    false
 }
 
-pub(crate) mod prompt {
-    use super::*;
+/// Error set for the read-until-delimiter helpers below.
+#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+pub enum ReadError {
+    #[error("StreamTooLong")]
+    StreamTooLong,
+    #[error("Io")]
+    Io,
+}
 
-    /// Error set for the read-until-delimiter helpers below.
-    #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-    pub enum ReadError {
-        #[error("StreamTooLong")]
-        StreamTooLong,
-        #[error("Io")]
-        Io,
+/// Small trait exposing `read_byte() -> Result<u8, _>`; the only
+/// concrete impl is the process-global `BufferedStdin`.
+pub(crate) trait ReadByte {
+    type Error;
+    fn read_byte(&mut self) -> Result<u8, Self::Error>;
+}
+
+impl ReadByte for bun_core::output::BufferedStdin {
+    type Error = bun_core::Error;
+    #[inline]
+    fn read_byte(&mut self) -> Result<u8, Self::Error> {
+        bun_core::output::BufferedStdin::read_byte(self)
     }
+}
 
-    /// Small trait exposing `read_byte() -> Result<u8, _>`; the only
-    /// concrete impl is the process-global `BufferedStdin`.
-    pub(crate) trait ReadByte {
-        type Error;
-        fn read_byte(&mut self) -> Result<u8, Self::Error>;
+/// Reads bytes until `delimiter` (exclusive), erroring with `StreamTooLong`
+/// once `max_size` bytes have been appended.
+pub(crate) fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
+    reader: &mut R,
+    array_list: &mut Vec<u8>,
+    delimiter: u8,
+    max_size: usize,
+) -> Result<(), ReadError> {
+    loop {
+        if array_list.len() == max_size {
+            return Err(ReadError::StreamTooLong);
+        }
+
+        let byte: u8 = reader.read_byte().map_err(|_| ReadError::Io)?;
+
+        if byte == delimiter {
+            return Ok(());
+        }
+
+        array_list.push(byte);
     }
+}
 
-    impl ReadByte for bun_core::output::BufferedStdin {
-        type Error = bun_core::Error;
-        #[inline]
-        fn read_byte(&mut self) -> Result<u8, Self::Error> {
-            bun_core::output::BufferedStdin::read_byte(self)
+/// Reads bytes until `delimiter` (exclusive), appending to `array_list`
+/// with no size limit.
+fn read_until_delimiter_array_list_infinity<R: ReadByte>(
+    reader: &mut R,
+    array_list: &mut Vec<u8>,
+    delimiter: u8,
+) -> Result<(), ReadError> {
+    loop {
+        let byte: u8 = reader.read_byte().map_err(|_| ReadError::Io)?;
+
+        if byte == delimiter {
+            return Ok(());
+        }
+
+        array_list.push(byte);
+    }
+}
+
+/// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
+pub(crate) fn prompt<'a>(
+    cx: &mut JsScope<'a>,
+    message: Option<&[u8]>,
+    default_value: Option<JsLocal<'a>>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let output = Output::writer();
+    // 4. Set default to the result of optionally truncating default.
+    // *  We don't really need to do this.
+    let default = default_value.map(JsLocal::to_js);
+
+    if let Some(message) = message {
+        // 2. Set message to the result of normalizing newlines given message.
+        // *  Not pertinent to a server runtime so we will just let the terminal handle this.
+
+        // 3. Set message to the result of optionally truncating message.
+        // *  Not necessary so we won't do it.
+        if output.write_all(message).is_err() {
+            // 1. If we cannot show simple dialogs for this, then return null.
+            return Ok(JSValue::NULL);
         }
     }
 
-    /// Reads bytes until `delimiter` (exclusive), erroring with `StreamTooLong`
-    /// once `max_size` bytes have been appended.
-    pub(crate) fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
-        reader: &mut R,
-        array_list: &mut Vec<u8>,
-        delimiter: u8,
-        max_size: usize,
-    ) -> Result<(), ReadError> {
-        loop {
-            if array_list.len() == max_size {
-                return Err(ReadError::StreamTooLong);
-            }
+    // 4. Set default to the result of optionally truncating default.
 
-            let byte: u8 = reader.read_byte().map_err(|_| ReadError::Io)?;
-
-            if byte == delimiter {
-                return Ok(());
-            }
-
-            array_list.push(byte);
-        }
-    }
-
-    /// Reads bytes until `delimiter` (exclusive), appending to `array_list`
-    /// with no size limit.
-    fn read_until_delimiter_array_list_infinity<R: ReadByte>(
-        reader: &mut R,
-        array_list: &mut Vec<u8>,
-        delimiter: u8,
-    ) -> Result<(), ReadError> {
-        loop {
-            let byte: u8 = reader.read_byte().map_err(|_| ReadError::Io)?;
-
-            if byte == delimiter {
-                return Ok(());
-            }
-
-            array_list.push(byte);
-        }
-    }
-
-    /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
-    #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
-        let output = Output::writer();
-        let has_message = !arguments.is_empty();
-        let has_default = arguments.len() >= 2;
-        // 4. Set default to the result of optionally truncating default.
-        // *  We don't really need to do this.
-        let default = if has_default {
-            arguments[1]
+    // 5. Show message to the user, treating U+000A LF as a line break,
+    //    and ask the user to either respond with a string value or
+    //    abort. The response must be defaulted to the value given by
+    //    default.
+    if output
+        .write_all(if message.is_some() {
+            b" " as &[u8]
         } else {
-            JSValue::NULL
-        };
+            b"Prompt "
+        })
+        .is_err()
+    {
+        // 1. If we cannot show simple dialogs for this, then return false.
+        return Ok(JSValue::FALSE);
+    }
 
-        if has_message {
-            // 2. Set message to the result of normalizing newlines given message.
-            // *  Not pertinent to a server runtime so we will just let the terminal handle this.
+    if let Some(default) = default {
+        let default_string = default.to_utf8(global)?;
 
-            // 3. Set message to the result of optionally truncating message.
-            // *  Not necessary so we won't do it.
-            let message = arguments[0].to_utf8(global)?;
-
-            if output.write_all(message.slice()).is_err() {
-                // 1. If we cannot show simple dialogs for this, then return null.
-                return Ok(JSValue::NULL);
-            }
-        }
-
-        // 4. Set default to the result of optionally truncating default.
-
-        // 5. Show message to the user, treating U+000A LF as a line break,
-        //    and ask the user to either respond with a string value or
-        //    abort. The response must be defaulted to the value given by
-        //    default.
         if output
-            .write_all(if has_message {
-                b" " as &[u8]
-            } else {
-                b"Prompt "
-            })
+            .print(format_args!(
+                "[{}] ",
+                bstr::BStr::new(default_string.slice())
+            ))
             .is_err()
         {
             // 1. If we cannot show simple dialogs for this, then return false.
             return Ok(JSValue::FALSE);
         }
+    }
 
-        if has_default {
-            let default_string = arguments[1].to_utf8(global)?;
+    // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
+    // *  Not relevant in a server context.
+    Output::flush();
 
-            if output
-                .print(format_args!(
-                    "[{}] ",
-                    bstr::BStr::new(default_string.slice())
-                ))
-                .is_err()
-            {
-                // 1. If we cannot show simple dialogs for this, then return false.
-                return Ok(JSValue::FALSE);
-            }
+    // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
+    // deleting the entire line
+    #[cfg(windows)]
+    let _restore =
+        bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+            unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+            ..Default::default()
+        });
+
+    // 7. Pause while waiting for the user's response.
+    // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
+    // SAFETY: process-global static; prompt() runs single-threaded on the JS
+    // main thread, so the exclusive borrow is sound for this scope.
+    let reader: &mut bun_core::output::BufferedStdin =
+        unsafe { &mut *Output::buffered_stdin_reader() };
+    let mut second_byte: Option<u8> = None;
+    let Ok(first_byte) = reader.read_byte() else {
+        // 8. Let result be null if the user aborts, or otherwise the string
+        //    that the user responded with.
+        return Ok(JSValue::NULL);
+    };
+
+    if first_byte == b'\n' {
+        // 8. Let result be null if the user aborts, or otherwise the string
+        //    that the user responded with.
+        return Ok(default.unwrap_or(JSValue::NULL));
+    } else if first_byte == b'\r' {
+        let Ok(second) = reader.read_byte() else {
+            return Ok(JSValue::NULL);
+        };
+        second_byte = Some(second);
+        if second == b'\n' {
+            return Ok(default.unwrap_or(JSValue::NULL));
         }
+    }
 
-        // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
-        // *  Not relevant in a server context.
-        Output::flush();
+    let mut input: Vec<u8> = Vec::with_capacity(2048);
 
-        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-        // deleting the entire line
-        #[cfg(windows)]
-        let _restore =
-            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
-            });
+    input.push(first_byte);
+    if let Some(second) = second_byte {
+        input.push(second);
+    }
 
-        // 7. Pause while waiting for the user's response.
-        // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
-        // SAFETY: process-global static; prompt() runs single-threaded on the JS
-        // main thread, so the exclusive borrow is sound for this scope.
-        let reader: &mut bun_core::output::BufferedStdin =
-            unsafe { &mut *Output::buffered_stdin_reader() };
-        let mut second_byte: Option<u8> = None;
-        let Ok(first_byte) = reader.read_byte() else {
+    // All of this code basically just first tries to load the input into a
+    // buffer of size 2048. If that is too small, then increase the buffer
+    // size to 4096. If that is too small, then just dynamically allocate
+    // the rest.
+    if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
+        &mut *reader,
+        &mut input,
+        b'\n',
+        2048,
+    ) {
+        if !matches!(e, ReadError::StreamTooLong) {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return Ok(JSValue::NULL);
-        };
-
-        if first_byte == b'\n' {
-            // 8. Let result be null if the user aborts, or otherwise the string
-            //    that the user responded with.
-            return Ok(default);
-        } else if first_byte == b'\r' {
-            let Ok(second) = reader.read_byte() else {
-                return Ok(JSValue::NULL);
-            };
-            second_byte = Some(second);
-            if second == b'\n' {
-                return Ok(default);
-            }
         }
 
-        let mut input: Vec<u8> = Vec::with_capacity(2048);
+        input.ensure_total_capacity(4096);
 
-        input.push(first_byte);
-        if let Some(second) = second_byte {
-            input.push(second);
-        }
-
-        // All of this code basically just first tries to load the input into a
-        // buffer of size 2048. If that is too small, then increase the buffer
-        // size to 4096. If that is too small, then just dynamically allocate
-        // the rest.
-        if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
+        if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
             &mut *reader,
             &mut input,
             b'\n',
-            2048,
+            4096,
         ) {
-            if !matches!(e, ReadError::StreamTooLong) {
+            if !matches!(e2, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
                 return Ok(JSValue::NULL);
             }
 
-            input.ensure_total_capacity(4096);
-
-            if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
-                &mut *reader,
-                &mut input,
-                b'\n',
-                4096,
-            ) {
-                if !matches!(e2, ReadError::StreamTooLong) {
-                    // 8. Let result be null if the user aborts, or otherwise the string
-                    //    that the user responded with.
-                    return Ok(JSValue::NULL);
-                }
-
-                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
-                    .is_err()
-                {
-                    // 8. Let result be null if the user aborts, or otherwise the string
-                    //    that the user responded with.
-                    return Ok(JSValue::NULL);
-                }
+            if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n').is_err() {
+                // 8. Let result be null if the user aborts, or otherwise the string
+                //    that the user responded with.
+                return Ok(JSValue::NULL);
             }
         }
-
-        if !input.is_empty() && input[input.len() - 1] == b'\r' {
-            input.truncate(input.len() - 1);
-        }
-
-        debug_assert!(!input.is_empty());
-
-        // 8. Let result be null if the user aborts, or otherwise the string
-        //    that the user responded with.
-        let result = EncodedSlice::utf8(&input);
-
-        // 9. Invoke WebDriver BiDi user prompt closed with this, false if
-        //    result is null or true otherwise, and result.
-        // *  Too complex for server context.
-
-        // 9. Return result.
-        Ok(result.to_js(global))
     }
+
+    if !input.is_empty() && input[input.len() - 1] == b'\r' {
+        input.truncate(input.len() - 1);
+    }
+
+    debug_assert!(!input.is_empty());
+
+    // 8. Let result be null if the user aborts, or otherwise the string
+    //    that the user responded with.
+    let result = EncodedSlice::utf8(&input);
+
+    // 9. Invoke WebDriver BiDi user prompt closed with this, false if
+    //    result is null or true otherwise, and result.
+    // *  Too complex for server context.
+
+    // 9. Return result.
+    Ok(result.to_js(global))
 }

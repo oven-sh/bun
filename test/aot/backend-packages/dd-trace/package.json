@@ -1,0 +1,10 @@
+{
+  "name": "backend-packages",
+  "private": true,
+  "dependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.5",
+    "dd-trace": "6.21.0",
+    "express": "5.3.0"
+  }
+}

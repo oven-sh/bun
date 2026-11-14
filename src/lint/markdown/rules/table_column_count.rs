@@ -5,11 +5,11 @@ pub struct TableColumnCount {
     check_missing_cells: bool,
 }
 
-const EXTRA_CELLS: Message = Message::new(
+const EXTRA_CELLS: &Message = &Message::new(
     "extraCells",
     "Table column count mismatch (Expected: {{expectedCells}}, Actual: {{actualCells}}), extra data starting here will be ignored.",
 );
-const MISSING_CELLS: Message = Message::new(
+const MISSING_CELLS: &Message = &Message::new(
     "missingCells",
     "Table column count mismatch (Expected: {{expectedCells}}, Actual: {{actualCells}}), row might be missing data.",
 );

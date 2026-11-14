@@ -1,0 +1,17 @@
+# -- source: main.ts
+# function spread(bytes: Uint8Array, turns: number, from: number) {
+#   let at = from | 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     bytes[at] = turn;
+#     at = (at + 3) | 0;
+#   }
+# }
+# const bytes = new Uint8Array(64);
+# spread(bytes, Number((globalThis as any).input), Number((globalThis as any).start));
+# (globalThis as any).publish(bytes);
+# -- end of source
+# A view of bytes may have more than 2^31 of them, so the index is compared with the length as a sign-extended word. The store takes that word, not another extension.
+# RUN: emit f1 mechanisms=all
+# CHECK-LABEL: unit f1
+# CHECK: = SExt32({{*}}, origin = 72)
+# CHECK-NOT: = ZExt32({{*}}, origin = 72)

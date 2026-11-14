@@ -1,0 +1,21 @@
+# -- source: main.js
+# let kept;
+# class Mid {
+#   static size = Number(globalThis.nothingOfThisName ?? 2);
+#   static tell() { return 1; }
+#   static grow(by) { const before = Mid.size; ({ tell: kept } = Mid); Mid.size = before + by; return Mid.size; }
+# }
+# function run(n) { let s = 0; for (let i = 0; i < n; i++) s += Mid.grow(1); return s; }
+# print(run(4), typeof kept);
+# -- end of source
+# The static fields of a class lie in the statics until its class object is made whole, which the first read of a static method does: their values move to properties of the object and the words are emptied.
+# The walk believes of that read that it writes nothing that anybody sees, and that holds for as long as compiled code reads such a word anew at every access and takes an empty one to the road by name: the store
+# in grow() stands behind a test of its own, behind the read of `tell`, though the same word was read in front of it. The net under effects counted the emptied word as a variable that was given another value.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: 18 function
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: = GetStaticFieldOrAbsent
+# WALK: = PropGet {{*}} key="tell" traits=[mayThrow, mayCollect, mayTouchMemory]
+# WALK: = GetStaticFieldOrAbsent
+# WALK: = PutStaticField

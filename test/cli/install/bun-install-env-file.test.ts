@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isRoot, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/12011
@@ -40,6 +41,8 @@ type RunOptions = {
   /** Relative to the temp dir. */
   cwd?: string;
   env?: (root: string, port: number) => Record<string, string>;
+  /** Runs after the files are written and before `bun` starts. */
+  setup?: (root: string) => void;
 };
 
 /** Runs `bun <argv>` against a loopback registry that records each Authorization header. */
@@ -55,6 +58,7 @@ async function run(opts: RunOptions): Promise<{ auth: string[]; stderr: string }
 
   using dir = tempDir("install-env-file", opts.files(server.port));
   const root = String(dir);
+  opts.setup?.(root);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...opts.argv],
@@ -79,11 +83,47 @@ const runInstall = (extraArgs: string[], extraEnv: Record<string, string> = {}) 
 
 describe("bun install .env loading (#12011)", () => {
   test.concurrent("--env-file loads the requested file for bunfig $VAR substitution", async () => {
-    const { auth, stderr } = await runInstall(["--env-file", ".env.custom"]);
+    const { auth } = await runInstall(["--env-file", ".env.custom"]);
     expect(auth.length).toBeGreaterThan(0);
     expect(auth[0]).toBe("Bearer CUSTOM");
-    expect(stderr).toContain(".env.custom");
-    expect(stderr).not.toContain(".env.production");
+  });
+
+  // https://github.com/oven-sh/bun/issues/47006
+  const quietLevels: [label: string, args: string[]][] = [
+    ["no flag", []],
+    ["--quiet", ["--quiet"]],
+    ["--silent", ["--silent"]],
+  ];
+  test.concurrent.each(quietLevels)("the loaded file is not printed with %s", async (_label, args) => {
+    const { auth, stderr } = await runInstall(args);
+    expect(auth[0]).toBe("Bearer PROD");
+    expect(stderr).not.toContain('".env');
+  });
+
+  test.concurrent("--verbose prints the loaded file", async () => {
+    const { auth, stderr } = await runInstall(["--verbose"]);
+    expect(auth[0]).toBe("Bearer PROD");
+    expect(stderr).toContain('".env.production"');
+  });
+
+  // Root bypasses permission checks, so skip there.
+  test.concurrent.skipIf(isWindows || isRoot)(
+    "a .env that install cannot read is still reported by default",
+    async () => {
+      const { stderr } = await run({
+        files: projectFiles,
+        argv: ["install"],
+        setup: root => chmodSync(join(root, ".env.production"), 0o000),
+      });
+      expect(stderr).toContain("EACCES error loading .env.production file");
+    },
+  );
+
+  test.concurrent("--verbose prints the --env-file file and not the default files", async () => {
+    const { auth, stderr } = await runInstall(["--env-file", ".env.custom", "--verbose"]);
+    expect(auth[0]).toBe("Bearer CUSTOM");
+    expect(stderr).toContain('".env.custom"');
+    expect(stderr).not.toContain('".env.production"');
   });
 
   test.concurrent("--env-file=PATH form works", async () => {
@@ -110,18 +150,18 @@ describe("bun install .env loading (#12011)", () => {
   const unresolved = ["Bearer $NPM_TOKEN", "<none>"];
 
   test.concurrent("--no-env-file suppresses auto-loading", async () => {
-    const { auth, stderr } = await runInstall(["--no-env-file"]);
+    const { auth, stderr } = await runInstall(["--no-env-file", "--verbose"]);
     expect(unresolved).toContain(auth[0]);
-    expect(stderr).not.toContain(".env");
+    expect(stderr).not.toContain('".env');
   });
 
   test.concurrent("bunfig `env = false` suppresses auto-loading", async () => {
     const { auth, stderr } = await run({
       files: port => ({ ...projectFiles(port), "bunfig.toml": `env = false\n${bunfig(port)}` }),
-      argv: ["install"],
+      argv: ["install", "--verbose"],
     });
     expect(unresolved).toContain(auth[0]);
-    expect(stderr).not.toContain(".env");
+    expect(stderr).not.toContain('".env');
   });
 
   test.concurrent("`bun --env-file=PATH install` (flag before the subcommand) works", async () => {
@@ -268,7 +308,13 @@ async function probeLifecycleEnv(extraArgs: string[]): Promise<{ seen: string; s
 
 describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   test.concurrent("by default the postinstall script sees the loaded .env* values", async () => {
-    const { seen, stderr, exitCode } = await probeLifecycleEnv([]);
+    const { seen, exitCode } = await probeLifecycleEnv([]);
+    expect(seen).toBe("from-dotenv-production");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--verbose prints the files the postinstall script got its values from", async () => {
+    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--verbose"]);
     expect(seen).toBe("from-dotenv-production");
     // The loader's banner quotes each file it loaded; the echoed postinstall
     // command line also mentions `process.env`, hence matching on the quote.
@@ -277,14 +323,19 @@ describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   });
 
   test.concurrent("--no-env-file keeps .env* values out of the postinstall script", async () => {
-    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file"]);
+    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--verbose"]);
     expect(seen).toBe("undefined");
     expect(stderr).not.toContain('".env');
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("--no-env-file together with --env-file still loads the explicit file", async () => {
-    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--env-file", ".env.custom"]);
+    const { seen, stderr, exitCode } = await probeLifecycleEnv([
+      "--no-env-file",
+      "--env-file",
+      ".env.custom",
+      "--verbose",
+    ]);
     expect(seen).toBe("from-custom");
     expect(stderr).toContain('".env.custom"');
     expect(stderr).not.toContain('".env.production"');

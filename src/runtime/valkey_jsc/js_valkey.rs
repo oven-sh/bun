@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
-use bun_core::{String as BunString, strings};
+use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
@@ -11,7 +11,7 @@ use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell, JsRef,
     JsResult,
 };
-use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
+use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_uws as uws;
 
 use super::protocol_jsc;
@@ -181,10 +181,7 @@ impl JSValkeyClient {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self);
-        let _guard = scopeguard::guard(parent_br, |p| {
+        let _guard = scopeguard::guard(self, |p| {
             p.on_new_subscription_callback_insert();
         });
         let map = self.subscription_callback_map();
@@ -259,18 +256,13 @@ impl JSValkeyClient {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self);
-        let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
         while let Some(callback) = iter.next()? {
             debug_assert!(callback.is_callable());
-            // `event_loop_mut()` is the safe accessor for the VM-owned
-            // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
-            vm.event_loop_mut().run_callback(
+            vm.event_loop().run_callback(
                 self.context,
                 callback,
                 global_object,
@@ -289,8 +281,7 @@ impl JSValkeyClient {
 /// Valkey client wrapper for JavaScript
 // Every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `JsCell` is
-// `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
-// `ValkeyClient::parent`) sees identical offsets.
+// `#[repr(transparent)]`, so `ValkeyClient::parent` sees identical offsets.
 //
 // `#[repr(C)]`: `client` MUST be
 // at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
@@ -303,7 +294,7 @@ pub(crate) struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
     pub this_value: JsCell<JsRef>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
 
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
@@ -330,7 +321,7 @@ pub(crate) struct JSValkeyClient {
 pub(crate) struct RefCountedTimer {
     // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
     // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
-    event_loop_timer: JsCell<Timer::EventLoopTimer>,
+    event_loop_timer: Timer::EventLoopTimer,
     held_ref: JsCell<Option<RefPtr<JSValkeyClient>>>,
 }
 
@@ -339,14 +330,14 @@ const _: () = assert!(core::mem::offset_of!(RefCountedTimer, event_loop_timer) =
 impl RefCountedTimer {
     fn new(tag: Timer::Tag) -> Self {
         Self {
-            event_loop_timer: JsCell::new(Timer::EventLoopTimer::init_paused(tag)),
+            event_loop_timer: Timer::EventLoopTimer::init_paused(tag),
             held_ref: JsCell::new(None),
         }
     }
 
     #[inline]
     fn state(&self) -> Timer::State {
-        self.event_loop_timer.get().state
+        self.event_loop_timer.state.get()
     }
 
     /// Insert into the VM timer heap to fire after `ms`, taking the keep-alive
@@ -363,23 +354,10 @@ impl RefCountedTimer {
             bun_core::TimespecMockMode::ForceRealTime,
             i64::from(ms),
         );
-        self.event_loop_timer.with_mut(|t| {
-            t.next = Timer::Timespec {
-                sec: now.sec,
-                nsec: now.nsec,
-            }
-        });
-        let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
-        // SAFETY: `vm` is the live per-thread VM; the timer is an unlinked
-        // field of the boxed `JSValkeyClient` (stable address until disarmed).
-        unsafe {
-            VirtualMachine::timer_insert(
-                vm,
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-            )
-        };
+        self.event_loop_timer.next.set(now);
+        // SAFETY: the timer is an unlinked field of the boxed `JSValkeyClient`
+        // (stable address until disarmed).
+        unsafe { owner.vm().timer_insert(&raw const self.event_loop_timer) };
         if self.held_ref.get().is_none() {
             self.held_ref.set(Some(owner.ref_guard()));
         }
@@ -387,12 +365,7 @@ impl RefCountedTimer {
 
     /// Remove from the VM timer heap and release the keep-alive ref if held.
     fn disarm(&self, owner: &JSValkeyClient) {
-        if self.state() == Timer::State::ACTIVE {
-            let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
-            // SAFETY: `vm` is the live per-thread VM; the timer is currently
-            // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, self.event_loop_timer.as_ptr()) };
-        }
+        owner.vm().timer_remove(&self.event_loop_timer);
         // The caller's ref keeps `owner` live past this call.
         self.held_ref.set(None);
     }
@@ -400,8 +373,7 @@ impl RefCountedTimer {
     /// Mark fired and hand the keep-alive ref (if held) to the callback scope.
     /// Returns `None` when no ref was held, so a stray fire cannot over-release.
     fn take_fire_ref(&self) -> Option<RefPtr<JSValkeyClient>> {
-        self.event_loop_timer
-            .with_mut(|t| t.state = Timer::State::FIRED);
+        self.event_loop_timer.state.set(Timer::State::FIRED);
         self.held_ref.take()
     }
 }
@@ -417,7 +389,7 @@ impl Drop for JSValkeyClient {
         debug_assert!(self.timer.held_ref.get().is_none());
         debug_assert!(self.reconnect_timer.held_ref.get().is_none());
         self.client_mut().shutdown(None);
-        self.poll_ref.with_mut(|r| r.disable());
+        self.poll_ref.disable();
         self.stop_timers();
         self.ref_count.assert_no_refs();
     }
@@ -490,14 +462,15 @@ impl JSValkeyClient {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
-        let url_str = if !url.is_undefined_or_null() {
-            url.to_bun_string(cx.global())?
+        let url_slice = if !url.is_undefined_or_null() {
+            url.to_utf8(cx.global())?
         } else {
             let env = vm_ref.env_loader();
-            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
-                Some(url) => BunString::borrow_utf8(url),
-                None => BunString::static_("valkey://localhost:6379"),
-            }
+            Utf8Bytes::Borrowed(
+                env.get(b"REDIS_URL")
+                    .or_else(|| env.get(b"VALKEY_URL"))
+                    .unwrap_or(b"valkey://localhost:6379"),
+            )
         };
         let mut fallback_url_buf = [0u8; 2048];
 
@@ -508,7 +481,6 @@ impl JSValkeyClient {
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
         let parsed_url = 'get_url: {
-            let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
 
             if url_byte_slice.is_empty() {
@@ -737,7 +709,7 @@ impl JSValkeyClient {
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -829,7 +801,7 @@ impl JSValkeyClient {
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -931,11 +903,10 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
-        let self_br = BackRef::new(self);
-        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
 
         if self.client.get().status == valkey::Status::NeverConnected {
-            self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
+            self.poll_ref.ref_(vm_event_loop_ctx());
 
             if let Err(err) = self.connect() {
                 debug!(
@@ -1114,10 +1085,7 @@ impl JSValkeyClient {
             ctx: self.ref_guard(),
             what,
         }));
-        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
-        unsafe {
-            (*self.vm().event_loop()).enqueue_task(task);
-        }
+        self.vm().event_loop().enqueue_task(task);
     }
 
     pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
@@ -1161,11 +1129,7 @@ impl JSValkeyClient {
         let _guard = self.ref_guard();
 
         // Ref the poll to keep event loop alive during connection
-        self.poll_ref.with_mut(|r| {
-            r.disable();
-            *r = KeepAlive::default();
-            r.ref_(vm_event_loop_ctx());
-        });
+        self.poll_ref.ref_(vm_event_loop_ctx());
 
         if let Err(err) = self.connect() {
             debug!(
@@ -1191,14 +1155,9 @@ impl JSValkeyClient {
         // Now counting idle time, not connect time.
         self.reset_connection_timeout();
 
-        let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: `p` was `self.as_ctx_ptr()` at guard creation; the caller
-            // holds an intrusive ref across this scope so `*p` is live here.
-            unsafe {
-                (*p).client_mut().on_writable();
-                (*p).update_poll_ref();
-            }
+        let _defer = scopeguard::guard(self, |this| {
+            this.client_mut().on_writable();
+            this.update_poll_ref();
         });
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
@@ -1353,7 +1312,7 @@ impl JSValkeyClient {
     // Callback for when Valkey client closes
     pub(crate) fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
-        let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
+        let _defer = scopeguard::guard(self, |p| p.update_poll_ref());
 
         // Bounded the attempt that just ended; a dial that fails outright
         // arms no timer of its own, so left armed this one would fire into it.
@@ -1448,14 +1407,13 @@ impl JSValkeyClient {
         }
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        let vm = self.client.get().vm.as_mut();
+        let vm = self.client.get().vm;
         let loop_ = vm.uws_loop();
         // (A client that redials on its own stays with the context that created it; what joins a
         // context that is gone is closed on the next turn of the loop.)
-        let context = core::ptr::from_ref(vm.context_of(self.context));
-        // SAFETY: the VM's own, or registered ⇒ not freed under this call; JS thread.
-        let groups = vm.client_socket_groups_in(unsafe { &*context });
-        let group: *mut uws::SocketGroup = if is_tls {
+        let context = vm.context_of(self.context);
+        let groups = vm.client_socket_groups_in(context);
+        let group = if is_tls {
             groups.valkey_group::<true>(loop_)
         } else {
             groups.valkey_group::<false>(loop_)
@@ -1471,11 +1429,7 @@ impl JSValkeyClient {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                let state = crate::jsc_hooks::runtime_state();
-                debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
-                // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
+                let cache = crate::jsc_hooks::ssl_ctx_cache();
                 self._secure.set(cache.get_or_create(custom, &mut err));
             }
             self._secure.get().is_none()
@@ -1499,7 +1453,7 @@ impl JSValkeyClient {
 
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
-        let errdefer_status = scopeguard::guard(BackRef::new(self), |p| {
+        let errdefer_status = scopeguard::guard(self, |p| {
             p.client_mut().status = valkey::Status::Disconnected;
             p.update_poll_ref();
         });
@@ -1508,24 +1462,14 @@ impl JSValkeyClient {
         // the OUTER pointer, not the inner `ValkeyClient`, or dispatch will
         // mis-type and re-offset it (`on_open` → `this.client_mut()` adds
         // `offsetof(JSValkeyClient, client)` again → garbage `&mut ValkeyClient`).
-        // Reshaped for borrowck — `address` is a field of `client`; go through a
-        // raw pointer. `Address::connect` only reads host/path bytes and forwards
-        // `owner_ptr` opaquely (no overlapping write).
         let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
-        let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
         // Socket keep-alive ref. Forgotten once there is a socket to own it;
         // adopted by the guard at the entry of the socket's close event
         // (`SocketHandler::on_close` or `SocketHandler::on_connect_error`),
         // which is the one event uSockets delivers for every socket this returns.
         let socket_ref = self.ref_guard();
-        // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
-        // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
-        // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
-        let socket = unsafe {
-            (*client_ptr)
-                .address
-                .connect(owner_ptr, &mut *group, ssl_ctx, is_tls)
-        }?;
+        let address = &self.client.get().address;
+        let socket = address.connect(owner_ptr, group, ssl_ctx, is_tls)?;
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
@@ -1545,8 +1489,7 @@ impl JSValkeyClient {
 
         self.ensure_dialing();
 
-        let self_br = BackRef::new(self);
-        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
         self.client_mut().send(global_this, command)
     }
 
@@ -1617,10 +1560,10 @@ impl JSValkeyClient {
         if has_activity || status == valkey::Status::Connecting {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
-            self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
+            self.poll_ref.ref_(vm_event_loop_ctx());
         } else {
             // There is no pending activity so it is safe to remove the event loop.
-            self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
+            self.poll_ref.unref(vm_event_loop_ctx());
         }
 
         if self.this_value.get().is_empty() {
@@ -1868,7 +1811,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Before `on_close()`: it runs `onclose` and settles the connect()
         // promise, and a connect() called from either must see Disconnected.
         this.client_mut().status = valkey::Status::Disconnected;
-        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let _defer = scopeguard::guard(this, |p| p.update_poll_ref());
 
         this.client_mut().on_close()
     }
@@ -1893,7 +1836,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // SAFETY: as in `on_close`; a dial that fails gets this event instead.
         let _socket_ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         this.client_mut().status = valkey::Status::Disconnected;
-        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let _defer = scopeguard::guard(this, |p| p.update_poll_ref());
 
         this.client_mut().on_close()
     }
@@ -2063,7 +2006,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // The VM is going away: `on_close()` would run `onclose`, so only
             // give back what `close_without_socket_next_tick` took.
             DeferredClose::WithoutSocket => {
-                task.ctx.poll_ref.with_mut(|r| r.disable());
+                task.ctx.poll_ref.disable();
             }
         }
     }

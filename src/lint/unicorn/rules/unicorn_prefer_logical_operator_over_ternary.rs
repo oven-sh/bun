@@ -7,9 +7,9 @@ use smallvec::SmallVec;
 /// This rule finds ternary expressions that can be simplified to a logical operator.
 pub struct PreferLogicalOperatorOverTernary;
 
-const PREFER_LOGICAL_OPERATOR_OVER_TERNARY: Message =
-    Message::new("", "Prefer using a logical operator over a ternary.");
-const SUGGESTION: Message = Message::new("", "Switch to \"||\" or \"??\" operator");
+const PREFER_LOGICAL_OPERATOR_OVER_TERNARY: &Message =
+    &Message::new("", "Prefer using a logical operator over a ternary.");
+const SUGGESTION: &Message = &Message::new("", "Switch to \"||\" or \"??\" operator");
 
 impl Rule for PreferLogicalOperatorOverTernary {
     const META: Meta =

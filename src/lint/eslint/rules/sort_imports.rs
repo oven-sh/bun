@@ -13,15 +13,15 @@ pub struct SortImports {
     rank: [usize; 4],
 }
 
-const SORT_IMPORTS_ALPHABETICALLY: Message = Message::new(
+const SORT_IMPORTS_ALPHABETICALLY: &Message = &Message::new(
     "sortImportsAlphabetically",
     "Imports should be sorted alphabetically.",
 );
-const SORT_MEMBERS_ALPHABETICALLY: Message = Message::new(
+const SORT_MEMBERS_ALPHABETICALLY: &Message = &Message::new(
     "sortMembersAlphabetically",
     "Member '{{memberName}}' of the import declaration should be sorted alphabetically.",
 );
-const UNEXPECTED_SYNTAX_ORDER: Message = Message::new(
+const UNEXPECTED_SYNTAX_ORDER: &Message = &Message::new(
     "unexpectedSyntaxOrder",
     "Expected '{{syntaxA}}' syntax before '{{syntaxB}}' syntax.",
 );

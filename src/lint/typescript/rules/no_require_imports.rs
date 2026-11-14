@@ -6,8 +6,8 @@ pub struct NoRequireImports {
     allow_as_import: bool,
 }
 
-const NO_REQUIRE_IMPORTS: Message =
-    Message::new("noRequireImports", "A `require()` style import is forbidden.");
+const NO_REQUIRE_IMPORTS: &Message =
+    &Message::new("noRequireImports", "A `require()` style import is forbidden.");
 
 /// Returns the argument of `require(..)` if it's a string or a template without substitutions.
 pub(crate) fn required_path(call: Call<'_>) -> Option<Name<'_>> {
@@ -36,7 +36,7 @@ impl NoRequireImports {
         if self.is_import_path_allowed(path) || Node::Expr(e).scope().resolve("require").is_some() {
             return;
         }
-        cx.report(e, NO_REQUIRE_IMPORTS).hint("Use an import declaration, or await import() to load it later.");
+        cx.report(e, NO_REQUIRE_IMPORTS).hint("Use import, or await import() to load it later.");
     }
 
     fn check_import_equals<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -47,7 +47,7 @@ impl NoRequireImports {
         {
             // oxlint points at the declaration.
             let report_span = if cx.language().is_oxlint { statement.span_without_export() } else { reference };
-            cx.report(report_span, NO_REQUIRE_IMPORTS).hint("Use an import declaration.");
+            cx.report(report_span, NO_REQUIRE_IMPORTS).hint("Use import.");
         }
     }
 }

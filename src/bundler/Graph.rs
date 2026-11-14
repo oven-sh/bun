@@ -29,7 +29,7 @@ pub struct Graph<'a> {
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
-    pub input_files: MultiArrayList<InputFile>,
+    pub input_files: MultiArrayList<InputFile<'a>>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
     // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
@@ -101,8 +101,8 @@ pub struct HtmlImports {
     pub(crate) html_source_indices: Vec<IndexInt>,
 }
 
-pub struct InputFile {
-    pub(crate) source: bun_ast::Source,
+pub struct InputFile<'a> {
+    pub(crate) source: bun_ast::Source<'a>,
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
@@ -114,7 +114,7 @@ pub struct InputFile {
     pub flags: InputFileFlags,
 }
 
-impl Default for InputFile {
+impl Default for InputFile<'_> {
     fn default() -> Self {
         Self {
             source: bun_ast::Source::default(),
@@ -133,8 +133,8 @@ impl Default for InputFile {
 // Field name + type are checked against `InputFile`'s reflected layout at
 // compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
-    pub trait InputFileColumns for InputFile {
-        source: bun_ast::Source,
+    pub trait InputFileColumns ['a] for InputFile<'a> {
+        source: bun_ast::Source<'a>,
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
@@ -220,22 +220,24 @@ impl<'a> Graph<'a> {
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
     }
+}
 
+impl BundleV2<'_> {
     /// Schedule a task to be run on the JS thread which resolves the promise of
     /// each `.defer()` called in an onLoad plugin.
     ///
     /// Returns true if there were more tasks queued.
-    pub(crate) fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        transpiler.thread_lock.assert_locked();
+    pub(crate) fn drain_deferred_tasks(&mut self) -> bool {
+        self.thread_lock.assert_locked();
 
-        if self.deferred_pending > 0 {
+        if self.graph.deferred_pending > 0 {
             // Their units are back in `pending_items` (a new epoch: those loads' own units are no longer
             // parked), plus one for the hop itself: the pass is not done until it is back (see
             // `DeferredBatchTask`).
-            self.pending_items += self.deferred_pending + 1;
-            self.deferred_pending = 0;
-            self.defer_epoch += 1;
-            transpiler.drain_defer_task.schedule();
+            self.graph.pending_items += self.graph.deferred_pending + 1;
+            self.graph.deferred_pending = 0;
+            self.graph.defer_epoch += 1;
+            self.drain_defer_task.schedule();
 
             return true;
         }

@@ -1,0 +1,16 @@
+# f1 = mirror
+# f2 = gather
+# -- source: main.mjs
+# function mirror(d, s) { for (let i = 0; i < 100; i++) { const v = s[i]; d[i] = v; d[99 - i] = v; } return d[3]; }
+# function gather(d, s, t) { for (let i = 0; i < 100; i++) d[i] = s[t[i] & 63]; return d[3]; }
+# const d = new Int32Array(100), s = new Int32Array(100).map((_, i) => i), list = JSON.parse('[1,2,3]');
+# print(mirror(d, s), gather(d, s, s), mirror(list, list) === list[3]);
+# -- end of source
+# The source is told apart by class. The target, and a table that is read under its elements, are expected of the same class.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: testedType=Int32Array
+# CHECK: PutTypedArrayElement
+# RUN(GATHER): walk f2:Body mechanisms=all
+# GATHER: PutTypedArrayElement
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 96 3 true

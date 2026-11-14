@@ -36,11 +36,12 @@ or don't match the cross-platform behavior the runtime needs.
 | `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
 | `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
-| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`                                       |
+| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `StringView::borrow_utf8`                           |
 | `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
 | `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
 | `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
 | `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
+| `from_raw_parts` / `transmute` on bytes | `bun_core::{bytes_of, slice_as_bytes, cast_slice, read_prefix}` (see below)          |
 
 ## `bun_sys` — System Calls (`src/sys/`)
 
@@ -85,17 +86,26 @@ requires a real encoder, not a cast.
 
 `String` owns one ref when WTF-backed: `Drop` derefs, `Clone` refs, it is
 not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
-is needed). In an `extern "C"` signature a by-value `String` means ownership
+is needed). Rust cannot build a `String` that borrows: `StringView<'a>`
+wraps a `&'a [u8]` without copying. It derefs to `&String`,
+`StringView::as_strings` lends a slice of them as `&[String]`, and
+`String::clone(&view)` copies the bytes into an owned `String`. A field that
+holds either an owned `String` or borrowed bytes is a `StringOrView<'a>` (the
+`ZigException<'a>` / `ZigStackFrame<'a>` strings: C++ fills them with refs, the
+dev server with slices of a request body); it drops the ref if it has one and
+also derefs to `&String`. In an `extern "C"` signature a by-value `String` means ownership
 crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
 consumer); `&String` ⇔ `const BunString*`.
 
 ```rust
-use bun_core::{EncodedSlice, String, Utf8Bytes};   // the only import path for all three
+use bun_core::{EncodedSlice, String, StringOrView, StringView, Utf8Bytes};   // the only import path for all five
 
 let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
-let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_("literal");        // 'static ASCII slice, never freed
-let s = String::from_bytes(bytes);         // borrow arbitrary bytes; tags UTF-8 if non-ASCII
+let s = String::from_static_bytes(bytes);  // 'static UTF-8: ASCII is not copied, anything else is clone_utf8
+let v = StringView::borrow_utf8(utf8_bytes); // no copy; `v` cannot outlive the slice
+let v = StringView::from_bytes(bytes);       // borrow arbitrary bytes; tags UTF-8 if non-ASCII
+let f: StringOrView<'_> = StringOrView::from_bytes(bytes); // same borrow, for a field that `owned.into()` also fits
 s.eq_ascii(b"lit") / s.starts_with_ascii(b"lit")  // encoding-aware ASCII compare without transcoding
 
 let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals
@@ -180,7 +190,8 @@ of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 `.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
 Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
 source lint bans the `core::arch` intrinsics. A new kernel goes in
-`src/jsc/bindings/highway_strings.cpp`, with its safe wrapper in `src/highway/lib.rs`.
+`src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
+`noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`.
 
 ```rust
 use bun_core::strings;
@@ -297,6 +308,40 @@ allocator and similar) do **not** run `Drop` when the arena resets — the
 backing pages are bulk-freed. If a type owns a heap allocation, refcount, or
 fd, free it explicitly before the arena resets. Don't rely on `Drop` for
 correctness in arena-backed code.
+
+## Bytes ↔ values (`bun_pod`, re-exported by `bun_core`)
+
+Viewing a value as bytes, or bytes as a value, is safe code. Four marker traits
+say which types allow it, and `impl_*!` macros implement them only if rustc can
+prove the claim from the type's layout (padding, a `bool`, an enum or a pointer
+in the wrong place is a compile error at the macro call). The `#[repr(..)]` is
+required: without one rustc picks the field order, and so the byte order:
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Header { magic: u32, len: u16, flags: u16 }
+bun_core::impl_pod!(Header);            // NoUninit + AnyBitPattern + Zeroable
+// impl_no_uninit!(T)        every byte initialized:  &T → &[u8]   (enums and bool qualify)
+// impl_any_bit_pattern!(T)  every byte pattern valid: &[u8] → T   (padding is fine)
+// impl_zeroable!(T)         all-zero valid: bun_core::ffi::zeroed::<T>()
+
+bun_core::bytes_of(&header)                  // &[u8]
+bun_core::slice_as_bytes(utf16)              // &[T] → &[u8], cannot fail
+bun_core::read_prefix::<Header>(bytes)       // Option<Header>, any alignment
+bun_core::vec_from_bytes::<Header>(bytes)    // Option<Vec<Header>>, any alignment
+bun_core::try_cast_slice::<u8, u16>(bytes)   // Option<&[u16]>: None if misaligned or a partial element
+bun_core::cast_slice::<u8, u16>(bytes)       // same, panics: only for layouts Bun itself established
+bun_core::Unaligned::<u16>::slice_of(bytes)  // &[Unaligned<u16>], cannot fail; `.get()` each element
+```
+
+Memory whose address JS controls (an `ArrayBuffer` can wrap any `bun:ffi` or
+N-API pointer) is not aligned to anything: never `cast_slice` it. Use
+`Unaligned::slice_of`, `read_prefix`, `vec_from_bytes` or `try_cast_slice`. A
+hand-written `unsafe impl` of these traits is only for what rustc cannot analyze
+(generic parameters, associated-type fields such as `bitflags!` storage, types
+over 4 KiB, and pointers for `Zeroable`). If a function is generic over "`u8` or
+`u16`", dispatch with a trait method (`PathByte::units`), not a cast.
 
 ## Environment Variables (`bun_core::env_var`)
 

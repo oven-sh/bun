@@ -1,6 +1,7 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
 import def, * as ns from "util/types";
+import vm from "vm";
 const req = require("util/types");
 const types = def;
 
@@ -72,6 +73,20 @@ for (const [value, _method] of [
     }
   });
 }
+
+test("isProxy is false for a global object", () => {
+  expect({
+    globalThis: types.isProxy(globalThis),
+    contextified: types.isProxy(vm.runInNewContext("this")),
+    notContextified: types.isProxy(vm.createContext(vm.constants.DONT_CONTEXTIFY)),
+    proxyOfGlobalThis: types.isProxy(new Proxy(globalThis, {})),
+  }).toEqual({
+    globalThis: false,
+    contextified: false,
+    notContextified: false,
+    proxyOfGlobalThis: true,
+  });
+});
 
 // Check boxed primitives.
 test("isBoxedPrimitive", () => {

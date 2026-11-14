@@ -1,0 +1,13 @@
+# -- source: main.ts
+# type Kind = "add" | "remove" | "insert";
+# function is(t: { type: Kind }, kind: Kind): boolean { return t.type === kind; }
+# function count(list: { type: Kind }[]): number { let r = 0; for (const t of list) { if (is(t, "add")) r += 1; if (is(t, "remove")) r += 2; if (is(t, "insert")) r += 4; r = r * 3 % 1003; } return r; }
+# const listed = JSON.parse('[{"type":"add"},{"type":7},{"type":null},{"type":"rem"},{"type":["add"]},{"type":"remove"},{"type":"insert"}]'); listed[3].type += "ove";
+# print(count(listed), count([{ type: "add" }, { type: ("in" + "xsert".slice(1)) as Kind }]));
+# -- end of source
+# The helper is inlined three times: each comparison with the literal handed to it asks for the header.
+# RUN: compile LiteralHeadersCompared mechanisms=all
+# CHECK: statistic LiteralHeadersCompared 3
+# RUN(ANSWER): run-in-shell
+# ANSWER: 373 21
+# ANSWER-NEXT: exited with 0

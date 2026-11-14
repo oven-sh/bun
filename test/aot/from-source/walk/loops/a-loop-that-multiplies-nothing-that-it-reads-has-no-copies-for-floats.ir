@@ -1,0 +1,18 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var s = 0; for (var i = 0; i < d.length; i++) s += d[i] + 1; return s; } };
+# print(T[key](new Uint8Array(3).fill(7)), T[key](new Float64Array(3).fill(7.5)), T[key](new Float32Array(2).fill(2.5)), T[key](new Int16Array(2).fill(-3)), T[key]([1, 2, 3]));
+# -- end of source
+# The two copies for floats behind the front of a loop stand where the loop's own text multiplies or divides an element of the holder (a-loop-over-what-nobody-knows-has-a-copy-for-each-kind-of-floats.ir). A loop that adds up, compares, copies or looks up what it reads
+# keeps the four members: floats share the copy of the other views and are read rightly, by the kind of the cell.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK-NOT: builtinClass=Float64Array
+# CHECK-NOT: builtinClass=Float32Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 24 25.5 7 -4 9
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 24 25.5 7 -4 9
+# NONE-NEXT: exited with 0

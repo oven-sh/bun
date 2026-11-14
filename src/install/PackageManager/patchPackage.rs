@@ -466,7 +466,7 @@ pub fn do_patch_commit(
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
-    let linker = load_result.node_linker(manager.options.node_linker);
+    let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
@@ -653,7 +653,7 @@ pub fn do_patch_commit(
 
     // package.json is shared with other machines, so an absolute path to a directory inside the
     // project is written relative to the project root.
-    let project = with_slashes(FileSystem::instance().top_level_dir());
+    let project = with_slashes(FileSystem::get().top_level_dir());
     if bun_paths::is_absolute(&patches_dir)
         && resolve_path::is_parent_or_equal(&project, &patches_dir)
             != resolve_path::ParentEqual::Unrelated
@@ -740,7 +740,7 @@ fn patch_applies(
 /// Returns `None` after printing an error. Calling `Global::crash()` in here would skip
 /// `HiddenFromDiff`'s drop.
 fn diff_against_cache(
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> Option<Vec<u8>> {
@@ -784,7 +784,7 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), new_folder),
     );
     let (opts, _envp_guard) =
-        bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
+        bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &manager.event_loop);
 
     let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
         Err(e) => {
@@ -1048,7 +1048,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         resolve_path::join_spill::<platform::Posix>(
             &mut spill,
             &[
-                FileSystem::instance().top_level_dir_without_trailing_slash(),
+                FileSystem::get().top_level_dir_without_trailing_slash(),
                 &target.folder,
             ],
         )
@@ -1100,7 +1100,6 @@ fn has_trusted_scripts(
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
         &mut bun_ast::Log::init(),
-        &manager.lockfile,
         &mut folder_path,
         name,
         &pkg.resolution,

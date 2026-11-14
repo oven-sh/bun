@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "Preserve",
+    "noEmit": true,
+    "types": [],
+    "paths": { "the-app": ["../imports/app/src/api.ts"] }
+  }
+}

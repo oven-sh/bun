@@ -186,7 +186,7 @@ impl Loader {
 }
 
 /// Never answers, so an encrypted PEM block fails instead of prompting the terminal.
-unsafe extern "C" fn no_password(
+extern "C" fn no_password(
     _buf: *mut c_char,
     _size: core::ffi::c_int,
     _rwflag: core::ffi::c_int,

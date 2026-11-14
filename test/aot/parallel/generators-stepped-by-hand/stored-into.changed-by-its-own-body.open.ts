@@ -1,0 +1,18 @@
+const log: string[] = [];
+type Walk = Generator<number, string, number | undefined>;
+function* walkOf(limit: number): Walk { let sum = 0; for (let i = 0; i < limit; i++) { const got = yield i; sum += got ?? 0; } return "sum " + sum; }
+let changing: Walk;
+function* changes(): Walk { yield 1; yield 2; let k = 0; (changing as any).next = function () { const at = k++; return { value: "own " + at, done: at > 1 }; }; yield 3; return "never"; }
+function prepare(walk: Walk, round: number): Walk { if (round & 1) { changing = changes(); return changing; } return walk; }
+function drive(walk: Walk): string { let out = ""; for (let i = 0; i < 12; i++) { const step = walk.next(1); const was = step.value; (step as any).value = "mine " + i; if (step.done) return out + "|" + was + step.value; out += was + "" + step.value + ","; } return out; }
+const unseen: (x: unknown) => void = (0, eval)("(x) => {}");
+const counts = process.env.COUNT !== undefined;
+for (let turn = 0; turn < (counts ? 60000 : 6); turn++) {
+  const round = turn % 6;
+  if (counts) log.length = 0;
+  const walk = prepare(walkOf(4 + round), round);
+  unseen(walk);
+  let said: string; try { said = drive(walk); } catch (e) { said = "thrown: " + (e as Error).name; }
+  log.push(round + ": " + said);
+}
+console.log(counts ? "resident " + process.memoryUsage().rss : log.join("\n"));

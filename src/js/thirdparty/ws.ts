@@ -88,25 +88,22 @@ type WaitingCallback = { callback: SendCallback | undefined; asyncContext: unkno
 // Null-prototype literals are written `{ __proto__: null as never }` because TypeScript treats `__proto__` as a key.
 type Dictionary<T> = { [key: string]: T };
 
-// node/http.ts types these two as `any`.
-type HttpModule = Omit<typeof import("../node/http").default, "IncomingMessage" | "STATUS_CODES"> & {
-  IncomingMessage: new (socket: null) => HandshakeResponse;
-  STATUS_CODES: { [code: number]: string };
-};
-type IncomingMessage = import("node:http").IncomingMessage;
+// TypeScript types the `prototype` of a constructor function as `any`.
+type HttpModule = typeof import("../node/http").default & { IncomingMessage: { prototype: IncomingMessage } };
+type IncomingMessage = $Node.IncomingMessage;
 interface HandshakeResponse extends IncomingMessage {
   _addHeaderLines(headers: string[], n: number): void;
   [kRequest]?: ClientRequest;
 }
-type HeaderValue = import("node:http").OutgoingHttpHeader;
-type HttpHeaders = import("node:http").OutgoingHttpHeaders;
-type HttpAgent = import("node:http").Agent;
-type HttpAgentOptions = import("node:http").AgentOptions;
-type HttpServer = import("node:http").Server;
-type NodeClientRequest = import("node:http").ClientRequest;
+type HeaderValue = number | string | string[];
+type HttpHeaders = { [name: string]: HeaderValue };
+type HttpAgent = $Node.Agent;
+type HttpAgentOptions = $Node.Agent["options"];
+type HttpServer = $Node.HttpServer;
+type NodeClientRequest = $Node.ClientRequest;
 type HttpsRequestOptions = import("node:https").RequestOptions;
-type NetSocket = import("node:net").Socket;
-type Duplex = import("node:stream").Duplex;
+type NetSocket = $Node.Socket;
+type Duplex = $Node.Duplex;
 
 interface SendOptions {
   binary?: boolean;
@@ -166,14 +163,18 @@ interface ReceiverError extends Error {
   [kStatusCode]?: number;
 }
 
-interface ConnectError extends NodeJS.ErrnoException {
+interface ConnectError extends Error {
+  errno?: number;
+  code?: string;
+  path?: string;
+  syscall?: string;
   address?: string;
   hostname?: string;
   port?: number;
 }
 
 type NativeClient = globalThis.WebSocket;
-type NativeServer = Bun.ServerWebSocket<WebSocket>;
+type NativeServer = import("bun").ServerWebSocket<WebSocket>;
 
 interface NativeTlsOptions {
   __proto__?: object | null;
@@ -222,11 +223,11 @@ interface NativeClientBinding {
   createWebSocket(url: string, options: NativeClientOptions, owner: WebSocket, handlers: ClientHandlers): NativeClient;
   createWebSocketOverStream(options: NativeStreamOptions, owner: WebSocket, handlers: ClientHandlers): NativeClient;
   detach(ws: NativeClient): void;
-  feed(ws: NativeClient, chunk: Uint8Array): void;
+  feed(ws: NativeClient, chunk: Buffer | Uint8Array): void;
   streamClosed(ws: NativeClient): void;
   sendFrame(
     ws: NativeClient,
-    data: string | ArrayBufferView | ArrayBuffer | Blob,
+    data: string | Buffer | ArrayBufferView | ArrayBuffer | Blob,
     opcode: number,
     fin: boolean,
     compress: boolean,
@@ -267,12 +268,25 @@ interface ClientHandlers extends Omit<ServerHandlers, "close"> {
 interface ServerSocket extends NetSocket {
   authorized?: boolean;
   encrypted?: boolean;
-  _httpMessage?: import("node:http").ServerResponse | null;
+  _httpMessage?: $Node.ServerResponse | null;
   [kInternalSocketData]?: unknown;
   [kWebSocket]?: WebSocket;
 }
 
+// node joins the repeats of each header that this file reads with ", ", so none of them is an array.
+interface HandshakeHeaders {
+  [name: string]: string | string[] | undefined;
+  origin?: string;
+  upgrade?: string;
+  "sec-websocket-extensions"?: string;
+  "sec-websocket-key"?: string;
+  "sec-websocket-origin"?: string;
+  "sec-websocket-protocol"?: string;
+  "sec-websocket-version"?: string;
+}
+
 interface ServerRequest extends IncomingMessage {
+  headers: HandshakeHeaders;
   socket: ServerSocket;
   url: string;
   [internal: symbol]: unknown;
@@ -286,7 +300,7 @@ interface SetSocketOptions {
 }
 
 // An `http.Agent` or a third-party proxy agent. Proxy agents store the proxy URL and headers in these fields.
-interface Agent extends HttpAgent {
+interface Agent extends Omit<HttpAgent, "addRequest" | "createSocket" | "options"> {
   addRequest?: unknown;
   connectOpts?: AgentConnectOptions;
   proxyRequestOptions?: AgentConnectOptions;
@@ -301,8 +315,15 @@ interface AgentConnectOptions extends HttpAgentOptions {
   proxy?: string | URL;
 }
 
-interface ClientOptions extends Omit<HttpsRequestOptions, "agent" | "headers" | "host" | "path" | "port"> {
+interface ClientOptions extends Omit<
+  HttpsRequestOptions,
+  "agent" | "createConnection" | "headers" | "host" | "path" | "port"
+> {
   secureContext?: import("node:tls").SecureContext;
+  createConnection?(
+    options: import("node:http").ClientRequestArgs,
+    oncreate?: (err: Error | null, socket: Duplex) => void,
+  ): Duplex | null | undefined;
   agent?: Agent | boolean;
   allowSynchronousEvents?: boolean;
   autoPong?: boolean;
@@ -392,10 +413,7 @@ interface ServerOptions {
 
 type UpgradeCallback = (ws: WebSocket, req: ServerRequest) => void;
 
-interface WebSocketDuplex extends Duplex {
-  _readableState: { endEmitted: boolean; objectMode: boolean };
-  _writableState: { finished: boolean };
-}
+type WebSocketDuplex = Duplex;
 
 // node:http is almost the entire cost of require("ws"); load it on first use.
 let http: HttpModule | undefined;
@@ -1039,7 +1057,7 @@ class WebSocket extends EventEmitter {
   declare _closeFrameSent: boolean;
   declare _closeMessage: Buffer;
   declare _closeTimeout: number | undefined;
-  declare _closeTimer: Timer | null;
+  declare _closeTimer: NodeJS.Timeout | null;
   declare _errorEmitted: boolean;
   declare _extensions: Extensions;
   declare _isServer: boolean;
@@ -1058,7 +1076,7 @@ class WebSocket extends EventEmitter {
   declare [kCallbacks]: WaitingCallback[] | null;
   declare [kFinalCallback]: (() => void) | undefined;
   declare [kFirstFragment]: boolean;
-  declare [kHandshakeTimer]: Timer | undefined;
+  declare [kHandshakeTimer]: NodeJS.Timeout | undefined;
   declare [kIdentityError]: unknown;
   declare [kNative]: NativeClient | NativeServer | null;
   declare [kProxyUrl]: string | undefined;
@@ -1114,7 +1132,7 @@ class WebSocket extends EventEmitter {
         }
       }
 
-      initAsClient(this, address, protocols, options);
+      initAsClient(this, address, protocols as string[], options);
     } else {
       this._autoPong = options!.autoPong;
       this._closeTimeout = options!.closeTimeout;
@@ -1665,7 +1683,8 @@ function destroySocket(websocket: WebSocket): void {
 }
 
 function setCloseTimer(websocket: WebSocket): void {
-  websocket._closeTimer = setTimeout(destroySocket, websocket._closeTimeout, websocket);
+  // A bare `setTimeout` here is the native function, which fake timers don't replace. They do reach the npm package's timers.
+  websocket._closeTimer = globalThis.setTimeout(destroySocket, websocket._closeTimeout, websocket);
 }
 
 // lib/receiver.js errors by code: [constructor, message, has "Invalid WebSocket frame: " prefix, status code].
@@ -1846,7 +1865,7 @@ const clientHandlers: ClientHandlers = {
     }
 
     // node:http drops the request's timeout once the response is an upgrade, even if an 'upgrade' listener throws.
-    clearTimeout(this[kHandshakeTimer]);
+    globalThis.clearTimeout(this[kHandshakeTimer]);
 
     if (this.listenerCount("upgrade") > 0) {
       const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
@@ -1893,7 +1912,7 @@ const clientHandlers: ClientHandlers = {
     }
   },
   open() {
-    clearTimeout(this[kHandshakeTimer]);
+    globalThis.clearTimeout(this[kHandshakeTimer]);
     this._socket = new ClientSocket(this[kNative] as NativeClient);
     this._readyState = OPEN;
 
@@ -1926,7 +1945,7 @@ const clientHandlers: ClientHandlers = {
     // Connecting failed. Emit the error that node:http would pass to `req.on('error')`.
     const native = this[kNative] as NativeClient;
 
-    clearTimeout(this[kHandshakeTimer]);
+    globalThis.clearTimeout(this[kHandshakeTimer]);
     // `_req` is already null if the socket closed after validateUpgrade() accepted the 101 but before 'open'.
     const req = this._req;
     if (req) removeAbortListener(req);
@@ -1947,7 +1966,7 @@ const clientHandlers: ClientHandlers = {
   close() {
     if (this[kTransport] === STREAM) return;
 
-    clearTimeout(this._closeTimer!);
+    globalThis.clearTimeout(this._closeTimer!);
     this.emitClose();
   },
   write(chunk) {
@@ -2002,7 +2021,7 @@ function socketOnClose(this: ServerSocket): void {
     if (!this.readableEnded && !websocket._closeFrameReceived && !websocket._errorEmitted && readableLength) {
       const closeFrameSent = websocket._closeFrameSent;
 
-      feed(native, this.read(readableLength));
+      feed(native, this.read(readableLength) as Buffer);
       websocket._closeFrameSent = closeFrameSent;
     }
 
@@ -2011,7 +2030,7 @@ function socketOnClose(this: ServerSocket): void {
 
   this[kWebSocket] = undefined;
 
-  clearTimeout(websocket._closeTimer!);
+  globalThis.clearTimeout(websocket._closeTimer!);
   websocket.emitClose();
 }
 
@@ -2097,7 +2116,8 @@ Object.defineProperty(ClientSocket, "name", { value: "Socket" });
 // node:tls destroys the socket with whatever `checkServerIdentity` returned, so 'error' gets that value. The native
 // client only reports that the name check failed.
 function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeTlsOptions {
-  const checkServerIdentity = getIgnoringObjectPrototype(tls, "checkServerIdentity");
+  const checkServerIdentity = getIgnoringObjectPrototype(tls, "checkServerIdentity") as
+    ((hostname: string, cert: unknown) => Error | undefined) | undefined;
   if (!$isCallable(checkServerIdentity)) return tls;
 
   // If the verdict isn't enforced the connection goes on, and a later failure must not report this one.
@@ -2173,7 +2193,7 @@ function responseOnClose(this: HandshakeResponse): void {
 }
 
 function makeHandshakeResponse(statusCode: number, statusMessage: string, rawHeaders: string[]): HandshakeResponse {
-  const res = new (lazyHttp().IncomingMessage)(null);
+  const res: HandshakeResponse = new (lazyHttp().IncomingMessage)(null);
   res._addHeaderLines(rawHeaders, rawHeaders.length);
   res.statusCode = statusCode;
   res.statusMessage = statusMessage;
@@ -2385,7 +2405,9 @@ function extractAgentOptions(agent: Agent): {
     const proxyHeaders =
       getIgnoringObjectPrototype(agent, "proxyHeaders") ??
       (connectOpts && getIgnoringObjectPrototype(connectOpts, "headers"));
-    let headers = $isCallable(proxyHeaders) ? proxyHeaders.$call(agent) : proxyHeaders;
+    let headers: HttpHeaders | Headers | undefined = $isCallable(proxyHeaders)
+      ? proxyHeaders.$call(agent)
+      : proxyHeaders;
 
     // Both agents overwrite this header with the URL's credentials. The native client prefers the header.
     const { username, password } = new URL(proxyUrl);
@@ -2575,7 +2597,7 @@ class ClientRequest extends EventEmitter {
       return this;
     }
 
-    clearTimeout(this[kWebSocket][kHandshakeTimer]);
+    globalThis.clearTimeout(this[kWebSocket][kHandshakeTimer]);
     removeAbortListener(this);
 
     const { res } = this;
@@ -2662,7 +2684,7 @@ function requestOnError(this: HttpClientRequest, err: Error): void {
 function requestOnResponse(this: HttpClientRequest, res: IncomingMessage): void {
   const websocket = this[kWebSocket];
 
-  if (followRedirect(websocket, this, res.statusCode!, res.headers.location)) return;
+  if (followRedirect(websocket, this, res.statusCode!, res.headers.location as string | undefined)) return;
 
   if (!websocket.emit("unexpected-response", this, res)) {
     abortHandshake(websocket, this, `Unexpected server response: ${res.statusCode}`);
@@ -2681,7 +2703,7 @@ function requestOnUpgrade(this: HttpClientRequest, res: IncomingMessage, socket:
   // The user may have closed the connection from a listener of the `'upgrade'` event.
   if (websocket.readyState !== CONNECTING) return;
 
-  if (!validateUpgrade(websocket, this, res.rawHeaders, res.headers.upgrade)) return;
+  if (!validateUpgrade(websocket, this, res.rawHeaders, res.headers.upgrade as string | undefined)) return;
 
   const { opts } = this[kOptions];
 
@@ -2975,7 +2997,10 @@ function initAsClient(
       }
     }
 
-    const request = isSecure ? require("node:https").request : lazyHttp().request;
+    // The fields that make the request an HttpClientRequest are set right below.
+    const request = (isSecure ? require("node:https").request : lazyHttp().request) as (
+      options: ClientOptions,
+    ) => HttpClientRequest;
     const req: HttpClientRequest = (websocket._req = request(opts));
 
     req[kAborted] = false;
@@ -3069,7 +3094,7 @@ function initAsClient(
 
   // Start the timer now so it also covers a `finishRequest` that calls `req.end()` late or never.
   if (handshakeTimeout) {
-    websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
+    websocket[kHandshakeTimer] = globalThis.setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
   }
 
   // Connecting throws on an invalid header. Let that propagate only while the constructor is still on the stack, i.e.
@@ -3079,7 +3104,7 @@ function initAsClient(
     if (opts.finishRequest) opts.finishRequest(req, websocket);
     else req.end();
   } catch (err) {
-    clearTimeout(websocket[kHandshakeTimer]);
+    globalThis.clearTimeout(websocket[kHandshakeTimer]);
     removeAbortListener(req);
     throw err;
   } finally {
@@ -3135,8 +3160,8 @@ class WebSocketServer extends EventEmitter {
 
     if (port != null) {
       const http = lazyHttp();
-      server = (http.createServer as typeof import("node:http").createServer)((req, res) => {
-        const body = http.STATUS_CODES[426];
+      server = http.createServer((req, res) => {
+        const body = http.STATUS_CODES[426]!;
 
         res.writeHead(426, {
           "Content-Length": body.length,
@@ -3144,7 +3169,7 @@ class WebSocketServer extends EventEmitter {
         });
         res.end(body);
       });
-      server.listen(port, options.host!, options.backlog!, callback);
+      server!.listen(port, options.host!, options.backlog!, callback);
     }
 
     if (server) {
@@ -3317,7 +3342,7 @@ class WebSocketServer extends EventEmitter {
 
     if (this.options.verifyClient) {
       const info: VerifyClientInfo = {
-        origin: req.headers[`${version === 8 ? "sec-websocket-origin" : "origin"}`],
+        origin: req.headers[`${version === 8 ? "sec-websocket-origin" : "origin"}`] as string | undefined,
         secure: !!(req.socket.authorized || req.socket.encrypted),
         req,
       };
@@ -3531,7 +3556,7 @@ function duplexOnError(this: WebSocketDuplex, err: Error): void {
   }
 }
 
-function createWebSocketStream(ws: WebSocket, options?: import("node:stream").DuplexOptions): Duplex {
+function createWebSocketStream(ws: WebSocket, options?: $Node.DuplexOptions): Duplex {
   const { Duplex } = require("node:stream");
   let terminateOnDestroy = true;
 
@@ -3589,7 +3614,7 @@ function createWebSocketStream(ws: WebSocket, options?: import("node:stream").Du
   duplex._final = function (callback) {
     if (ws.readyState === ws.CONNECTING) {
       ws.once("open", function open() {
-        duplex._final(callback);
+        duplex._final!(callback);
       });
       return;
     }

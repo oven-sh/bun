@@ -33,7 +33,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     streaming_compiler: *mut c_void,
 ) -> JsResult<JSValue> {
     // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
-    let context = this.bun_vm().context_of_caller_no_frame();
+    let context = this.bun_vm().context_of_caller();
     let response: &mut Response = match response::from_js(response_value) {
         // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
         // the cell stays live for the duration of this host call (rooted on the

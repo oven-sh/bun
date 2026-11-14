@@ -1,0 +1,24 @@
+# f1 = spread, f2 = count
+# a pair `[whole, whole / 2]` lies in storage of doubles. By its written place the first element is a whole number. Where its only user reckons with a fraction the read takes the form of a double, as the second does, and claims
+# no more than a number: the emitter holds a double read off a list to what is claimed of it. NOT SO where both operands are whole numbers: there the read stays as it was.
+# -- source: a-whole-number-at-a-written-place-is-read-unboxed-where-it-meets-a-fraction.ts
+# declare function print(...values: unknown[]): void;
+# type Mark = [at: number, half: number];
+# type Span = [from: number, to: number];
+# const marks: Mark[] = [];
+# const spans: Span[] = [];
+# for (let i = 0; i < 9; i++) { marks.push([i & 15, i / 2]); spans.push([i & 15, (i & 15) + 3]); }
+# function spread(list: Mark[]): number { let sum = 0; for (const mark of list) sum += mark[0] - mark[1]; return sum; }
+# function count(list: Span[]): number { let sum = 0; for (const span of list) sum += span[1] - span[0]; return sum; }
+# print(spread(marks), count(spans));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: i32 @JSValue = GetArrayElement
+# CHECK: number @OptionalDouble = GetArrayElement
+# CHECK: number @OptionalDouble = GetArrayElement
+# RUN(WHOLE): walk f2 mechanisms=all
+# WHOLE-LABEL: code f2:Body
+# WHOLE: i32 @JSValue = GetArrayElement
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 18 27

@@ -1,0 +1,33 @@
+# -- source: main.js
+# function Tally() { this.sum = 0; this.steps = 0; }
+# Tally.prototype = {
+#   raise: function (v) { this.sum = this.sum + v; this.steps = this.steps + 1; return this; },
+#   lower: function () { this.steps = this.steps - 1; return this.sum; },
+#   get paces() { return this.steps; } };
+# function run(count) { const t = new Tally(); let total = 0; for (let i = 0; i < count; i++) { t.raise(i & 15).raise(1); total += t.lower() + t.lower() + t.paces; } return total; }
+# print(run(10));
+# -- end of source
+# The prototype object of Tally is a literal that the body of the module stores. The record of the class expects what the literal lists, two methods and a getter.
+# The layout has left. What stands above the object the object's own byte says, and that the member is the one of the record the guard of the class and the name.
+# Behind the two the code of run names the function, as a call or as a copy in line. f2 = run, f3 = raise, f4 = lower, f5 = paces
+# RUN(RAISE): walk f2 mechanisms=all
+# RAISE-LABEL: code f2:Body
+# RAISE: = AreMembersUnchanged {{*}}key="raise"
+# RUN(LOWER): walk f2 mechanisms=all
+# LOWER-LABEL: code f2:Body
+# LOWER: = AreMembersUnchanged {{*}}key="lower"
+# RUN(PACES): walk f2 mechanisms=all
+# PACES-LABEL: code f2:Body
+# PACES: = AreMembersUnchanged {{*}}key="paces"
+# RUN(NAMESRAISE): walk f2 mechanisms=all
+# NAMESRAISE-LABEL: code f2:Body
+# NAMESRAISE: =f3
+# RUN(NAMESLOWER): walk f2 mechanisms=all
+# NAMESLOWER-LABEL: code f2:Body
+# NAMESLOWER: =f4
+# RUN(NAMESPACES): walk f2 mechanisms=all
+# NAMESPACES-LABEL: code f2:Body
+# NAMESPACES: =f5
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 440
+# ANSWERS-NEXT: exited with 0

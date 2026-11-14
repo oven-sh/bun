@@ -1,0 +1,294 @@
+#### object-stored-into-itself.mjs
+class C extends Map {}
+function see(o) { return o.self; }
+function run(o = new C()) {
+  see(o);
+  o.self = o;
+}
+run({});
+run();
+console.log("ok");
+#### object-stored-into-itself.mjs alone
+#### object-stored-into-itself.mjs prints
+ok
+#### yield-star-behind-returning-finally.js
+function* inner() {}
+function* made() {
+  try {
+  } finally {
+    return "from finally";
+  }
+  yield* inner();
+}
+console.log(made().next().value);
+#### yield-star-behind-returning-finally.js alone
+#### yield-star-behind-returning-finally.js prints
+from finally
+#### class-of-module-that-fails-to-load/main.ts
+
+    try {
+      const { Child } = await import("./child");
+      console.log(new Child({ size: 1 }) instanceof Child);
+    } catch (e) {
+      console.log((e as Error).name, String((e as Error).message).replace(/ from .*/, ""));
+    }
+#### class-of-module-that-fails-to-load/base.ts
+
+    export class Base {
+      size: number;
+      constructor(options: { size: number }) {
+        this.size = options.size;
+      }
+    }
+#### class-of-module-that-fails-to-load/child.ts
+import "unbuilt";
+import { Base } from "./base";
+export class Child extends Base {}
+#### class-of-module-that-fails-to-load/node_modules/unbuilt/package.json
+{ "name": "unbuilt", "main": "./dist/index.js" }
+#### class-of-module-that-fails-to-load/package.json
+{ "name": "z" }
+#### class-of-module-that-fails-to-load alone
+#### class-of-module-that-fails-to-load prints
+ResolveMessage Cannot find package 'unbuilt' imported
+#### type-names-class-of-unloadable-module/main.ts
+
+      import type { Child } from "./child";
+      let held: Child | undefined;
+      try {
+        held = new (await import("./child")).Child({ size: 1 });
+      } catch (e) {
+        console.log((e as Error).name, String((e as Error).message).replace(/ from .*/, ""));
+      }
+      console.log(held?.size);
+#### type-names-class-of-unloadable-module/base.ts
+
+    export class Base {
+      size: number;
+      constructor(options: { size: number }) {
+        this.size = options.size;
+      }
+    }
+#### type-names-class-of-unloadable-module/child.ts
+import "unbuilt";
+import { Base } from "./base";
+export class Child extends Base {}
+#### type-names-class-of-unloadable-module/node_modules/unbuilt/package.json
+{ "name": "unbuilt", "main": "./dist/index.js" }
+#### type-names-class-of-unloadable-module/package.json
+{ "name": "z" }
+#### type-names-class-of-unloadable-module alone
+#### type-names-class-of-unloadable-module prints
+ResolveMessage Cannot find package 'unbuilt' imported
+undefined
+#### type-names-class-left-out/main.ts
+
+    import { used } from "./lib";
+    import type { Unused } from "./lib";
+    let held: Unused | undefined;
+    console.log(used, held?.size);
+#### type-names-class-left-out/base.ts
+
+  export class Base {
+    size: number;
+    constructor(options: { size: number }) {
+      this.size = options.size;
+    }
+  }
+#### type-names-class-left-out/lib.ts
+import { Base } from "./base";
+export class Unused extends Base {}
+export const used = 1;
+#### type-names-class-left-out/package.json
+{ "name": "z", "sideEffects": false }
+#### type-names-class-left-out alone
+#### type-names-class-left-out prints
+1 undefined
+#### type-names-package-class-left-out/main.ts
+
+      import { used } from "lib";
+      import type { Unused } from "lib";
+      let held: Unused | undefined;
+      console.log(used, held?.size);
+#### type-names-package-class-left-out/base.ts
+
+  export class Base {
+    size: number;
+    constructor(options: { size: number }) {
+      this.size = options.size;
+    }
+  }
+#### type-names-package-class-left-out/lib.ts
+import { Base } from "./base";
+export class Unused extends Base {}
+export const used = 1;
+#### type-names-package-class-left-out/node_modules/lib/base.ts
+
+  export class Base {
+    size: number;
+    constructor(options: { size: number }) {
+      this.size = options.size;
+    }
+  }
+#### type-names-package-class-left-out/node_modules/lib/lib.ts
+import { Base } from "./base";
+export class Unused extends Base {}
+export const used = 1;
+#### type-names-package-class-left-out/node_modules/lib/package.json
+{ "name": "lib", "sideEffects": false, "main": "./lib.ts", "types": "./lib.ts" }
+#### type-names-package-class-left-out/package.json
+{ "name": "z" }
+#### type-names-package-class-left-out alone
+#### type-names-package-class-left-out prints
+1 undefined
+#### call-credited-with-held-list.js
+let everythingPrinted = "";
+function shownInTheText(value) { return (typeof value === "object" && value !== null) || typeof value === "function" || typeof value === "symbol" ? typeof value : String(value); }
+function printValue(...values) { for (const value of values) everythingPrinted += shownInTheText(value) + " "; everythingPrinted += "\n"; }
+{
+    let told = "";
+    function show(value) { return typeof value === "object" && value !== null ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); }
+    function num(value) { return Object.is(value, -0) ? "-0" : String(value); }
+    const first = { k: 1 };
+    const second = { k: 2 };
+    const third = { k: 3 };
+    function orStart1_3(value) { return value === undefined ? 7 : value; }
+    function* turns1_3(given, p, q, r) {
+        let out = "";
+        const seen = [];
+        const values = [0.5, 2, -0];
+        let a = given;
+        let turn = 0;
+        do {
+            a = a !== values[0] ? values[0] : values[1];
+            seen.push([a]);
+            yield turn;
+        } while (++turn < 20);
+        for (const kept of seen) out += (typeof kept === "function" ? show(kept()) : show(kept)) + ",";
+        return out + a;
+    }
+    const steps1_3 = turns1_3(7, 0.5, 2, -0);
+    let result1_3 = steps1_3.next();
+    for (let more = 0; more < 300 && !result1_3.done; more++) result1_3 = steps1_3.next(result1_3.value);
+    told += result1_3.value + "|";
+    printValue("variables from turn to turn 1", told);
+}
+console.log(everythingPrinted);
+export {};
+import { stat as statOfNodeFs } from "node:fs";
+statOfNodeFs(".", () => {});
+#### call-credited-with-held-list.js alone
+#### call-credited-with-held-list.js prints
+variables from turn to turn 1 [0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],[0.5],[2],2| 
+
+#### arms-made-alike-by-dead-code.js
+
+let kept;
+function keep(i) {
+  const list = ["a", "b", "c"];
+  kept = i & 1 ? list.keys() : list.values();
+}
+function step() {
+  const it = [1, , 3].values();
+  let out = "";
+  try {
+    const r = it.next();
+    if (r.value === 3) throw new Error("three");
+    out += "t";
+  } catch (e) {
+    out += e.message;
+  } finally {
+    out += String(it.next().done);
+  }
+  return out;
+}
+let line = "";
+for (let i = 0; i < 5000; i++) {
+  keep(i);
+  line = step();
+}
+console.log(line, String(kept.next().done));
+#### arms-made-alike-by-dead-code.js alone
+#### arms-made-alike-by-dead-code.js prints
+tfalse false
+#### predicted-callee-takes-a-list/pair.js
+const programs = {
+  0: () => import("./p0.js"),
+  1: () => import("./p2.ts"),
+};
+await programs[process.argv[2]]();
+#### predicted-callee-takes-a-list/p0.js
+class Log extends Array {
+  push(line) {
+  }
+}
+function hashOf(lines) {
+  try {
+  } catch (error) {
+  }
+}
+async function scene0() {
+class Steps {
+  [Symbol.iterator]() {
+    return {
+    };
+  }
+}
+  const step = async turn => {
+    try {
+    } catch (error) {
+    }
+    if (turn === 34) {
+      try {
+      } catch (error) {
+      }
+    }
+  }
+}
+async function scene1() {
+  for (let turn = 0; turn < 400; turn++) {
+    if (turn === 314) {
+      try {
+      } catch (error) {
+      }
+    }
+    try {
+    } catch (error) {
+    }
+    if (turn === 1) {
+      try {
+      } catch (error) {
+      }
+    }
+  }
+}
+async function scene3() {
+  for (let turn = 0; turn < 3; turn++) {
+    if (turn === 1) {
+      try {
+        Bun.gc(true);
+      } catch (error) {
+        log.push("the change threw " + error.name);
+      }
+    }
+    try {
+      const result = box.run.call(AbortSignal, [controller.signal]);
+    } catch (error) {
+    }
+  }
+}
+await scene3();
+#### predicted-callee-takes-a-list/p2.ts
+function scene0(given: number[]) {
+  [7].forEach((each, at) => made.push((() => {
+    })()));
+}
+class Holder3 {
+  run(given: number[]) {
+  }
+}
+console.log(3, JSON.stringify(new Holder3().run([5, 6, 7])));
+#### predicted-callee-takes-a-list/tsconfig.json
+{"compilerOptions":{"target":"esnext","module":"preserve","moduleResolution":"bundler","allowJs":true,"noEmit":true,"strict":true,"types":[]}}
+#### predicted-callee-takes-a-list alone
+#### predicted-callee-takes-a-list prints, exit code 1

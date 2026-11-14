@@ -1,0 +1,25 @@
+# f1 = find
+# -- source: array-index-of-integer-two-storage-kinds.ts
+# function find(list: number[], value: number): number {
+#   return list.indexOf(value);
+# }
+# declare const input: any;
+# const whole: number[] = [];
+# whole.push(input | 0);
+# const fractions: number[] = [];
+# fractions.push(input / 2);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = find(turn & 1 ? whole : fractions, input | 0);
+# -- end of source
+# The compiler before this one: 31 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 43, patches 2, moves 12, unlikely or rare 20.
+# RUN(X64): steps most:55 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 55
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: loop: operations 4, patches 0, moves 0, unlikely 0 ; loop: operations 5, patches 0, moves 0, unlikely 0.
+# RUN(X64N6): loops most:4,5 f1 mechanisms=all-Inlining
+# REQUIRES(X64N6): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64N6-LABEL: unit f1:Body
+# X64N6-NEXT: loop: at most 4
+# X64N6-NEXT: loop: at most 5

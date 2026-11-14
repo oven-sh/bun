@@ -14,8 +14,8 @@ use std::ops::ControlFlow;
 /// Disallow `this` from being used in stateless functional components
 pub struct NoThisInSfc;
 
-const NO_THIS_IN_SFC: Message = Message::new("noThisInSFC", "Stateless functional components should not use `this`");
-const OXLINT: Message = Message::new("", "Stateless functional components should not use `this`");
+const NO_THIS_IN_SFC: &Message = &Message::new("noThisInSFC", "Stateless functional components should not use `this`");
+const OXLINT: &Message = &Message::new("", "Stateless functional components should not use `this`");
 
 pub struct State<'a> {
     /// Caches the function that owns a `this`, if it can be a component, and whether a class member is in between.

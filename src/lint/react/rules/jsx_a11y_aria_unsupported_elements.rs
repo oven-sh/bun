@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Enforces that reserved DOM elements do not contain ARIA roles, states, or properties.
 pub struct AriaUnsupportedElements;
 
-const ARIA_UNSUPPORTED_ELEMENTS: Message = Message::new("", "This element does not support ARIA roles, states, or properties.");
+const ARIA_UNSUPPORTED_ELEMENTS: &Message = &Message::new("", "This element does not support ARIA roles, states, or properties.");
 
 impl Rule for AriaUnsupportedElements {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-unsupported-elements", Kind::Problem).fixable(Fixable::Code);

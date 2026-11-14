@@ -1,0 +1,280 @@
+proxy | end: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | end without a chunk: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=0 ""
+  get end, get Symbol(handle), get finished, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | end with a callback: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said: ended true true true true
+proxy | end twice: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get end, get Symbol(handle), get finished, set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | write behind end: false true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get on, get _events, get _eventsCount, set _eventsCount, get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get write, get Symbol(handle), get finished, get destroyed, set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get emit, get destroyed, get emit, get _events, get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said: write after end true true true true
+proxy | write with a callback: true true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  get write, get Symbol(handle), get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get strictContentLength, get _hasBody, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, set Symbol(headerState), get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get getHeader, get Symbol(kOutHeaders), get Symbol(kReplayingPipelinedOps), get Symbol(kBytesBuffered), set Symbol(kBytesBuffered), get Symbol(kAccountingFlushScheduled), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), set Symbol(fakeSocket), set Symbol(kBytesBuffered), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said: written true true true true
+proxy | two writes: [true,true] true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  get write, get Symbol(handle), get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get strictContentLength, get _hasBody, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, set Symbol(headerState), get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get getHeader, get Symbol(kOutHeaders), get Symbol(kReplayingPipelinedOps), get Symbol(kBytesBuffered), set Symbol(kBytesBuffered), get Symbol(kAccountingFlushScheduled), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get write, get Symbol(handle), get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get Symbol(headerState), get _hasBody, get strictContentLength, get _hasBody, get Symbol(headerState), get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get getHeader, get Symbol(kOutHeaders), get Symbol(kReplayingPipelinedOps), get Symbol(kBytesBuffered), set Symbol(kBytesBuffered), get Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get end, get Symbol(handle), get finished, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), set Symbol(fakeSocket), set Symbol(kBytesBuffered), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | headersSent: [false,true,true] true true
+  202 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  get headersSent, get Symbol(headerState), get Symbol(headerState), get writeHead, get headersSent, get Symbol(headerState), get Symbol(headerState), get statusMessage, set statusMessage, get statusMessage, set statusCode, get Symbol(kOutHeaders), get _hasBody, get _removedTE, get useChunkedEncodingByDefault, get statusCode, set Symbol(kSnapshotStatusCode), get statusMessage, set Symbol(kSnapshotStatusMessage), get Symbol(kImplicitHeaderFromEnd), get hasHeader, get Symbol(kOutHeaders), get hasHeader, get Symbol(kOutHeaders), set Symbol(kFramingFrozenChunked), set Symbol(headerState), get Symbol(handle), get headersSent, get Symbol(headerState), get Symbol(headerState), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get req, get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get Symbol(kSnapshotStatusMessage), get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get headersSent, get Symbol(headerState), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | socket: true true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get connection, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | what waits to be written: [0,false,false,8,false,false,0,false,true] true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "abcb"
+  get writableLength, get writableFinished, get Symbol(handle), get finished, get Symbol(kBytesBuffered), get Symbol(handle), get Symbol(kPipelinedQueuedState), get writableNeedDrain, get Symbol(handle), get destroyed, get finished, get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get Symbol(kPipelinedQueuedState), get writableFinished, get Symbol(handle), get finished, get write, get Symbol(handle), get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get strictContentLength, get _hasBody, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, set Symbol(headerState), get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get getHeader, get Symbol(kOutHeaders), get Symbol(kReplayingPipelinedOps), get Symbol(kBytesBuffered), set Symbol(kBytesBuffered), get Symbol(kAccountingFlushScheduled), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get writableLength, get writableFinished, get Symbol(handle), get finished, get Symbol(kBytesBuffered), get Symbol(handle), get Symbol(kPipelinedQueuedState), get writableNeedDrain, get Symbol(handle), get destroyed, get finished, get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get Symbol(kPipelinedQueuedState), get writableFinished, get Symbol(handle), get finished, get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get writableLength, get writableFinished, get Symbol(handle), get finished, get writableNeedDrain, get Symbol(handle), get destroyed, get finished, get writableFinished, get Symbol(handle), get finished, set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), set Symbol(fakeSocket), set Symbol(kBytesBuffered), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | a status without a body: undefined true true
+  204 connection=keep-alive keep-alive=timeout=5 ""
+  set statusCode, get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, set _hasBody, get _hasBody, get Symbol(kRejectNonStandardBodyWrites), get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | a connection that closes: undefined true true
+  200 connection=close content-length=1 "b"
+  get setHeader, get Symbol(headerState), get _header, get _isLenientHeaderValidation, get Symbol(kLenientValidation), get httpValidation, get req, get insecureHTTPParser, set Symbol(kLenientValidation), get Symbol(kOutHeaders), set Symbol(kOutHeaders), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), set Symbol(kMustCloseConnection), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kMustCloseConnection) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | no content length: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  get removeHeader, get Symbol(headerState), get _header, set _removedContLen, get Symbol(kOutHeaders), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get req, get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | a strict content length: undefined true true
+  200 content-length=1 connection=keep-alive keep-alive=timeout=5 "b"
+  set strictContentLength, get setHeader, get Symbol(headerState), get _header, get _isLenientHeaderValidation, get Symbol(kLenientValidation), get httpValidation, get req, get insecureHTTPParser, set Symbol(kLenientValidation), get Symbol(kOutHeaders), set Symbol(kOutHeaders), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, get _contentLength, get getHeader, get Symbol(kOutHeaders), get _hasBody, get chunkedEncoding, get Symbol(kChunkedEncoding), get hasHeader, get Symbol(kOutHeaders), get Symbol(kOutHeaders), set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | _send: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "1\r\na\r\n"
+  get _send, get Symbol(handle), get Symbol(headerState), get strictContentLength, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, set Symbol(headerState), get end, get Symbol(handle), get finished, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | _implicitHeader: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  get _implicitHeader, get headersSent, get Symbol(headerState), get Symbol(headerState), get writeHead, get statusCode, get headersSent, get Symbol(headerState), get Symbol(headerState), get statusMessage, set statusMessage, get statusMessage, set statusCode, get Symbol(kOutHeaders), get _hasBody, get _removedTE, get useChunkedEncodingByDefault, get statusCode, set Symbol(kSnapshotStatusCode), get statusMessage, set Symbol(kSnapshotStatusMessage), get Symbol(kImplicitHeaderFromEnd), get hasHeader, get Symbol(kOutHeaders), get hasHeader, get Symbol(kOutHeaders), set Symbol(kFramingFrozenChunked), set Symbol(headerState), get Symbol(handle), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get req, get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get Symbol(kSnapshotStatusMessage), get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | _callPendingCallbacks: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | a writeHead of its own: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  set writeHead, get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, set Symbol(kImplicitHeaderFromEnd), get writeHead, get statusCode, get statusMessage, get headersSent, get Symbol(headerState), get Symbol(headerState), get statusMessage, set statusMessage, get statusMessage, set statusCode, get Symbol(kOutHeaders), get _hasBody, get _removedTE, get useChunkedEncodingByDefault, get statusCode, set Symbol(kSnapshotStatusCode), get statusMessage, set Symbol(kSnapshotStatusMessage), get Symbol(kImplicitHeaderFromEnd), set Symbol(headerState), get Symbol(handle), set Symbol(kImplicitHeaderFromEnd), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get Symbol(kSnapshotStatusMessage), get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: writeHead _ended Symbol(kImplicitHeaderFromEnd) Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kDetachedFrom)
+  said: writeHead true true true true
+proxy | listeners: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get on, get _events, get _eventsCount, set _eventsCount, get on, get _events, get _maxListeners, get on, get _events, get _eventsCount, set _eventsCount, get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said: prefinish, finish, close true true true true
+proxy | cork: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  get cork, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get write, get Symbol(handle), get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get strictContentLength, get _hasBody, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, set Symbol(headerState), get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get getHeader, get Symbol(kOutHeaders), get Symbol(kReplayingPipelinedOps), get Symbol(kBytesBuffered), set Symbol(kBytesBuffered), get Symbol(kAccountingFlushScheduled), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get uncork, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), set Symbol(fakeSocket), set Symbol(kBytesBuffered), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | destroy: undefined false false
+  ECONNRESET
+  get destroy, get destroyed, get Symbol(handle), set destroyed, set Symbol(errored), get Symbol(kPipelinedQueuedState), get Symbol(kSocket)
+  new on the response: 
+  said:  true false true true
+proxy | write, then the response ends: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  get write, get Symbol(handle), get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get strictContentLength, get _hasBody, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, set Symbol(headerState), get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), get getHeader, get Symbol(kOutHeaders), get Symbol(kReplayingPipelinedOps), get Symbol(kBytesBuffered), set Symbol(kBytesBuffered), get Symbol(kAccountingFlushScheduled), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), set Symbol(kAccountingFlushScheduled), get Symbol(kBytesBuffered), get writableHighWaterMark, get socket, get Symbol(kPipelinedQueuedState), get Symbol(fakeSocket), set Symbol(fakeSocket), set Symbol(kBytesBuffered)
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | the response writes, then end: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | the response writes under a content length, then end: undefined true true
+  200 content-length=2 connection=keep-alive keep-alive=timeout=5 "ab"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get strictContentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | the response writes the head, then end: undefined true true
+  201 x-a=1 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get _hasBody, get _trailer, get Symbol(headerState), get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get req, get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get Symbol(kSnapshotStatusMessage), get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | writeHead, then the response ends: undefined true true
+  201 x-a=1 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  get writeHead, get headersSent, get Symbol(headerState), get Symbol(headerState), get statusMessage, set statusMessage, get statusMessage, set statusCode, get setHeader, get Symbol(headerState), get _header, get _isLenientHeaderValidation, get Symbol(kLenientValidation), get httpValidation, get req, get insecureHTTPParser, set Symbol(kLenientValidation), get Symbol(kOutHeaders), set Symbol(kOutHeaders), get Symbol(kOutHeaders), get _hasBody, get _removedTE, get useChunkedEncodingByDefault, get statusCode, set Symbol(kSnapshotStatusCode), get statusMessage, set Symbol(kSnapshotStatusMessage), get Symbol(kImplicitHeaderFromEnd), get hasHeader, get Symbol(kOutHeaders), get Symbol(kOutHeaders), get hasHeader, get Symbol(kOutHeaders), get Symbol(kOutHeaders), set Symbol(kFramingFrozenChunked), set Symbol(headerState), get Symbol(handle)
+  new on the response: _ended Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(kDetachedFrom)
+  said:  true true true true
+proxy | end, then the response ends: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get Symbol(kPipelinedQueuedState), get Symbol(headerState), get statusCode, set statusCode, get _hasBody, get _trailer, get Symbol(headerState), get writeHead, get _implicitHeader, get Symbol(kOutHeaders), get sendDate, get useChunkedEncodingByDefault, get _hasBody, get _removedTE, get _removedContLen, get Symbol(kFramingFrozenChunked), get _removedConnection, get maxRequestsOnConnectionReached, get shouldKeepAlive, get Symbol(kShouldKeepAlive), get req, get _keepAliveTimeout, get _maxRequestsPerSocket, get _hasBody, get Symbol(kSnapshotStatusCode), get statusCode, get Symbol(kSnapshotStatusMessage), get statusMessage, get strictContentLength, set Symbol(headerState), set _contentLength, set _header, set finished, get emit, get _events, get _callPendingCallbacks, get Symbol(pendingCallbacks), get Symbol(pendingCallbacks), set Symbol(pendingCallbacks), set _ended, get emit, get _events, get req, get Symbol(kDetachedFrom), get Symbol(kMustCloseConnection), get _closed, set destroyed, set _closed, get Symbol(closeCallback), get emit, get Symbol(kPendingFinish), get Symbol(closeCallback), get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said: write after end true true true true
+proxy | the response ends, then end: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  get end, get Symbol(handle), get destroyed, get finished, get destroyed, get emit, get destroyed, get emit, get _events
+  new on the response: _ended Symbol(kDetachedFrom)
+  said: write after end true true true true
+heir | end: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | end without a chunk: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=0 ""
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | end with a callback: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said: ended false false true true
+heir | end twice: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | write behind end: false false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: _eventsCount statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said: write after end false false true true
+heir | write with a callback: true false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  its own: statusCode _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks) Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(fakeSocket)
+  new on the response: Symbol(kDetachedFrom)
+  said: written false false true true
+heir | two writes: [true,true] false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  its own: statusCode _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks) Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(fakeSocket)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | headersSent: [false,true,true] false false
+  202 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  its own: statusMessage statusCode _contentLength _header finished _ended destroyed _closed Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | socket: true false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | what waits to be written: [0,false,false,8,false,false,0,false,true] false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "abcb"
+  its own: statusCode _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks) Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(fakeSocket)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | a status without a body: undefined false false
+  204 connection=keep-alive keep-alive=timeout=5 ""
+  its own: statusCode _hasBody _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | a connection that closes: undefined false false
+  200 connection=close content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(kLenientValidation) Symbol(kOutHeaders) Symbol(kMustCloseConnection) Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | no content length: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  its own: _removedContLen statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | a strict content length: undefined false false
+  200 content-length=1 connection=keep-alive keep-alive=timeout=5 "b"
+  its own: strictContentLength statusCode _contentLength _header finished _ended destroyed _closed Symbol(kLenientValidation) Symbol(kOutHeaders) Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | _send: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "1\r\na\r\n"
+  its own: _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | _implicitHeader: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  its own: statusMessage statusCode _contentLength _header finished _ended destroyed _closed Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | _callPendingCallbacks: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(pendingCallbacks) Symbol(headerState)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | a writeHead of its own: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: writeHead statusCode statusMessage _contentLength _header finished _ended destroyed _closed Symbol(kImplicitHeaderFromEnd) Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said: writeHead false false true true
+heir | listeners: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: _eventsCount statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kDetachedFrom)
+  said: prefinish, finish, close false false true true
+heir | cork: undefined false false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  its own: statusCode _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks) Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(fakeSocket)
+  new on the response: Symbol(kDetachedFrom)
+  said:  false false true true
+heir | destroy: undefined false false
+  ECONNRESET
+  its own: destroyed Symbol(errored)
+  new on the response: 
+  said:  true false true true
+heir | write, then the response ends: "Error: Stream already started" false false
+  ECONNRESET
+  its own: statusCode Symbol(headerState) Symbol(pendingCallbacks) Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled)
+  new on the response: 
+  said:  true false true true
+heir | the response writes, then end: undefined true false
+  200 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "ab"
+  its own: _header finished _ended destroyed _closed Symbol(pendingCallbacks)
+  new on the response: Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  false false true true
+heir | the response writes under a content length, then end: undefined true false
+  200 content-length=2 connection=keep-alive keep-alive=timeout=5 "ab"
+  its own: _header finished _ended destroyed _closed Symbol(pendingCallbacks)
+  new on the response: Symbol(kBytesBuffered) Symbol(kAccountingFlushScheduled) Symbol(kDetachedFrom)
+  said:  false false true true
+heir | the response writes the head, then end: undefined true false
+  201 x-a=1 connection=keep-alive keep-alive=timeout=5 transfer-encoding=chunked "b"
+  its own: _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(kDetachedFrom)
+  said:  false false true true
+heir | writeHead, then the response ends: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusMessage statusCode Symbol(kLenientValidation) Symbol(kOutHeaders) Symbol(kSnapshotStatusCode) Symbol(kSnapshotStatusMessage) Symbol(kFramingFrozenChunked) Symbol(headerState)
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  true true true true
+heir | end, then the response ends: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: statusCode _contentLength _header finished _ended destroyed _closed Symbol(headerState) Symbol(pendingCallbacks)
+  new on the response: _ended Symbol(kDetachedFrom)
+  said:  false true true true
+heir | the response ends, then end: undefined true true
+  200 connection=keep-alive keep-alive=timeout=5 content-length=1 "b"
+  its own: 
+  new on the response: _ended Symbol(kDetachedFrom)
+  said: write after end true true true true

@@ -1,0 +1,39 @@
+# -- source: a-turn-under-a-try-throws-and-the-finally-reads-the-sum-made-in-front.js
+# function k(x, z, bad) {
+#   let d = 0, e = 0;
+#   for (let h = 0; h < x; h++) d = true;
+#   for (let i = 0; i < x; i++) {
+#     d = 1;
+#     e += z;
+#   }
+#   try {
+#     try {
+#       for (let i = 0; i < x; i++) {
+#         if (i === bad) throw new Error("turn " + i);
+#         d = (e + z) & 7;
+#       }
+#     } finally {
+#       e++;
+#     }
+#   } catch (error) {
+#     return [d, e, error.message].join();
+#   }
+#   return [d, e].join();
+# }
+# print(k(3, 2, 1));
+# print(k(3, 2, 9));
+# -- end of source
+# The way into the handler is taken at run time: the finally reads the sum out of the parameter that holds a raw number.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0,7,turn 1
+# CHECK-NEXT: 0,7
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
+# FAILING: 0,7,turn 1
+# FAILING-NEXT: 0,7
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 0,7,turn 1
+# HELD-NEXT: 0,7
+# HELD-NEXT: exited with 0

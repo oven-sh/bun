@@ -32,7 +32,7 @@ struct StatCacheEntry {
 pub(crate) struct DirectoryRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
-    root_fd: Cell<Fd>,
+    root: File,
     /// Mount prefix with trailing `/` (`"/static/"`, or `"/"` for `"/*"`).
     url_prefix: Box<[u8]>,
     stat_cache: Box<[Cell<StatCacheEntry>]>,
@@ -63,12 +63,13 @@ impl DirectoryRoute {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
 
-        let root_fd = match bun_sys::open_a(
+        let root = match File::openat(
+            Fd::cwd(),
             root,
             bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
             0,
         ) {
-            Ok(fd) => fd,
+            Ok(dir) => dir,
             Err(err) => {
                 use bun_sys_jsc::ErrorJsc;
                 return Err(global.throw_value(err.to_js(global)?));
@@ -88,7 +89,7 @@ impl DirectoryRoute {
         Ok(RefPtr::new(DirectoryRoute {
             ref_count: Cell::new(1),
             server: Cell::new(None),
-            root_fd: Cell::new(root_fd),
+            root,
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
@@ -289,7 +290,7 @@ impl DirectoryRoute {
         (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
     }
 
-    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
+    /// Symlinks resolve as with `openat2(RESOLVE_IN_ROOT)`, whether or not the kernel has it. Windows follows them anywhere.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
@@ -301,10 +302,13 @@ impl DirectoryRoute {
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
         #[cfg(windows)]
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
+        #[cfg(not(windows))]
+        let fd = {
+            use bun_sys::beneath::{Symlinks, openat};
+            openat(self.root.fd(), zrel, flags, 0, Symlinks::FollowAsRoot).ok()?
+        };
+        #[cfg(windows)]
+        let fd = bun_sys::openat(self.root.fd(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
         use bun_sys::FdExt;
@@ -357,12 +361,6 @@ impl DirectoryRoute {
         if let Some(server) = self.server.get() {
             server.on_static_request_complete();
         }
-    }
-}
-
-impl Drop for DirectoryRoute {
-    fn drop(&mut self) {
-        drop(File::from_fd(self.root_fd.get()));
     }
 }
 

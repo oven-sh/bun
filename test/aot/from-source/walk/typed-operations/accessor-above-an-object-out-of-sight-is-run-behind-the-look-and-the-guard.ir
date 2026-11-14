@@ -1,0 +1,21 @@
+# -- source: accessor-above-an-object-out-of-sight-is-run-behind-the-look-and-the-guard.js
+# function Temp(c) { this._c = c; }
+# Object.defineProperty(Temp.prototype, "f", { get: function () { return this._c * 2 + 32; }, set: function (v) { this._c = (v - 32) / 2; }, enumerable: true, configurable: true });
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var t = new Temp(i & 7); t.f = t.f + 2; total += t.f; } return total; }
+# print(run(10));
+# function lay(holder) { Object.defineProperty(holder, "f", { get: function () { return 1; }, set: function () { }, configurable: true }); }
+# lay(Temp.prototype);
+# print(run(10));
+# -- end of source
+# One descriptor, written in the body, lays an accessor on the prototype object of a constructor function: the record of the class expects both halves there (the scan: nameAccessorWrittenInDescriptor()).
+# The layout has left: a lookup passes a name that a descriptor defines. What stands above the object the object's own byte says, and that the accessor is the one of the record the guard of the class and the name:
+# behind the two the half is run directly, here as a copy in line. The second definition, on a holder that is handed in (written on `Temp.prototype` itself it would leave the record without an expectation), ends the guard, and the accesses go as they are written.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame {{*}} callee=f4
+# CHECK: frame {{*}} callee=f5
+# CHECK: = AreMembersUnchanged {{*}}key="f"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 398
+# ANSWERS: 10
+# ANSWERS-NEXT: exited with 0

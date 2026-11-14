@@ -1,0 +1,13 @@
+# -- source: main.js
+# class Meter { k = 2; }
+# Meter.prototype.scale = [3, 5];
+# function run(n) { const meter = new Meter(); let s = 0; for (let i = 0; i < n; i++) s = (s + meter.scale[i & 1] + meter.k) | 0; return s; }
+# print(run(100));
+# -- end of source
+# LIBRARY: own
+# A statement puts an array on the prototype. The loop reads it out of the word of its guard.
+# RUN: walk f1 mechanisms=all
+# CHECK: GetAssignedMember conditions=[{kind=MemberAssigned layout=L0 key="scale"}]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 600
+# ANSWERS-NEXT: exited with 0

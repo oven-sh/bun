@@ -1,0 +1,20 @@
+# -- source: main.ts
+# class Plain { id = 0; note: unknown = undefined; constructor(id: number) { this.id = id; } }
+# class Noted extends Plain { mark = 1; constructor(id: number, note: unknown) { super(id); this.note = note; } }
+# function make(id: number) { return id % 2 ? new Noted(id, "n") : new Plain(id); }
+# publish(make);
+# let sum = 0;
+# for (let i = 0; i < 200; i++) { const made: any = step(i); sum += made.id + (made.mark ?? 0); }
+# print(sum);
+# declare function step(...values: any[]): any;
+# declare function publish(...values: any[]): any;
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# f3 = Noted. The base constructor is called, not copied, for two classes: what it gives back is no longer fresh where the class below defines its own field.
+# A definition in the initializer of a class is expected to create its field all the same: the step of the key order is tested in line and no stub lists the field.
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: PutSlotOrAdd {{*}}key="mark"{{*}}[isDefinition, isExpectedToCreate]
+# RUN(ANSWERS): run-in-shell let kept; globalThis.publish = f => { kept = f; }; globalThis.step = i => kept(i);
+# ANSWERS: 20000
+# ANSWERS-NEXT: exited with 0

@@ -13,7 +13,7 @@ export const FileSystemRouterOptions = b.dictionary(
 );
 
 const text = { getter: b.string.utf8, cache: true } as const;
-const queryObject = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
+const queryObject = { getter: b.any.returning("object"), cache: true, capability: "heap", throws: true } as const;
 
 export const RouteKind = b.enumeration(["exact", "catch-all", "optional-catch-all", "dynamic"]);
 
@@ -70,7 +70,12 @@ export const FrameworkFileSystemRouter = b.class({
   rustPath: "crate::bake::router::JSFrameworkRouter",
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
-    match: { args: { path: b.string.loose.utf8 }, returns: b.any, capability: "js", throws: true },
-    toJSON: { returns: b.any, capability: "js", throws: true },
+    match: {
+      args: { path: b.string.loose.utf8 },
+      returns: b.any.returning("object", "null"),
+      capability: "js",
+      throws: true,
+    },
+    toJSON: { returns: b.any.returning("object"), capability: "js", throws: true },
   },
 });

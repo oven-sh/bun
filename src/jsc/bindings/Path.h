@@ -1,8 +1,9 @@
-#include "config.h"
-#include "ZigGlobalObject.h"
+#pragma once
+#include "root.h"
 
 namespace Bun {
 
-JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject);
+// `path.dirname(path)`, with its errors.
+JSC::JSValue pathDirname(JSC::JSGlobalObject*, JSC::JSValue path);
 
 } // namespace Bun

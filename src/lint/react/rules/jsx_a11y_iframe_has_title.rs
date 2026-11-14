@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce iframe elements have a title attribute.
 pub struct IframeHasTitle;
 
-const IFRAME_HAS_TITLE: Message = Message::new("", "Missing `title` attribute for the `iframe` element.");
+const IFRAME_HAS_TITLE: &Message = &Message::new("", "Missing `title` attribute for the `iframe` element.");
 
 impl Rule for IframeHasTitle {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "iframe-has-title", Kind::Problem);

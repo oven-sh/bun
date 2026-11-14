@@ -1,0 +1,19 @@
+# Node and Reference are one union, so their fields agree on a form. The program reads pos and end of a Node as integers and says nothing of a Reference's: both hold int32s, in four bytes each.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function parse(text: string): any;
+# class Node { pos: number; end: number; constructor(pos: number, end: number) { this.pos = pos; this.end = end; } }
+# interface Reference { fileName: string; pos: number; end: number }
+# function shift(node: Node, by: number): void { node.pos = node.pos + by | 0; node.end = node.end + by | 0; }
+# function widthOf(item: Node | Reference): number { return item.end - item.pos; }
+# function pragma(name: string, data: any): Reference { return { fileName: name, pos: data.pos, end: data.end }; }
+# const items: (Node | Reference)[] = [new Node(1, 2), pragma("x", parse("{}"))];
+# parse(items as any);
+# shift(items[0] as Node, 1);
+# print(widthOf(items[0]) + widthOf(items[1]));
+# -- end of source
+# RUN(SLOTS): plan layouts mechanisms=all
+# SLOTS: slot 0 "pos" OptionalInt32
+# SLOTS-NEXT: slot 1 "end" OptionalInt32
+# SLOTS: "end" OptionalInt32
+# SLOTS: "pos" OptionalInt32

@@ -19,19 +19,19 @@ pub struct IdLength {
     sufficient_prefix_len: usize,
 }
 
-const TOO_SHORT: Message = Message::new(
+const TOO_SHORT: &Message = &Message::new(
     "tooShort",
     "Identifier name '{{name}}' is too short (< {{min}}).",
 );
-const TOO_SHORT_PRIVATE: Message = Message::new(
+const TOO_SHORT_PRIVATE: &Message = &Message::new(
     "tooShortPrivate",
     "Identifier name '#{{name}}' is too short (< {{min}}).",
 );
-const TOO_LONG: Message = Message::new(
+const TOO_LONG: &Message = &Message::new(
     "tooLong",
     "Identifier name '{{name}}' is too long (> {{max}}).",
 );
-const TOO_LONG_PRIVATE: Message = Message::new(
+const TOO_LONG_PRIVATE: &Message = &Message::new(
     "tooLongPrivate",
     "Identifier name '#{{name}}' is too long (> {{max}}).",
 );
@@ -124,7 +124,11 @@ impl IdLength {
 
     /// Returns what to report for an identifier named `name`, given without its `#`, and the limit that the message
     /// mentions.
-    fn problem(&self, name: &[u8], is_private: bool) -> Option<(Message, &'static str, f64)> {
+    fn problem(
+        &self,
+        name: &[u8],
+        is_private: bool,
+    ) -> Option<(&'static Message, &'static str, f64)> {
         if self.has_valid_length_by_prefix(name) {
             return None;
         }
@@ -171,7 +175,10 @@ impl IdLength {
 
     /// Returns `name` without its `#`, and its [`IdLength::problem`].
     #[inline(never)]
-    fn problem_of<'a>(&self, name: Name<'a>) -> (&'a [u8], Option<(Message, &'static str, f64)>) {
+    fn problem_of<'a>(
+        &self,
+        name: Name<'a>,
+    ) -> (&'a [u8], Option<(&'static Message, &'static str, f64)>) {
         match name.bytes() {
             [b'#', rest @ ..] => (rest, self.problem(rest, true)),
             name => (name, self.problem(name, false)),

@@ -1,0 +1,397 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[` > a hint for a test without a name 1`] = `2`;
+
+exports[` 1`] = `1`;
+
+exports[`any() of a class without a name 1`] = `
+{
+  "a": Any<<anonymous>>,
+  "f": Any<Function>,
+}
+`;
+
+exports[`carriage returns: "\\r" > comment 1`] = `
+<!--
+-->
+`;
+
+exports[`carriage returns: "\\r" > element 1`] = `
+<div
+  a="
+"
+>
+  
+  <!--
+-->
+  
+</div>
+`;
+
+exports[`carriage returns: "\\r" > strings 1`] = `
+[
+  "
+",
+  {
+    "
+": "
+",
+  },
+]
+`;
+
+exports[`carriage returns: "\\r" > text 1`] = `
+
+
+`;
+
+exports[`carriage returns: "\\r" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": 
+,
+}
+`;
+
+exports[`carriage returns: "\\r\\n\\r\\n" > comment 1`] = `
+<!--
+
+-->
+`;
+
+exports[`carriage returns: "\\r\\n\\r\\n" > element 1`] = `
+<div
+  a="
+
+"
+>
+  
+
+
+  <!--
+
+-->
+  
+
+
+</div>
+`;
+
+exports[`carriage returns: "\\r\\n\\r\\n" > strings 1`] = `
+[
+  "
+
+",
+  {
+    "
+
+": "
+
+",
+  },
+]
+`;
+
+exports[`carriage returns: "\\r\\n\\r\\n" > text 1`] = `
+
+
+
+`;
+
+exports[`carriage returns: "\\r\\n\\r\\n" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": 
+
+,
+}
+`;
+
+exports[`carriage returns: "\\ra" > comment 1`] = `
+<!--
+a-->
+`;
+
+exports[`carriage returns: "\\ra" > element 1`] = `
+<div
+  a="
+a"
+>
+  
+a
+  <!--
+a-->
+  
+a
+</div>
+`;
+
+exports[`carriage returns: "\\ra" > strings 1`] = `
+[
+  "
+a",
+  {
+    "
+a": "
+a",
+  },
+]
+`;
+
+exports[`carriage returns: "\\ra" > text 1`] = `
+
+a
+`;
+
+exports[`carriage returns: "\\ra" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": 
+a,
+}
+`;
+
+exports[`carriage returns: "a\\n\\r" > comment 1`] = `
+<!--a
+
+-->
+`;
+
+exports[`carriage returns: "a\\n\\r" > element 1`] = `
+<div
+  a="a
+
+"
+>
+  a
+
+  <!--a
+
+-->
+  a
+
+</div>
+`;
+
+exports[`carriage returns: "a\\n\\r" > strings 1`] = `
+[
+  "a
+
+",
+  {
+    "a
+
+": "a
+
+",
+  },
+]
+`;
+
+exports[`carriage returns: "a\\n\\r" > text 1`] = `
+a
+
+
+`;
+
+exports[`carriage returns: "a\\n\\r" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": a
+
+,
+}
+`;
+
+exports[`carriage returns: "a\\r" > comment 1`] = `
+<!--a
+-->
+`;
+
+exports[`carriage returns: "a\\r" > element 1`] = `
+<div
+  a="a
+"
+>
+  a
+  <!--a
+-->
+  a
+</div>
+`;
+
+exports[`carriage returns: "a\\r" > strings 1`] = `
+[
+  "a
+",
+  {
+    "a
+": "a
+",
+  },
+]
+`;
+
+exports[`carriage returns: "a\\r" > text 1`] = `
+a
+
+`;
+
+exports[`carriage returns: "a\\r" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": a
+,
+}
+`;
+
+exports[`carriage returns: "a\\r\\n" > comment 1`] = `
+<!--a
+-->
+`;
+
+exports[`carriage returns: "a\\r\\n" > element 1`] = `
+<div
+  a="a
+"
+>
+  a
+
+  <!--a
+-->
+  a
+
+</div>
+`;
+
+exports[`carriage returns: "a\\r\\n" > strings 1`] = `
+[
+  "a
+",
+  {
+    "a
+": "a
+",
+  },
+]
+`;
+
+exports[`carriage returns: "a\\r\\n" > text 1`] = `
+a
+
+`;
+
+exports[`carriage returns: "a\\r\\n" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": a
+,
+}
+`;
+
+exports[`carriage returns: "a\\r\\rb" > comment 1`] = `
+<!--a
+
+b-->
+`;
+
+exports[`carriage returns: "a\\r\\rb" > element 1`] = `
+<div
+  a="a
+
+b"
+>
+  a
+
+b
+  <!--a
+
+b-->
+  a
+
+b
+</div>
+`;
+
+exports[`carriage returns: "a\\r\\rb" > strings 1`] = `
+[
+  "a
+
+b",
+  {
+    "a
+
+b": "a
+
+b",
+  },
+]
+`;
+
+exports[`carriage returns: "a\\r\\rb" > text 1`] = `
+a
+
+b
+`;
+
+exports[`carriage returns: "a\\r\\rb" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": a
+
+b,
+}
+`;
+
+exports[`carriage returns: "a\\rb" > comment 1`] = `
+<!--a
+b-->
+`;
+
+exports[`carriage returns: "a\\rb" > element 1`] = `
+<div
+  a="a
+b"
+>
+  a
+b
+  <!--a
+b-->
+  a
+b
+</div>
+`;
+
+exports[`carriage returns: "a\\rb" > strings 1`] = `
+[
+  "a
+b",
+  {
+    "a
+b": "a
+b",
+  },
+]
+`;
+
+exports[`carriage returns: "a\\rb" > text 1`] = `
+a
+b
+`;
+
+exports[`carriage returns: "a\\rb" > text in an object 1`] = `
+{
+  "after": 1,
+  "node": a
+b,
+}
+`;
+
+exports[`closeTo() 1`] = `
+[
+  NumberCloseTo 0 (2 digits),
+  NumberCloseTo 1.5 (1 digit),
+  NumberCloseTo Infinity (0 digits),
+  NumberNotCloseTo 1e+21 (3 digits),
+]
+`;

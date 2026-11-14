@@ -30,9 +30,6 @@ public:
     IsoSubspace* m_subspaceForNodeSqliteSession { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteLimits { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteTagStore { nullptr };
-    IsoSubspace* m_subspaceForJSSinkConstructor { nullptr };
-    IsoSubspace* m_subspaceForJSSinkController { nullptr };
-    IsoSubspace* m_subspaceForJSSink { nullptr };
     IsoSubspace* m_subspaceForStringDecoder { nullptr };
     IsoSubspace* m_subspaceForPendingVirtualModuleResult { nullptr };
     IsoSubspace* m_subspaceForCallSite { nullptr };
@@ -71,7 +68,6 @@ public:
     IsoSubspace* m_subspaceForV8Function { nullptr };
     IsoSubspace* m_subspaceForJSNodeHTTPServerSocket { nullptr };
     IsoSubspace* m_subspaceForJSX509Certificate { nullptr };
-    IsoSubspace* m_subspaceForJSNodePerformanceHooksHistogram { nullptr };
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};

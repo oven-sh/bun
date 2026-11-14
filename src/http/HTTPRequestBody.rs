@@ -88,15 +88,14 @@ impl StreamFraming {
 }
 
 impl Stream {
-    /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
+    /// Access to the JS-side `ThreadSafeStreamBuffer` while attached.
     ///
     /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
     /// ref on the `ThreadSafeStreamBuffer` (taken on attach, released in
     /// `detach`); the buffer is a separate heap allocation that outlives the
-    /// returned borrow. HTTP-thread-only at the call sites, so the `&mut` is
-    /// the sole live borrow on this side of the lock.
+    /// returned borrow.
     #[inline]
-    pub(crate) fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
+    pub(crate) fn buffer_ref(&self) -> Option<&ThreadSafeStreamBuffer> {
         // Route through the shared `from_attached` accessor (one centralised
         // unsafe); see INVARIANT above.
         self.buffer.map(ThreadSafeStreamBuffer::from_attached)

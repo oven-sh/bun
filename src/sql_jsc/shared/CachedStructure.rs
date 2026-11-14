@@ -72,10 +72,8 @@ impl CachedStructure {
         I: Iterator<Item = &'a ColumnIdentifier> + Clone,
     {
         // lets avoid most allocations
-        // SAFETY: `[MaybeUninit<T>; N]` is always sound to `assume_init` — every
-        // element is itself `MaybeUninit` and thus has no validity invariant.
         let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
-            unsafe { MaybeUninit::uninit().assume_init() };
+            [const { MaybeUninit::uninit() }; 70];
         // lets de duplicate the fields early
         let non_duplicated_count = columns
             .clone()

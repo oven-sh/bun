@@ -9,8 +9,7 @@ pub struct Winsize {
     pub xpixel: u16,
     pub ypixel: u16,
 }
-// SAFETY: four `u16` fields; all-zero is a valid `Winsize`.
-unsafe impl crate::ffi::Zeroable for Winsize {}
+crate::impl_zeroable!(Winsize);
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -42,9 +41,7 @@ pub struct State {
     #[cfg(unix)]
     orig_termios: libc::termios,
 }
-// SAFETY: `c_int` + `libc::termios` (C POD). All-zero is mode Normal, and the
-// termios is only read after the first non-Normal transition has written it.
-unsafe impl crate::ffi::Zeroable for State {}
+crate::impl_zeroable!(State);
 
 impl State {
     #[inline]

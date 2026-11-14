@@ -4,7 +4,11 @@
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/PutPropertySlot.h"
@@ -149,7 +153,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
     }
 
     if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+        ASSERT((this->impl.wtf->isStatic() || this->impl.wtf->refCount() > 0) && !this->impl.wtf->isEmpty());
         auto str = WTF::String(adoptRef(*this->impl.wtf));
         *this = { .tag = BunStringTag::Dead };
         return jsString(vm, WTF::move(str));
@@ -206,6 +210,13 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 
 namespace Bun {
 
+static UniquedStringImpl* nameOfProgram(JSC::VM& vm, const EncodedSlice& text)
+{
+    if (!vm.hasCompiledCode() || !text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
+        return nullptr;
+    return JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(Zig::untag(text.ptr)), text.len });
+}
+
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     if (bunString.tag == BunStringTag::Empty) {
@@ -234,6 +245,8 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 
     if (bunString.tag == BunStringTag::StaticEncodedSlice) {
         assertStaticStringIsNotCommon(bunString.impl.encoded);
+        if (auto* name = nameOfProgram(globalObject->vm(), bunString.impl.encoded))
+            return JSC::jsString(globalObject->vm(), String(*name));
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.encoded));
     }
 
@@ -251,6 +264,8 @@ JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
         return vm.propertyNames->emptyIdentifier;
     }
     if (bunString.tag == BunStringTag::StaticEncodedSlice) {
+        if (auto* name = nameOfProgram(vm, bunString.impl.encoded))
+            return JSC::Identifier::fromUid(vm, name);
         return JSC::Identifier::fromString(vm, Zig::toStringStatic(bunString.impl.encoded));
     }
     return JSC::Identifier::fromString(vm, bunString.toWTFString());
@@ -797,7 +812,7 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     } else if (this->tag == BunStringTag::StaticEncodedSlice) {
         return Zig::toStringStatic(this->impl.encoded);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+        ASSERT((this->impl.wtf->isStatic() || this->impl.wtf->refCount() > 0) && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
     }
 
@@ -832,7 +847,7 @@ WTF::String BunString::transferToWTFString()
         *this = Zig::BunStringEmpty;
         return str;
     } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
+        ASSERT((this->impl.wtf->isStatic() || this->impl.wtf->refCount() > 0) && !this->impl.wtf->isEmpty());
 
         auto str = WTF::String(adoptRef(*this->impl.wtf));
         *this = Zig::BunStringEmpty;

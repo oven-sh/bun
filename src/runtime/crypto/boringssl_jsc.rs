@@ -52,7 +52,11 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
+/// `err_code` was popped off the error queue. The entries behind it belong to the same failure,
+/// so they are dropped here instead of surfacing in a later, unrelated error.
 pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
+    boring::ERR_clear_error();
+
     // The message is the raw ERR_error_string output
     // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
     // exactly what Node built against BoringSSL produces - no prefix.

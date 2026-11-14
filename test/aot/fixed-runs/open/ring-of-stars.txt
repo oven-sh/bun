@@ -1,0 +1,30 @@
+Two barrels take each other's names by `export *`, and a mock stands for a module behind them. The mock under a computed name in x.test.js lets any module of the run be mocked, so every star is followed when the namespace object is made: round the ring it came back to the object that was being made, without end.
+#### a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+import { seen } from "./user.js";
+test("t", () => console.log("| CASE", seen()));
+#### x.test.js
+import { test, vi } from "bun:test";
+test("x", () => {
+  vi.doMock(import.meta.path, () => ({ a: 1 }));
+});
+#### barrel.js
+export * from "./clash.js";
+export * from "./ring.js";
+export const b = "b";
+#### clash.js
+export const x = "clash x";
+export const other = "other";
+#### dep.js
+export const x = "real x";
+export const f = "real f";
+#### ring.js
+export * from "./dep.js";
+export * from "./barrel.js";
+export const r = "r";
+#### user.js
+import * as barrel from "./barrel.js";
+import * as ring from "./ring.js";
+const show = ns => "x=" + ns.x + " f=" + ns.f + " b=" + ns.b + " r=" + ns.r + " other=" + ns.other + " keys=" + Object.keys(ns).join("+");
+export const seen = () => show(barrel) + " | " + show(ring);

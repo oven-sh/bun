@@ -24,6 +24,7 @@
 #ifndef LIBUS_NO_SSL
 
 #include "libusockets.h"
+#include "internal/internal.h"
 #include <map>
 #include <memory>
 #include <string_view>
@@ -149,7 +150,7 @@ extern "C" {
             auto it = root->children.find(label);
             if (it == root->children.end()) {
                 /* Duplicate this label for our kept string_view of it */
-                void *labelString = us_malloc(label.length());
+                void *labelString = us_xmalloc(label.length());
                 memcpy(labelString, label.data(), label.length());
 
                 it = root->children.emplace(std::string_view((char *) labelString, label.length()),

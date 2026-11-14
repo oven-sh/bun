@@ -8,8 +8,17 @@ function nestedAtan2Chain(depth: number): string {
   return `hsl(sin(2\n${body}` + Buffer.alloc(depth + 3, ")").toString();
 }
 
+// The leading min() of plain numbers fails as an <angle> before the nested atan2() is reached.
+function minAtan2Chain(depth: number): string {
+  let inner = "atan2(1)";
+  for (let i = 0; i < depth; i++) inner = `atan2(2 * min(9, 75) + -1 + ${inner})`;
+  return `hsl(sin(${inner}))`;
+}
+
 const cases: [css: string, expected: string | null][] = [
   [nestedAtan2Chain(40), null],
+  [minAtan2Chain(40), null],
+  [minAtan2Chain(80), null],
   [nestedAtan2Chain(64), null],
   ["hsl(" + Buffer.alloc(6 * 64, "atan2(").toString() + "9, 1" + Buffer.alloc(64, ")").toString() + " 50% 50%)", null],
   ["hsl(atan2(9, 1) 50% 50%)", "#8dbf40"],

@@ -444,7 +444,7 @@ impl<'a> Installer<'a> {
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
             if apply.logger.has_errors() {
                 let mut log = Log::init();
-                apply.logger.clone_to_with_recycled(&mut log, true);
+                apply.logger.append_to(&mut log);
                 return Err(TaskError::Patching(log));
             }
             let _ = apply
@@ -1336,7 +1336,7 @@ impl Task {
             .map_err(|err| TaskError::RunScripts(err.into()))?;
         let mut log = Log::init();
         let Some(list) = pkg_scripts
-            .get_list(&mut log, lockfile, &mut cwd, dep_name, pkg_res, is_trusted)
+            .get_list(&mut log, &mut cwd, dep_name, pkg_res, is_trusted)
             .map_err(TaskError::RunScripts)?
         else {
             return Ok(false);
@@ -1373,9 +1373,7 @@ impl Task {
             .append_real_store_path(&mut pkg_dir, entry_id, which)
             .map_err(crate::Error::from)
             // `true` counts the scripts that would run, like the hoisted installer does.
-            .and_then(|()| {
-                pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res, true)
-            });
+            .and_then(|()| pkg_scripts.get_list(&mut log, &mut pkg_dir, dep_name, pkg_res, true));
         match list {
             Ok(Some(list)) => {
                 if manager.options.log_level.is_verbose() {
@@ -2829,9 +2827,9 @@ impl<'a> Installer<'a> {
     /// `check_link_entries` bounded the length. Normalized: a Windows junction resolves no `..`.
     fn link_target_path<'b>(&self, target: &[u8], buf: &'b mut paths::PathBuffer) -> &'b [u8] {
         let base: &[u8] = if crate::dependency::is_link_path(target) {
-            bun_fs::FileSystem::instance().top_level_dir()
+            bun_fs::FileSystem::get().top_level_dir()
         } else {
-            &self.manager().global_link_dir_path
+            self.manager().global_link_dir_path
         };
         debug_assert!(!base.is_empty());
         let len = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
@@ -2950,7 +2948,7 @@ fn append_workspace_path(buf: &mut impl PathLike, workspace_path: &[u8]) -> sys:
     }
     let mut join_buf = paths::path_buffer_pool::get();
     let absolute = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-        bun_fs::FileSystem::instance().top_level_dir(),
+        bun_fs::FileSystem::get().top_level_dir(),
         &mut join_buf[..],
         &[workspace_path],
     );

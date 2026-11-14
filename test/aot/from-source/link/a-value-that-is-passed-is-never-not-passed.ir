@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function publish(...values: unknown[]): void;
+# declare function choose(): boolean;
+# class Weight { constructor(public grams: number) {} }
+# class Total { constructor(public sum: number) {} }
+# function withValueThatMayBeUndefined(weights: Weight[], from: Total | undefined) {
+#     return weights.reduce((total: Total | undefined, weight: Weight) => new Total((total === undefined ? 0 : total.sum) + weight.grams), from);
+# }
+# function withNothing(weights: Weight[]) {
+#     return weights.reduce((total: Weight, weight: Weight) => new Weight(total.grams + weight.grams));
+# }
+# const weights = [new Weight(1), new Weight(2)];
+# const total = withValueThatMayBeUndefined(weights, choose() ? new Total(1) : undefined);
+# publish(total === undefined ? 0 : total.sum, withNothing(weights).grams);
+# -- end of source
+# `reduce` has a row for a call without an initial value, where the first element is the accumulator, so that its result may be an element. A call that passes a value which may be undefined is no such call:
+# `[..].reduce(f, undefined)` has two arguments. The result of the first function is a Total or undefined and never a Weight; the second leaves the operand out, and its result may be an element.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=undefined|L1 returns=
+# CHECK: function f2 {{*}}result=undefined|L0 returns=

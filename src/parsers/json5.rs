@@ -362,7 +362,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
+    pub fn parse(
+        source: &'a Source<'a>,
+        log: &mut Log,
+        bump: &'a Bump,
+    ) -> Result<Expr, ExternalError> {
         source.check_parseable_len(log, "JSON5 document")?;
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),

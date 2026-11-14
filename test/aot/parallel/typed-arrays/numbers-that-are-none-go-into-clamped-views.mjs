@@ -1,0 +1,4 @@
+// Words that are no number, read raw out of views, go into clamped views.
+const out = []; const t = f => { try { out.push(String(f())); } catch (e) { out.push(e.name); } };
+const b = new ArrayBuffer(64), u = new BigUint64Array(b), f = new Float64Array(b), g = new Float32Array(b), c = new Uint8ClampedArray(8); const ps = [0x7ff8000000000001n, 0xfff8000000000000n, 0xffffffffffffffffn, 0x7ff0000000000001n, 0xfffe000000000007n, 0x7ffa000000000000n]; for (let r = 0; r < 3; r++) for (const p of ps) { u[0] = p; for (let i = 0; i < 4; i++) { c[i] = f[0]; c[i + 4] = g[1]; } t(() => c.join()); c[9] = f[0]; t(() => (c[0] = f[0], c[0])); function q(x) { c[1] = x; return c[1]; } t(() => q(f[0])); }
+let hh = 7; for (const x of out) for (const c of x) hh = (Math.imul(hh, 31) + c.charCodeAt(0)) | 0; console.log(out.length + ' ' + hh + ' ' + out.slice(0, 12).join('|'));

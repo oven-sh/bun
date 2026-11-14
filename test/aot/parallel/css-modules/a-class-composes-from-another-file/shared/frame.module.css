@@ -1,0 +1,9 @@
+.edge {
+  border: 0;
+}
+
+.heading {
+  composes: edge;
+  composes: note from "../card.module.css";
+  font-weight: bold;
+}

@@ -1,0 +1,18 @@
+What a test file exports starts anew in each run: a `var` is undefined, and a `let`, a `const` and a class are in their dead zones until the run comes to them. `bun test --rerun-each=3` loads a test file three times in one realm: each load is a new module of the file. In a compiled run what a file exports is a variable of the program, which is there once: it kept what the run before had stored.
+#### anew.test.js
+import { test } from "bun:test";
+const early = [];
+for (const read of [() => loose, () => late, () => fixed, () => Made]) {
+  try { early.push(String(read())); } catch (error) { early.push(error.name); }
+}
+export var loose;
+export let late = "late";
+export const fixed = "fixed";
+export class Made { static toString() { return "Made"; } }
+test("anew", () => {
+  console.log("| CASE", early.join(), "|", loose, late);
+  loose = "stored by a test";
+  late = "stored by a test";
+});
+#### package.json
+{ "type": "module" }

@@ -1,0 +1,13 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function twice(x: number): number { return 2 * x; }
+# function chosen(given: any): any { return given === undefined ? twice : given; }
+# print(chosen(undefined) === twice, chosen(undefined)(4), chosen(7), chosen(JSON.parse("null")));
+# -- end of source
+# A function without captures is a cell of a table. The read tests the entry of the table, not the decoded cell.
+# REQUIRES: x86_64
+# RUN: bytes f2 mechanisms=all-Inlining
+# CHECK: unit f2:Body
+# CHECK-NEXT: size=47 frame=0@34-44
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: true 8 7 null

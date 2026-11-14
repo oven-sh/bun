@@ -1,0 +1,19 @@
+A shared file that throws while it loads.
+#### helpers/throws.cjs
+globalThis.commonLoads = (globalThis.commonLoads ?? 0) + 1;
+exports.partial = 1;
+throw new RangeError("from throws.cjs");
+#### helpers/throws.js
+globalThis.throwsLoads = (globalThis.throwsLoads ?? 0) + 1;
+export const never = 1;
+throw new RangeError("from throws.js");
+#### throws.test.js
+import { expect, mock, test } from "bun:test";
+test("throws", async () => {
+  for (let turn = 0; turn < 2; turn++) {
+    await import("./helpers/throws.js").then(() => console.log("| CASE", "loaded"), error => console.log("| CASE", "import()", error.name, error.message, globalThis.throwsLoads));
+    try { require("./helpers/throws.cjs"); } catch (error) { console.log("| CASE", "require", error.name, error.message, globalThis.commonLoads); }
+  }
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

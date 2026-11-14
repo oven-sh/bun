@@ -74,12 +74,14 @@ pub const fn count_single<Id>(params: &[Param<Id>]) -> usize {
     n
 }
 
-/// Count multi-value params (named, `Many`).
+/// Count multi-value params (named, `Many` / `ManyOptional`).
 pub const fn count_multi<Id>(params: &[Param<Id>]) -> usize {
     let mut n = 0;
     let mut i = 0;
     while i < params.len() {
-        if is_named(&params[i]) && matches!(params[i].takes_value, Values::Many) {
+        if is_named(&params[i])
+            && matches!(params[i].takes_value, Values::Many | Values::ManyOptional)
+        {
             n += 1;
         }
         i += 1;
@@ -118,7 +120,7 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
                     index = single;
                     single += 1;
                 }
-                Values::Many => {
+                Values::Many | Values::ManyOptional => {
                     index = multi;
                     multi += 1;
                 }
@@ -315,6 +317,11 @@ impl ConvertedTable {
         }
     }
 
+    /// The params in the order of the source table, without their help text.
+    pub fn params(&self) -> &'static [Param<usize>] {
+        self.converted
+    }
+
     /// Look up (or build + intern) the converted table for a `'static` param
     /// slice. **Cold path** — the startup hot set (`Arguments::parse`) goes
     /// through [`comptime_table!`](crate::comptime_table) +
@@ -362,7 +369,7 @@ impl ConvertedTable {
                 let ctr = match p.takes_value {
                     Values::None => &mut flags,
                     Values::One | Values::OneOptional => &mut single,
-                    Values::Many => &mut multi,
+                    Values::Many | Values::ManyOptional => &mut multi,
                 };
                 index = *ctr;
                 *ctr += 1;
@@ -547,6 +554,7 @@ impl<Id> ComptimeClap<Id> {
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
             ignored_long_flags: opt.ignored_long_flags,
+            unknown_long_flags: opt.unknown_long_flags,
         };
 
         while let Some(arg) = stream.next()? {
@@ -575,10 +583,11 @@ impl<Id> ComptimeClap<Id> {
                 if single_options.len() != 0 {
                     single_options[param.id] = Some(arg.value.unwrap_or(b""));
                 }
-            } else if param.takes_value == Values::Many {
+            } else if param.takes_value == Values::Many || param.takes_value == Values::ManyOptional
+            {
                 debug_assert!(multis.len() != 0);
                 if multis.len() != 0 {
-                    multis[param.id].push(arg.value.unwrap());
+                    multis[param.id].push(arg.value.unwrap_or(b""));
                 }
             } else {
                 debug_assert!(flags.len() != 0);
@@ -621,7 +630,7 @@ impl<Id> ComptimeClap<Id> {
             bstr::BStr::new(name),
         );
         debug_assert!(
-            param.takes_value != Values::Many,
+            param.takes_value != Values::Many && param.takes_value != Values::ManyOptional,
             "{} takes many options, not one.",
             bstr::BStr::new(name),
         );
@@ -649,7 +658,7 @@ impl<Id> ComptimeClap<Id> {
         match param.takes_value {
             Values::None => self.flags[param.id],
             Values::One | Values::OneOptional => self.single_options[param.id].is_some(),
-            Values::Many => !self.multi_options[param.id].is_empty(),
+            Values::Many | Values::ManyOptional => !self.multi_options[param.id].is_empty(),
         }
     }
 

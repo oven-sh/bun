@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { dot(i, n) { var col = new Array(n), s = 0; for (var j = 0; j < n; j++) col[j] = j + 0.5; for (var k = 0; k < n; k++) s += this.get(i, k) * col[k]; return s; } }; } var mixed = mixin;
+# class View extends mixed() { constructor(m) { super(); this.m = m; } get(i, j) { return this.m.get(j, i); } }
+# class M extends mixed(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } }
+# var m = new M(4), v = new View(m);
+# print(m.dot(1, 4), v.dot(1, 4), m.dot.call({ get(i, j) { return i + j; } }, 1, 4), v.dot.call(new View(v), 1, 4));
+# -- end of source
+# The loop has a version for instances known by their structure, and one for instances of the one other class below the mixin that the program constructs.
+# RUN: compile LoopsUnswitched mechanisms=all
+# CHECK: statistic LoopsUnswitched 1
+# RUN(ANSWER): run-in-shell
+# ANSWER: 7.25 8.5 25 7.25
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 7.25 8.5 25 7.25
+# CHECKED-NEXT: exited with 0

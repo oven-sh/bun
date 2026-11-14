@@ -206,7 +206,7 @@ pub(crate) fn read_start<'a>(path: &[u8], start: &'a mut [u8]) -> &'a [u8] {
 
 pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
     let mut all = Vec::new();
-    File::stdin().read_to_end_into(&mut all)?;
+    File::borrow(&Fd::stdin()).read_to_end_into(&mut all)?;
     Ok(all)
 }
 
@@ -503,14 +503,16 @@ pub(crate) fn write_atomically(
             .map(<[u8]>::to_vec)
             .map_err(|error| describe(&error))
     };
-    let mut real = resolve()?;
-    // When an open file is renamed over, NTFS moves it to a special directory. The real path points there if another
-    // thread, which reached the file by a different path, replaced it after it was opened here. Resolving again finds
-    // the new file.
-    if cfg!(windows) && escapes_repository(cwd, path, &real) {
-        real = resolve()?;
+    let mut real = resolve();
+    let escapes = |real: &Vec<u8>| escapes_repository(cwd, path, real);
+    // When an open file is renamed over, NTFS moves it to a special directory. If another thread, which reached the file
+    // by a different path, replaces it after it was opened here, the real path points there or can't be determined.
+    // Resolving again finds the new file.
+    if cfg!(windows) && real.as_ref().map_or(true, escapes) {
+        real = resolve();
     }
-    if escapes_repository(cwd, path, &real) {
+    let real = real?;
+    if escapes(&real) {
         return Err(ESCAPES_REPOSITORY.to_vec());
     }
     if !already_written.0.lock().insert(real.clone()) {

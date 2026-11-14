@@ -1,23 +1,30 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const js = { capability: "js", throws: true } as const;
+const read = { returns: b.any.returning("Promise"), ...js } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { ...method, length: 1 },
-  isClosed: { getter: b.bool },
-  pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, length: 1 },
-  start: { ...method, length: 1 },
+  drain: { returns: b.any.returning("Uint8Array", "undefined"), ...js, length: 1 },
+  isClosed: { getter: b.bool, pure: true },
+  pull: {
+    ...js,
+    args: { view: b.any, flags: b.any },
+    returns: b.any.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
+    passThis: true,
+    length: 1,
+  },
+  start: { returns: b.any.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
 /** Reads the whole stream. */
 const buffered = {
-  arrayBuffer: method,
-  blob: method,
-  bytes: method,
-  json: method,
-  text: method,
+  arrayBuffer: read,
+  blob: read,
+  bytes: read,
+  json: read,
+  text: read,
 } as const;
 
 const bufferedSource = {
@@ -58,7 +65,7 @@ export const FileInternalReadableStreamSource = b.class({
     isClosed: members.isClosed,
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
-    setRawMode: { args: { flag: b.any }, returns: b.any, capability: "js" },
+    setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
     start: members.start,
     updateRef: members.updateRef,
   },

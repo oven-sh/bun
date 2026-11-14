@@ -32,7 +32,7 @@ export const TextDecoder = b.class({
       mutates: true,
     },
     encoding: { getter: b.string.local, cache: true, capability: "heap" },
-    fatal: { getter: b.bool },
-    ignoreBOM: { getter: b.bool },
+    fatal: { getter: b.bool, pure: true },
+    ignoreBOM: { getter: b.bool, pure: true },
   },
 });

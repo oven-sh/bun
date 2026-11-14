@@ -10,7 +10,7 @@ pub struct ImgRedundantAlt {
     words: Vec<String>,
 }
 
-const IMG_REDUNDANT_ALT: Message = Message::new("", "Redundant `alt` attribute.");
+const IMG_REDUNDANT_ALT: &Message = &Message::new("", "Redundant `alt` attribute.");
 
 impl Rule for ImgRedundantAlt {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "img-redundant-alt", Kind::Problem);

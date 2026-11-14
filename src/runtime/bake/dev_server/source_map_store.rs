@@ -91,12 +91,7 @@ impl Entry {
     }
 
     /// `SourceMapStore.Entry.renderJSON`.
-    pub(crate) fn render_json(
-        &self,
-        dev: &mut DevServer,
-        kind: ChunkKind,
-        side: Side,
-    ) -> crate::Result<Vec<u8>> {
+    pub(crate) fn render_json(&self, kind: ChunkKind, side: Side) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -217,8 +212,6 @@ impl Entry {
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
-        let _ = dev;
-
         Ok(json_bytes)
     }
 
@@ -321,20 +314,6 @@ impl Entry {
             }
         }
         Ok(())
-    }
-
-    /// Drop handles `files` (each `Shared` decrements its `Rc<PackedMap>`)
-    /// and `paths` (both the outer box and the owned inner `Box<[u8]>` path
-    /// copies).
-    ///
-    /// Deliberately not `impl Drop` — the `ref_count == 0` assertion belongs
-    /// only on the explicit `unrefAtIndex` release path. Whole-store teardown and
-    /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
-    /// counts, where a `Drop` assertion would diverge from spec and panic.
-    pub(crate) fn deinit(&mut self) {
-        debug_assert_eq!(self.ref_count, 0);
-        self.files.clear();
-        self.paths = Box::default();
     }
 }
 
@@ -450,11 +429,6 @@ impl SourceMapStore {
         Self::default()
     }
 
-    #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
-    }
-
     pub(crate) fn put_or_increment_ref_count(
         &mut self,
         script_id: Key,
@@ -531,10 +505,10 @@ impl SourceMapStore {
             if self.weak_refs.readable_length() >= WEAK_REF_ENTRY_MAX {
                 let first = self.weak_refs.read_item().unwrap();
                 self.unref_count(first.key(), first.count);
-                if self.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE
-                    && self.weak_ref_sweep_timer.next.sec == first.expire
+                if self.weak_ref_sweep_timer.state.get() == EventLoopTimerState::ACTIVE
+                    && self.weak_ref_sweep_timer.next.get().sec == first.expire
                 {
-                    Self::timer_all().remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
+                    crate::jsc_hooks::timer_all().remove(&self.weak_ref_sweep_timer);
                 }
             }
         }
@@ -547,9 +521,10 @@ impl SourceMapStore {
             .write_item(WeakRef::init(key, new_weak_ref_count, expire.sec))
             .expect("unreachable"); // space has been cleared above
 
-        if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
+        if self.weak_ref_sweep_timer.state.get() != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            crate::jsc_hooks::timer_all()
+                .update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -629,32 +604,30 @@ impl SourceMapStore {
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
-
         while let Some(item) = store.weak_refs.read_item() {
             if item.expire <= now {
                 store.unref_count(item.key(), item.count);
             } else {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
-                Self::timer_all().update(
+                store
+                    .weak_ref_sweep_timer
+                    .state
+                    .set(EventLoopTimerState::FIRED);
+                crate::jsc_hooks::timer_all().update(
                     core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
                     &Timespec {
                         sec: item.expire + 1,
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
-        store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+        store
+            .weak_ref_sweep_timer
+            .state
+            .set(EventLoopTimerState::CANCELLED);
     }
 
     /// This is used in exactly one place: remapping errors.

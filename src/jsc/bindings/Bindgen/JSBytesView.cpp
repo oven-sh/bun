@@ -65,19 +65,20 @@ bool isSharedBuffer(JSValue value)
     return false;
 }
 
-std::span<const uint8_t> copyBytes(JSGlobalObject& globalObject, std::span<const uint8_t> bytes, MallocSpan<uint8_t>& copy)
+bool copyBytes(JSGlobalObject& globalObject, std::span<const uint8_t>& bytes, BytesCopy& copy)
 {
     if (bytes.empty())
-        return bytes;
+        return true;
     // Not a Vector, which holds less than a buffer can.
     copy = MallocSpan<uint8_t>::tryMalloc(bytes.size());
-    if (!copy) [[unlikely]] {
+    if (!*copy) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         throwOutOfMemoryError(&globalObject, scope);
-        return bytes;
+        return false;
     }
-    memcpySpan(copy.mutableSpan(), bytes);
-    return copy.span();
+    memcpySpan(copy->mutableSpan(), bytes);
+    bytes = copy->span();
+    return true;
 }
 
 }

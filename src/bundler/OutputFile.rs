@@ -1,11 +1,8 @@
-use core::ffi::c_void;
-
 use crate::options::Loader;
 // `bake::Side` / `jsc.api.BuildArtifact.OutputKind` are TYPE_ONLY move-ins;
 // the `options` module already defines them locally.
 use crate::Error;
 use crate::options::{OutputKind, Side};
-use bun_core::String as BunString;
 use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
@@ -122,36 +119,6 @@ impl Value {
         match self {
             Value::Buffer { bytes } => bytes,
             _ => b"",
-        }
-    }
-
-    /// Borrowing variant of [`Self::to_bun_string`]: wraps the buffer in a
-    /// `WTF::ExternalStringImpl` that aliases `bytes` with a **no-op** free
-    /// callback (zero-copy). Caller guarantees `self` outlives every use of the
-    /// returned string.
-    ///
-    /// `PerThread.bundled_outputs` owns the bytes for the entire prerender
-    /// phase. The consuming [`Self::to_bun_string`] cannot be used there
-    /// because the `Vec<OutputFile>` is only borrowed.
-    pub fn to_bun_string_ref(&self) -> BunString {
-        match self {
-            Value::Noop => BunString::EMPTY,
-            Value::Buffer { bytes } => {
-                if bytes.is_empty() {
-                    return BunString::EMPTY;
-                }
-                extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
-                // latin1 = true.
-                BunString::create_external::<*mut c_void>(
-                    bytes,
-                    true,
-                    core::ptr::null_mut::<c_void>(),
-                    noop,
-                )
-            }
-            Value::Copy(_) | Value::Saved(_) => {
-                bun_core::todo_panic!("to_bun_string_ref: Copy/Saved")
-            }
         }
     }
 }

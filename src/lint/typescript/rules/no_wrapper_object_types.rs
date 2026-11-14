@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 /// Disallow using confusing built-in primitive class wrappers.
 pub struct NoWrapperObjectTypes;
 
-const BANNED_CLASS_TYPE: Message = Message::new(
+const BANNED_CLASS_TYPE: &Message = &Message::new(
     "bannedClassType",
     "Prefer using the primitive `{{preferred}}` as a type name, rather than the upper-cased `{{typeName}}`.",
 );

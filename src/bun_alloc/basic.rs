@@ -9,10 +9,9 @@ use crate::{Alignment, AllocatorVTable, StdAllocator};
 #[inline(always)]
 pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize) {
     if cfg!(debug_assertions) {
-        // SAFETY: `mi_is_in_heap_region` accepts any pointer; remaining calls
-        // are sound by the caller contract above.
+        debug_assert!(mimalloc::mi_is_in_heap_region(ptr));
+        // SAFETY: caller contract above.
         unsafe {
-            debug_assert!(mimalloc::mi_is_in_heap_region(ptr));
             if mimalloc::must_use_aligned_alloc(align) {
                 mimalloc::mi_free_size_aligned(ptr, size, align);
             } else {

@@ -248,8 +248,7 @@ impl SSLConfigFromJs for SSLConfig {
             generated::ALPNProtocols::None => core::ptr::null(),
             generated::ALPNProtocols::String(val) => zbox_into_raw(&val.to_owned_slice_z()),
             generated::ALPNProtocols::Buffer(val) => {
-                // SAFETY: `generated` holds a ref on the buffer, and nothing else borrows it here.
-                let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
+                let buffer: jsc::ArrayBuffer = val.as_array_buffer();
                 dupe_z(buffer.byte_slice())
             }
         };
@@ -393,14 +392,8 @@ fn handle_file(
         match file {
             generated::TLSOptionsFile::None => return Ok(None),
             generated::TLSOptionsFile::String(val) => SingleFile::String(val),
-            generated::TLSOptionsFile::Buffer(val) => {
-                // SAFETY: `file` holds a ref on the buffer, and nothing else borrows it here.
-                SingleFile::Buffer(unsafe { &mut *val.get() })
-            }
-            generated::TLSOptionsFile::File(val) => {
-                // SAFETY: as above, for the `Blob`.
-                SingleFile::File(unsafe { &mut *val.get() })
-            }
+            generated::TLSOptionsFile::Buffer(val) => SingleFile::Buffer(val),
+            generated::TLSOptionsFile::File(val) => SingleFile::File(val),
             generated::TLSOptionsFile::Array(list) => {
                 return handle_file_array(global, list);
             }
@@ -432,14 +425,8 @@ fn handle_file_array(
             global,
             match elem {
                 generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
-                generated::TLSOptionsSingleFile::Buffer(val) => {
-                    // SAFETY: see `handle_file`.
-                    SingleFile::Buffer(unsafe { &mut *val.get() })
-                }
-                generated::TLSOptionsSingleFile::File(val) => {
-                    // SAFETY: see `handle_file`.
-                    SingleFile::File(unsafe { &mut *val.get() })
-                }
+                generated::TLSOptionsSingleFile::Buffer(val) => SingleFile::Buffer(val),
+                generated::TLSOptionsSingleFile::File(val) => SingleFile::File(val),
             },
         )?);
     }
@@ -447,10 +434,11 @@ fn handle_file_array(
     Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
+#[derive(Clone, Copy)]
 enum SingleFile<'a> {
     String(&'a bun_core::String),
-    Buffer(&'a mut jsc::JSCArrayBuffer),
-    File(&'a mut crate::webcore::Blob),
+    Buffer(&'a jsc::JSCArrayBuffer),
+    File(&'a crate::webcore::Blob),
 }
 
 fn handle_single_file(

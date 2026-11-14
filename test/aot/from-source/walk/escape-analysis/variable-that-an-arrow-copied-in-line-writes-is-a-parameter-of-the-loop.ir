@@ -1,0 +1,30 @@
+# -- source: variable-that-an-arrow-copied-in-line-writes-is-a-parameter-of-the-loop.ts
+# declare function report(value: unknown): void;
+# interface Row { id: number; name: string; }
+# function forEach<T>(list: T[], f: (x: T) => void): void { for (let i = 0; i < list.length; i++) f(list[i]); }
+# function total(rows: Row[]): number { let sum = 0; forEach(rows, row => { sum += row.id; }); return sum; }
+# function totalPlus(rows: Row[], k: number): number { let sum = 0; forEach(rows, row => { sum += row.id + k; }); return sum; }
+# const rows: Row[] = [];
+# for (let i = 0; i < 12; i++) rows.push({ id: i, name: "row" + i });
+# report(total(rows) + 1);
+# report(total(rows) + 1);
+# report(totalPlus(rows, 3) + 1);
+# report(totalPlus(rows, 3) + 1);
+# -- end of source
+# The helper and the arrow are both copied into `total`, so nobody but `total` has the scope of `sum`. What the state knows of the field goes round the loop as a parameter of the head, typed as a read of the field is, through the entry of the second copy of the loop and through the block in which the two copies meet.
+# No read is left, so the sweep drops the stores, the release and the allocation: no scope is made.
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: GetEnvironmentField
+# CHECK-NOT: PutEnvironmentField
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: NewClosure
+# CHECK-NOT: layout=L1
+# RUN(PLUS): walk f3 mechanisms=all
+# PLUS-LABEL: code f3:Body
+# PLUS-NOT: GetEnvironmentField
+# PLUS-NOT: PutEnvironmentField
+# PLUS-NOT: ReleaseEnvironment
+# PLUS-NOT: NewClosure
+# PLUS-NOT: layout=L2

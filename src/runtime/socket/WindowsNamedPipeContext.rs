@@ -59,13 +59,11 @@ bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, 
 /// project raw fields only — same constraint as the `on_*` handlers below.
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm`/`task` are disjoint from the caller's `&mut named_pipe`, and
-    // `vm` is `&'static` (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
+    // `task_event`/`vm` are disjoint from the caller's `&mut named_pipe`.
     unsafe {
         debug_assert!((*this).task_event != EventState::Deinit);
         (*this).task_event = EventState::Deinit;
-        let vm = ptr::from_ref::<VirtualMachine>((*this).vm).cast_mut();
-        (*vm).enqueue_task(Task::init(this));
+        (*this).vm.enqueue_task(Task::init(this));
     }
 }
 

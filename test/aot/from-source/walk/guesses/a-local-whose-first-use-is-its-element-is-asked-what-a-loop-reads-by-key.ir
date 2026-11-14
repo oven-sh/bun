@@ -1,0 +1,14 @@
+# -- source: a-local-whose-first-use-is-its-element.js
+# function ofText() { const s = sink(); let c = 0, i = 0; while (s[i] === "(") i++; for (; i < s.length; i++) if (s[i] === " ") c++; return c; }
+# function ofList() { const l = sink(); let c = 0; for (let i = 0; i < 9; i++) if (l[i] && l[i].v) c++; return c + l.length; }
+# sink(ofText, ofList);
+# -- end of source
+# Nothing is expected of what the call gives, and its element is used before its length: it is asked as where the length comes first. Compared with characters a text, its elements used as objects a list.
+# f1 = ofText, f2 = ofList
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: testedType=string
+# RUN(LIST): walk f2:Body mechanisms=all
+# LIST: testedType=Array
+# RUN(COUNT): compile ArraysSpeculatedFromIndexedReads mechanisms=all
+# COUNT-NOT: statistic ArraysSpeculatedFromIndexedReads 0

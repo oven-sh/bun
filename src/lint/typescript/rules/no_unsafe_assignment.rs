@@ -15,29 +15,29 @@ use rustc_hash::FxHashMap;
 /// Disallow assigning a value with type `any` to variables and properties.
 pub struct NoUnsafeAssignment;
 
-const ANY_ASSIGNMENT: Message =
-    Message::new("anyAssignment", "Unsafe assignment of an {{sender}} value.");
-const ANY_ASSIGNMENT_THIS: Message = Message::new(
+const ANY_ASSIGNMENT: &Message =
+    &Message::new("anyAssignment", "Unsafe assignment of an {{sender}} value.");
+const ANY_ASSIGNMENT_THIS: &Message = &Message::new(
     "anyAssignmentThis",
     "Unsafe assignment of an {{sender}} value. `this` is typed as `any`.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
-const UNSAFE_ARRAY_PATTERN: Message = Message::new(
+const UNSAFE_ARRAY_PATTERN: &Message = &Message::new(
     "unsafeArrayPattern",
     "Unsafe array destructuring of an {{sender}} array value.",
 );
-const UNSAFE_ARRAY_PATTERN_FROM_TUPLE: Message = Message::new(
+const UNSAFE_ARRAY_PATTERN_FROM_TUPLE: &Message = &Message::new(
     "unsafeArrayPatternFromTuple",
     "Unsafe array destructuring of a tuple element with an {{sender}} value.",
 );
-const UNSAFE_ARRAY_SPREAD: Message = Message::new(
+const UNSAFE_ARRAY_SPREAD: &Message = &Message::new(
     "unsafeArraySpread",
     "Unsafe spread of an {{sender}} value in an array.",
 );
-const UNSAFE_ASSIGNMENT: Message = Message::new(
+const UNSAFE_ASSIGNMENT: &Message = &Message::new(
     "unsafeAssignment",
     "Unsafe assignment of type {{sender}} to a variable of type {{receiver}}.",
 );
-const UNSAFE_OBJECT_PATTERN: Message = Message::new(
+const UNSAFE_OBJECT_PATTERN: &Message = &Message::new(
     "unsafeObjectPattern",
     "Unsafe object destructuring of a property with an {{sender}} value.",
 );
@@ -110,7 +110,7 @@ struct Destructured<'a> {
     has_default: bool,
     target: Target<'a>,
     sender: Sender<'a>,
-    message: Message,
+    message: &'static Message,
 }
 
 impl<'a> Destructured<'a> {
@@ -118,7 +118,7 @@ impl<'a> Destructured<'a> {
         element: &TargetElement<'a>,
         target: Target<'a>,
         sender: Sender<'a>,
-        message: Message,
+        message: &'static Message,
     ) -> Self {
         // tsgolint looks at a binding element's name, whatever its default is.
         let uses_name_only = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);

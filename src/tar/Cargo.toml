@@ -1,0 +1,17 @@
+[package]
+name = "bun_tar"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+itoa.workspace = true
+thiserror.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_zlib.workspace = true

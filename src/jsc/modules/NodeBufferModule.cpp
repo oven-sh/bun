@@ -279,8 +279,8 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
 
     if (errorCode != 0) {
         auto* error = JSC::createError(globalObject, makeString("Unable to transcode Buffer ["_s, errorName, "]"_s));
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String(errorName)), 0);
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "errno"_s), JSC::jsNumber(errorCode), 0);
+        Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, String(errorName)));
+        Bun::putDirectNamed(vm, error, "errno"_s, JSC::jsNumber(errorCode));
         throwException(globalObject, scope, error);
         return {};
     }

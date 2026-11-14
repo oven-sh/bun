@@ -72,17 +72,11 @@ impl JSGlobalObject {
         }
     }
 
-    /// What a host function starts with: this global, and the context of the script that called it.
+    /// This global, and the context of the script that is calling (see
+    /// [`VirtualMachine::context_of_caller`]).
     #[inline]
-    pub fn js_thread_of_caller<'a>(&'a self, frame: &crate::CallFrame) -> JsThread<'a> {
-        self.js_thread(self.bun_vm().context_of_caller(frame))
-    }
-
-    /// As [`js_thread_of_caller`](Self::js_thread_of_caller) where no `CallFrame` reaches Rust
-    /// (see [`VirtualMachine::context_of_caller_no_frame`]).
-    #[inline]
-    pub fn js_thread_of_caller_no_frame(&self) -> JsThread<'_> {
-        self.js_thread(self.bun_vm().context_of_caller_no_frame())
+    pub fn js_thread_of_caller(&self) -> JsThread<'_> {
+        self.js_thread(self.bun_vm().context_of_caller())
     }
 }
 
@@ -346,7 +340,7 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let mut keep_alive = KeepAlive::default();
+        let keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
@@ -362,7 +356,7 @@ impl<C: JobContext> Job<C> {
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
                 context: cx.context().id(),
-                generation: cx.vm().test_isolation_generation,
+                generation: cx.vm().test_isolation_generation.get(),
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -407,18 +401,17 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
-        if C::CANCELLABLE {
-            // SAFETY: fn contract.
-            vm.jobs
-                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
-        }
         // SAFETY: fn contract.
+        let mut job = unsafe { Box::from_raw(this) };
+        if C::CANCELLABLE {
+            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
+        }
         let Job {
-            mut keep_alive,
+            keep_alive,
             off,
             js,
             ..
-        } = unsafe { *Box::from_raw(this) };
+        } = *job;
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }
@@ -480,7 +473,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    if unsafe { (*header).generation } != vm.test_isolation_generation {
+    if unsafe { (*header).generation } != vm.test_isolation_generation.get() {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());

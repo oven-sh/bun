@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 /// Disallow unnecessary template expressions.
 pub struct NoUnnecessaryTemplateExpression;
 
-const NO_UNNECESSARY_TEMPLATE_EXPRESSION: Message = Message::new(
+const NO_UNNECESSARY_TEMPLATE_EXPRESSION: &Message = &Message::new(
     "noUnnecessaryTemplateExpression",
     "Template literal expression is unnecessary and can be simplified.",
 );

@@ -1118,17 +1118,21 @@ test("lowering many decorated instance fields into a large constructor body stay
           loader: "ts",
           tsconfig: { compilerOptions: { experimentalDecorators: true } },
         });
-        function time(M) {
-          const src = gen(M);
-          const t0 = performance.now();
+        function time(M, src) {
+          const start = process.cpuUsage();
           const out = t.transformSync(src);
-          const ms = performance.now() - t0;
+          const { user, system } = process.cpuUsage(start);
           if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
             throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
-          return ms;
+          return (user + system) / 1000;
         }
-        const tSmall = time(100);
-        const tLarge = time(50000);
+        // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
+        const [small, large] = [gen(100), gen(50000)];
+        let [tSmall, tLarge] = [Infinity, Infinity];
+        for (let i = 0; i < 7; i++) {
+          tSmall = Math.min(tSmall, time(100, small));
+          tLarge = Math.min(tLarge, time(50000, large));
+        }
         console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],

@@ -1,0 +1,24 @@
+# -- source: interface-rows-reach-constructors.ts
+# declare function print(...values: unknown[]): void;
+# interface Row { id: number; name: string; email: string; active: boolean }
+# class User { id: number; name: string; email: string; active: boolean; constructor(row: Row) { this.id = row.id; this.name = row.name; this.email = row.email; this.active = row.active; } }
+# function use(row: Row): number { const user = new User(row); return user.id + user.name.length + user.email.length + (user.active ? 1 : 0); }
+# function total(rows: Row[]): number { let sum = 0; for (let i = 0; i < rows.length; i++) sum += use(rows[i]!); return sum; }
+# const written: Row[] = [{ id: 100, name: "w", email: "w@x", active: true }, { id: 101, name: "v", email: "v@x", active: false }];
+# const parsed: Row[] = JSON.parse('[{"active":true,"email":"j@x","name":"j","id":1},{"id":2,"name":"k","email":"k@x","active":false,"more":[1]}]');
+# (globalThis as any).kept = [total, use, User];
+# print(total(written), total(parsed), total([...written, ...parsed, Object.create(written[0]!)]));
+# -- end of source
+# Objects of any make answer an interface. Where nobody knows what arrives, the constructor does not ask for the make of its row in front of its body, where the other version defines each field in a stub:
+# it asks in the body, and reads by name where the row is of another make: the object is made alike on both ways.
+# f1 = User, f2 = use, f3 = total
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest v1
+# CHECK: = PropGet {{*}}key="id"
+# CHECK: = PropGet {{*}}key="active"
+# CHECK: = NewObject layout=L0
+# CHECK: = PutSlotOrAdd {{*}}key="id" receivers=[L0] level=Proven
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 210 12 327
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,44 @@
+# -- source: main.js
+# function B1() { this.count = 0; }
+# B1.prototype.on = function on1(ev) { this.count += ev; return "base " + ev; };
+# function inArgument(x) { return B1.prototype.on.call(x, change(0)); }
+# function B2() { this.count = 0; }
+# B2.prototype.on = function on2(ev) { this.count += ev; return "base"; };
+# function twice(x) { var a = B2.prototype.on.call(x, 1); change(1); var b = B2.prototype.on.call(x, 1); return a + "," + b; }
+# function P3() { this.count = 0; }
+# P3.prototype.on = function on3(ev) { this.count += ev; return "parent"; };
+# function H3() { P3.call(this); }
+# Object.setPrototypeOf(H3.prototype, P3.prototype);
+# function offTheHeir(x) { return H3.prototype.on.call(x, 1); }
+# function B4() { this.count = 0; }
+# B4.prototype.on = function on4(ev) { this.count += ev; return "base"; };
+# function Other4() { this.count = 0; }
+# Other4.prototype.on = function other4(ev) { this.count += 50; return "the other function's"; };
+# const box = { held: B4 };
+# function throughBox(x) { return box.held.prototype.on.call(x, 1); }
+# register(B1, B2, H3, box, Other4);
+# var x1 = new B1(), x2 = new B2(), x3 = new H3(), x4 = new B4();
+# print(inArgument(x1) + " | " + inArgument(x1) + " | " + x1.count);
+# print(twice(x2) + " | " + twice(x2) + " | " + x2.count);
+# print(offTheHeir(x3) + "," + offTheHeir(x3) + " | " + change(2) + " | " + offTheHeir(x3) + " | " + x3.count);
+# print(throughBox(x4) + "," + throughBox(x4) + " | " + change(3) + " | " + throughBox(x4) + " | " + x4.count);
+# -- end of source
+# The member is replaced WHILE THE ARGUMENTS ARE EVALUATED: the function that was read in front of them is called . BETWEEN TWO IDIOMS OF ONE BODY: the second asks anew . a parent's method read off THE HEIR's prototype, and then hidden there .
+# THE FUNCTION OBJECT ONLY EXPECTED (a field of an object that unseen code holds): it is tested, and another function is laid in the field. As plain. f5 = inArgument, f6 = twice, f7 = offTheHeir, f10 = throughBox
+# RUN(WALK): walk f5 f6 f7 f10 mechanisms=all
+# WALK-LABEL: code f5:Body
+# WALK: AreMembersUnchanged conditions=[{layout=
+# WALK-LABEL: code f6:Body
+# WALK: AreMembersUnchanged conditions=[{layout=
+# WALK: AreMembersUnchanged conditions=[{layout=
+# WALK-LABEL: code f7:Body
+# WALK: AreMembersUnchanged conditions=[{layout=
+# WALK-LABEL: code f10:Body
+# WALK: TypeTest {{*}}testedType=f
+# WALK: AreMembersUnchanged conditions=[{layout=
+# RUN(ANSWERS): run-in-shell globalThis.register = (B1, B2, H3, box, Other4) => { globalThis.change = k => { switch (k) { case 0: B1.prototype.on = function late1(ev) { this.count += 10; return "replaced " + ev; }; return 3; case 1: B2.prototype.on = function late2(ev) { this.count += 10; return "replaced"; }; return 0; case 2: H3.prototype.on = function hides(ev) { this.count += 20; return "the heir's own"; }; return "laid on the heir"; default: box.held = Other4; return "another function in the box"; } }; };
+# ANSWERS: base 3 | replaced 3 | 13
+# ANSWERS-NEXT: base,replaced | replaced,replaced | 31
+# ANSWERS-NEXT: parent,parent | laid on the heir | the heir's own | 22
+# ANSWERS-NEXT: base,base | another function in the box | the other function's | 52
+# ANSWERS-NEXT: exited with 0

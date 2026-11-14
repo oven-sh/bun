@@ -1,7 +1,7 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { symlinkSync, utimesSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const strace = isLinux ? Bun.which("strace") : null;
@@ -413,38 +413,80 @@ describe("Bun.serve() directory routes", () => {
     expect(dbl.body).not.toContain("SECRET");
   });
 
-  it.skipIf(!isLinux)("rejects symlink escapes on Linux via RESOLVE_IN_ROOT", async () => {
-    using dir = tempDir("serve-dir-symlink", {
-      "secret.txt": "SECRET",
-      "public/ok.txt": "ok",
-      "public/inside.txt": "inside",
+  describe.skipIf(isWindows).each([
+    ["by default", {}],
+    ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }],
+  ] as const)("symlinks %s", (_, env) => {
+    it.concurrent("only lead to what is inside the root", async () => {
+      using dir = tempDir("serve-dir-symlink", {
+        "secret.txt": "SECRET",
+        "public-other/secret.txt": "SECRET",
+        "public/index.html": "root index",
+        "public/inside.txt": "inside",
+        "public/sub/index.html": "index",
+      });
+      const root = join(String(dir), "public");
+      const links = {
+        "alias": "inside.txt",
+        "alias-dir": "sub",
+        "alias-up": "sub/../inside.txt",
+        "alias-abs": join(root, "inside.txt"),
+        "alias-back": "../public/inside.txt",
+        "alias-root": "../public",
+        "alias-slash": "/sub/../../inside.txt",
+        "sub/alias-slash": "/inside.txt",
+        "escape-rel": "../secret.txt",
+        "escape-abs": join(String(dir), "secret.txt"),
+        "escape-down": "sub/../../secret.txt",
+        "escape-dir": "..",
+        "escape-sibling": "../public-other/secret.txt",
+        "escape-sibling-abs": root + "-other/secret.txt",
+        "loop": "loop",
+      };
+      for (const [name, target] of Object.entries(links)) symlinkSync(target, join(root, name));
+
+      const script = `
+        const server = Bun.serve({ port: 0, routes: { "/static/*": { dir: ${JSON.stringify(root)} } } });
+        const out = {};
+        for (const path of JSON.parse(process.argv.at(-1))) {
+          const res = await fetch(server.url + "static/" + path);
+          out[path] = res.status + " " + (await res.text());
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+      const inside = { "alias": "200 inside", "alias-dir/": "200 index", "alias-up": "200 inside" };
+      // The root is `/` and its own parent.
+      const rootIsSlash = {
+        "alias-slash": "200 inside",
+        "sub/alias-slash": "200 inside",
+        "escape-dir/": "200 root index",
+        "alias-abs": "404 ",
+        "alias-back": "404 ",
+        "alias-root/": "404 ",
+      };
+      const outside = Object.fromEntries(
+        [
+          "escape-rel",
+          "escape-abs",
+          "escape-down",
+          "escape-dir/secret.txt",
+          "escape-sibling",
+          "escape-sibling-abs",
+          "loop",
+        ].map(path => [path, "404 "]),
+      );
+      const expected = { ...inside, ...rootIsSlash, ...outside };
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script, JSON.stringify(Object.keys(expected))],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout && JSON.parse(stdout), stderr).toEqual(expected);
+      expect(exitCode).toBe(0);
     });
-
-    const root = String(dir);
-    // Absolute target: IN_ROOT resolves it against dirfd, so this looks for
-    // public/<abs path> which doesn't exist.
-    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
-    // Relative target climbing out: `..` is clamped at the root.
-    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
-    symlinkSync("inside.txt", join(root, "public", "alias"));
-
-    server = serve({
-      port: 0,
-      routes: { "/static/*": { dir: join(root, "public") } },
-      fetch: () => new Response("fallback", { status: 404 }),
-    });
-
-    // Symlink that stays inside the root is allowed.
-    const inside = await fetch(`${server.url}static/alias`);
-    expect(inside.status).toBe(200);
-    expect(await inside.text()).toBe("inside");
-
-    // Symlinks that escape the root are clamped by the kernel.
-    for (const name of ["escape-abs", "escape-rel"]) {
-      const res = await fetch(`${server.url}static/${name}`);
-      expect(await res.text()).not.toContain("SECRET");
-      expect(res.status).toBe(404);
-    }
   });
 
   it.skipIf(!canInjectOpenat2Error)("keeps clamping symlinks to the root after an open error on one path", async () => {

@@ -17,23 +17,19 @@ impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
 {
-    fn parse_val(input: &mut Parser) -> Result<T>
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Size2D<T>>
     where
-        T: Parse,
+        T: Parse<'bump>,
     {
-        // f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
-        // else → T::parse — all unified under the `Parse` trait in Rust.
-        T::parse(input)
+        Self::parse_with(input, T::parse)
     }
 
-    pub(crate) fn parse(input: &mut Parser) -> Result<Size2D<T>>
-    where
-        T: Parse,
-    {
-        let first = Self::parse_val(input)?;
-        let second = input
-            .try_parse(Self::parse_val)
-            .unwrap_or_else(|_| first.clone());
+    pub(crate) fn parse_with<'bump>(
+        input: &mut Parser<'_, 'bump>,
+        parse_fn: fn(&mut Parser<'_, 'bump>) -> Result<'bump, T>,
+    ) -> Result<'bump, Size2D<T>> {
+        let first = parse_fn(input)?;
+        let second = input.try_parse(parse_fn).unwrap_or_else(|_| first.clone());
         Ok(Size2D {
             a: first,
             b: second,
@@ -76,8 +72,7 @@ where
 
     #[inline]
     pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // Note: compares lhs.a against rhs.b only (not a/a && b/b).
-        lhs.a == rhs.b
+        lhs.a == rhs.a && lhs.b == rhs.b
     }
 }
 

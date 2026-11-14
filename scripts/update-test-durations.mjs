@@ -11,7 +11,7 @@
  * reads public build metadata and writes one file in the repo.
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -98,6 +98,15 @@ export function parseLog(raw) {
         concurrent = false;
         continue;
       }
+      // A program compiled ahead of time says what it took: its own build, or its
+      // share of a build that it shares with others, and its run.
+      const program = /^(.+\.[cm]?[jt]sx?) \(compile (\d+) ms, run (\d+) ms\)$/.exec(title);
+      if (program) {
+        out.push([program[1], Number(program[2]) + Number(program[3])]);
+        path = start = null;
+        concurrent = false;
+        continue;
+      }
       const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;
@@ -116,6 +125,14 @@ export function parseLog(raw) {
   }
   emit(lastTs);
   return out;
+}
+
+// Most programs under test/aot/parallel take well under a second, and count alike
+// where the shards are dealt (msOfWeight): only the long ones have an entry.
+// test/aot/run-parallel.ts compiles Bun's library once for all that have one,
+// and then each takes little: so an entry stays once it is there.
+export function entryOfProgram(medians, before) {
+  return medians.default >= 700 ? medians : before;
 }
 
 function median(arr) {
@@ -213,6 +230,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
     process.exit(1);
   }
+  const before = JSON.parse(readFileSync(outputPath, "utf8"));
   const out = {
     // Consumers should tolerate missing paths (new tests) and missing lanes.
     _meta: {
@@ -226,7 +244,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     for (const lane of Object.keys(lanes)) {
       if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
     }
-    out[p] = entry;
+    const kept = p.startsWith("aot/parallel/") ? entryOfProgram(entry, before[p]) : entry;
+    if (kept) out[p] = kept;
   }
 
   writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");

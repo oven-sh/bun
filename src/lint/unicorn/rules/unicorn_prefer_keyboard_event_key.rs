@@ -7,7 +7,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Prefer `KeyboardEvent#key` over `KeyboardEvent#keyCode`.
 pub struct PreferKeyboardEventKey;
 
-const PREFER_KEYBOARD_EVENT_KEY: Message = Message::new("", "Use `.key` instead of `.{{deprecated_prop}}`");
+const PREFER_KEYBOARD_EVENT_KEY: &Message = &Message::new("", "Use `.key` instead of `.{{deprecated_prop}}`");
 
 const DEPRECATED_PROPERTIES: [&str; 3] = ["keyCode", "charCode", "which"];
 

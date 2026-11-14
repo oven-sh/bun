@@ -5,11 +5,11 @@ use bun_lint::rule::Plugin;
 /// Prefers use of `Date.now()` over `new Date().getTime()` or `new Date().valueOf()`.
 pub struct PreferDateNow;
 
-const PREFER_DATE_NOW: Message = Message::new("", "Prefer `Date.now()` over `new Date()`");
-const PREFER_DATE_NOW_OVER_METHODS: Message =
-    Message::new("", "Prefer `Date.now()` over `new Date().{{bad_method}}()`");
-const PREFER_DATE_NOW_OVER_NUMBER_DATE_OBJECT: Message =
-    Message::new("", "Prefer `Date.now()` over `{{kind}}(new Date())`");
+const PREFER_DATE_NOW: &Message = &Message::new("", "Prefer `Date.now()` over `new Date()`");
+const PREFER_DATE_NOW_OVER_METHODS: &Message =
+    &Message::new("", "Prefer `Date.now()` over `new Date().{{bad_method}}()`");
+const PREFER_DATE_NOW_OVER_NUMBER_DATE_OBJECT: &Message =
+    &Message::new("", "Prefer `Date.now()` over `{{kind}}(new Date())`");
 
 fn is_arithmetic(op: BinOp) -> bool {
     matches!(op, BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow)

@@ -1,0 +1,11 @@
+# f1 = lazy
+# -- source: main.mjs
+# function lazy(size) { const object = { get table() { const value = size * 2; Object.defineProperty(this, "table", { value, enumerable: true }); return value; } }; return object.table + object.table; }
+# let n = 0; for (let k = 0; k < 20; k++) n += lazy(k);
+# print(n);
+# -- end of source
+# A value that is not writable fits no slot of a plain field either: the slot holds the accessor until the getter defines it.
+# RUN: link fields mechanisms=all
+# CHECK: "table" proven=number writers-known {{*}}filled-by-accessors-alone
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 760

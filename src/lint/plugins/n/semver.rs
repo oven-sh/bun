@@ -49,12 +49,10 @@ impl Range {
             .filter(|it| !it.is_empty())
             .collect::<Vec<_>>()
             .join(&b" "[..]);
-        let mut group = handle_oom(query::parse(&raw, SlicedString::init(&raw, &raw)));
+        let group = handle_oom(query::parse(&raw, SlicedString::init(&raw, &raw)));
         if group.has_skipped() {
             return None;
         }
-        // Nothing reads `input`, and in a clone it would still point to the original's `raw`.
-        group.input = std::ptr::from_ref::<[u8]>(b"");
         Some(Range { raw, group })
     }
 

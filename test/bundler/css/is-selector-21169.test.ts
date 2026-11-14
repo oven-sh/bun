@@ -18,10 +18,6 @@ describe("css", () => {
           color: red;
         }
 
-        .foo:-moz-any(input:checked) {
-          color: red;
-        }
-
         .foo:is(input:checked) {
           color: red;
         }

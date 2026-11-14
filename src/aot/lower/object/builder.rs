@@ -1,0 +1,186 @@
+use bun_sema::hir::ExprId;
+use smallvec::SmallVec;
+
+use super::{ObjectBuilder, ObjectState, WaitingElement};
+use crate::ir::generated::FunctionKind;
+use crate::ir::{LayoutId, PropertyKeyId, ValueId};
+use crate::lower::member::PropertyName;
+use crate::lower::{FunctionLowering, convert};
+
+pub(in crate::lower) const MOST_VALUES_THAT_WAIT_IN_REGISTERS: usize = 8;
+
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn costs_no_word_while_it_waits(&self, value: ValueId) -> bool {
+        self.builder.is_constant(value)
+            || matches!(
+                self.builder.function().kind,
+                FunctionKind::Module | FunctionKind::CommonJsModule
+            )
+    }
+
+    pub(super) fn open_head(&mut self, object: &mut ObjectBuilder) -> ValueId {
+        let initial = match &object.state {
+            ObjectState::Pending(initial) => initial,
+            ObjectState::Open { head } => return *head,
+        };
+        self.file.fragment.note_allocation(object.layout);
+        let head = self
+            .builder
+            .new_object(object.layout, &initial.fields, None, &initial.values);
+        if let Some(prototype) = initial.prototype {
+            self.builder.set_literal_prototype(head, prototype, false);
+        }
+        object.state = ObjectState::Open { head };
+        head
+    }
+
+    fn define_waiting_names(&mut self, object: &mut ObjectBuilder) {
+        if object.waiting_names.is_empty() {
+            return;
+        }
+        let head = self.open_head(object);
+        let position = self.position();
+        for name in std::mem::take(&mut object.waiting_names) {
+            self.set_position(name.position);
+            self.emit_define(head, PropertyName::Constant(name.key), name.value);
+        }
+        self.set_position(position);
+    }
+
+    pub(super) fn define_waiting_elements(&mut self, object: &mut ObjectBuilder) {
+        self.define_waiting_names(object);
+        if object.waiting_elements.is_empty() {
+            return;
+        }
+        let head = self.open_head(object);
+        let position = self.position();
+        for element in std::mem::take(&mut object.waiting_elements) {
+            self.set_position(element.position);
+            self.emit_define(head, PropertyName::Constant(element.key), element.value);
+        }
+        self.set_position(position);
+    }
+
+    pub(super) fn finish_head(&mut self, object: &mut ObjectBuilder) {
+        self.define_waiting_elements(object);
+        let head = self.open_head(object);
+        if object.is_finished {
+            return;
+        }
+        let head = self.builder.finish_object(head);
+        object.state = ObjectState::Open { head };
+        object.is_finished = true;
+    }
+
+    pub(crate) fn emit_object_rest(
+        &mut self,
+        source: ValueId,
+        excluded: &[PropertyName],
+        layout: Option<LayoutId>,
+    ) -> ValueId {
+        let mut excluded_keys: SmallVec<[PropertyKeyId; 4]> = SmallVec::new();
+        let mut excluded_values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for &name in excluded {
+            match name {
+                PropertyName::Constant(key) => excluded_keys.push(key),
+                PropertyName::Computed(value) => excluded_values.push(value),
+            }
+        }
+        let Some(layout) = layout.filter(|&layout| self.file.lists_some_field(layout)) else {
+            let (keys, values) = (&excluded_keys, &excluded_values);
+            return self.builder.copy_object(source, keys, values, false);
+        };
+        self.file.fragment.note_allocation(layout);
+        let head = self.builder.new_object(layout, &[], None, &[]);
+        self.builder
+            .copy_data_properties(head, source, &excluded_keys, &excluded_values);
+        self.builder.finish_object(head)
+    }
+}
+
+pub(in crate::lower) fn set_prototype(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    object: &mut ObjectBuilder,
+    prototype: ValueId,
+) {
+    if let ObjectState::Pending(initial) = &mut object.state {
+        if initial.prototype.is_none() {
+            initial.prototype = Some(prototype);
+            return;
+        }
+    }
+    let head = lowering.open_head(object);
+    lowering
+        .builder
+        .set_literal_prototype(head, prototype, false);
+}
+
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn add_property(
+        &mut self,
+        object: &mut ObjectBuilder,
+        name: PropertyName,
+        mut value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        let field = match name {
+            PropertyName::Constant(key) if self.file.find_element_index(key).is_some() => {
+                self.file.fragment.note_write(key);
+                let position = self.position();
+                object.waiting_elements.push(WaitingElement {
+                    key,
+                    value,
+                    position,
+                });
+                let fits = self.costs_no_word_while_it_waits(value)
+                    || object.waiting_elements.len() <= MOST_VALUES_THAT_WAIT_IN_REGISTERS;
+                if !fits || !self.may_wait_with(object.waiting_elements.len()) {
+                    self.define_waiting_elements(object);
+                }
+                return;
+            }
+            PropertyName::Constant(key) => {
+                self.file.fragment.note_write(key);
+                self.file.find_field(object.layout, key)
+            }
+            PropertyName::Computed(_) => {
+                self.define_waiting_elements(object);
+                None
+            }
+        };
+        let costs_no_word = self.costs_no_word_while_it_waits(value);
+        if let Some(field) = field {
+            let position = self.file.position_of_member(object.layout, field, source);
+            value = self.convert_initializer(value, position, source);
+            if let ObjectState::Pending(initial) = &mut object.state {
+                if (costs_no_word || initial.values.len() < MOST_VALUES_THAT_WAIT_IN_REGISTERS)
+                    && object.waiting_names.is_empty()
+                    && convert::establishes_type(position)
+                    && !initial.contains(field)
+                    && self.may_wait_with(initial.values.len())
+                {
+                    initial.add(field, value);
+                    return;
+                }
+            }
+        }
+        if let (ObjectState::Pending(initial), PropertyName::Constant(key)) = (&object.state, name)
+        {
+            let waiting = initial.values.len() + object.waiting_names.len();
+            if (costs_no_word || waiting < MOST_VALUES_THAT_WAIT_IN_REGISTERS)
+                && self.may_wait_with(waiting)
+            {
+                let position = self.position();
+                object.waiting_names.push(WaitingElement {
+                    key,
+                    value,
+                    position,
+                });
+                return;
+            }
+        }
+        self.define_waiting_names(object);
+        let head = self.open_head(object);
+        self.emit_define(head, name, value);
+    }
+}

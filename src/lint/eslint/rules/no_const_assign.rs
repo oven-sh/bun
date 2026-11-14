@@ -4,7 +4,7 @@ use bun_lint::utils::ast_utils::get_modifying_references;
 /// Disallow reassigning `const`, `using`, and `await using` variables.
 pub struct NoConstAssign;
 
-const CONST: Message = Message::new("const", "'{{name}}' is constant.");
+const CONST: &Message = &Message::new("const", "'{{name}}' is constant.");
 
 impl Rule for NoConstAssign {
     const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended().hints();
@@ -36,8 +36,8 @@ impl Rule for NoConstAssign {
                 let report = cx.report(report_span, CONST).data("name", reference.name()).hint_with(|| {
                     let line = cx.line_of(pat.span().start);
                     Some(match decl.var_kind() {
-                        VarKind::Const => format!("It is declared with const on line {line}. Use let if it has to change."),
-                        _ => format!("It is declared with using on line {line}, so it cannot change."),
+                        VarKind::Const => format!("Declared with const on line {line}. Use let if it changes."),
+                        _ => format!("Declared with using on line {line}, so it can't change."),
                     })
                 });
                 report.labels_with(|labels| {

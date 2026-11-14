@@ -56,9 +56,16 @@ struct NumericConstant {
 };
 
 // One loop instead of a `putDirect` call sequence per constant; these objects
-// are each built once, lazily.
+// are each built once, lazily. A long table goes into a dictionary: no other
+// object ever has these names, so a Structure per name would serve nobody.
 static void putNumericConstants(VM& vm, JSObject* object, const NumericConstant* constants)
 {
+    constexpr size_t fewConstants = 8;
+    size_t count = 0;
+    while (count <= fewConstants && constants[count].name)
+        ++count;
+    if (count > fewConstants && !object->structure()->isDictionary())
+        object->convertToDictionary(vm);
     for (; constants->name; ++constants)
         object->putDirect(vm, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constants->name)), jsNumber(constants->value));
 }

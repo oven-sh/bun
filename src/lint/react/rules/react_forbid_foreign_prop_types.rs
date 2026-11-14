@@ -10,7 +10,7 @@ pub struct ForbidForeignPropTypes {
     allow_in_prop_types: bool,
 }
 
-const FORBIDDEN_PROP_TYPE: Message = Message::new(
+const FORBIDDEN_PROP_TYPE: &Message = &Message::new(
     "forbiddenPropType",
     "Using propTypes from another component is not safe because they may be removed in production builds",
 );

@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce using the digits argument with `Number#toFixed()`.
 pub struct RequireNumberToFixedDigitsArgument;
 
-const MISSING_DIGITS_ARGUMENT: Message = Message::new("", "Number method .toFixed() should have an argument");
+const MISSING_DIGITS_ARGUMENT: &Message = &Message::new("", "Number method .toFixed() should have an argument");
 
 impl Rule for RequireNumberToFixedDigitsArgument {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "require-number-to-fixed-digits-argument", Kind::Suggestion)

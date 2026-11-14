@@ -459,6 +459,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
 static void ssl_emit(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, unsigned int length, int is_batch);
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
+static int ssl_wants_eof_dispatch(struct us_socket_t *s);
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
  * The same shared mem-BIO pair is reused for every SSL* on a loop. The write
@@ -598,11 +599,15 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   return length;
 }
 
+static int ssl_sent_close_notify(struct us_socket_t *s) {
+  return (SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) != 0;
+}
+
 static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   if (!s->ssl_spilled) return;
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
   loop_ssl_data->ssl_batch_spills -= rare->spill->is_batch;
-  if (rare->spill->offset != rare->spill->length) s->ssl_spill_dropped = 1;
+  if (rare->spill->offset != rare->spill->length && !ssl_sent_close_notify(s)) s->ssl_spill_dropped = 1;
   us_free(rare->spill);
   rare->spill = NULL;
   s->ssl_spilled = 0;
@@ -1169,11 +1174,101 @@ enum {
   US_IDENTITY_UNCHECKED = 2,
 };
 
-/* A blocked public key (blocked_spkis.cpp) is reported the way X509_verify_cert reports its own errors: to the SSL's
- * verify callback, which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
+/* The syntax check of OpenSSL's cn2dnsid: whether a common name reads as a host name of two or more labels.
+ * https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/x509/v3_ncons.c#L341 */
+static int us_looks_like_dns_name(const unsigned char *in, int len) {
+  int is_dns_name = 0;
+  for (int i = 0; i < len; i++) {
+    unsigned char c = in[i];
+    if (OPENSSL_isalnum(c) || c == '_') continue;
+    if (i == 0 || i == len - 1) return 0;
+    if (c == '-') continue;
+    if (c != '.' || in[i + 1] == '.' || in[i - 1] == '-' || in[i + 1] == '-') return 0;
+    is_dns_name = 1;
+  }
+  return is_dns_name;
+}
+
+/* OpenSSL's nc_dns. */
+static int us_dns_name_is_within(const unsigned char *name, int len, const ASN1_IA5STRING *base) {
+  if (base->length == 0) return 1;
+  if (len < base->length) return 0;
+  name += len - base->length;
+  if (len > base->length && base->data[0] != '.' && name[-1] != '.') return 0;
+  return OPENSSL_strncasecmp((const char *)name, (const char *)base->data, base->length) == 0;
+}
+
+/* OpenSSL's nc_match for a DNS name. BoringSSL's strips a trailing dot and refuses an explicit minimum of 0. */
+static int us_name_constraints_check_dns_name(const NAME_CONSTRAINTS *nc, const unsigned char *name, int len) {
+  enum { UNCONSTRAINED, NOT_PERMITTED, PERMITTED } match = UNCONSTRAINED;
+  for (size_t i = 0; i < sk_GENERAL_SUBTREE_num(nc->permittedSubtrees); i++) {
+    const GENERAL_SUBTREE *sub = sk_GENERAL_SUBTREE_value(nc->permittedSubtrees, i);
+    if (sub->base->type != GEN_DNS) continue;
+    if (sub->maximum || ASN1_INTEGER_get(sub->minimum) != 0) return X509_V_ERR_SUBTREE_MINMAX;
+    if (match != PERMITTED) match = us_dns_name_is_within(name, len, sub->base->d.dNSName) ? PERMITTED : NOT_PERMITTED;
+  }
+  if (match == NOT_PERMITTED) return X509_V_ERR_PERMITTED_VIOLATION;
+  for (size_t i = 0; i < sk_GENERAL_SUBTREE_num(nc->excludedSubtrees); i++) {
+    const GENERAL_SUBTREE *sub = sk_GENERAL_SUBTREE_value(nc->excludedSubtrees, i);
+    if (sub->base->type != GEN_DNS) continue;
+    if (sub->maximum || ASN1_INTEGER_get(sub->minimum) != 0) return X509_V_ERR_SUBTREE_MINMAX;
+    if (us_dns_name_is_within(name, len, sub->base->d.dNSName)) return X509_V_ERR_EXCLUDED_VIOLATION;
+  }
+  return X509_V_OK;
+}
+
+/* OpenSSL's NAME_CONSTRAINTS_check_CN. BoringSSL looks at common names only when there is no subjectAltName at all. */
+static int us_name_constraints_check_cn(X509 *leaf, const NAME_CONSTRAINTS *nc) {
+  const X509_NAME *subject = X509_get_subject_name(leaf);
+  int error = X509_V_OK;
+  for (int i = -1; error == X509_V_OK && (i = X509_NAME_get_index_by_NID(subject, NID_commonName, i)) >= 0;) {
+    unsigned char *common_name = NULL;
+    int len = ASN1_STRING_to_UTF8(&common_name, X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, i)));
+    /* OpenSSL's check_name_constraints gives up here, which its X509_verify_cert reports as unspecified. */
+    if (len < 0) return X509_V_ERR_UNSPECIFIED;
+    while (len > 0 && common_name[len - 1] == '\0') len--;
+    if (len > 0 && memchr(common_name, 0, len)) {
+      error = X509_V_ERR_UNSUPPORTED_NAME_SYNTAX;
+    } else if (us_looks_like_dns_name(common_name, len)) {
+      error = us_name_constraints_check_dns_name(nc, common_name, len);
+    }
+    OPENSSL_free(common_name);
+  }
+  return error;
+}
+
+/* OpenSSL's has_san_id(cert, GEN_DNS). */
+static int us_x509_has_dns_name(X509 *cert) {
+  GENERAL_NAMES *names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+  int has_dns_name = 0;
+  for (size_t i = 0; i < sk_GENERAL_NAME_num(names) && !has_dns_name; i++) {
+    has_dns_name = sk_GENERAL_NAME_value(names, i)->type == GEN_DNS;
+  }
+  GENERAL_NAMES_free(names);
+  return has_dns_name;
+}
+
+/* When the leaf's subjectAltName lists no DNS name, its common names are checked against the chain's constraints on DNS
+ * names, as in OpenSSL's check_name_constraints. The nearest failing CA decides the error, as with node's callback. */
+static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
+  STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(ctx);
+  X509 *leaf = sk_X509_value(chain, 0);
+  int error = X509_V_OK;
+  for (size_t i = 1; i < sk_X509_num(chain) && error == X509_V_OK; i++) {
+    NAME_CONSTRAINTS *nc = X509_get_ext_d2i(sk_X509_value(chain, i), NID_name_constraints, NULL, NULL);
+    if (nc && !us_x509_has_dns_name(leaf)) error = us_name_constraints_check_cn(leaf, nc);
+    NAME_CONSTRAINTS_free(nc);
+  }
+  return error;
+}
+
+/* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
+ * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
+ * which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_blocked_key_error(ctx);
+  if (error == X509_V_OK && ok) error = us_x509_store_ctx_common_name_error(ctx);
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
   SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
@@ -2099,7 +2194,7 @@ static int ssl_renegotiate(struct us_socket_t *s) {
 }
 
 /* Returns 1 if shutdown is complete (or impossible) and the TCP socket may be
- * closed; 0 if we sent close_notify but must wait for the peer's. */
+ * closed; 0 if our close_notify is spilled, or if we must wait for the peer's. */
 static int ssl_handle_shutdown(struct us_socket_t *s) {
     if (!s->ssl || us_internal_ssl_is_shut_down(s) || s->ssl_fatal_error || !SSL_is_init_finished(s_ssl(s)))
     return 1;
@@ -2121,16 +2216,32 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
       s->ssl_fatal_error = 1;
       return 1;
     }
-    /* The kernel refused the close_notify, and SSL_SENT_SHUTDOWN (is_shut_down) ends the writable
-     * poll that would drain it: close now without it, the peer still observes the FIN. Node parks
-     * the alert in its stream write queue (crypto_tls.cc DoShutdown). */
-    return ret == 1 || s->ssl_spilled;
+    return ret == 1 && !(s->ssl_spilled && ssl_wants_eof_dispatch(s));
   }
   return 1;
 }
 
-/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for its close_notify: Bun.serve's default idleTimeout. */
+static void ssl_received_close_notify(struct us_socket_t *s) {
+  SSL_set_shutdown(s_ssl(s), SSL_get_shutdown(s_ssl(s)) | SSL_RECEIVED_SHUTDOWN);
+}
+
+/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for the two close_notify: Bun.serve's default idleTimeout. */
 #define US_SSL_CLOSE_AFTER_SPILL_TIMEOUT 10
+
+/* The owner let go, so its timeouts are over and nobody else bounds the wait. */
+static void ssl_bound_close(struct us_socket_t *s) {
+  s->ssl_close_after_spill = 0;
+  us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
+  us_socket_long_timeout(s, 0);
+}
+
+/* The close resumes with the same `code` from the writable event that drains the spill: a graceful
+ * close must not come back as a forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
+static void ssl_defer_close(struct us_socket_t *s, int code) {
+  ssl_bound_close(s);
+  s->ssl_close_after_spill = 1;
+  s->ssl_pending_close_code = (unsigned char) code;
+}
 
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
   if (s->ssl && s->ssl_in_use) {
@@ -2167,13 +2278,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
       && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
-      s->ssl_close_after_spill = 1;
-      /* Resume with the SAME code: a graceful close must not come back as a
-       * forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
-      s->ssl_pending_close_code = (unsigned char) code;
-      /* The owner let go, so its timeouts are over and nobody else bounds this wait. */
-      us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
-      us_socket_long_timeout(s, 0);
+      ssl_defer_close(s, code);
       return s;
     }
   }
@@ -2220,9 +2325,10 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   }
   /* Only a read delivers the peer's reply, and the owner that paused let go with this close. */
   us_socket_resume(s);
-  /* So nobody else bounds the wait for a peer that does not answer, whatever else it sends (us_internal_ssl_on_timeout). */
-  us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
-  us_socket_long_timeout(s, 0);
+  /* A close before the close_notify left, over unread input, is a reset: the kernel would drop what it had not sent yet. */
+  if (s->ssl_spilled) ssl_defer_close(s, code);
+  /* For a peer that does not answer, whatever else it sends (us_internal_ssl_on_timeout). */
+  else ssl_bound_close(s);
   return s;
 }
 #define ssl_close us_internal_ssl_close
@@ -2390,9 +2496,7 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
      * received so a later graceful close (an allow_half_open socket ending
      * its side after this EOF) completes immediately in ssl_handle_shutdown
      * instead of deferring for an alert that cannot arrive. */
-    if (!ssl_gone(s)) {
-      SSL_set_shutdown(s_ssl(s), SSL_get_shutdown(s_ssl(s)) | SSL_RECEIVED_SHUTDOWN);
-    }
+    if (!ssl_gone(s)) ssl_received_close_notify(s);
     s = ssl_deliver_eof(s);
     if (!s || us_socket_is_closed(s)) {
       return s;
@@ -2412,21 +2516,29 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
   /* TCP FIN with no half-open: send our close_notify best-effort and
    * raw-close now — deferring (the code==0 path in ssl_close) would wait
    * forever. */
-  s = ssl_close(s, 0, NULL);
+  if (!s->ssl_close_after_spill) s = ssl_close(s, 0, NULL);
   if (s && !us_socket_is_closed(s)) {
-    if (s->ssl_close_after_spill) {
+    if (s->ssl_close_after_spill && (s->flags.allow_half_open || ssl_wants_eof_dispatch(s))) {
       /* The close spill-deferred. When on_writable resumes it, the peer's
        * FIN above means its close_notify is never coming, so record the
        * shutdown as received now — otherwise ssl_handle_shutdown defers
        * for the missing alert and the socket hangs. */
-      if (!ssl_gone(s)) {
-        SSL_set_shutdown(s_ssl(s), SSL_get_shutdown(s_ssl(s)) | SSL_RECEIVED_SHUTDOWN);
-      }
+      if (!ssl_gone(s)) ssl_received_close_notify(s);
     } else {
       s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     }
   }
   return s;
+}
+
+int us_internal_ssl_defer_end(struct us_socket_t *s) {
+  if (!s->ssl_spilled || !ssl_wants_eof_dispatch(s)) return 0;
+  if (!s->ssl_close_after_spill) {
+    if (!ssl_sent_close_notify(s)) return 0;
+    ssl_defer_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN);
+  }
+  ssl_received_close_notify(s);
+  return 1;
 }
 
 /* A fatal socket neither sends nor receives, and no write may close under its caller: the writable event does. */
@@ -2440,8 +2552,8 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
     ssl_release_spill(s->group->loop, s);
     return us_internal_socket_close_raw(s, s->ssl_pending_close_code, NULL);
   }
-  /* close_notify without the FIN: the spill drained, and the graceful close now waits for the peer's reply. */
-  if ((SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) && us_internal_socket_can_raw_write(s)) {
+  /* close_notify without the FIN, and no FIN held: the spill drained, and the graceful close now waits for the peer's reply. */
+  if (ssl_sent_close_notify(s) && us_internal_socket_can_raw_write(s) && !s->ssl_shutdown_after_spill) {
     return us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
   }
   return us_dispatch_timeout(s);
@@ -2487,13 +2599,19 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   if (loop_ssl_data->ssl_send_error) return ssl_close_after_rejected_send(s, loop_ssl_data->ssl_send_error);
   if (s->ssl_shutdown_after_spill) {
     s->ssl_shutdown_after_spill = 0;
-    us_internal_ssl_shutdown(s);
-    if (ssl_gone(s)) return s;
+    if (ssl_sent_close_notify(s)) us_internal_socket_raw_shutdown(s);
+    else us_internal_ssl_shutdown(s);
+    if (ssl_gone(s) || s->ssl_shutdown_after_spill) return s;
   }
   if (s->ssl_close_after_spill) {
     s->ssl_close_after_spill = 0;
-    return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
+    const int awaits_reply = s->ssl_pending_close_code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN &&
+                             (SSL_get_shutdown(s_ssl(s)) & (SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN)) == SSL_SENT_SHUTDOWN &&
+                             us_internal_socket_can_raw_write(s);
+    if (!awaits_reply) return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
   }
+  /* A graceful close awaits the peer's reply. Its owner would take the event for the end of its flush and close again. */
+  if (ssl_sent_close_notify(s) && us_internal_socket_can_raw_write(s)) return s;
   ssl_update_handshake(s, 0);
   s = ssl_close_if_fatal(s);
   if (!s || ssl_gone(s)) return s;
@@ -2682,6 +2800,7 @@ restart:
            * reached and a parked write would be destroyed with the socket. */
           s = ssl_retry_parked_write(s);
           if (!s || ssl_gone(s)) return NULL;
+          if (s->ssl_close_after_spill) return s;
           /* TLS-level EOF: for uWS HTTP sockets, dispatch the user layer's
            * end handler like a TCP FIN would (see ssl_wants_eof_dispatch),
            * then honor half-open exactly like the plain-TCP eof branch in
@@ -2701,7 +2820,7 @@ restart:
               return s;
             }
           }
-          s = ssl_close(s, 0, NULL);
+          if (!s->ssl_close_after_spill) s = ssl_close(s, 0, NULL);
           if (!s || ssl_gone(s)) return NULL;
           /* Spill-deferred close: the socket is still live; report it so the
            * caller's bookkeeping does not treat it as destroyed. */
@@ -2837,7 +2956,7 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
  * close-after-drain gates do not fire while the last batch is still in
  * userspace. */
 unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
-  if (!s->ssl_spilled) return 0;
+  if (!s->ssl_spilled || ssl_sent_close_notify(s)) return 0;
   struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill;
   return spill->length - spill->offset;
 }
@@ -2980,6 +3099,21 @@ int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
 #endif
 }
 
+static void ssl_send_fin(struct us_socket_t *s) {
+  if (s->ssl_spilled && !s->ssl_fatal_error) {
+#ifdef _WIN32
+    /* On Windows a reset drops what was not read yet, and a peer that answered and closed resets over a close_notify that comes late. */
+    int room;
+    bsd_socket_buffer_size(us_poll_fd(&s->p), 0, 1 << 30, &room);
+#else
+    s->ssl_shutdown_after_spill = 1;
+    return;
+#endif
+  }
+  ssl_release_spill(s->group->loop, s);
+  us_internal_socket_raw_shutdown(s);
+}
+
 void us_internal_ssl_shutdown(struct us_socket_t *s) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) return;
   if (s->ssl_first_flight_before_fin) {
@@ -3016,8 +3150,7 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
      * prepends any pending TLS 1.3 NewSessionTicket flight to the alert, so
      * tickets are still delivered) and owns the error handling. */
     ssl_handle_shutdown(s);
-    ssl_release_spill(s->group->loop, s);
-    us_internal_socket_raw_shutdown(s);
+    ssl_send_fin(s);
     return;
   }
 
@@ -3041,8 +3174,7 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
   /* RECEIVED_SHUTDOWN brought us here, so the TLS shutdown is complete; FIN the
    * TCP write side so the poll type becomes SHUT_DOWN and the loop's
    * is_shut_down eof branch can close once both halves are done. */
-  ssl_release_spill(s->group->loop, s);
-  us_internal_socket_raw_shutdown(s);
+  ssl_send_fin(s);
 }
 
 /* Resume a handshake suspended by an async SNICallback. `ctx` (may be NULL =
@@ -3424,7 +3556,7 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
-  struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
+  struct sni_node_t *node = us_xmalloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
   SSL_CTX_up_ref(ctx);
 

@@ -1,0 +1,16 @@
+# a call stands between the stores and is handed the object: it sees the keys that were stored in front of it and no other. So the allocation lists the stores up to the call
+# f1 = Node, f2 = make, f3 = makeEntry
+# -- source: allocation-lists-no-store-that-stands-behind-a-call.ts
+# declare function sink(...values: unknown[]): void;
+# declare function note(value: unknown): void;
+# type Entry = { name: unknown; count?: unknown; next?: unknown };
+# function Node(this: any, kind: number, pos: number) { this.kind = kind; note(this); this.pos = pos; }
+# function make(kind: number) { return new (Node as any)(kind, -1); }
+# function makeEntry(name: unknown) { const entry: Entry = { name }; entry.count = 0; note(entry); entry.next = null; return entry; }
+# sink(make, makeEntry);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject {{*}}fields=[0]
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = NewObject {{*}}fields=[0, 1

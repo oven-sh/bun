@@ -6,7 +6,7 @@ pub struct NoSync {
     allows_at_root_level: bool,
 }
 
-const NO_SYNC: Message = Message::new("noSync", "Unexpected sync method: '{{propertyName}}'.");
+const NO_SYNC: &Message = &Message::new("noSync", "Unexpected sync method: '{{propertyName}}'.");
 
 impl NoSync {
     /// True if the `MemberExpression` `node` should be checked. With `allowAtRootLevel`, that's only inside a function.

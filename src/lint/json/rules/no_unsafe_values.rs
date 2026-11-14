@@ -6,29 +6,29 @@ use bun_lint::rule::Plugin;
 /// Disallow JSON values that are unsafe for interchange
 pub struct NoUnsafeValues;
 
-const UNSAFE_NUMBER: Message = Message::new(
+const UNSAFE_NUMBER: &Message = &Message::new(
     "unsafeNumber",
     "The number '{{ value }}' will evaluate to Infinity.",
 );
-const UNSAFE_INTEGER: Message = Message::new(
+const UNSAFE_INTEGER: &Message = &Message::new(
     "unsafeInteger",
     "The integer '{{ value }}' is outside the safe integer range.",
 );
-const UNSAFE_ZERO: Message = Message::new(
+const UNSAFE_ZERO: &Message = &Message::new(
     "unsafeZero",
     "The number '{{ value }}' will evaluate to zero.",
 );
-const SUBNORMAL: Message = Message::new(
+const SUBNORMAL: &Message = &Message::new(
     "subnormal",
     "Unexpected subnormal number '{{ value }}' found, which may cause interoperability issues.",
 );
-const LONE_SURROGATE: Message =
-    Message::new("loneSurrogate", "Lone surrogate '{{ surrogate }}' found.");
+const LONE_SURROGATE: &Message =
+    &Message::new("loneSurrogate", "Lone surrogate '{{ surrogate }}' found.");
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// The problem with the number whose source text is `text`, if any.
-fn problem_of(text: &[u8]) -> Option<Message> {
+fn problem_of(text: &[u8]) -> Option<&'static Message> {
     let has_exponent = strings::index_of_any(text, b"eE").is_some();
     // A number this short can't be too large or too small.
     if text.len() <= 15 && !has_exponent {

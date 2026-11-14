@@ -84,6 +84,12 @@ impl us_socket_t {
         c::us_socket_resume(self);
     }
 
+    #[cfg(not(windows))]
+    pub(crate) fn read_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_read_now({:p})", self);
+        c::us_socket_read_now(self);
+    }
+
     pub fn close(&mut self, code: CloseCode) {
         bun_core::scoped_log!(
             uws,
@@ -244,14 +250,14 @@ impl us_socket_t {
         c::us_socket_ext(self).cast::<u8>()
     }
 
-    pub fn group(&mut self) -> &mut SocketGroup {
+    pub fn group(&mut self) -> &SocketGroup {
         unsafe {
             // SAFETY: us_socket_group never returns null for a live socket
-            &mut *c::us_socket_group(self)
+            &*c::us_socket_group(self)
         }
     }
     #[inline]
-    pub fn raw_group(&mut self) -> &mut SocketGroup {
+    pub fn raw_group(&mut self) -> &SocketGroup {
         self.group()
     }
 
@@ -274,7 +280,7 @@ impl us_socket_t {
     // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
     pub fn adopt_tls(
         &mut self,
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
@@ -573,6 +579,8 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        #[cfg(not(windows))]
+        pub(super) safe fn us_socket_read_now(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,
@@ -606,7 +614,7 @@ mod c {
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
-            group: *mut SocketGroup,
+            group: *const SocketGroup,
             kind: u8,
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,

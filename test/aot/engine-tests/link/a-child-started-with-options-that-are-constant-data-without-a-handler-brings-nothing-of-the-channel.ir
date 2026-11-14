@@ -1,0 +1,45 @@
+# Bun.spawn(["true"], { stdout: "ignore" }), the options as the front end writes them where every value is a constant
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: function f2 unreached
+# CHECK: function f3 unreached
+# CHECK: function f4 unreached
+
+layout L0 fields=[{key="ipc" declared={type=anything} flags=[IsNeverWritten]}, {key="stdout" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Ipc.ts" displayPath="/$bun/js/builtins/Ipc.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=IpcParseHandle function=f1
+runtimefunction id=IpcRestoreAdvancedBuffers function=f2
+runtimefunction id=IpcSerialize function=f3
+runtimefunction id=IpcTagAdvancedBuffers function=f4
+data d0 root=Object{layout=L0 members=[{key="stdout" value=String{value="ignore"}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="spawn"
+    v2 = Convert v1 declared={type=builtin(BunSpawn) flags=[IsExpected]}
+    v3 = String string="true"
+    v4 = NewArray v3 contents=anything
+    v5 = Data data=d0
+    v6 = Call v2, v0, v4, v5 calleeKey="spawn" calleeName="Bun.spawn"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="parseHandle" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcParseHandle thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f2 name="restoreAdvancedBuffers" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcRestoreAdvancedBuffers thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f3 name="serialize" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcSerialize thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f4 name="tagAdvancedBuffers" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcTagAdvancedBuffers thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

@@ -3,15 +3,14 @@ use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_odd(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
         self.run_unary_predicate(cx.global(), this_value.to_js(), "toBeOdd", |v| {
-            if v.is_big_int32() {
-                v.to_int32() & 1 == 1
-            } else if v.is_big_int() {
+            if v.is_big_int() {
                 v.to_int64() & 1 == 1
             } else if v.is_int32() {
                 v.to_int32().rem_euclid(2) == 1

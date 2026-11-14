@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 /// Disallow unnecessary namespace qualifiers.
 pub struct NoUnnecessaryQualifier;
 
-const UNNECESSARY_QUALIFIER: Message = Message::new(
+const UNNECESSARY_QUALIFIER: &Message = &Message::new(
     "unnecessaryQualifier",
     "Qualifier is unnecessary since '{{ name }}' is in scope.",
 );

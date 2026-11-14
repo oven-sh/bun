@@ -1,0 +1,29 @@
+# -- source: an-equality-beside-a-proven-number-speaks-for-numbers-in-a-list-of-the-file-that-the-turn-reads.cjs
+# "use strict";
+# const base = JSON.parse("[1,2,3,4,5,6,7,8]");
+# const heights = base.map((p) => p / 4), names = base.map((p) => "n" + p), mixed = base.map((p) => p / 4);
+# delete mixed[1]; mixed[2] = "0.75"; mixed[5] = NaN; mixed[6] = -0;
+# function countIn(needle, k) { let count = k & 3; for (let i = 0; i < heights.length; i++) if (heights[i] === needle) count += 1; return count; }
+# function countNames(needle, k) { let count = k & 3; for (let i = 0; i < names.length; i++) if (names[i] === needle) count += 1; return count; }
+# function placeIn(needle, k) { for (let i = 0; i < mixed.length; i++) if (mixed[i] === needle) return i; return -1 - (k & 1); }
+# const first = { countIn }, second = { countNames }, third = { placeIn }, words = JSON.parse('["countIn","countNames","placeIn"]'), half = +JSON.parse('"0.5"');
+# print(first[words[0]](half + 0.25, 0), first[words[0]](half * 4, 0), first[words[0]](half * 100, 0));
+# print(second[words[1]]("n" + base[2], 0), second[words[1]]("none", 0));
+# print(third[words[2]](half + 0.25, 0), third[words[2]](half * 0, 0), third[words[2]](half / 0 - half / 0, 0), third[words[2]](half * 4, 0));
+# -- end of source
+# Nothing is written of what the three lists of the file hold, and each turn reads its list out of the file's variable. Where an element under an index goes through an operator the
+# holder is asked in front of the loop for a list of numbers. A relation counted as such an operator; an equality counts where the holder is a variable read in the turn and the other side
+# is a value proven a number where the walk stands: f1 = countIn and f3 = placeIn. f2 = countNames: the needle is a text: a search among texts or objects is asked nothing. In f3 the list
+# is none of numbers: the next copy takes it: a hole, a text that reads like the needle, NaN and -0 answer as written. A written needle, and a holder from in front of the loop, go by
+# other rules and are not touched.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# RUN(NAMES): walk f2 mechanisms=all
+# NAMES-NOT: testedType=Array<number>
+# RUN(PLACE): walk f3 mechanisms=all
+# PLACE: = TypeTest {{*}} testedType=Array<number>
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 1 1 0
+# ANSWER-NEXT: 1 0
+# ANSWER-NEXT: -1 6 -1 7
+# ANSWER-NEXT: exited with 0

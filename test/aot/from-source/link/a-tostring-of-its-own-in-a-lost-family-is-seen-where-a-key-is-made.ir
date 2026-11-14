@@ -1,0 +1,20 @@
+# -- source: a-tostring-of-its-own-in-a-lost-family-is-seen-where-a-key-is-made.js
+# class Mark { constructor(start) { this.start = start; } }
+# function m0(mark) { return { kind: "K0", k0: 1, value: "v0", mark }; }
+# function m1(mark) { return { kind: "K1", k1: 1, value: "v1", mark }; }
+# function m2(mark) { return { kind: "K2", k2: 1, value: "v2", mark }; }
+# function m3(mark) { return { kind: "K3", k3: 1, value: "v3", mark }; }
+# function m4(mark) { return { kind: "K4", k4: 1, value: "v4", mark, toString() { this.mark.start = "text"; return "v1"; } }; }
+# function m5(mark) { return { kind: "K5", value: pick(hidden(), mark), mark }; }
+# function pick(i, mark) { return i === 0 ? m0(mark) : i === 1 ? m1(mark) : i === 2 ? m2(mark) : i === 3 ? m3(mark) : i === 4 ? m4(mark) : m5(mark); }
+# const table = { v1: 1, v2: 2 };
+# function known(made) { return Object.hasOwn(table, made.value); }
+# let sum = "";
+# for (let i = 0; i < 6; i++) { const made = pick(i, new Mark(i)); sum += known(made) + "," + typeof made.mark.start + ";"; }
+# print(sum);
+# -- end of source
+# L0 = Mark. One of the six answers toString by a function of its own, which stores a text where numbers lie.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: "start" proven=number writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 4;
+# ANSWERS: false,number;true,number;true,number;false,number;false,number;true,string;

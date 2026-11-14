@@ -1,0 +1,19 @@
+# -- source: accessor-halves-join.js
+# function Features() { this._red = 0; this._green = 1; }
+# Object.defineProperty(Features.prototype, "red", { configurable: true, get: function () { return this._red; } });
+# Object.defineProperty(Features.prototype, "red", { configurable: true, set: function (value) { this._red = value; } });
+# Object.defineProperty(Features.prototype, "green", { configurable: true, set: function (value) { this._green = value; } });
+# Object.defineProperty(Features.prototype, "green", { configurable: true, get: function () { return this._green; } });
+# const features = [new Features(), new Features()];
+# let sum = 0;
+# for (let k = 0; k < 20; k++) { features[k & 1].red = k; features[k & 1].green = k; sum += features[k & 1].red + features[k & 1].green; }
+# print(sum);
+# -- end of source
+# A descriptor with one half keeps the other half of the accessor: both functions are expected.
+# RUN(LINK): link members mechanisms=all
+# LINK: on-prototype L0 "red" getter=f
+# LINK: setter=f
+# LINK: on-prototype L0 "green" getter=f
+# LINK: setter=f
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 380

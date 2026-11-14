@@ -325,10 +325,6 @@ impl Members {
     }
 }
 
-// `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
-// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
-// longer derives `Clone` (private `origin` field); callers that need a shallow copy must
-// `core::mem::take` or `core::ptr::read` instead.
 pub struct Scope {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena

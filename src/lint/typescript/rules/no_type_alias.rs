@@ -13,11 +13,11 @@ pub struct NoTypeAlias {
     allow_tuple_types: Values,
 }
 
-const NO_COMPOSITION_ALIAS: Message = Message::new(
+const NO_COMPOSITION_ALIAS: &Message = &Message::new(
     "noCompositionAlias",
     "{{typeName}} in {{compositionType}} types are not allowed.",
 );
-const NO_TYPE_ALIAS: Message = Message::new("noTypeAlias", "Type {{alias}} are not allowed.");
+const NO_TYPE_ALIAS: &Message = &Message::new("noTypeAlias", "Type {{alias}} are not allowed.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Values {

@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# const names = { __proto__: null };
+# names.add = add;
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = names.add(s, i); return s; }
+# print(called(5), called(6));
+# -- end of source
+# f1 = add, f2 = called
+# `{ __proto__: null }` was lowered to the call Object.create(null) and stayed a plain object whatever stood behind it. With stores by name (or written definitions of values) behind its declaration it is the record that the call becomes.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: "add" appended proven=f1
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: callee=f1
+# RUN(ANSWER): run-in-shell
+# ANSWER: 11 16
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 11 16
+# CHECKED-NEXT: exited with 0

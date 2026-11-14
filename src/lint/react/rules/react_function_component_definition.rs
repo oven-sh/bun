@@ -21,14 +21,14 @@ pub struct FunctionComponentDefinition {
     unnamed_components: Vec<FunctionStyle>,
 }
 
-const FUNCTION_DECLARATION: Message =
-    Message::new("function-declaration", "Function component is not a function declaration");
-const FUNCTION_EXPRESSION: Message =
-    Message::new("function-expression", "Function component is not a function expression");
-const ARROW_FUNCTION: Message = Message::new("arrow-function", "Function component is not an arrow function");
-const NOT_A_DECLARATION: Message = Message::new("", "Function component is not a function declaration");
-const NOT_AN_EXPRESSION: Message = Message::new("", "Function component is not a function expression");
-const NOT_AN_ARROW: Message = Message::new("", "Function component is not an arrow function");
+const FUNCTION_DECLARATION: &Message =
+    &Message::new("function-declaration", "Function component is not a function declaration");
+const FUNCTION_EXPRESSION: &Message =
+    &Message::new("function-expression", "Function component is not a function expression");
+const ARROW_FUNCTION: &Message = &Message::new("arrow-function", "Function component is not an arrow function");
+const NOT_A_DECLARATION: &Message = &Message::new("", "Function component is not a function declaration");
+const NOT_AN_EXPRESSION: &Message = &Message::new("", "Function component is not a function expression");
+const NOT_AN_ARROW: &Message = &Message::new("", "Function component is not an arrow function");
 
 pub struct State<'a> {
     /// These three are for oxlint, which decides by a function's position and what it returns.

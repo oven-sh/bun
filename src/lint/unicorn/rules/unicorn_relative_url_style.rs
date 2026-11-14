@@ -8,9 +8,9 @@ pub struct RelativeUrlStyle {
     always: bool,
 }
 
-const NEVER: Message = Message::new("", "Remove the `./` prefix from the relative URL.");
-const ALWAYS: Message = Message::new("", "Add a `./` prefix to the relative URL.");
-const REMOVE: Message = Message::new("", "Remove leading `./`");
+const NEVER: &Message = &Message::new("", "Remove the `./` prefix from the relative URL.");
+const ALWAYS: &Message = &Message::new("", "Add a `./` prefix to the relative URL.");
+const REMOVE: &Message = &Message::new("", "Remove leading `./`");
 
 impl Rule for RelativeUrlStyle {
     const META: Meta =

@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): number;
+# interface Dial { f0(): number; f1(): number; f2(): number; f3(): number; f4(): number; f5(): number; f6(): number; f7(): number; f8(): number; f9(): number; step: number; close(): number; last(): number }
+# function measure(n: number): number { return sink(n) | 0; }
+# function open(rounds: number, count: number): Dial[] { const out: Dial[] = []; for (let r = 0; r < rounds; r++) { let at = r * 10; const close = () => ++at; for (let i = 0; i < count; i++) out.push({ f0: () => at + 0, f1: () => at + 1, f2: () => at + 2, f3: () => at + 3, f4: () => at + 4, f5: () => at + 5, f6: () => at + 6, f7: () => at + 7, f8: () => at + 8, f9: () => at + 9, step: measure(at), close, last: () => at - 1 }); } return out; }
+# const all = open(2, 2); sink(all[0].close === all[1].close, all[1].close === all[2].close, all[0].close(), all[3].f0(), all[2].last());
+# const more = open(3, 1); sink(more[0].close(), more[2].last());
+# -- end of source
+# `close` is written in the outer loop and laid, behind a computed value, into each object that the inner loop makes. It has one use in the text and is stored many times: it is ONE function in all of them,
+# so it is made where it is written and its cell is stored. `last` is written in the turn that lays it: its store takes the mark.
+# f2 = open
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[close]]: {{*}} = NewClosure {{*}}closureForm=Slim
+# CHECK: = NewObject
+# CHECK: = PutSlotOrAdd {{*}}key="step"
+# CHECK: = PutSlotOrAdd {{*}}key="close"
+# CHECK: isMadeOnDemand
+# CHECK: = PutSlotOrAdd {{*}}key="last"

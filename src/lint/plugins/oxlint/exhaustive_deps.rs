@@ -13,71 +13,71 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::hash::{BuildHasher, Hash, Hasher};
 
-const MISSING_CALLBACK: Message =
-    Message::new("", "React hook {{hook}} requires an effect callback.");
-const DEPENDENCY_ARRAY_REQUIRED: Message = Message::new(
+const MISSING_CALLBACK: &Message =
+    &Message::new("", "React hook {{hook}} requires an effect callback.");
+const DEPENDENCY_ARRAY_REQUIRED: &Message = &Message::new(
     "",
     "React Hook {{hook}} does nothing when called with only one argument.",
 );
-const UNKNOWN_DEPENDENCIES: Message = Message::new(
+const UNKNOWN_DEPENDENCIES: &Message = &Message::new(
     "",
     "React Hook {{hook}} received a function whose dependencies are unknown.",
 );
-const ASYNC_EFFECT: Message = Message::new(
+const ASYNC_EFFECT: &Message = &Message::new(
     "",
     "Effect callbacks are synchronous to prevent race conditions.",
 );
-const MISSING_DEPENDENCY: Message = Message::new(
+const MISSING_DEPENDENCY: &Message = &Message::new(
     "",
     "React Hook {{hook}} has a missing dependency: {{dependencies}}{{mutable}}",
 );
-const MISSING_DEPENDENCIES: Message = Message::new(
+const MISSING_DEPENDENCIES: &Message = &Message::new(
     "",
     "React Hook {{hook}} has missing dependencies: {{dependencies}}{{mutable}}",
 );
-const INCLUDE_OR_REMOVE: Message =
-    Message::new("", "Either include it or remove the dependency array.");
-const UNNECESSARY_DEPENDENCY: Message = Message::new(
+const INCLUDE_OR_REMOVE: &Message =
+    &Message::new("", "Either include it or remove the dependency array.");
+const UNNECESSARY_DEPENDENCY: &Message = &Message::new(
     "",
     "React Hook {{hook}} has unnecessary dependency: {{dependency}}",
 );
-const NOT_ARRAY_LITERAL: Message = Message::new(
+const NOT_ARRAY_LITERAL: &Message = &Message::new(
     "",
     "React Hook {{hook}} was passed a dependency list that is not an array literal. This means we can't statically verify whether you've passed the correct dependencies.",
 );
-const LITERAL: Message = Message::new(
+const LITERAL: &Message = &Message::new(
     "",
     "The literal is not a valid dependency because it never changes.",
 );
-const DUPLICATE: Message = Message::new(
+const DUPLICATE: &Message = &Message::new(
     "",
     "This dependency is specified more than once in the dependency array.",
 );
-const COMPLEX_EXPRESSION: Message = Message::new(
+const COMPLEX_EXPRESSION: &Message = &Message::new(
     "",
     "React Hook {{hook}} has a complex expression in the dependency array.",
 );
-const CHANGES_EVERY_RENDER: Message = Message::new(
+const CHANGES_EVERY_RENDER: &Message = &Message::new(
     "",
     "React hook {{hook}} depends on `{{dependency}}`, which changes every render",
 );
-const MEMOIZE: Message = Message::new(
+const MEMOIZE: &Message = &Message::new(
     "",
     "Try memoizing this variable with `useRef` or `useCallback`.",
 );
-const UNNECESSARY_OUTER_SCOPE: Message = Message::new(
+const UNNECESSARY_OUTER_SCOPE: &Message = &Message::new(
     "",
     "React Hook {{hook}} has an unnecessary dependency: {{dependency}}.",
 );
-const INFINITE_RERENDER: Message = Message::new(
+const INFINITE_RERENDER: &Message = &Message::new(
     "",
     "React Hook {{hook}} contains a call to setState. Without a list of dependencies, this can lead to an infinite chain of updates.",
 );
-const REF_IN_CLEANUP: Message = Message::new(
+const REF_IN_CLEANUP: &Message = &Message::new(
     "",
     "The ref's value `.current` is accessed directly in the effect cleanup function.",
 );
-const USE_EFFECT_EVENT: Message = Message::new(
+const USE_EFFECT_EVENT: &Message = &Message::new(
     "",
     "Functions returned from `useEffectEvent` must not be included in the dependency array.",
 );

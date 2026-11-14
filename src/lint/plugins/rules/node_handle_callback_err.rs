@@ -10,7 +10,7 @@ enum ErrorPattern {
     Regex(Box<Regex>),
 }
 
-const HANDLE_CALLBACK_ERR: Message = Message::new("", "Expected error to be handled.");
+const HANDLE_CALLBACK_ERR: &Message = &Message::new("", "Expected error to be handled.");
 
 impl Rule for HandleCallbackErr {
     const META: Meta = Meta::oxlint(Plugin::Node, "handle-callback-err", Kind::Suggestion);

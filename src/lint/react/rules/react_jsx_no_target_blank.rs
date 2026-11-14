@@ -18,28 +18,28 @@ pub struct JsxNoTargetBlank {
     forms: bool,
 }
 
-const NO_TARGET_BLANK_WITHOUT_NOREFERRER: Message = Message::new(
+const NO_TARGET_BLANK_WITHOUT_NOREFERRER: &Message = &Message::new(
     "noTargetBlankWithoutNoreferrer",
     "Using target=\"_blank\" without rel=\"noreferrer\" (which implies rel=\"noopener\") is a security risk in older browsers: see https://mathiasbynens.github.io/rel-noopener/#recommendations",
 );
-const NO_TARGET_BLANK_WITHOUT_NOOPENER: Message = Message::new(
+const NO_TARGET_BLANK_WITHOUT_NOOPENER: &Message = &Message::new(
     "noTargetBlankWithoutNoopener",
     "Using target=\"_blank\" without rel=\"noreferrer\" or rel=\"noopener\" (the former implies the latter and is preferred due to wider support) is a security risk: see https://mathiasbynens.github.io/rel-noopener/#recommendations",
 );
-const TARGET_BLANK_WITHOUT_NOREFERRER: Message = Message::new(
+const TARGET_BLANK_WITHOUT_NOREFERRER: &Message = &Message::new(
     "",
     "Using target=`_blank` without rel=`noreferrer` (which implies rel=`noopener`) is a security risk in older browsers: see https://mathiasbynens.github.io/rel-noopener/#recommendations",
 );
-const TARGET_BLANK_WITHOUT_NOOPENER: Message = Message::new(
+const TARGET_BLANK_WITHOUT_NOOPENER: &Message = &Message::new(
     "",
     "Using target=`_blank` without rel=`noreferrer` or rel=`noopener` (the former implies the latter and is preferred due to wider support) is a security risk: see https://mathiasbynens.github.io/rel-noopener/#recommendations",
 );
-const EXPLICIT_PROPS_IN_SPREAD_ATTRIBUTES: Message = Message::new(
+const EXPLICIT_PROPS_IN_SPREAD_ATTRIBUTES: &Message = &Message::new(
     "",
     "all spread attributes are treated as if they contain an unsafe combination of props, unless specifically overridden by props after the last spread attribute prop.",
 );
-const ADD_NOREFERRER: Message = Message::new("", "add rel=`noreferrer` to the element");
-const ADD_NOREFERRER_OR_NOOPENER: Message = Message::new("", "add rel=`noreferrer` or rel=`noopener` to the element");
+const ADD_NOREFERRER: &Message = &Message::new("", "add rel=`noreferrer` to the element");
+const ADD_NOREFERRER_OR_NOOPENER: &Message = &Message::new("", "add rel=`noreferrer` or rel=`noopener` to the element");
 
 /// `settings.react.linkComponents` and `formComponents`, which is where oxlint reads them from.
 pub struct State<'a> {
@@ -240,8 +240,8 @@ impl JsxNoTargetBlank {
     fn report<'a>(
         &self,
         span: Span,
-        message: Message,
-        help: Message,
+        message: &'static Message,
+        help: &'static Message,
         jsx: Jsx<'a>,
         component: Component,
         cx: &Cx<'a, Self>,

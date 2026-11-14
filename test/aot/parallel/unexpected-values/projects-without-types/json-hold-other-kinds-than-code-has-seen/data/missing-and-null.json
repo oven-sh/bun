@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "name": "a",
+      "price": null,
+      "tags": null
+    },
+    {
+      "name": "b"
+    },
+    null
+  ],
+  "count": null
+}

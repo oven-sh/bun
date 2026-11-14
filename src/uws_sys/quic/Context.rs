@@ -11,7 +11,7 @@ bun_opaque::opaque_ffi! { pub struct Context; }
 
 unsafe extern "C" {
     fn us_create_quic_client_context(
-        loop_: *mut Loop,
+        loop_: &Loop,
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,
@@ -79,13 +79,10 @@ pub enum ConnectResult {
 
 impl Context {
     /// # Safety
-    /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
-    /// because the Loop is shared across every context/socket/timer on the thread,
-    /// so requiring `&mut` would force callers to assert uniqueness that does not
-    /// hold.
+    /// `global_init` has run.
     #[inline]
     pub unsafe fn create_client(
-        loop_: *mut Loop,
+        loop_: &'static Loop,
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,

@@ -35,7 +35,7 @@ mod _impl {
         /// How the pool thread delivers a finished write to the VM.
         pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
-        pub poll_ref: JsCell<CountedKeepAlive>,
+        pub poll_ref: CountedKeepAlive,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
@@ -71,7 +71,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(cx.global()),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
-                poll_ref: JsCell::new(CountedKeepAlive::default()),
+                poll_ref: CountedKeepAlive::default(),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
@@ -212,7 +212,7 @@ mod _impl {
                     init_params_array_value,
                 ));
             }
-            for (i, &x) in params_.as_u32().iter().enumerate() {
+            for (i, x) in params_.as_u32().iter().map(|x| x.get()).enumerate() {
                 if x == u32::MAX {
                     continue;
                 }
@@ -525,9 +525,12 @@ mod _impl {
             } as u64;
         }
 
-        pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-            *avail_in = u32::try_from(self.input.size - self.input.pos).expect("int cast");
-            *avail_out = u32::try_from(self.output.size - self.output.pos).expect("int cast");
+        pub(crate) fn write_result(&self) -> [u32; 2] {
+            [
+                self.output.size - self.output.pos,
+                self.input.size - self.input.pos,
+            ]
+            .map(|n| u32::try_from(n).expect("int cast"))
         }
 
         pub(crate) fn get_error_info(&mut self) -> Error {

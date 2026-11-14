@@ -6,7 +6,7 @@ pub struct NoNamespace {
     allow_definition_files: bool,
 }
 
-const MODULE_SYNTAX_IS_PREFERRED: Message = Message::new(
+const MODULE_SYNTAX_IS_PREFERRED: &Message = &Message::new(
     "moduleSyntaxIsPreferred",
     "ES2015 module syntax is preferred over namespaces.",
 );

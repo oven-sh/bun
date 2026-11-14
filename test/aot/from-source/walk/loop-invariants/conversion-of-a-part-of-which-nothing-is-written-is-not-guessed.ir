@@ -1,0 +1,12 @@
+# `text += `${box.price}\n`` in a loop with nothing written of the part: a test for whatever has text by itself would give the part no form of its own, and it may be a string, which the call that takes any primitive copies at a higher price than the conversion and the stub: no guess
+# f1 = joins
+# -- source: conversion-of-a-part-of-which-nothing-is-written-is-not-guessed.ts
+# declare function sink(...values: unknown[]): any;
+# function joins(list: any[]): string { let line = ""; for (const c of list) { line += `${c},`; } return line; }
+# sink(joins, joins([sink(), 2]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: StringBuilderAppendValue
+# CHECK: = ToString
+# CHECK-NOT: StringBuilderAppendValue

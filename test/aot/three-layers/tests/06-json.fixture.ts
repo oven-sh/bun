@@ -1,0 +1,11 @@
+import { check } from "../src/show";
+import { Circle, makeWide, makePoint, secret } from "fake-shapes";
+import { Vec2, config, makeItem, Option, Color, Temperature } from "fake-typed";
+import { Square, makeUser, SerialSquare, Both, AppError, Vec3 } from "../src/models";
+const F = "06";
+check(F, "stringify", () => [JSON.stringify(new Square("s", 2)), JSON.stringify(new Circle("c", 1)), JSON.stringify(new Vec3(1, 2, 3)), JSON.stringify(makeWide(1)), JSON.stringify(makeUser(3)), JSON.stringify([makeItem(0), makeItem(1), makeItem(2)]), JSON.stringify(Option.some(1)), JSON.stringify({ c: Color.Green, t: new Temperature(4) }), JSON.stringify({ [secret]: 1, a: undefined, f() {} })]);
+check(F, "mixins", () => [new SerialSquare("m", 3).serialize(), SerialSquare.label(), new Both("b", 1).serialize(), new Both("b2", 1).describe(), Both.made]);
+check(F, "replacer and indent", () => [JSON.stringify(makeUser(3), ["id", "address", "city"]), JSON.stringify(makeWide(2), (k, v) => (typeof v === "number" ? v * 2 : v)), JSON.stringify(makePoint(1, 2), null, 2), JSON.stringify({ v: new Vec2(1, 2) }, function (this: any, k, v) { return k === "x" ? this.y : v; })]);
+check(F, "parse, then typed code", () => { const v = JSON.parse('{"x":3,"y":4}'); const u = JSON.parse(JSON.stringify(makeUser(9))); return [Vec2.prototype.add.call(v, new Vec2(1, 1)).parts(), new Vec2(1, 1).add(v).parts(), u, JSON.parse("[1,2]", (k, x) => (typeof x === "number" ? x + 1 : x))]; });
+check(F, "errors", () => [JSON.stringify(new AppError("bad", { at: "here" })), (() => { const a: any = makePoint(1, 2); a.self = a; try { return JSON.stringify(a); } catch (e) { return (e as Error).name; } })(), (() => { try { return JSON.stringify({ n: 1n }); } catch (e) { return (e as Error).name; } })()]);
+check(F, "config round trip", () => JSON.parse(JSON.stringify(config)));

@@ -198,9 +198,8 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
     "run.js": `
       const a = ${JSON.stringify(sleep)};
       const b = process.argv[2];
-      // Alternate absolute editor paths so the cached editor name_storage is
-      // replaced each call while a detached editor thread may still be
-      // reading the previous one.
+      // Alternate absolute editor paths so the cached editor name is replaced
+      // on each call. A thread that borrowed the old one would read freed memory.
       for (let i = 0; i < 8; i++) {
         try { Bun.openInEditor("0.3", { editor: i % 2 ? b : a }); } catch {}
       }
@@ -212,7 +211,7 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
     `,
   });
   // Second absolute path to the same binary so alternating calls take the
-  // `!eql_long(prev_name, ...)` branch in open_in_editor. Keep the basename
+  // name-changed branch in open_in_editor. Keep the basename
   // `sleep` so BusyBox (Alpine) resolves the multi-call applet from argv[0].
   const sleep2 = join(String(dir), "sleep");
   symlinkSync(sleep!, sleep2);

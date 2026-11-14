@@ -555,9 +555,10 @@ declare module "bun:jsc" {
     column: number;
     /**
      * The tier the function was running in when sampled: `"LLInt"`,
-     * `"Baseline"`, `"DFG"`, or `"FTL"` for JavaScript functions, or one of the
-     * other names from the tier breakdown in {@link SamplingProfile.bytecodes}
-     * (native functions show up as `"Unknown Executable"`).
+     * `"Baseline"`, `"DFG"`, or `"FTL"` for JavaScript functions, `"AOT"` for a
+     * function compiled ahead of time, or one of the other names from the tier
+     * breakdown in {@link SamplingProfile.bytecodes} (native functions show up
+     * as `"Unknown Executable"`).
      */
     category: string;
     /**
@@ -748,6 +749,7 @@ declare module "bun:jsc" {
    * - Baseline is the first JIT compilation tier: the least optimized, but the fastest to compile
    * - DFG ("Data Flow Graph") is the second JIT compilation tier: some optimizations, but slower to compile
    * - FTL ("Faster Than Light") is the third JIT compilation tier: the most optimizations, but the slowest to compile
+   * - AOT ("Ahead Of Time") is code that `bun build --compile --aot` compiled to machine code when the executable was built
    *
    * @param callback The function to profile. It is called immediately, with `args`.
    * @param sampleInterval How often to sample the stack, in microseconds. Defaults to 1000 (once a millisecond).

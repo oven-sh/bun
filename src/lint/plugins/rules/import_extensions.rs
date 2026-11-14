@@ -26,19 +26,19 @@ pub struct Extensions {
     path_group_overrides: Vec<PathGroupOverride>,
 }
 
-const MISSING: Message = Message::new(
+const MISSING: &Message = &Message::new(
     "",
     "Missing file extension {{extension}}for \"{{importPath}}\"",
 );
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "",
     "Unexpected use of file extension \"{{extension}}\" for \"{{importPath}}\"",
 );
-const EXTENSION_SHOULD_NOT_BE_INCLUDED: Message = Message::new(
+const EXTENSION_SHOULD_NOT_BE_INCLUDED: &Message = &Message::new(
     "",
     "File extension \"{{extension}}\" should not be included in the {{import_or_export}} declaration.",
 );
-const EXTENSION_MISSING: Message = Message::new(
+const EXTENSION_MISSING: &Message = &Message::new(
     "",
     "Missing file extension in {{import_or_export}} declaration.",
 );
@@ -492,7 +492,7 @@ impl Extensions {
         cx: &Cx<'a, Self>,
     ) {
         let import_or_export = if is_import { "import" } else { "export" };
-        let report = |message: Message| match call {
+        let report = |message: &'static Message| match call {
             Some(call) => cx.report(span, message).called_with(call),
             None => cx.report(span, message),
         };

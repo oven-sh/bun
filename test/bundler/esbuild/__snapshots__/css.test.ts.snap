@@ -1234,6 +1234,17 @@ exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case4.css 1`] =
 
 exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case5.css 1`] = `
 "/* case5-foo.css */
+@layer {
+  @layer one {
+    @layer two, three.four;
+
+    body {
+      color: red;
+    }
+  }
+}
+
+/* case5-foo.css */
 @layer middle {
   @layer one {
     @layer two, three.four;

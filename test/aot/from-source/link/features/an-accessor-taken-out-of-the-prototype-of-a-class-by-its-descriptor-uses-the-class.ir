@@ -1,0 +1,7 @@
+# the row hands out what the object holds: that is no question
+# -- source: an-accessor-taken-out-of-the-prototype-of-a-class-by-its-descriptor-uses-the-class.ts
+# const read = Object.getOwnPropertyDescriptor(WebSocket.prototype, "readyState")!.get!;
+# console.log(typeof read);
+# -- end of source
+# RUN: features
+# CHECK: by WebSocket named

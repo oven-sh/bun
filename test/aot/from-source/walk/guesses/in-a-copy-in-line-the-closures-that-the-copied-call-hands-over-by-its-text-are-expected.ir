@@ -1,0 +1,24 @@
+# -- source: in-a-copy-in-line-the-closures-that-the-copied-call-hands-over-by-its-text-are-expected.js
+# function repeat(step, turns) {
+#   let s = 1;
+#   for (let i = 0; i < turns; i++) s = step(s) | 0;
+#   return s;
+# }
+# function main(rounds) {
+#   const steps = [x => x + 3, x => x * 5 + 1, x => x ^ (x >>> 3)];
+#   let total = 0;
+#   for (let round = 0; round < rounds; round++) total = (total + repeat(steps[round % 3], 1024)) | 0;
+#   return total;
+# }
+# sink(main);
+# print(main(6));
+# -- end of source
+# `repeat` is copied in line into `main`. What the copied call hands over is text of the very body that is being walked: an element of a list of functions written there. Those closures are expected of the
+# copy's parameter: in front of the loop that calls it a test for each, and a build of the loop for each where that pays. Nothing but the unit that is walked is read: no call of another body, no type of
+# the rest of the program: so whoever imports what of this file, `main` is compiled the same.
+# f1 = repeat, f2 = main
+# RUN: walk f2:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=f3
+# CHECK: = TypeTest {{*}} testedType=f4
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 1723920390

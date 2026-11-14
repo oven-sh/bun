@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# class Entry { constructor(k, v, next) { this.k = k; this.v = v; this.next = next; } }
+# class Table { constructor() { this.slots = [null, null, null, null]; } put(k, v) { this.slots[k & 3] = new Entry(k, v, this.slots[k & 3]); } find(k) { let e = this.slots[k & 3]; while (e && e.k !== k) e = e.next; return e ? e.v : -1; } }
+# const table = new Table(); for (let i = 0; i < 9; i++) table.put(i, i * 2000000000 | 0);
+# function total() { let sum = 0; for (let j = 0; j < 5; j++) { for (let i = 0; i < 1000; i++) sum += table.find(i & 15); } return sum; }
+# print(total());
+# -- end of source
+# 5000 integers of 32 bits: the sum stays below 2 ** 53 and is carried across the calls as an integer.
+# RUN: compile SumsCarriedAsIntegers mechanisms=all
+# CHECK: SumsCarriedAsIntegers 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1039264171910

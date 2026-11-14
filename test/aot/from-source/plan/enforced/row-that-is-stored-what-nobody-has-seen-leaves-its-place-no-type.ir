@@ -1,0 +1,18 @@
+# a field that hides a field of the class above lies in its slot. `x: any`, stored what nobody has seen made, takes every value in the objects of Below: no form could be chosen for the place by a type that holds in Above alone.
+# so no row of the place is held to anything. Facts still says what is written of the one field. `y` beside it, which nothing hides, is held in both layouts.
+# -- source: row-that-is-stored-what-nobody-has-seen-leaves-its-place-no-type.ts
+# declare function sink(...values: unknown[]): void;
+# declare function source(): any;
+# class Above { x: string; y: string; constructor(x: string, y: string) { this.x = x; this.y = y; } }
+# class Below extends Above { x: any = source(); }
+# sink(Above, Below);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK-COUNT-2: "y" {{*}} type=undefined|null|string
+# RUN(NEVER): plan layouts mechanisms=all
+# NEVER-NOT: "x" {{*}} type=
+# RUN(FACTS): facts enforced mechanisms=all
+# FACTS: field {{*}} "x" source=written type=undefined|null|string slot=JSValue
+# RUN(SAME): facts enforced mechanisms=all
+# SAME-NOT: "x" {{*}} held=
+# SAME-NOT: differs-from-table

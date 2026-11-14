@@ -1,0 +1,26 @@
+class Leaf { constructor(public weight: number) {} }
+class Holder { items: Leaf[] = []; other: Leaf[] = []; count = 0; }
+const world: any = globalThis;
+const lines: string[] = [];
+function show(value: any): string {
+    if (value instanceof Leaf) return "leaf" + value.weight;
+    if (typeof value === "symbol") return "symbol";
+    if (typeof value === "function") return "function";
+    if (Object.is(value, -0)) return "-0";
+    if (Array.isArray(value)) return "[" + Array.from(value, show).join() + "]";
+    return String(value);
+}
+function attempt(run: () => any) { try { lines.push(show(run())); } catch (error: any) { lines.push("threw " + error.constructor.name); } }
+function describe(list: any) { try { return show(Array.from({ length: Math.min(list.length >>> 0, 12) }, (_, at) => list[at])) + " length " + list.length + " keys " + Reflect.ownKeys(list).map(show).join(); } catch (error: any) { return "threw " + error.constructor.name; } }
+function plain(): any { return [new Leaf(1), new Leaf(2), new Leaf(3), new Leaf(4)]; }
+function read(l: Leaf[], at: number) { return l[at]; }
+function readText(l: string[], at: number) { return l[at]; }
+function store(l: Leaf[], at: number, leaf: Leaf) { l[at] = leaf; }
+function sum(l: Leaf[]) { const seen: any[] = []; for (let at = 0; at < l.length; at++) seen.push(l[at]); return seen; }
+world.read = read; world.readText = readText; world.store = store; world.sum = sum;
+for (let round = 0; round < 5; round++) {
+    const l: any = round === 2 || round === 3 ? [] : plain();
+    attempt(() => world.read(l, 1)); attempt(() => world.readText(l, 2)); attempt(() => world.sum(l));
+    attempt(() => { world.store(l, 1, new Leaf(20 + round)); return describe(l); });
+}
+console.log(lines.join("\n"));

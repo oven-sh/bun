@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallows assignment to `exports`.
 pub struct NoExportsAssign;
 
-const NO_EXPORTS_ASSIGN: Message = Message::new("", "Unexpected assignment to 'exports'.");
+const NO_EXPORTS_ASSIGN: &Message = &Message::new("", "Unexpected assignment to 'exports'.");
 
 impl Rule for NoExportsAssign {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-exports-assign", Kind::Problem).fixable(Fixable::Code);

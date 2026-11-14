@@ -12,7 +12,7 @@ pub struct JsxIndent {
     indent_logical_expressions: bool,
 }
 
-const WRONG_INDENT: Message = Message::new(
+const WRONG_INDENT: &Message = &Message::new(
     "wrongIndent",
     "Expected indentation of {{needed}} {{type}} {{characters}} but found {{gotten}}.",
 );

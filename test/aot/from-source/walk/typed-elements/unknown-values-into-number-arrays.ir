@@ -1,0 +1,20 @@
+# A value of unknown type that is stored outside loops into an array that is declared to hold numbers is stored inline by the array's own storage kind (Double, then Int32).
+# -- source: main.ts
+# class Board {
+#   readonly cells: number[] = new Array<number>(16).fill(0);
+#   put(key: number, value: any): void {
+#     this.cells[key] = value;
+#   }
+# }
+# const board = new Board();
+# const values: any[] = JSON.parse('[3, 0.5, "x", null, 7]');
+# for (let i = 0; i < values.length; i++) board.put(i, values[i]);
+# print(board.cells.join());
+# -- end of source
+# f2 = put
+# RUN(EMIT): emit f2 mechanisms=all
+# EMIT-LABEL: unit f2:Body
+# EMIT: indexedDoubleProperties
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3,0.5,x,,7,0,0,0,0,0,0,0,0,0,0,0
+# ANSWERS-NEXT: exited with 0

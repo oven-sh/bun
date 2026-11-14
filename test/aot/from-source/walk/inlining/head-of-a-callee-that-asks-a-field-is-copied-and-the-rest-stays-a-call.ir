@@ -1,0 +1,38 @@
+# f1 = measure, f2 = cachedOf, f3 = sizeOf, f4 = plainOf, f5 = first, f6 = second, f7 = third, f8 = fourth
+# -- source: head-of-a-callee-that-asks-a-field-is-copied-and-the-rest-stays-a-call.ts
+# declare function print(...values: unknown[]): void;
+# class Sum { total: number; constructor(total: number) { this.total = total; } }
+# class Box { size: number; flags: number; cached: Sum | undefined; constructor(size: number) { this.size = size; this.flags = size & 1; this.cached = undefined; } }
+# let measured = 0;
+# function measure(box: Box): Sum { measured++; let total = 0; for (let index = 0; index < box.size; index++) total += index * box.size; return new Sum(total); }
+# function cachedOf(box: Box): Sum { if (box.cached) return box.cached; const made = measure(box); box.cached = made; box.flags |= 2; return made; }
+# function sizeOf(box: Box | undefined): number { if (!box) return 0; const made = measure(box); box.flags |= 4; box.cached = made; return made.total + box.size; }
+# function plainOf(box: Box): number { if (box.flags & 1 && box.size > 2 && box.cached) return box.size; const made = measure(box); box.flags |= 8; box.cached = made; return made.total; }
+# function first(box: Box): number { return cachedOf(box).total + 1; }
+# function second(box: Box | undefined): number { return sizeOf(box) + 1; }
+# function third(box: Box): number { return plainOf(box) + 1; }
+# function fourth(box: Box): Sum { return cachedOf(box); }
+# (globalThis as any).users = [first, second, third, fourth];
+# const box = new Box(4);
+# print(first(box), first(box), measured, second(undefined), second(box), third(new Box(3)), fourth(new Box(2)).total, measured);
+# -- end of source
+# `cachedOf` reads a field, tests it and returns what it has read: four operations. They stand at the call; the way on which the field is empty goes to ONE ordinary block that enters `cachedOf` as the call would, and the head runs once more there: it has done nothing.
+# `sizeOf` asks its parameter itself and `plainOf` asks more than four operations' worth: both stay calls. A call in tail position stays one behind the copied head.
+# RUN: walk f5 mechanisms=all
+# CHECK: frame 1 callee=f2
+# CHECK: Branch {{*}}notTaken [[call]]()
+# CHECK: [[call]]():
+# CHECK: = CallDirect {{*}}function=f2 {{*}}[isNeverInlined]
+# CHECK: = GetSlot {{*}}key="cached"
+# RUN(REST): walk f5 mechanisms=all
+# REST-NOT: function=f1
+# RUN(PARAMETER): walk f6 mechanisms=all
+# PARAMETER-NOT: frame 1 callee=f3
+# RUN(LONG): walk f7 mechanisms=all
+# LONG-NOT: frame 1 callee=f4
+# RUN(TAIL): walk f8 mechanisms=all
+# TAIL: frame 1 callee=f2
+# TAIL: [[result]]: {{*}} = CallDirect {{*}}function=f2
+# TAIL-NEXT: ReturnCall [[result]]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 25 25 1 1 29 10 2 4

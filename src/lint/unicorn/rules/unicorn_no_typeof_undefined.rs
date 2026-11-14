@@ -6,7 +6,7 @@ pub struct NoTypeofUndefined {
     check_global_variables: bool,
 }
 
-const NO_TYPEOF_UNDEFINED: Message = Message::new("", "Compare with `undefined` directly instead of using `typeof`.");
+const NO_TYPEOF_UNDEFINED: &Message = &Message::new("", "Compare with `undefined` directly instead of using `typeof`.");
 
 impl Rule for NoTypeofUndefined {
     const META: Meta =

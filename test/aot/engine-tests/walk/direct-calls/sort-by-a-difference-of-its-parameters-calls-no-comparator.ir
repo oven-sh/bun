@@ -1,0 +1,85 @@
+# function upward(a, b) { const list = [a, b]; return list.sort((x, y) => x - y); }   downward: (x, y) => y - x   neither: (x, y) => x - x   sink(upward, downward, neither);
+# On numbers nobody sees such a comparator run. The library has two functions that sort a short list of numbers where it lies without one call, and hand every other list to sort(): they take the list and the comparator.
+# A comparator that is anything else goes to sort() itself.
+# The library here is a stand-in.
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallDirect {{*}}function=f5
+# RUN(DOWNWARD): walk f2 mechanisms=all-Inlining
+# DOWNWARD-LABEL: code f2:Body
+# DOWNWARD: = CallDirect {{*}}function=f6
+# RUN(NEITHER): walk f3 mechanisms=all-Inlining
+# NEITHER-LABEL: code f3:Body
+# NEITHER: = CallDirect {{*}}function=f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/array-sort.ts" displayPath="/$bun/js/prelude/array-sort.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArraySortSort function=f4
+runtimefunction id=ArraySortSortByDifference function=f5 visibility=Private
+runtimefunction id=ArraySortSortByReversedDifference function=f6 visibility=Private
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="upward" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = PropGet v2 key="sort"
+    v4 = NewClosure function=f7
+    v5 = Call v3, v2, v4 calleeKey="sort" calleeName="list.sort"
+    Return v5
+}
+function f2 name="downward" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = PropGet v2 key="sort"
+    v4 = NewClosure function=f8
+    v5 = Call v3, v2, v4 calleeKey="sort" calleeName="list.sort"
+    Return v5
+}
+function f3 name="neither" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = PropGet v2 key="sort"
+    v4 = NewClosure function=f9
+    v5 = Call v3, v2, v4 calleeKey="sort" calleeName="list.sort"
+    Return v5
+}
+function f4 name="sort" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArraySortSort thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3, v3
+    Return v0
+}
+function f5 name="sortByDifference" module=m1 role=Library flags=[HasExplicitName] length=2 enclosingRuntimeFunction=ArraySortSortByDifference thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f6 name="sortByReversedDifference" module=m1 role=Library flags=[HasExplicitName] length=2 enclosingRuntimeFunction=ArraySortSortByReversedDifference thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f7 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    Return v2
+}
+function f8 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v1, v0
+    Return v2
+}
+function f9 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v0
+    Return v2
+}

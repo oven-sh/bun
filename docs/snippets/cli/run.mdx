@@ -73,6 +73,14 @@ bun run <file or script>
   Use less memory, but run garbage collection more often
 </ParamField>
 
+<ParamField path="--aot" type="boolean">
+  Check the program like <code>bun compile</code> does, then run it with built-in objects read-only
+</ParamField>
+
+<ParamField path="--aot-allow-code-from-disk" type="boolean">
+  With <code>--aot</code>: check the program like <code>bun compile --aot-allow-code-from-disk</code> does
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

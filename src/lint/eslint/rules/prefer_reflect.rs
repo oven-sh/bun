@@ -7,8 +7,8 @@ pub struct PreferReflect {
     allows_delete: bool,
 }
 
-const PREFER_REFLECT: Message =
-    Message::new("preferReflect", "Avoid using {{existing}}, instead use {{substitute}}.");
+const PREFER_REFLECT: &Message =
+    &Message::new("preferReflect", "Avoid using {{existing}}, instead use {{substitute}}.");
 
 /// A method's name, its full name, and its replacement.
 const METHODS: [(&str, &str, &str); 9] = [

@@ -1,0 +1,32 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# function make(weight: number, marks: boolean) { const parcel = new Parcel(weight); try { if (marks) parcel.fragile = true; } catch (error) { return (error as Error).name; } return String(Object.hasOwn(parcel, "fragile")); }
+# const makes = id(make);
+# print(makes(1, true));
+# Object.defineProperty(id(Parcel.prototype), "fragile", { value: false, writable: false, configurable: true });
+# print(makes(2, true));
+# -- end of source
+# LIBRARY: own
+# A store into a freshly allocated object may create its field if nothing on the prototype chain of its class intercepts stores of that name.
+# A read-only data property that the program defines on the prototype chain makes the store throw.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: true
+# RIGHT-NEXT: TypeError
+# RIGHT-NEXT: exited with 0
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# ASKED: true
+# ASKED-NEXT: TypeError
+# ASKED-NEXT: exited with 0
+# The injected fault, testing=AssumeGuardsAndFacts, has an effect here: on its own it makes the store create the field silently.
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts
+# BITES: true
+# BITES-NEXT: true
+# BITES-NEXT: exited with 0
+# With testing=CheckWalkAtRunTime the object itself is queried before the store, by a lookup that reads no guard.
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts
+# ASKEDLIE: true
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: a property store to a fixed slot assumes that 'fragile' is a writable data property, but a full lookup finds a read-only property
+# ASKEDLIE: crashed with

@@ -1,12 +1,13 @@
 // The parts of `bun ./index.html` (internal/html.ts) and `bun bake` (internal/bake.ts) that start
 // the server and talk to the terminal.
-import type { Serve, Server } from "bun";
+import type { Serve } from "bun";
+type Server<T> = Bun.Server<T>;
 
 const path = require("node:path");
 
 const env = Bun.env;
 
-const isRestarting = $newRustFunction("bake/config/plugins.rs", "isRestarting", 0);
+const isRestarting = $bindgen("bake_plugins.bind.ts", "isRestarting");
 
 type ServeFlags = {
   /** `undefined` until `--host` or `--hostname` sets it. */
@@ -218,7 +219,7 @@ function printBannerAndHandleShortcuts(banner: Banner) {
     process.on("SIGINT", exit);
     process.on("SIGHUP", exit);
     process.on("SIGTERM", exit);
-    process.stdin.on("data", data => {
+    process.stdin.on("data", (data: Buffer) => {
       const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
 
       switch (key) {
@@ -233,7 +234,7 @@ function printBannerAndHandleShortcuts(banner: Banner) {
           break;
 
         case "o\n":
-          const url = latestServer!.url.toString();
+          const url = (latestServer!.url as URL).toString();
 
           // TODO: copy the AppleScript from create-react-app or Vite.
           const opener =
@@ -246,7 +247,7 @@ function printBannerAndHandleShortcuts(banner: Banner) {
                   ? ["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]
                   : ["xdg-open", url];
           try {
-            Bun.spawn(opener).exited.catch(() => {});
+            (Bun.spawn(opener).exited as Promise<number>).catch(() => {});
           } catch {
             // `Bun.spawn` throws when the opener is not installed. The URL is in the banner.
             console.log(`Could not open a browser. Open ${url}`);

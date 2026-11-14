@@ -4,7 +4,7 @@ const rss =
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
 const reloads = parseInt(process.env.RELOADS || "400", 10);
-const warmup = parseInt(process.env.WARMUP || "200", 10);
+const warmup = parseInt(process.env.WARMUP || "1000", 10);
 const routeCount = parseInt(process.env.ROUTES || "12", 10);
 
 const routes: Record<string, () => Response> = {};

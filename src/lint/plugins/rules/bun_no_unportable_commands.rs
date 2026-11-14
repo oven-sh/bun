@@ -15,17 +15,17 @@ pub struct NoUnportableCommands {
     launchers: Box<[Box<[u8]>]>,
 }
 
-const NEEDS_SHELL: Message = Message::new(
+const NEEDS_SHELL: &Message = &Message::new(
     "needsShell",
     "On Windows, `{{command}}` is the script `{{command}}.cmd`, which cannot run without a shell.",
 );
-const POSIX_ONLY: Message = Message::new("posixOnly", "`{{command}}` does not exist on Windows.");
-const SHELL_SYNTAX: Message = Message::new(
+const POSIX_ONLY: &Message = &Message::new("posixOnly", "`{{command}}` does not exist on Windows.");
+const SHELL_SYNTAX: &Message = &Message::new(
     "shellSyntax",
     "`{{operator}}` is shell syntax, and the shell differs between systems.",
 );
-const PS_OPTIONS: Message =
-    Message::new("psOptions", "`ps` options differ between systems, and `ps` does not exist on Windows.");
+const PS_OPTIONS: &Message =
+    &Message::new("psOptions", "`ps` options differ between systems, and `ps` does not exist on Windows.");
 
 const SCRIPTS: [&str; 5] = ["npm", "npx", "pnpm", "pnpx", "yarn"];
 const POSIX_ONLY_UTILITIES: [&str; 33] = [

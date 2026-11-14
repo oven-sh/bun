@@ -56,11 +56,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
 static constexpr Seconds timePrecision { 1_ms };
 
-Performance::Performance(ScriptExecutionContext* context, MonotonicTime timeOrigin)
+Performance::Performance(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
-    , m_timeOrigin(timeOrigin)
 {
-    ASSERT(m_timeOrigin);
 }
 
 Performance::~Performance() = default;
@@ -87,11 +85,6 @@ Seconds Performance::reduceTimeResolution(Seconds seconds)
     double resolution = timePrecision.seconds();
     double reduced = std::floor(seconds.seconds() / resolution) * resolution;
     return Seconds(reduced);
-}
-
-MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp relativeTime) const
-{
-    return m_timeOrigin + Seconds::fromMilliseconds(relativeTime);
 }
 
 PerformanceTiming* Performance::timing()

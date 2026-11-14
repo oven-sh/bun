@@ -141,12 +141,12 @@ pub(crate) fn parse_manifest_bin(
     Ok(())
 }
 
-pub fn detect_and_load_other_lockfile<'a>(
-    this: &'a mut Lockfile,
+pub fn detect_and_load_other_lockfile(
+    this: &mut Lockfile,
     dir: Fd,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
-) -> LoadResult<'a> {
+) -> LoadResult {
     // check for npm-shrinkwrap.json, package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
     let timer = std::time::Instant::now();
@@ -173,24 +173,17 @@ pub fn detect_and_load_other_lockfile<'a>(
         let next = found.get(i + 1).map(|next| next.0);
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let migrate_result = match name {
-            "yarn.lock" => yarn::migrate_yarn_lockfile(&mut *this, manager, log, data),
-            "pnpm-lock.yaml" => migrate_pnpm_lockfile(&mut *this, manager, log, data),
+            "yarn.lock" => yarn::migrate_yarn_lockfile(this, manager, log, data),
+            "pnpm-lock.yaml" => migrate_pnpm_lockfile(this, manager, log, data),
             _ => {
                 let Ok(path) = bun_sys::get_fd_path(file.handle(), &mut path_buf) else {
                     continue;
                 };
-                migrate_npm_lockfile(&mut *this, manager, log, data, path, dir, name, next)
+                migrate_npm_lockfile(this, manager, log, data, path, dir, name, next)
             }
         };
-        let err = match finish_migration(migrate_result, manager, log, &timer, name_z) {
-            Ok((migrated, format)) => {
-                return LoadResult::Ok(LoadResultOk {
-                    lockfile: this,
-                    migrated,
-                    serializer_result: Default::default(),
-                    format,
-                });
-            }
+        let err = match finish_migration(migrate_result, this, manager, log, &timer, name_z) {
+            Ok(ok) => return LoadResult::Ok(ok),
             Err(err) => err,
         };
         // The install can continue without this lockfile, and errors left in `log` would fail it.
@@ -211,12 +204,12 @@ pub fn detect_and_load_other_lockfile<'a>(
     LoadResult::NotFound
 }
 
-fn migrate_pnpm_lockfile<'a>(
-    this: &'a mut Lockfile,
+fn migrate_pnpm_lockfile(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, Error> {
+) -> Result<LoadResult, Error> {
     match pnpm::migrate_pnpm_lockfile(this, manager, log, data) {
         Ok(r) => Ok(r),
         Err(MigratePnpmLockfileError::PnpmLockfileTooOld) => {
@@ -256,14 +249,14 @@ fn migrating_error(err: Error, lockfile_name: &'static ZStr) -> LoadResultErr {
     }
 }
 
-/// On success, returns the `migrated` and `format` fields for the caller's `LoadResultOk`.
 fn finish_migration(
-    migrate_result: Result<LoadResult<'_>, Error>,
+    migrate_result: Result<LoadResult, Error>,
+    lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     timer: &std::time::Instant,
     lockfile_name: &'static ZStr,
-) -> Result<(Migrated, LockfileFormat), LoadResultErr> {
+) -> Result<LoadResultOk, LoadResultErr> {
     let ok = match migrate_result {
         Ok(LoadResult::Ok(ok)) => ok,
         Ok(LoadResult::Err(err)) => return Err(err),
@@ -271,8 +264,7 @@ fn finish_migration(
         Err(err) => return Err(migrating_error(err, lockfile_name)),
     };
     // Other lockfiles have no `trustedDependencies`, and `bun pm migrate` saves this one as-is.
-    if let Err(err) = ok
-        .lockfile
+    if let Err(err) = lockfile
         .read_trusted_dependencies_from_manifests(&mut manager.workspace_package_json_cache, log)
     {
         return Err(migrating_error(err, lockfile_name));
@@ -285,13 +277,13 @@ fn finish_migration(
             .get_with_path(log, path.slice(), Default::default())
     {
         bun_core::handle_oom(crate::lockfile_real::package::append_patched_dependencies(
-            ok.lockfile,
+            lockfile,
             root.root,
             &bun_alloc::Arena::new(),
         ));
     }
     report_migrated(manager, log, timer, lockfile_name);
-    Ok((ok.migrated, ok.format))
+    Ok(ok)
 }
 
 fn print_errors_and_reset(manager: &PackageManager, log: &mut bun_ast::Log) {
@@ -426,8 +418,8 @@ fn report_migrated(
     Output::flush();
 }
 
-fn migrate_npm_lockfile<'a>(
-    this: &'a mut Lockfile,
+fn migrate_npm_lockfile(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
@@ -435,7 +427,7 @@ fn migrate_npm_lockfile<'a>(
     dir: Fd,
     lockfile_name: &'static str,
     next: Option<&str>,
-) -> Result<LoadResult<'a>, Error> {
+) -> Result<LoadResult, Error> {
     debug!("begin lockfile migration");
 
     this.init_empty();
@@ -560,7 +552,6 @@ fn migrate_npm_lockfile<'a>(
     this.resolve(log)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
-        lockfile: this,
         migrated: Migrated::Npm,
         serializer_result: Default::default(),
         format: LockfileFormat::Binary,

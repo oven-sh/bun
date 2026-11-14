@@ -1,0 +1,1 @@
+"factory,other," | "own,other,factory,": `bun test` searches the factory's printed source for the request; the compiler predicts that source and takes the request for one of the mocked module

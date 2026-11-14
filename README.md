@@ -146,14 +146,16 @@ bun upgrade --canary
   - [Plugins](https://bun.com/docs/bundler/plugins)
   - [Macros](https://bun.com/docs/bundler/macros)
   - [vs esbuild](https://bun.com/docs/bundler/esbuild)
-  - [Single-file executable](https://bun.com/docs/bundler/executables)
   - [CSS](https://bun.com/docs/bundler/css)
   - [HTML & static sites](https://bun.com/docs/bundler/html-static)
   - [Hot Module Replacement (HMR)](https://bun.com/docs/bundler/hot-reloading)
   - [Full-stack with HTML imports](https://bun.com/docs/bundler/fullstack)
   - [Standalone HTML](https://bun.com/docs/bundler/standalone-html)
-  - [Bytecode caching](https://bun.com/docs/bundler/bytecode)
   - [Minifier](https://bun.com/docs/bundler/minifier)
+
+- Compiler
+  - [Single-file executable](https://bun.com/docs/compiler/executables)
+  - [Bytecode caching](https://bun.com/docs/compiler/bytecode)
 
 - Test runner
   - [`bun test`](https://bun.com/docs/test/index)

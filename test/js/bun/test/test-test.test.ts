@@ -647,6 +647,111 @@ it("skip() and skipIf()", () => {
   expect(result.match(/reachable/g)).toHaveLength(6);
 });
 
+describe.concurrent("hooks of a describe block that does not run", () => {
+  const fixture = `
+    import { afterAll, afterEach, beforeAll, beforeEach, describe, test, xdescribe } from "bun:test";
+    function hooks(name) {
+      beforeAll(() => console.log(name, "beforeAll"));
+      beforeEach(() => console.log(name, "beforeEach"));
+      afterEach(() => console.log(name, "afterEach"));
+      afterAll(() => console.log(name, "afterAll"));
+    }
+    function block(name) {
+      return [name, () => {
+        hooks(name);
+        test("outer", () => { throw new Error("not done yet"); });
+        describe("nested", () => {
+          hooks(name + " nested");
+          test("inner", () => { throw new Error("not done yet"); });
+        });
+      }];
+    }
+    describe.skip(...block("skip"));
+    xdescribe(...block("xdescribe"));
+    describe.skipIf(true)(...block("skipIf"));
+    describe.if(false)(...block("if"));
+    describe.todo(...block("todo"));
+    describe.todoIf(true)(...block("todoIf"));
+    describe("runs", () => {
+      hooks("runs");
+      test("outer", () => {});
+    });
+  `;
+
+  async function run(...args: string[]) {
+    using dir = tempDir("hooks-in-skipped-describe", { "hooks.test.js": fixture });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "hooks.test.js", "--reporter=junit", "--reporter-outfile=junit.xml", ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const junit = await Bun.file(join(String(dir), "junit.xml")).text();
+    return {
+      hooks: stdout.split("\n").filter(line => /(All|Each)$/.test(line)),
+      reported: stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      summary: stderr.split("\n").filter(line => /^ \d+ (pass|fail|skip|todo)$|^Ran /.test(line)),
+      junit: [
+        /<testsuites [^>]*?(tests="\d+").*?(skipped="\d+")/.exec(junit)?.slice(1),
+        junit.match(/<testcase /g)?.length,
+      ],
+      exitCode,
+    };
+  }
+  const ran = ["runs beforeAll", "runs beforeEach", "runs afterEach", "runs afterAll"];
+  const skipped = ["skip", "xdescribe", "skipIf", "if"].flatMap(name => [
+    `(skip) ${name} > outer`,
+    `(skip) ${name} > nested > inner`,
+  ]);
+  const todo = ["todo", "todoIf"].flatMap(name => [`(todo) ${name} > outer`, `(todo) ${name} > nested > inner`]);
+
+  it("are not reported as tests", async () => {
+    const { summary, ...result } = await run();
+    expect(result).toEqual({
+      hooks: ran,
+      reported: [...skipped, ...todo, "(pass) runs > outer"],
+      junit: [[`tests="13"`, `skipped="12"`], 13],
+      exitCode: 0,
+    });
+    expect(summary.map(line => line.replace(/ \[.*$/, ""))).toEqual([
+      " 1 pass",
+      " 8 skip",
+      " 4 todo",
+      " 0 fail",
+      "Ran 13 tests across 1 file.",
+    ]);
+  });
+
+  it("run in describe.todo() with --todo", async () => {
+    const { summary, ...result } = await run("--todo");
+    expect(result).toEqual({
+      hooks: [
+        ...["todo", "todoIf"].flatMap(name => [
+          `${name} beforeAll`,
+          `${name} beforeEach`,
+          `${name} afterEach`,
+          `${name} nested beforeAll`,
+          `${name} beforeEach`,
+          `${name} nested beforeEach`,
+          `${name} nested afterEach`,
+          `${name} afterEach`,
+          `${name} nested afterAll`,
+          `${name} afterAll`,
+        ]),
+        ...ran,
+      ],
+      reported: [...skipped, ...todo, "(pass) runs > outer"],
+      junit: [[`tests="13"`, `skipped="12"`], 13],
+      exitCode: 0,
+    });
+  });
+});
+
 it("should run beforeAll() & afterAll() even without tests", async () => {
   const test_dir = tmpdirSync();
   try {

@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow use of `Object.prototype.hasOwnProperty.call()` and prefer use of `Object.hasOwn()`.
 pub struct PreferObjectHasOwn;
 
-const USE_HAS_OWN: Message = Message::new(
+const USE_HAS_OWN: &Message = &Message::new(
     "useHasOwn",
     "Use 'Object.hasOwn()' instead of 'Object.prototype.hasOwnProperty.call()'.",
 );

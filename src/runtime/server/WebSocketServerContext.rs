@@ -98,7 +98,7 @@ impl Handler {
         }
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
-            global_object.bun_vm().event_loop_mut().run_callback(
+            global_object.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 on_error,
                 global_object,
@@ -109,10 +109,7 @@ impl Handler {
             return Ok(());
         }
 
-        let _ =
-            VirtualMachine::get()
-                .as_mut()
-                .uncaught_exception(global_object, error_value, false);
+        let _ = VirtualMachine::get().uncaught_exception(global_object, error_value, false);
         Ok(())
     }
 
@@ -129,7 +126,7 @@ impl Handler {
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             flags: HandlerFlags::empty(),
         };
 

@@ -1,0 +1,22 @@
+# `scope.run(task, this, ...values)`: two arguments are written for the two parameters of the callee, and the rest parameter of the caller is spread behind them. Behind the looks at the receiver the callee is entered directly:
+# the written arguments fill the parameters, and the list that is spread is the rest list of the callee. No list is made on that way and none is laid out on the stack. A long list goes by the call as written.
+# OPTIONS: check=Validate
+# Nobody in sight calls `wrap`: nothing flows into the capture `scope`. It is a constant that holds `this` of its maker, a method, so what is written of that `this` is expected of it.
+# RUN: walk f5 mechanisms=all
+# CHECK-LABEL: code f5:Body
+# CHECK: = ShapeTest
+# CHECK: [[length]]: {{*}} = GetArrayLength
+# CHECK: = LessEq [[length]]
+# CHECK: = CallDirect {{*}} function=f2
+# RUN(COUNT): walk f5 mechanisms=all
+# COUNT-COUNT-1: = CallDirect {{*}} function=f2
+# COUNT-NOT: = CallDirect {{*}} function=f2
+# RUN(WITHHELD): walk f5 mechanisms=-Guesses
+# WITHHELD-NOT: = CallDirect
+# WITHHELD: = CallList
+# -- source: a-list-spread-behind-the-arguments-is-the-rest-list-of-the-callee-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# class Scope { depth = 0; run(task: (...values: unknown[]) => unknown, receiver: unknown, ...values: unknown[]): unknown { this.depth++; return task.apply(receiver, values); }
+#   wrap(task: (...values: unknown[]) => unknown) { const scope = this; return function wrapped(this: unknown, ...values: unknown[]) { return scope.run(task, this, ...values); }; } }
+# sink(Scope);
+# -- end of source

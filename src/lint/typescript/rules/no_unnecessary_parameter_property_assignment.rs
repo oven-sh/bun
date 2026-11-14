@@ -8,7 +8,7 @@ use std::cmp::Reverse;
 /// Disallow unnecessary assignment of constructor property parameter.
 pub struct NoUnnecessaryParameterPropertyAssignment;
 
-const UNNECESSARY_ASSIGN: Message = Message::new(
+const UNNECESSARY_ASSIGN: &Message = &Message::new(
     "unnecessaryAssign",
     "This assignment is unnecessary since it is already assigned by a parameter property.",
 );

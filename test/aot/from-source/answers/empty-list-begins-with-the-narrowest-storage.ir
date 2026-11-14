@@ -1,0 +1,25 @@
+# `const list = []` of which no storage is declared begins with the narrowest storage, as an empty list of the engine does, and what is appended to it decides: int32s, doubles, any value.
+# A site that makes one list learns nothing, and its list was made with storage for any value: that says nothing of the elements to whoever tests the kind in front of a loop.
+# -- source: main.js
+# const integers = [];
+# const fractions = [];
+# const mixed = [];
+# const texts = [];
+# for (let i = 0; i < 4; i++) {
+#   integers.push(i);
+#   fractions.push(i + 0.5);
+#   mixed.push(i < 2 ? i : i + 0.5);
+#   texts.push("x" + i);
+# }
+# report(integers);
+# report(fractions);
+# report(mixed);
+# report(texts);
+# -- end of source
+# RUN: run-in-shell globalThis.report = list => print(/ArrayWith\w+/.exec(describe(list))[0] + " " + list.join());
+# CHECK: ArrayWithInt32 0,1,2,3
+# CHECK-NEXT: ArrayWithDouble 0.5,1.5,2.5,3.5
+# CHECK-NEXT: ArrayWithDouble 0,1,2.5,3.5
+# CHECK-NEXT: ArrayWithContiguous x0,x1,x2,x3
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

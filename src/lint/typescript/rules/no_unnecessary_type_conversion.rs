@@ -9,12 +9,12 @@ use bun_lint::utils::ts_utils::{
 /// Disallow conversion idioms when they do not change the type or value of the expression.
 pub struct NoUnnecessaryTypeConversion;
 
-const SUGGEST_REMOVE: Message = Message::new("suggestRemove", "Remove the type conversion.");
-const SUGGEST_SATISFIES: Message = Message::new(
+const SUGGEST_REMOVE: &Message = &Message::new("suggestRemove", "Remove the type conversion.");
+const SUGGEST_SATISFIES: &Message = &Message::new(
     "suggestSatisfies",
     "Instead, assert that the value satisfies the {{type}} type.",
 );
-const UNNECESSARY_TYPE_CONVERSION: Message = Message::new(
+const UNNECESSARY_TYPE_CONVERSION: &Message = &Message::new(
     "unnecessaryTypeConversion",
     "{{violation}} does not change the type or value of the {{type}}.",
 );

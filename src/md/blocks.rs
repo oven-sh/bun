@@ -4,8 +4,6 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use core::mem::size_of;
-
 type BlockHeader = parser::BlockHeader;
 
 impl Parser<'_> {
@@ -1068,13 +1066,7 @@ impl Parser<'_> {
             }
 
             // Write accumulated lines to block_bytes
-            // SAFETY: VerbatimLine is POD; reinterpret slice as bytes for serialization
-            let line_bytes: &[u8] = unsafe {
-                core::slice::from_raw_parts(
-                    self.current_block_lines.as_ptr().cast::<u8>(),
-                    self.current_block_lines.len() * size_of::<VerbatimLine>(),
-                )
-            };
+            let line_bytes: &[u8] = bun_core::slice_as_bytes(&self.current_block_lines);
             // The block's lines land in `block_bytes` too (12 bytes per
             // line), not just its header, so this growth needs the same cap.
             parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;

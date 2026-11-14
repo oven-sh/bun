@@ -1,8 +1,9 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::strong::Optional as StrongOptional;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
+use bun_jsc::{self as jsc, JSValue, JsCell};
 use bun_ptr::RefPtr;
 use bun_sys::Error as SysError;
 
@@ -964,27 +965,18 @@ impl ByteStream {
     }
 }
 
-pub(crate) mod testing_apis {
-    use super::*;
-
-    /// `bun:internal-for-testing`: swap the stream's producer for
-    /// [`streams::SourceHandle::TestingCancelOnDrain`], whose drain signal
-    /// re-enters `on_cancel` and consumes the pending buffer action.
-    pub(crate) fn byte_stream_cancel_on_drain(
-        global: &JSGlobalObject,
-        frame: &bun_jsc::CallFrame,
-    ) -> bun_jsc::JsResult<JSValue> {
-        let stream = readable_stream::ReadableStream::from_js(frame.argument(0), global)?;
-        let Some(bytes) = stream.and_then(|s| s.ptr.bytes()) else {
-            return Err(global.throw(format_args!("expected a ByteStream-backed ReadableStream")));
-        };
-        bytes
-            .parent_const()
-            .producer
-            .set(streams::SourceHandle::TestingCancelOnDrain(bytes));
-        Ok(JSValue::UNDEFINED)
-    }
+/// `bun:internal-for-testing`: swap the stream's producer for
+/// [`streams::SourceHandle::TestingCancelOnDrain`], whose drain signal
+/// re-enters `on_cancel` and consumes the pending buffer action.
+pub(crate) fn cancel_on_drain(cx: &mut JsScope<'_>, stream: JsLocal<'_>) -> bun_jsc::JsResult<()> {
+    let global = cx.global();
+    let stream = readable_stream::ReadableStream::from_js(stream.to_js(), global)?;
+    let Some(bytes) = stream.and_then(|s| s.ptr.bytes()) else {
+        return Err(global.throw(format_args!("expected a ByteStream-backed ReadableStream")));
+    };
+    bytes
+        .parent_const()
+        .producer
+        .set(streams::SourceHandle::TestingCancelOnDrain(bytes));
+    Ok(())
 }
-// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
-// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
-pub(crate) use testing_apis as testing_ap_is;

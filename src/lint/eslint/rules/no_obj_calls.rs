@@ -9,8 +9,8 @@ use std::borrow::Cow;
 /// Disallow calling global object properties as functions.
 pub struct NoObjCalls;
 
-const UNEXPECTED_CALL: Message = Message::new("unexpectedCall", "'{{name}}' is not a function.");
-const UNEXPECTED_REF_CALL: Message = Message::new(
+const UNEXPECTED_CALL: &Message = &Message::new("unexpectedCall", "'{{name}}' is not a function.");
+const UNEXPECTED_REF_CALL: &Message = &Message::new(
     "unexpectedRefCall",
     "'{{name}}' is reference to '{{ref}}', which is not a function.",
 );

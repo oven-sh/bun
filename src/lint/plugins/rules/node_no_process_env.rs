@@ -8,7 +8,7 @@ pub struct NoProcessEnv {
     allowed_variables: FxHashSet<Box<[u8]>>,
 }
 
-const NO_PROCESS_ENV: Message = Message::new("", "Disallowed usage of `process.env`.");
+const NO_PROCESS_ENV: &Message = &Message::new("", "Disallowed usage of `process.env`.");
 
 impl Rule for NoProcessEnv {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-process-env", Kind::Suggestion);

@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `new` operators with the `Function` object.
 pub struct NoNewFunc;
 
-const NO_FUNCTION_CONSTRUCTOR: Message =
-    Message::new("noFunctionConstructor", "The Function constructor is eval.");
+const NO_FUNCTION_CONSTRUCTOR: &Message =
+    &Message::new("noFunctionConstructor", "The Function constructor is eval.");
 
 impl Rule for NoNewFunc {
     const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion).reports_at_the_end();

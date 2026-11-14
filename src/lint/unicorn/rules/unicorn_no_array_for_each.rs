@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Forbids the use of `Array#forEach` in favor of a for loop.
 pub struct NoArrayForEach;
 
-const NO_ARRAY_FOR_EACH: Message = Message::new("", "Do not use `Array#forEach`");
+const NO_ARRAY_FOR_EACH: &Message = &Message::new("", "Do not use `Array#forEach`");
 
 const ELEMENT_ONLY: &str = "Replace it with a `for…of` loop. It is faster, more readable, and allows early exits with `break` or `return`.";
 const INDEX: &str = "For arrays that need the index, replace it with a `for…of` loop over `.entries()`, such as `for (const [index, element] of array.entries())`. Otherwise, use the appropriate `for…of` loop. Array `.entries()` keeps indexes numeric and loops allow early exits with `break` or `return`.";

@@ -1,0 +1,15 @@
+# -- source: main.js
+# function fixedStep(seed) { const step = (seed * 3) | 0; return () => { let sum = 0; for (let i = 0; i < 10; i++) sum += step; return sum; }; }
+# function counter() { let count = 0; return () => ++count; }
+# print(fixedStep(1)(), counter()());
+# -- end of source
+# The closure that fixedStep() gives is known by its type and holds no word, so the second call asks nothing of the first. As written the first only allocates.
+# It stores what the arrow reads. Link counts that among the effects of a function that runs at most once and hands captures over or makes a scope, so every reader of its effects sees the write, and the call stays.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: = CallDirect {{*}}function=f2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 30 1
+# RUN(CAPTURED): run-in-shell mechanisms=all-PromotedEnvironments
+# CAPTURED: 30 1

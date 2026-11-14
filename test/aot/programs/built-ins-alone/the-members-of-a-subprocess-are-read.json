@@ -1,0 +1,1 @@
+{ "mainThread": "behind child.unref() nothing keeps a Worker waiting for the child process" }

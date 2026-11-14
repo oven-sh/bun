@@ -1,0 +1,25 @@
+A CommonJS file that throws runs again where files are taken out of require.cache.
+#### helpers/again.js
+export const again = path => { delete require.cache[path]; };
+#### helpers/mends.cjs
+globalThis.mendLoads = (globalThis.mendLoads ?? 0) + 1;
+if (globalThis.mendLoads < 2) throw new RangeError("not yet");
+exports.loads = globalThis.mendLoads;
+#### helpers/throws.cjs
+globalThis.commonLoads = (globalThis.commonLoads ?? 0) + 1;
+exports.partial = 1;
+throw new RangeError("from throws.cjs, " + globalThis.commonLoads);
+#### throws.test.js
+import { expect, mock, test } from "bun:test";
+import { again } from "./helpers/again.js";
+test("throws", () => {
+  const errors = [];
+  for (let turn = 0; turn < 3; turn++) {
+    try { require("./helpers/throws.cjs"); } catch (error) { errors.push(error); console.log("| CASE", "require", error.name, error.message, globalThis.commonLoads); }
+  }
+  console.log("| CASE", "each its own error", errors[0] !== errors[1] && errors[1] !== errors[2], typeof again);
+  try { require("./helpers/mends.cjs"); } catch (error) { console.log("| CASE", "first", error.message); }
+  console.log("| CASE", "second", require("./helpers/mends.cjs").loads, require("./helpers/mends.cjs").loads);
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

@@ -16,8 +16,8 @@ pub struct NoDeprecated {
     allow: Vec<TypeOrValueSpecifier>,
 }
 
-const DEPRECATED: Message = Message::new("deprecated", "`{{name}}` is deprecated.");
-const DEPRECATED_WITH_REASON: Message = Message::new("deprecatedWithReason", "`{{name}}` is deprecated. {{reason}}");
+const DEPRECATED: &Message = &Message::new("deprecated", "`{{name}}` is deprecated.");
+const DEPRECATED_WITH_REASON: &Message = &Message::new("deprecatedWithReason", "`{{name}}` is deprecated. {{reason}}");
 
 /// An `Identifier`, a `JSXIdentifier`, a `PrivateIdentifier` or a `Super`.
 #[derive(Copy, Clone)]

@@ -1,0 +1,11 @@
+// RUN: link
+// CHECK: module [[entry]] path="{{*}}arguments-typed-parameter.ts"
+// CHECK: function [[f]] name="f" module=[[entry]] {{*}}HasArgumentCount, HasHiddenRest, {{*}}parameters=[{type=number}] results=
+// CHECK: b0([[count]]: {{*}}, [[a]]: number, [[rest]]: {{*}}):
+// CHECK: = CreateUnmappedArguments [[count]], [[rest]], [[a]]
+// CHECK-NOT: Convert [[a]]
+// CHECK: = Add {{*}}, [[a]]
+
+export function f(a: number) {
+  return arguments[0] + a;
+}

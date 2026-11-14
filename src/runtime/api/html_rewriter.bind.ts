@@ -19,7 +19,8 @@ const contentOp = (returns: b.Type) =>
   }) as const;
 
 /** `b.any`: an accessor has one type, and the getter gives a string or nothing where the setter takes `ToString` of any value. */
-const assignable = { getter: b.any, setter: true, capability: "js", throws: true } as const;
+const assignable = (nothing: "null" | "undefined") =>
+  ({ getter: b.any.returning("string", nothing), setter: true, capability: "js", throws: true }) as const;
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
@@ -36,7 +37,12 @@ export const TextChunk = b.class({
 });
 
 /** `b.any`: a string, `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.any, cache: true, capability: "js", throws: true } as const;
+const doctypeField = {
+  getter: b.any.returning("string", "null", "undefined"),
+  cache: true,
+  capability: "js",
+  throws: true,
+} as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -67,7 +73,7 @@ export const Comment = b.class({
     remove: chainable(b.self.nullable),
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.nullable),
-    text: assignable,
+    text: assignable("null"),
   },
 });
 
@@ -77,7 +83,7 @@ export const EndTag = b.class({
   proto: {
     after: contentOp(b.self.nullable),
     before: contentOp(b.self.nullable),
-    name: assignable,
+    name: assignable("undefined"),
     remove: chainable(b.self.optional),
   },
 });
@@ -90,8 +96,9 @@ export const AttributeIterator = b.class({
   refCounted: true,
   finalize: true,
   proto: {
-    next: { returns: AttributeIteratorResult, capability: "heap", throws: true },
-    "@@iterator": { ...chainable(b.self), rustName: "get_this" },
+    /** Neither keeps the receiver. */
+    next: { returns: AttributeIteratorResult, capability: "heap", throws: true, uses: { this: [] } },
+    "@@iterator": { ...chainable(b.self), rustName: "get_this", uses: { this: [{ use: "Returns" }] } },
   },
 });
 
@@ -131,7 +138,7 @@ export const Element = b.class({
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),
-    tagName: assignable,
+    tagName: assignable("undefined"),
   },
 });
 
@@ -143,7 +150,13 @@ export const HTMLRewriter = b.class({
   proto: {
     on: { ...chainable(b.self), args: { selector: b.any, handlers: b.any }, capability: "js", throws: true },
     onDocument: { ...chainable(b.self), args: { handlers: b.any }, capability: "js", throws: true },
-    transform: { args: { input: b.any }, returns: b.any, capability: "js", throws: true, passThis: true },
+    transform: {
+      args: { input: b.any },
+      returns: b.any.returning("string", "object"),
+      capability: "js",
+      throws: true,
+      passThis: true,
+    },
   },
 });
 

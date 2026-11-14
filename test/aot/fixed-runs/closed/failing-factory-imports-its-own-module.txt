@@ -1,0 +1,18 @@
+The factory of a mock imports the module that it mocks, and throws: `bun test` calls it once and lets that import share what became of the run.
+#### fails.test.js
+import { mock, test, vi } from "bun:test";
+test("t", async () => {
+  let calls = 0;
+  const imports = [];
+  mock.module("./m.js", () => { calls++; imports.push(import("./m.js").then(ns => "got " + Object.keys(ns), e => "caught " + e.message)); throw new Error("the factory failed " + calls); });
+  try { const user = await import("./user.js"); console.log("| CASE loaded", Object.keys(user).join()); } catch (e) { console.log("| CASE threw", e.message); }
+  console.log("| CASE", JSON.stringify(await Promise.all(imports)), "calls", calls);
+  try { await import("./m.js"); console.log("| CASE loaded again"); } catch (e) { console.log("| CASE again threw", e.message, "calls", calls); }
+  for (const turn of [1, 2]) { try { await import("./m.js"); console.log("| CASE loaded once more"); } catch (e) { console.log("| CASE once more threw", e.message, "calls", calls); } }
+  mock.module("./m.js", () => ({ b: "mock" }));
+  try { console.log("| CASE later", (await import("./m.js")).b, "calls", calls); } catch (e) { console.log("| CASE later threw", e.message, "calls", calls); }
+});
+#### m.js
+import "./m.js"; export const b = 1;
+#### user.js
+import "./m.js"; export const a = 1;

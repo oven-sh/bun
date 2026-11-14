@@ -1,0 +1,17 @@
+# -- source: closure-stored-over-the-mark-by-the-maker-is-called-over-its-own-scope.ts
+# declare function print(...values: unknown[]): void;
+# type Holder = { get: () => number };
+# function hold(start: number, from: Holder | undefined): Holder { let count = start; const made: Holder = { get: () => count++ }; if (from) made.get = from.get; return made; }
+# function drain(list: Holder[]): number { let total = 0; for (let i = 0; i < list.length; i++) total += list[i].get(); return total; }
+# const list: Holder[] = [];
+# for (let i = 0; i < 300; i++) list.push(hold(1000 * i, i ? list[0] : undefined));
+# print(drain(list), drain(list), list[7].get === list[0].get, list[7].get());
+# -- end of source
+# The maker stores over the member while nothing else has the object, which counts as construction: the field still holds closures of one function alone, and its slot a mark. What is stored is a closure over ANOTHER scope.
+# The call through the slot takes the object's scope only while the slot holds the mark: a closure that lies there says itself what it captures. Before: 44850000 44850300 true 7002.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[closure]]: {{*}} = GetDeferredClosureSlot {{*}}key="get"
+# CHECK-NEXT: = GetCapture [[closure]]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 44850 134850 true 600

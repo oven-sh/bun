@@ -1,0 +1,15 @@
+# Two lists are read under one index. A shift that both addresses read was an instruction of its own: each address has its own, which is fused into it.
+# LIBRARY: own
+# -- source: main.ts
+# function add(a: number[], b: number[], n: number): number { let s = 0; for (let i = 0; i < n; i++) s += a[i] * b[i]; return s; }
+# const one = [1.5, 2.5, 3.5, 4.5], other = [2, 4, 8, 16.5];
+# publish(() => add(one, other, 4));
+# declare function publish(run: () => number): void;
+# -- end of source
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: = Shl ZExt32(
+# CHECK: Load [Add({{*}}, Shl({{*}}, 3))]
+# CHECK-NOT: = Shl ZExt32(
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 115.25

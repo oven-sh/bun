@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prefer `catch` to `then(a, b)` and `then(null, b)`.
 pub struct PreferCatch;
 
-const PREFER_CATCH: Message = Message::new("", "Prefer `catch` to `then(a, b)` or `then(null, b)`");
+const PREFER_CATCH: &Message = &Message::new("", "Prefer `catch` to `then(a, b)` or `then(null, b)`");
 
 impl Rule for PreferCatch {
     const META: Meta = Meta::oxlint(Plugin::Promise, "prefer-catch", Kind::Suggestion);

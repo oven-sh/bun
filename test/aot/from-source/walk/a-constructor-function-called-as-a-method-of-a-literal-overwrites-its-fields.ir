@@ -1,0 +1,14 @@
+# A constructor function takes its `this` for the object that it is making, whose fields its stores create. Called as a method of a literal it gets an old object: a record is filled by its literal, and a construction makes no record.
+# So where every receiver is born by a literal the stores overwrite. f2 = run, with both calls of Point copied in; L1 = the literal.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = PutSlot {{*}}key="x" receivers=[L1] level=Proven
+# CHECK: = PutSlot {{*}}key="y" receivers=[L1] level=Proven
+# RUN(CREATES): walk f2 mechanisms=all
+# CREATES-NOT: PutSlotOrAdd {{*}}receivers=[L1]
+# -- source: a-constructor-function-called-as-a-method-of-a-literal-overwrites-its-fields.cjs
+# function Point(x) { this.x = x; this.y = this.x * 2; }
+# var holder = { move: Point, x: 0, y: 0 };
+# function run(t) { var s = t & 1; for (var i = 0; i < 64; i++) { holder.move(i); s += holder.y; s += new Point(i + 0.5).y; } return s; }
+# console.log(run(1), run(2));
+# -- end of source

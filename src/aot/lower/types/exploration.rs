@@ -1,0 +1,158 @@
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::{SmallVec, smallvec};
+
+use super::shape_edges::collect_edges;
+use super::{Component, ExploredType, TypeEdges};
+use crate::ir::generated::LimitId;
+use crate::lower::{CheckerTypeId, FileLowering};
+
+pub(super) enum Explored {
+    Exhausted,
+    /// The parts of the type are mapped.
+    Alone(ExploredType),
+    Components(SmallVec<[Component; 1]>),
+}
+
+#[derive(Copy, Clone)]
+enum NodeState {
+    Open { index: u32 },
+    Closed,
+}
+
+struct Visit {
+    explored: ExploredType,
+    next_edge: usize,
+    index: u32,
+    lowest_link: u32,
+    open_start: usize,
+}
+
+#[derive(Default)]
+pub(super) struct Walk {
+    states: FxHashMap<CheckerTypeId, NodeState>,
+    open: Vec<ExploredType>,
+    path: Vec<Visit>,
+    components: SmallVec<[Component; 1]>,
+}
+
+fn enter_type(walk: &mut Walk, ty: CheckerTypeId, edges: TypeEdges) {
+    let index = walk.states.len() as u32;
+    walk.states.insert(ty, NodeState::Open { index });
+    walk.path.push(Visit {
+        explored: ExploredType { ty, edges },
+        next_edge: 0,
+        index,
+        lowest_link: index,
+        open_start: walk.open.len(),
+    });
+}
+
+fn leave_type(walk: &mut Walk) {
+    let Some(finished) = walk.path.pop() else {
+        return;
+    };
+    let closes_component = finished.lowest_link == finished.index;
+    if closes_component && walk.open.len() == finished.open_start {
+        walk.states.insert(finished.explored.ty, NodeState::Closed);
+        walk.components.push(smallvec![finished.explored]);
+    } else {
+        walk.open.push(finished.explored);
+        if closes_component {
+            let component: Component = walk.open.drain(finished.open_start..).collect();
+            for member in component.iter() {
+                walk.states.insert(member.ty, NodeState::Closed);
+            }
+            walk.components.push(component);
+        }
+    }
+    if let Some(parent) = walk.path.last_mut() {
+        parent.lowest_link = parent.lowest_link.min(finished.lowest_link);
+    }
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn explore(&mut self, root: CheckerTypeId) -> Explored {
+        debug_assert!(
+            self.find_mapped(root).is_none(),
+            "only an unmapped type is explored"
+        );
+        if self.types.exhausted.contains(&root) {
+            return Explored::Exhausted;
+        }
+        let edges = collect_edges(self, root);
+        let mut parts = edges.iter();
+        if parts.all(|edge| self.find_mapped(edge.target).is_some()) {
+            return Explored::Alone(ExploredType { ty: root, edges });
+        }
+        match self.explore_parts(root, edges) {
+            Some(components) => Explored::Components(components),
+            None => Explored::Exhausted,
+        }
+    }
+
+    fn explore_parts(
+        &mut self,
+        root: CheckerTypeId,
+        edges: TypeEdges,
+    ) -> Option<SmallVec<[Component; 1]>> {
+        let mut walk = core::mem::take(&mut self.types.walk);
+        enter_type(&mut walk, root, edges);
+        let is_complete = self.walk_from_root(&mut walk, root);
+        let components = core::mem::take(&mut walk.components);
+        walk.states.clear();
+        walk.open.clear();
+        walk.path.clear();
+        self.types.walk = walk;
+        is_complete.then_some(components)
+    }
+
+    fn walk_from_root(&mut self, walk: &mut Walk, root: CheckerTypeId) -> bool {
+        let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
+        while let Some(visit) = walk.path.last_mut() {
+            let Some(&edge) = visit.explored.edges.get(visit.next_edge) else {
+                leave_type(walk);
+                continue;
+            };
+            visit.next_edge += 1;
+            if self.find_mapped(edge.target).is_some() {
+                continue;
+            }
+            if self.types.exhausted.contains(&edge.target) {
+                let path = walk.path.iter().map(|visit| visit.explored.ty);
+                self.types.exhausted.extend(path);
+                return false;
+            }
+            match walk.states.get(&edge.target).copied() {
+                Some(NodeState::Closed) => {}
+                Some(NodeState::Open { index }) => visit.lowest_link = visit.lowest_link.min(index),
+                None if walk.states.len() as u64 >= limit => {
+                    self.types.exhausted.insert(root);
+                    return false;
+                }
+                None => {
+                    let edges = collect_edges(self, edge.target);
+                    enter_type(walk, edge.target, edges);
+                }
+            }
+        }
+        true
+    }
+
+    pub(super) fn count_reachable_types(&mut self, root: CheckerTypeId) -> Option<u32> {
+        let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
+        let mut visited = FxHashSet::default();
+        visited.insert(root);
+        let mut pending = vec![root];
+        while let Some(ty) = pending.pop() {
+            if visited.len() as u64 > limit || self.types.exhausted.contains(&ty) {
+                return None;
+            }
+            for edge in collect_edges(self, ty) {
+                if visited.insert(edge.target) {
+                    pending.push(edge.target);
+                }
+            }
+        }
+        Some(visited.len() as u32)
+    }
+}

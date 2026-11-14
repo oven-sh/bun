@@ -1,0 +1,60 @@
+mock.module() under a file: URL without the extension, as import.meta.resolve() gives it, reaches whoever writes that name: an import, require(), import(), another extension, a folder; and it ends with its test file.
+#### no-extension/dep.ts
+export const name = "real";
+#### no-extension/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(import.meta.resolve("./dep"), () => ({ name: "mocked" })); console.log("| CASE no-extension:", await (await import("./src/uses-dep")).seen());  });
+#### no-extension/src/uses-dep.ts
+import { name } from "../dep";
+export const seen = () => name;
+#### require/dep.ts
+export const name = "real";
+#### require/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(import.meta.resolve("./dep"), () => ({ name: "mocked" })); console.log("| CASE require:", await (await import("./src/uses-dep")).seen());  });
+#### require/src/uses-dep.ts
+export const seen = () => require("../dep").name;
+#### import/dep.ts
+export const name = "real";
+#### import/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(import.meta.resolve("./dep"), () => ({ name: "mocked" })); console.log("| CASE import:", await (await import("./src/uses-dep")).seen());  });
+#### import/src/uses-dep.ts
+export const seen = async () => (await import("../dep")).name;
+#### href/dep.ts
+export const name = "real";
+#### href/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(new URL("./dep", import.meta.url).href, () => ({ name: "mocked" })); console.log("| CASE href:", await (await import("./src/uses-dep")).seen());  });
+#### href/src/uses-dep.ts
+import { name } from "../dep";
+export const seen = () => name;
+#### another-extension/dep.ts
+export const name = "real";
+#### another-extension/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(import.meta.resolve("./dep.js"), () => ({ name: "mocked" })); console.log("| CASE another-extension:", await (await import("./src/uses-dep")).seen());  });
+#### another-extension/src/uses-dep.ts
+import { name } from "../dep.js";
+export const seen = () => name;
+#### folder/dep.ts
+export const name = "real";
+#### folder/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(new URL("./lib", import.meta.url).href, () => ({ name: "mocked" })); console.log("| CASE folder:", await (await import("./src/uses-dep")).seen());  });
+#### folder/lib/index.ts
+export const name = "real";
+#### folder/src/uses-dep.ts
+import { name } from "../lib";
+export const seen = () => name;
+#### next-file/dep.ts
+export const name = "real";
+#### next-file/a.test.ts
+import { test, mock, vi } from "bun:test";
+test("a", async () => { mock.module(import.meta.resolve("./dep"), () => ({ name: "mocked" })); console.log("| CASE next-file:", await (await import("./src/uses-dep")).seen());  });
+#### next-file/b.test.ts
+import { test, mock, vi } from "bun:test";
+test("b", async () => { console.log("| CASE next-file:", (await import("./src/uses-dep")).seen()); });
+#### next-file/src/uses-dep.ts
+import { name } from "../dep";
+export const seen = () => name;

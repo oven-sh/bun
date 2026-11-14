@@ -1,0 +1,24 @@
+# f1 = size
+# -- source: switch-on-a-string-tag-of-three.ts
+# type Circle = { kind: "circle"; radius: number };
+# type Square = { kind: "square"; side: number };
+# type Box = { kind: "box"; width: number; height: number };
+# function size(shape: Circle | Square | Box): number {
+#   switch (shape.kind) {
+#     case "circle": return shape.radius + shape.radius;
+#     case "square": return shape.side;
+#     case "box": return shape.width + shape.height;
+#   }
+# }
+# declare const input: any;
+# const circle: Circle = { kind: "circle", radius: +input };
+# const square: Square = { kind: "square", side: +input };
+# const box: Box = { kind: "box", width: +input, height: +input };
+# (globalThis as any).answer = size(input > 1 ? circle : input ? square : box);
+# -- end of source
+# The compiler before this one: 11 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 12, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:13 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 13

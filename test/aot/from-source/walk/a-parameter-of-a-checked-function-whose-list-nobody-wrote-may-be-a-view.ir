@@ -1,0 +1,27 @@
+# `data: ArrayLike<number>` names an interface that lists and views alike fulfill. The table of built-ins calls it a view type of Array, and the front end lowers it to a list of numbers that is only expected: nobody wrote "a list".
+# Where nobody wrote the list of a parameter, and nothing but the length is named off it, the front of a loop tells apart a list of numbers, any list, bytes and the other views, and the guard of the parameters leaves it alone.
+# That was refused to every checked function, as if each word in one were written: `mixes` was guarded as a list, a view failed the guard, and the whole call ran its slow body.
+# `written` says `number[]`: somebody wrote that, and it keeps its guard.
+# The shell hands both what they may and may not expect; each answers as plain JavaScript does.
+# f1 = mixes, f2 = written
+# LIBRARY: own
+# -- source: a-parameter-of-a-checked-function-whose-list-nobody-wrote-may-be-a-view.ts
+# declare function publish(first: unknown, second: unknown): void;
+# function mixes(data: ArrayLike<number>): number { let c = -1; for (let i = 0; i < data.length; i++) c = ((c << 5) - c) ^ data[i]!; return c; }
+# function written(data: number[]): number { let c = -1; for (let i = 0; i < data.length; i++) c = ((c << 5) - c) ^ data[i]!; return c; }
+# publish(mixes, written);
+# -- end of source
+# RUN(FRONT): walk f1 mechanisms=all
+# FRONT: b0(v0: anything?ParameterOfEscapedFunction
+# FRONT: = TypeTest v0 testedType=Array<number>
+# FRONT: = TypeTest v0 testedType=Array #
+# FRONT: = TypeTest v0 testedType=Buffer|Uint8Array
+# FRONT: = TypeTest v0 testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# FRONT: int[0, 255] @Int32 = GetTypedArrayElement {{*}}level=Proven [keyIsIntegral, isInsideView]
+# FRONT: number @Double = GetTypedArrayElement {{*}}level=Proven [keyIsIntegral, isInsideView]
+# RUN(WRITTEN): walk f2 mechanisms=all
+# WRITTEN: b0(v0: Array<number>?ParameterOfEscapedFunction
+# WRITTEN-NOT: = GetTypedArrayElement
+# RUN(SHELL): run-in-shell globalThis.publish = (mixes, written) => { class Bytes extends Uint8Array {} const list = [1, 2, 3, 250, 77, 9]; const holes = list.slice(); delete holes[2]; const above = list.slice(); delete above[1]; Object.setPrototypeOf(above, Object.assign(Object.create(Array.prototype), { 1: 66 })); const gone = new Uint8Array(list); gone.buffer.transfer(); const record = { length: 3, 0: 5, 1: 6, 2: 7 }; const kinds = [list, list.map(x => x + 0.5), [1, "4", 3], holes, above, Object.freeze(list.slice()), new Uint8Array(list), new Bytes(list), new Uint8ClampedArray(list), new Int8Array(list), new Int32Array(list.map(x => -x * 65537)), new Int16Array(list), new Uint32Array(list.map(x => x * 16843009)), new Float64Array(list.map(x => x + 0.25)), new Float32Array([1.5, NaN, -0, 1e10]), gone, record, "0123", (function () { return arguments; })(4, 5, 6), new Proxy(list, {}), 7, new BigInt64Array(2), undefined, null]; for (const f of [mixes, written]) { let told = ""; for (const data of kinds) { for (let turn = 0; turn < 2; turn++) { try { told += " " + f(data); } catch (error) { told += " " + error.constructor.name; } } } print(told); } };
+# SHELL: -914323105 -914323105 -914323105 -914323105 -30625 -30625 -914355022 -914355022 -855344737 -855344737 -914323105 -914323105 -914323105 -914323105 -914323105 -914323105 -914323105 -914323105 914313823 914313823 -602669085 -602669085 -914323105 -914323105 -1523418273 -1523418273 -914323105 -914323105 -1409642464 -1409642464 -1 -1 -26975 -26975 -924541 -924541 -25852 -25852 -914323105 -914323105 -1 -1 TypeError TypeError TypeError TypeError TypeError TypeError
+# SHELL-NEXT: -914323105 -914323105 -914323105 -914323105 -30625 -30625 -914355022 -914355022 -855344737 -855344737 -914323105 -914323105 -914323105 -914323105 -914323105 -914323105 -914323105 -914323105 914313823 914313823 -602669085 -602669085 -914323105 -914323105 -1523418273 -1523418273 -914323105 -914323105 -1409642464 -1409642464 -1 -1 -26975 -26975 -924541 -924541 -25852 -25852 -914323105 -914323105 -1 -1 TypeError TypeError TypeError TypeError TypeError TypeError

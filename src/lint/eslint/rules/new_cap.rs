@@ -18,11 +18,11 @@ struct Exceptions {
     pattern: Option<Regex>,
 }
 
-const UPPER: Message = Message::new(
+const UPPER: &Message = &Message::new(
     "upper",
     "A function with a name starting with an uppercase letter should only be used as a constructor.",
 );
-const LOWER: Message = Message::new(
+const LOWER: &Message = &Message::new(
     "lower",
     "A constructor name should not start with a lowercase letter.",
 );
@@ -190,7 +190,7 @@ fn callee_of(call: Call<'_>) -> Expr<'_> {
 }
 
 /// Reports the call `e` at the property, or otherwise at the callee.
-fn report<'a>(e: Expr<'a>, callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
+fn report<'a>(e: Expr<'a>, callee: Expr<'a>, message: &'static Message, cx: &Cx<'a, NewCap>) {
     let at = match callee.kind() {
         ExprKind::Dot { name, .. } => name.span(),
         ExprKind::Index { index, .. } => index.span(),

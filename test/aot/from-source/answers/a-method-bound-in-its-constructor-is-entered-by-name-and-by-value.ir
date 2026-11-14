@@ -1,0 +1,72 @@
+# -- source: main.cjs
+# "use strict";
+# class Knob { constructor(step) { this.step = step; this.turn = this.turn.bind(this); } turn(by) { return (by + this.step) & 255; } spin(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + this.turn(i)) | 0; return s; } }
+# function byName(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + knob.turn(i)) | 0; return s; }
+# function byValue(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + loose(i)) | 0; return s; }
+# function handed(holder, t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + holder.turn(i)) | 0; return s; }
+# const knob = new Knob(3), loose = knob.turn;
+# print(byName(1), byValue(1), knob.spin(1), handed(knob, 1));
+# print(outside(handed, Knob));
+# -- end of source
+# f1 = byName, f2 = byValue, f3 = handed, f4 = Knob, f5 = turn, f6 = spin
+# `this.turn = this.turn.bind(this)`: the name lies in a field that Link appends (its own test: a-name-that-the-constructor-of-a-class-stores-over-its-own-method-lies-in-a-field.ir).
+# What is held in that field, and in a variable read out of it, is a bound function of the method, beside every primitive (the result of a call of `bind` that nobody has proven) and beside the method itself.
+# Of what is expected of a CALLEE only the objects count; one part of bound functions is asked for first, in front of the one function that Link lists at the call by name.
+# So the call by name, the call by value and the call off `this` ask the cell, in front of their loops, and enter the method: the sums are of whole numbers.
+# RUN(NAME): walk f1 mechanisms=all
+# NAME: = HasNumberOfBoundArguments
+# NAME: = TypeTest {{*}}testedType=f5
+# RUN(VALUE): walk f2 mechanisms=all
+# VALUE: = HasNumberOfBoundArguments
+# VALUE: = TypeTest {{*}}testedType=f5
+# RUN(INSIDE): walk f6 mechanisms=all
+# INSIDE: = HasNumberOfBoundArguments
+# INSIDE: = TypeTest {{*}}testedType=f5
+# RUN(HANDED): walk f3 mechanisms=all
+# HANDED: = HasNumberOfBoundArguments
+# HANDED: = TypeTest {{*}}testedType=f5
+# The shell itself calls handed(), out of sight of Link, with a Knob as made, with one whose name holds a closure, nothing, a function bound to another this, with an argument, a number; with an object that no constructor filled; with an heir; with a stranger.
+# RUN(SAME): run-in-shell make = function (Knob) { return new Knob(7); }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# SAME: 18 18 18 18
+# SAME-NEXT: 45
+# SAME-NEXT: exited with 0
+# RUN(CLOSURE): run-in-shell make = function (Knob) { const knob = new Knob(7); knob.turn = function (by) { return by * this.step; }; return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# CLOSURE: 18 18 18 18
+# CLOSURE-NEXT: 70
+# CLOSURE-NEXT: exited with 0
+# RUN(DELETED): run-in-shell make = function (Knob) { const knob = new Knob(7); delete knob.turn; return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# DELETED: 18 18 18 18
+# DELETED-NEXT: 45
+# DELETED-NEXT: exited with 0
+# RUN(OTHERTHIS): run-in-shell make = function (Knob) { const knob = new Knob(7); knob.turn = Knob.prototype.turn.bind({ step: 100 }); return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# OTHERTHIS: 18 18 18 18
+# OTHERTHIS-NEXT: 510
+# OTHERTHIS-NEXT: exited with 0
+# RUN(ARGUMENT): run-in-shell make = function (Knob) { const knob = new Knob(7); knob.turn = Knob.prototype.turn.bind(knob, 50); return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# ARGUMENT: 18 18 18 18
+# ARGUMENT-NEXT: 285
+# ARGUMENT-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell make = function (Knob) { const knob = new Knob(7); knob.turn = 5; return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# NUMBER: 18 18 18 18
+# NUMBER-NEXT: TypeError
+# NUMBER-NEXT: exited with 0
+# RUN(BARE): run-in-shell make = function (Knob) { const knob = Object.create(Knob.prototype); knob.step = 9; return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# BARE: 18 18 18 18
+# BARE-NEXT: 55
+# BARE-NEXT: exited with 0
+# RUN(HEIR): run-in-shell make = function (Knob) { return new (class extends Knob { turn(by) { return super.turn(by) * 2; } })(7); }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# HEIR: 18 18 18 18
+# HEIR-NEXT: 90
+# HEIR-NEXT: exited with 0
+# RUN(STRANGER): run-in-shell make = function () { return { turn(by) { return by + 1000; } }; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# STRANGER: 18 18 18 18
+# STRANGER-NEXT: 5010
+# STRANGER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime make = function (Knob) { const knob = new Knob(7); knob.turn = function (by) { return by * this.step; }; return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# CHECKED: 18 18 18 18
+# CHECKED-NEXT: 70
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime make = function (Knob) { const knob = Object.create(Knob.prototype); knob.step = 9; return knob; }; outside = function (run, Knob) { try { return run(make(Knob), 2); } catch (error) { return error.constructor.name; } };
+# CHECKEDTOO: 18 18 18 18
+# CHECKEDTOO-NEXT: 55
+# CHECKEDTOO-NEXT: exited with 0

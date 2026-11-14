@@ -1,0 +1,23 @@
+# A read from a receiver that is proven to be one of a few layouts is dispatched by a chain of shape tests, one case per layout.
+# The failing side of the last test is unreachable, so the chain relies on the list of layouts being complete.
+# Fault injection, testing=DropLastCase: the chain omits its last case, as if that layout were not in use. An object of that layout reaches the unreachable end.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the receiver, as it entered the chain, is checked against the layouts of the cases before that end.
+# If the check fails, the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 18
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=DropLastCase
+# WRONG: crashed with SIGILL
+# RUN(HELD): run-in-shell mechanisms=all testing=DropLastCase,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: in the result of an operation
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Strand { constructor(readonly text: string) {} get size(): number { return this.text.length; } }
+# class Pair { readonly size: number; constructor(readonly left: Strand | Pair, readonly right: Strand | Pair) { this.size = left.size + right.size; } }
+# function join(one: Strand | Pair, other: Strand | Pair): Strand | Pair { if (!one.size) return other; if (!other.size) return one; return new Pair(one, other); }
+# let cord: Strand | Pair = new Strand("ab");
+# for (let i = 0; i < 3; i++) cord = join(join(cord, new Strand(i % 2 ? "c" : "")), cord);
+# print(cord.size);
+# -- end of source

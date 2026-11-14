@@ -1,0 +1,14 @@
+# What is made through the constructor of a class is one node a class. It is fed where a construction enters the constructor, and from the class below where super() hands new.target up the row.
+# Nobody reads what `new Low()` gives here, and its three constructors run all the same: `this` behind each super() is a Low, and each store fills a field of a Low.
+# Fed where the result of a construction is read, the nodes stayed empty: `this` was nothing, and the fields were proven never to be written.
+# RUN: link fields functions mechanisms=all
+# CHECK: field L1.0 "middle" proven=string writers-known written-at-construction-alone filled
+# CHECK: field L2.0 "low" proven=string writers-known written-at-construction-alone filled
+# CHECK: function f2 callers-known one-callee {{*}}result=L2
+# CHECK: function f3 callers-known one-callee {{*}}result=L2
+# -- source: a-construction-whose-result-nobody-reads-makes-an-object-of-its-class-from-source.js
+# class Top { constructor() { this.top = "t"; } }
+# class Middle extends Top { constructor() { super(); this.middle = "m"; } }
+# class Low extends Middle { constructor() { super(); this.low = "l"; } }
+# new Low();
+# -- end of source

@@ -1,0 +1,11 @@
+# The steps of a Map iterator and those of a Headers iterator are records of different layouts, and one function reads a member of both. The read went by the layout of the first record. It was not resolved again when the families of the two records were united.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f1
+# -- source: main.js
+# const out = [];
+# function read(r) { out.push(String(r.done)); }
+# read(new Map([[true, "a"]]).entries().next());
+# read(new Headers({ a: "h" }).entries().next());
+# -- end of source

@@ -1,0 +1,2 @@
+class A { constructor(n) { this.n = n; } m() { return 1; } } class B { constructor(n) { this.n = n; } m() { return 2; } } const t = { a: A, b: B };
+class X { run(K, i) { return new K(i).n; } } class Y { run(K, i) { return new K(i).n + 1; } } function drive(os, n) { let s = 0; for (let i = 0; i < n; i++) s += os[i & 1].run(t.a, i & 3); return s; } let z = 0; for (let i = 0; i < 4; i++) z += new (i & 1 ? t.a : t.b)(i).n; console.log(drive([new X(), new Y()], 400), z);

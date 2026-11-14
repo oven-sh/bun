@@ -33,15 +33,6 @@ impl SignalCode {
         128u8.wrapping_add(self.0)
     }
 
-    pub fn from<T: bytemuck::NoUninit>(value: T) -> SignalCode {
-        // View `value` as bytes and read the
-        // first one. `NoUninit` guarantees `T` is `Copy` with no padding/uninit
-        // bytes, so `bytemuck::bytes_of` is the safe equivalent of the raw
-        // `*(&raw const value).cast::<u8>()` reinterpret. A ZST `T` panics on
-        // the `[0]` index; all callers pass integer types.
-        SignalCode(bytemuck::bytes_of(&value)[0])
-    }
-
     pub fn fmt(self, enable_ansi_colors: bool) -> Fmt {
         Fmt {
             signal: self,

@@ -39,36 +39,59 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
     std::sync::LazyLock::new(|| {
         let mut t: [Option<&'static VTable>; SOCKET_KIND_COUNT] = [None; SOCKET_KIND_COUNT];
 
+        use bun_removable_features::removable_body;
+
         // Bun.connect / Bun.listen
-        t[SocketKind::BunSocketTcp as usize] = Some(vtable::make::<handlers::BunSocket<false>>());
-        t[SocketKind::BunSocketTls as usize] = Some(vtable::make::<handlers::BunSocket<true>>());
-        t[SocketKind::BunListenerTcp as usize] =
-            Some(vtable::make::<handlers::BunListener<false>>());
-        t[SocketKind::BunListenerTls as usize] =
-            Some(vtable::make::<handlers::BunListener<true>>());
+        removable_body!(Sockets, ReturnDefault, {
+            t[SocketKind::BunSocketTcp as usize] =
+                Some(vtable::make::<handlers::BunSocket<false>>());
+            t[SocketKind::BunListenerTcp as usize] =
+                Some(vtable::make::<handlers::BunListener<false>>());
+        });
+        removable_body!(TlsSockets, ReturnDefault, {
+            t[SocketKind::BunSocketTls as usize] =
+                Some(vtable::make::<handlers::BunSocket<true>>());
+            t[SocketKind::BunListenerTls as usize] =
+                Some(vtable::make::<handlers::BunListener<true>>());
+        });
 
         // HTTP client thread
-        t[SocketKind::HttpClient as usize] = Some(vtable::make::<handlers::HTTPClient<false>>());
-        t[SocketKind::HttpClientTls as usize] = Some(vtable::make::<handlers::HTTPClient<true>>());
+        removable_body!(HttpClient, ReturnDefault, {
+            t[SocketKind::HttpClient as usize] =
+                Some(vtable::make::<handlers::HTTPClient<false>>());
+            t[SocketKind::HttpClientTls as usize] =
+                Some(vtable::make::<handlers::HTTPClient<true>>());
+        });
 
         // WebSocket client
-        t[SocketKind::WsClientUpgrade as usize] =
-            Some(vtable::make::<handlers::WSUpgrade<false>>());
-        t[SocketKind::WsClientUpgradeTls as usize] =
-            Some(vtable::make::<handlers::WSUpgrade<true>>());
-        t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
-        t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
+        removable_body!(WebSocket, ReturnDefault, {
+            t[SocketKind::WsClientUpgrade as usize] =
+                Some(vtable::make::<handlers::WSUpgrade<false>>());
+            t[SocketKind::WsClientUpgradeTls as usize] =
+                Some(vtable::make::<handlers::WSUpgrade<true>>());
+            t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
+            t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
+        });
 
         // SQL drivers
-        t[SocketKind::Postgres as usize] = Some(vtable::make::<handlers::Postgres<false>>());
-        t[SocketKind::PostgresTls as usize] = Some(vtable::make::<handlers::Postgres<true>>());
-        t[SocketKind::Mysql as usize] = Some(vtable::make::<handlers::MySQL<false>>());
-        t[SocketKind::MysqlTls as usize] = Some(vtable::make::<handlers::MySQL<true>>());
-        t[SocketKind::Valkey as usize] = Some(vtable::make::<handlers::Valkey<false>>());
-        t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
+        removable_body!(Sql, ReturnDefault, {
+            t[SocketKind::Postgres as usize] = Some(vtable::make::<handlers::Postgres<false>>());
+            t[SocketKind::PostgresTls as usize] = Some(vtable::make::<handlers::Postgres<true>>());
+            t[SocketKind::Mysql as usize] = Some(vtable::make::<handlers::MySQL<false>>());
+            t[SocketKind::MysqlTls as usize] = Some(vtable::make::<handlers::MySQL<true>>());
+        });
+        removable_body!(Valkey, ReturnDefault, {
+            t[SocketKind::Valkey as usize] = Some(vtable::make::<handlers::Valkey<false>>());
+            t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
+        });
 
         // IPC
-        t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        removable_body!(Ipc, ReturnDefault, {
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        });
+        removable_body!(Spawn, ReturnDefault, {
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        });
 
         t
     });
@@ -89,10 +112,7 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
         | SocketKind::UwsHttp
         | SocketKind::UwsHttpTls
         | SocketKind::UwsWs
-        | SocketKind::UwsWsTls => {
-            // `raw_group()` already returns `&mut SocketGroup` for `us_socket_t`.
-            s.raw_group().vtable.expect("group vtable")
-        }
+        | SocketKind::UwsWsTls => s.raw_group().vtable.get().expect("group vtable"),
         _ => TABLES[kind as usize].expect("kind vtable"),
     }
 }
@@ -113,7 +133,7 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
         | SocketKind::UwsWs
         | SocketKind::UwsWsTls => {
             // SAFETY: raw_group() is non-null for any socket with a valid kind.
-            unsafe { (*c.raw_group()).vtable.expect("group vtable") }
+            unsafe { (*c.raw_group()).vtable.get().expect("group vtable") }
         }
         _ => TABLES[kind as usize].expect("kind vtable"),
     }

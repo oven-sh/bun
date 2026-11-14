@@ -1,0 +1,32 @@
+# The Saves at the heads of a framed part, where a processor keeps many registers across a call. `clear` sets up its frame late, in the arm that calls. At the head of that arm more values wait for what lies behind the calls than registers are kept: `this`, the eight fields, and the word that the slow road of a private field asks for. That word is read last and by the slow road of the store to `#timer` alone, as a cold operand, so it is the one that waits in a slot: the head of the arm saves it. The testing word leaves that Save out.
+# No check is asked for here, as in a build of a user: the slots stored at heads are checked all the same, because a head left out a Save, and the build stops by name. Without that check it would end well and the code would be wrong.
+# With four fields every value finds a kept register and nothing waits in a slot. On x86-64 the entry runs out of registers with seven fields and more and sets the frame up itself: its own test is a-save-at-a-head-that-a-cold-operand-alone-reads-and-that-is-left-out-stops-the-build-by-name.ir.
+# f4 = clear
+# -- source: a-save-at-a-head-that-a-cold-operand-alone-reads-where-more-values-wait-than-registers-are-kept-stops-the-build-by-name.ts
+# declare function sink(...values: unknown[]): void;
+# declare function cancel(handle: unknown): void;
+# class Sweeper {
+#   #timer: unknown = null;
+#   a0: unknown = null;
+#   a1: unknown = null;
+#   a2: unknown = null;
+#   a3: unknown = null;
+#   a4: unknown = null;
+#   a5: unknown = null;
+#   a6: unknown = null;
+#   a7: unknown = null;
+#   set(handle: unknown) { this.#timer = handle; }
+#   fill(value: unknown) { this.a0 = value; this.a1 = value; this.a2 = value; this.a3 = value; this.a4 = value; this.a5 = value; this.a6 = value; this.a7 = value; }
+#   clear() {
+#     const timer = this.#timer;
+#     const v0 = this.a0, v1 = this.a1, v2 = this.a2, v3 = this.a3, v4 = this.a4, v5 = this.a5, v6 = this.a6, v7 = this.a7;
+#     if (timer !== null) { cancel(timer); sink(v0, v1, v2, v3, v4, v5, v6, v7); this.#timer = null; return true; }
+#     return v0 === null && v1 === null && v2 === null && v3 === null && v4 === null && v5 === null && v6 === null && v7 === null;
+#   }
+# }
+# sink(Sweeper);
+# -- end of source
+# REQUIRES: arm64
+# AS-USERS-BUILD: the check of the slots stored at heads where a head leaves out a Save runs in every build, and under the check of the runner the allocation is checked anyway
+# DIAGNOSTIC: WrongValueInSpillSlot f4
+# RUN: emit f4 mechanisms=all testing=DropPatchOnlySaves

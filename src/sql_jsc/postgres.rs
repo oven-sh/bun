@@ -1,18 +1,3 @@
-use crate::jsc::{JSGlobalObject, JSValue};
-
-pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    crate::put_host_functions!(
-        binding,
-        global_object,
-        [
-            ("init", PostgresSQLContext::init, 0),
-            ("createQuery", PostgresSQLQuery::call, 5),
-            ("createConnection", postgres_sql_connection::call, 2),
-        ]
-    )
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────

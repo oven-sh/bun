@@ -1,13 +1,12 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
-    AutoFlush, CallFrame, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject,
-    JSValue, JsCell, JsRef, JsResult, KeepAlive, VirtualMachine, VirtualMachineSqlExt as _,
-    run_callback,
+    AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    KeepAlive, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -43,7 +42,7 @@ pub struct JSMySQLConnection {
     js_value: JsCell<JsRef>,
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
 
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
@@ -60,7 +59,7 @@ impl Drop for JSMySQLConnection {
     fn drop(&mut self) {
         self.timers.stop();
         let ctx = self.vm_ctx();
-        self.poll_ref.with_mut(|p| p.unref(ctx));
+        self.poll_ref.unref(ctx);
         self.unregister_auto_flusher();
     }
 }
@@ -81,8 +80,8 @@ impl JSMySQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop_mut()
+    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
+        VirtualMachine::get().event_loop()
     }
 
     #[inline]
@@ -182,7 +181,7 @@ impl JSMySQLConnection {
     }
 
     /// Keeps a callback's exit from draining microtasks in the middle of the calling JS frame.
-    fn entered_from_js(&self) -> bun_jsc::event_loop::EventLoopEnterNoCheckpointGuard {
+    fn entered_from_js(&self) -> bun_jsc::event_loop::EventLoopEnterNoCheckpointGuard<'_> {
         self.vm().enter_event_loop_scope_without_checkpoint()
     }
 
@@ -201,7 +200,7 @@ impl JSMySQLConnection {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         let _guard = self.ref_guard();
         {
-            let _loop_guard = self.event_loop().entered();
+            let _loop_guard = self.event_loop().enter_scope();
             self.ensure_js_value_is_alive();
             if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
                 self.connection_mut().flush_queue()
@@ -238,9 +237,9 @@ impl JSMySQLConnection {
             if self.connection.get().status == my_sql_connection::Status::Connected
                 && self.connection.get().is_idle()
             {
-                self.poll_ref.with_mut(|p| p.unref(ctx));
+                self.poll_ref.unref(ctx);
             } else {
-                self.poll_ref.with_mut(|p| p.r#ref(ctx));
+                self.poll_ref.r#ref(ctx);
             }
             return;
         }
@@ -248,27 +247,56 @@ impl JSMySQLConnection {
             self.js_value.with_mut(|r| r.downgrade());
         }
         let ctx = self.vm_ctx();
-        self.poll_ref.with_mut(|p| p.unref(ctx));
+        self.poll_ref.unref(ctx);
     }
 
-    pub(crate) fn create_instance(
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn create_connection<'a>(
+        cx: &mut JsScope<'a>,
+        hostname: &[u8],
+        port: f64,
+        username: &[u8],
+        password: &[u8],
+        database: &[u8],
+        ssl_mode: u8,
+        tls: JsLocal<'a>,
+        _: JsLocal<'a>,
+        path: &[u8],
+        on_connected: JsLocal<'a, Callable>,
+        on_disconnected: JsLocal<'a, Callable>,
+        idle_timeout: f64,
+        connection_timeout: f64,
+        max_lifetime: f64,
+        _: JsLocal<'a>,
+        allow_public_key_retrieval: bool,
+        on_retire: Option<JsLocal<'a, Callable>>,
+        found_rows: bool,
+        _: JsLocal<'a>,
+        column_transform: Option<JsLocal<'a, Callable>>,
     ) -> JsResult<JSValue> {
-        let vm = global_object.bun_vm().as_mut();
+        let global_object = cx.global();
+        let vm = global_object.bun_vm();
+        let port = port as i32;
         // The connection is the calling script's.
-        let context = global_object.bun_vm().context_of_caller(callframe);
-        let arguments = callframe.arguments();
-        let Some(args) = ConnectionCtorArgs::parse(global_object, &mut *vm, arguments)? else {
+        let context = global_object.bun_vm().context_of_caller();
+        let Some(args) = ConnectionCtorArgs::parse(
+            global_object,
+            hostname,
+            ssl_mode,
+            tls.to_js(),
+            idle_timeout,
+            connection_timeout,
+            max_lifetime,
+        )?
+        else {
             return Ok(JSValue::ZERO);
         };
         let (secure, tls_config) = (args.secure, args.tls_config);
-        let check_server_identity = server_identity::callback_of(global_object, arguments[6])?;
+        let check_server_identity = server_identity::callback_of(global_object, tls.to_js())?;
 
-        let username = args.username_str.to_owned_slice().into_boxed_slice();
-        let password = args.password_str.to_owned_slice().into_boxed_slice();
-        let database = args.database_str.to_owned_slice().into_boxed_slice();
-        let path = args.path_str.to_owned_slice().into_boxed_slice();
+        let username: Box<[u8]> = Box::from(username);
+        let password: Box<[u8]> = Box::from(password);
+        let database: Box<[u8]> = Box::from(database);
+        let path: Box<[u8]> = Box::from(path);
 
         // Reject null bytes in connection parameters to prevent protocol injection
         // (null bytes act as field terminators in the MySQL wire protocol).
@@ -283,20 +311,12 @@ impl JSMySQLConnection {
             }
         }
 
-        let on_connect = arguments[9];
-        let on_close = arguments[10];
-        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
-        let on_retire = callframe.argument(16);
-        let found_rows = callframe.argument(17).to_boolean();
-
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            vm: BackRef::new(VirtualMachine::get()),
+            poll_ref: KeepAlive::default(),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
                 username,
@@ -320,8 +340,6 @@ impl JSMySQLConnection {
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
         {
-            let hostname = args.hostname_str.to_utf8();
-
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
             let group = vm.mysql_socket_group::<false>(context);
@@ -339,8 +357,8 @@ impl JSMySQLConnection {
                     group,
                     uws::DispatchKind::Mysql,
                     None,
-                    hostname.slice(),
-                    args.port,
+                    hostname,
+                    port,
                     ptr,
                     false,
                 )
@@ -368,19 +386,18 @@ impl JSMySQLConnection {
                 .set_socket(AnySocket::SocketTcp(socket));
         }
         this.reset_connection_timeout();
-        this.poll_ref.with_mut(|p| p.r#ref(vm.vm_ctx()));
+        this.poll_ref.r#ref(vm.vm_ctx());
         let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
         this.js_value
             .with_mut(|r| r.set_strong(js_value, global_object));
-        js::onconnect_set_cached(js_value, global_object, on_connect);
-        let column_transform = callframe.argument(19);
-        if column_transform.is_callable() {
-            js::column_transform_set_cached(js_value, global_object, column_transform);
+        js::onconnect_set_cached(js_value, global_object, on_connected.to_js());
+        if let Some(column_transform) = column_transform {
+            js::column_transform_set_cached(js_value, global_object, column_transform.to_js());
         }
-        js::onclose_set_cached(js_value, global_object, on_close);
-        if on_retire.is_callable() {
-            js::onretire_set_cached(js_value, global_object, on_retire);
+        js::onclose_set_cached(js_value, global_object, on_disconnected.to_js());
+        if let Some(on_retire) = on_retire {
+            js::onretire_set_cached(js_value, global_object, on_retire.to_js());
         }
         // Next to `rejectUnauthorized: false` it is not asked, as in Node.
         if let Some(callback) =
@@ -814,7 +831,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
         let _guard = this.ref_guard();
         {
-            let _loop_guard = this.event_loop().entered();
+            let _loop_guard = this.event_loop().enter_scope();
             this.ensure_js_value_is_alive();
 
             if let Err(e) = this.connection_mut().read_and_process_data(data) {

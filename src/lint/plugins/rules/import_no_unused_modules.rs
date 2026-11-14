@@ -27,8 +27,8 @@ pub struct NoUnusedModules {
     prepared: OnceLock<Box<Prepared>>,
 }
 
-const NO_EXPORTS: Message = Message::new("", "No exports found");
-const UNUSED: Message = Message::new("", "exported declaration '{{value}}' not used within other modules");
+const NO_EXPORTS: &Message = &Message::new("", "No exports found");
+const UNUSED: &Message = &Message::new("", "exported declaration '{{value}}' not used within other modules");
 
 const EXPORT_ALL_DECLARATION: &[u8] = b"ExportAllDeclaration";
 const IMPORT_NAMESPACE_SPECIFIER: &[u8] = b"ImportNamespaceSpecifier";

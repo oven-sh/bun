@@ -1,0 +1,57 @@
+# a row that calls what it is handed, a function with a loop over a list, a timer: each comes back. The process is ended behind the store, by an operation that names the built-in there: the build stops
+# function sum(list) { let total = 0; for (const n of list) total += n; return total; } sum([1, 2].map(x => x)); setTimeout(() => {}, 0); Array.prototype.push = () => {}; process.exit(0);
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = Data data=d0 @1
+    v2 = PropGet v1 key="map" @1
+    v3 = NewClosure function=f2 @1
+    v4 = Call v2, v1, v3 calleeKey="map" @1
+    v5 = Call v0, -, v4 calleeName="sum" @1
+    v6 = Builtin builtin=SetTimeout @2
+    v7 = NewClosure function=f3 @2
+    v8 = Integer @2
+    v9 = Call v6, -, v7, v8 @2
+    v10 = Builtin builtin=ArrayPrototype @3
+    PropSet v10, v7 key="push" @4
+    v12 = Builtin builtin=Process @5
+    v13 = PropGet v12 key="exit" @5
+    v14 = Call v13, v12, v8 calleeKey="exit" @5
+    Return v14 @5
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer @101
+    v2 = IteratorOpen v0 @102
+    Jump -> next b1(v1) @103
+  b1(v3):
+    LoopHint @104
+    v5 = IteratorResume v2 @105
+    v6 = ResultAt v5 @106
+    v7 = ResultAt v5 index=1 @107
+    Branch v6 -> taken b2(), notTaken b3() @108
+  b2():
+    Return v3 @109
+  b3() handler=b4():
+    v8 = Add v3, v7 @110
+    Jump -> next b1(v8) @111
+  b4() role=IterationCleanup subject=v2:
+    v9 = CatchException @112
+    IteratorClose v2 completion=Throw @113
+    Rethrow v9 @114
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0 @115
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @116
+    Return v0 @117
+}

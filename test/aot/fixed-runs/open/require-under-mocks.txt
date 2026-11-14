@@ -1,0 +1,31 @@
+require() of an ES module under a mock with a factory, without one, and with an async one, with resets between.
+#### a.ts
+import "./b.mjs"; export const a = "real-a"; export function fn() { return "real-fn"; }
+#### b.mjs
+import { a, fn } from "./a"; export const seen = () => [a, fn()];
+#### package.json
+{"name":"require-cycle"}
+#### require.test.ts
+import { expect, jest, test, vi } from "bun:test";
+import { join } from "node:path";
+test("calls a factory that does not wait", () => {
+  jest.doMock("./a", () => ({ ...jest.requireActual("./a"), a: "mocked-a" }));
+  expect(require("./b.mjs").seen()).toEqual(["mocked-a", "real-fn"]);
+});
+test("makes the mocks of a module without a factory", () => {
+  vi.resetModules();
+  vi.doMock("./a");
+  expect(require("./b.mjs").seen()).toEqual(["real-a", undefined]);
+});
+test("does not wait for one that does", async () => {
+  vi.resetModules();
+  const { promise: settled, resolve } = Promise.withResolvers();
+  vi.doMock("./a", async importOriginal => {
+    const original = await importOriginal();
+    queueMicrotask(resolve);
+    return { ...original, a: "mocked-a" };
+  });
+  expect(() => require("./b.mjs")).toThrow("require() async module \"" + join(import.meta.dir, "b.mjs") + "\" is unsupported. use \"await import()\" instead.");
+  await settled;
+  expect((await import("./b.mjs")).seen()).toEqual(["mocked-a", "real-fn"]);
+});

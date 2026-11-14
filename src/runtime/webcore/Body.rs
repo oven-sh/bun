@@ -910,6 +910,30 @@ impl Value {
         Ok(stream_value)
     }
 
+    /// A `body` init that [`from_js`](Self::from_js) reads by reference, so the
+    /// fetch spec extracts it after the other init members are converted.
+    pub fn is_extracted_by_reference(value: JSValue) -> bool {
+        if !value.is_cell() || value.is_string() {
+            return false;
+        }
+        let js_type = value.js_type();
+        if js_type.is_array_buffer_like()
+            || matches!(js_type, jsc::JSType::Array | jsc::JSType::DerivedArray)
+        {
+            return true;
+        }
+        if DOMFormData::from_js(value).is_some() || URLSearchParams::from_js(value).is_some() {
+            return true;
+        }
+        if js_type == jsc::JSType::DOMWrapper
+            && (value.as_class_ref::<Blob>().is_some()
+                || value.as_class_ref::<crate::image::Image>().is_some())
+        {
+            return true;
+        }
+        ReadableStream::is_readable_stream(value)
+    }
+
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
         value.ensure_still_alive();
 

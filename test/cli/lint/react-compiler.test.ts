@@ -502,6 +502,47 @@ export function Plain({ c }) {
     expect(await build(true)).toBe(await build(false));
   });
 
+  test("in a function, a read that nothing reads is no dependency for the rules", async () => {
+    // The compiled output makes such a function depend on `el` (react-compiler/FunctionThatKeepsAnUnreadRead). The
+    // rules are upstream's: `el` in a list is unnecessary, `[]` misses nothing, and `d && el?.x` reads a path.
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "unread.jsx": `import { useCallback, useEffect } from "react";
+export function useListed(el) {
+  useEffect(() => {
+    el?.offsetHeight;
+  }, [el]);
+  return useCallback(() => {
+    el?.offsetHeight;
+  }, [el]);
+}
+export function useNotListed(el, d) {
+  useEffect(() => {
+    for (let i = 0; i < 1; el.offsetHeight) i++;
+  }, []);
+  return useCallback(() => {
+    d && el?.offsetHeight;
+  }, [d]);
+}
+`,
+    });
+    type Labeled = { code: string; labels: { label: string; span: { line: number; column: number } }[] };
+    const found = (diagnostics["unread.jsx"] as Labeled[]).map(it => [
+      it.code,
+      ...it.labels.map(({ label, span }) => `${span.line}:${span.column} ${label}`),
+    ]);
+    expect(found.sort()).toEqual([
+      ["react(exhaustive-effect-dependencies)", "5:7 Unnecessary dependency `el`"],
+      ["react(memo-dependencies)", "8:7 Unnecessary dependency `el`"],
+      [
+        "react(preserve-manual-memoization)",
+        "16:6 This dependency list does not match the dependencies inferred from the callback",
+        "15:14 This dependency is inferred here",
+      ],
+    ]);
+    expect(exit).toBe(1);
+  });
+
   test("reports nothing for a path that contains node_modules", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);

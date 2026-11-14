@@ -16,10 +16,11 @@
 use crate::collections::{IdBitSet, IdMap, IndexMap, sort_slice_by};
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
@@ -27,7 +28,7 @@ use crate::hir::{
     MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
     ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
-use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
+use crate::optimization::dead_code_elimination::find_semantic_only_instructions;
 
 // =============================================================================
 // Public entry point
@@ -1858,6 +1859,8 @@ struct DependencyCollectionContext<'a> {
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
+    /// Not in upstream: each variable that earlier code names above its declaration.
+    hoisted: SmallVec<[DeclarationId; 4]>,
 }
 
 impl<'a> DependencyCollectionContext<'a> {
@@ -1875,6 +1878,7 @@ impl<'a> DependencyCollectionContext<'a> {
             temporaries,
             processed_instrs_in_optional,
             inner_fn_context: None,
+            hoisted: SmallVec::new(),
         }
     }
 
@@ -2013,7 +2017,20 @@ impl<'a> DependencyCollectionContext<'a> {
             path: hir_vec![],
             loc: resolved.map_or(place.loc, |it| it.loc),
         };
-        self.visit_dependency(dep, env);
+        // A declaration in front of a memo block ends the TDZ of a hoisted variable. For a read in a function of
+        // client output, PropagateEarlyReturns declares the variable, or leaves the component as written.
+        let declaration_id = env.identifiers[dep.identifier.0 as usize].declaration_id;
+        if self.inner_fn_context.is_none()
+            || env.output_mode != OutputMode::Client
+            || !self.hoisted.contains(&declaration_id)
+        {
+            self.declare_outside_original_scope(dep.identifier, env);
+        }
+        if self.check_valid_dependency(&dep, env)
+            && let Some(top) = self.dep_stack.last_mut()
+        {
+            top.push(dep);
+        }
     }
 
     fn visit_property(
@@ -2141,8 +2158,11 @@ fn visit_inner_function_blocks(
         return;
     }
 
+    // A function is called after the render that made it, and has to read the variables of that render. Only in
+    // client output: a server render runs a memo block once, and the lint rules are upstream's.
+    let unread_reads = env.output_mode == OutputMode::Client;
     let semantic_only =
-        find_semantic_only_caught_instructions(&env.functions[func_id.0 as usize], env);
+        find_semantic_only_instructions(&env.functions[func_id.0 as usize], env, unread_reads);
 
     // Nothing looks at the function itself through `env` while it is visited.
     let func = std::mem::replace(
@@ -2197,7 +2217,7 @@ fn handle_instruction(
     ctx.declare(instr.lvalue.identifier, id, env);
 
     if is_semantic_only {
-        // See `find_semantic_only_caught_instructions`.
+        // See `find_semantic_only_instructions`.
         for operand in visitors::operands(&instr.value, &[]) {
             ctx.visit_operand_root(operand, env);
         }
@@ -2241,6 +2261,9 @@ fn handle_instruction(
         | InstructionValue::DeclareContext { lvalue, .. } => {
             if lvalue.kind.unhoisted().is_none() {
                 ctx.declare(lvalue.place.identifier, id, env);
+            } else {
+                let identifier = &env.identifiers[lvalue.place.identifier.0 as usize];
+                ctx.hoisted.push(identifier.declaration_id);
             }
         }
         InstructionValue::Destructure {
@@ -2281,7 +2304,9 @@ fn collect_dependencies(
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &HashSet<ProcessedInstr>,
 ) -> Result<IndexMap<ScopeId, Vec<ReactiveScopeDependency>>, CompilerDiagnostic> {
-    let semantic_only = find_semantic_only_caught_instructions(func, env);
+    // Not `unread_reads`: that declares the root before the passes that prune and merge scopes, and a store to
+    // the root behind the read then goes stale. PropagateEarlyReturns declares what a read in the body needs.
+    let semantic_only = find_semantic_only_instructions(func, env, false);
     let mut ctx = DependencyCollectionContext::new(temporaries, processed_instrs_in_optional);
 
     // Declare params

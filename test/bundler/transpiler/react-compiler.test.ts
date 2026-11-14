@@ -894,6 +894,390 @@ describe("bundler", () => {
     },
   });
 
+  // DeadCodeElimination keeps the value of a block, so a read of a property that nothing reads stays where it is one:
+  // `el?.offsetHeight;` (there to flush the layout), the update of a `for`, the last statement of a handler. A read
+  // leaves its dependency to what reads it, and nothing reads this one. A function whose only use of `el` it was, was
+  // made once and kept the `el` of the first render. babel-plugin-react-compiler 1.0.0 does the same. A nested
+  // function now depends on the variable that such a read is on. The guard reads the variable and not a path: a
+  // path at render would be a read that the source does not have there.
+  //
+  // A row is the log of each render of a function, then the size of its memo cache ("-": it has none). The build
+  // without the compiler prints the same log, but for the rows that have a log of their own.
+  {
+    const files = {
+      // What a function that renders has, by the order of its hooks. An effect runs at once, when it has no
+      // list or the list is another.
+      "/node_modules/react/index.js": `
+        const hooks = new Map();
+        const hook = make => {
+          const list = hooks.get(globalThis.rendering) ?? hooks.set(globalThis.rendering, []).get(globalThis.rendering);
+          const at = globalThis.hook++;
+          return at in list ? list[at] : (list[at] = make());
+        };
+        const changed = deps => {
+          const slot = hook(() => ({}));
+          const same = slot.deps && deps && slot.deps.length === deps.length && deps.every((it, i) => Object.is(it, slot.deps[i]));
+          slot.deps = deps;
+          return !same;
+        };
+        exports.useEffect = (f, deps) => { if (changed(deps)) { const cleanup = f(); if (typeof cleanup === "function") cleanup(); } };
+        exports.useLayoutEffect = exports.useEffect;
+        exports.useCallback = (f, deps) => { const slot = hook(() => ({})); if (changed(deps)) slot.f = f; return slot.f; };
+        exports.useRef = current => hook(() => ({ current }));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx; exports.Fragment = "fragment";`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p }); exports.Fragment = "fragment";`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+        exports.size = fn => caches.get(fn)?.length ?? "-";
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    };
+    const entry = /* jsx */ `
+      import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+      import { size } from "react/compiler-runtime";
+      let log = [];
+      // A getter gives the same value for each element, so a guard on what a read gives cannot tell them apart.
+      const mk = name => ({
+        get x() { log.push(name + ".x"); return 0; },
+        get y() { log.push(name + ".y"); return 0; },
+        get a() { log.push(name + ".a"); return { get b() { log.push(name + ".a.b"); return 0; } }; },
+        flush() { log.push(name + ".flush()"); },
+      });
+      const a = mk("a"), b = mk("b");
+      const sink = () => {};
+      const thrower = () => { throw new Error("thrown"); };
+      const useNothing = () => 0;
+      const count = (...lists) => lists.length;
+      const mutate = value => value;
+
+      // An optional chain that nothing reads.
+      function useOptional(el) { useEffect(() => { el?.x; }); }
+      function useOptionalDeep(el) { useEffect(() => { el?.a.b; }); }
+      function useOptionalInner(el) { useEffect(() => { el.a?.b; }); }
+      function useOptionalTwice(el) { useEffect(() => { el?.a?.b; }); }
+      function useOptionalOfProps(props) { useEffect(() => { props.el?.x; }); }
+      function useVoid(el) { useEffect(() => { void el?.x; }); }
+      function useUnusedConst(el) { useEffect(() => { const unused = el?.x; }); }
+      function useTwoReads(el) { useEffect(() => { el?.x; el?.y; }); }
+      function useStatementAfter(el, d) { useEffect(() => { el?.x; sink(d); }); }
+      function useUsedToo(el) { useEffect(() => { el?.x; sink(el?.x); }); }
+      function useComputed(el, k) { useEffect(() => { el.a?.[k]; }); }
+      function useComputedKey(el, o) { useEffect(() => { el?.[o?.y]; }); }
+      // It is the value of a comma, \`&&\`, \`||\` or \`?:\` that nothing reads. In a bundle with \`minify.syntax\` the parser
+      // makes one comma expression of the statements of a function before the compiler sees them.
+      function useCommaFirst(el, d) { useEffect(() => { el?.x, sink(d); }); }
+      function useCommaLast(el, d) { useEffect(() => { sink(d), el?.x; }); }
+      function useCommaLastDeep(el, d) { useEffect(() => { sink(d), el?.a.b; }); }
+      function useCommaComputed(el, k) { useEffect(() => { sink(k), el.a[k]; }); }
+      function useAnd(el, d) { useEffect(() => { d && el?.x; }); }
+      function useOr(el, d) { useEffect(() => { !d || el?.x; }); }
+      function useTernaryArms(el, d) { useEffect(() => { d ? el?.x : el?.y; }); }
+      function useAndComma(el, d) { useEffect(() => { d && (sink(d), el?.x); }); }
+      function useAndDeep(el, d) { useEffect(() => { d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && el?.x))))))))))))))))); }); }
+      // A read with no \`?.\` that ends a block: the update of a \`for\`, the last statement of a handler.
+      function useForUpdate(el) { useEffect(() => { for (let i = 0; i < 1; el.x) i++; }); }
+      function useCatchTail(el) { useEffect(() => { try { thrower(); } catch { el.x; } }); }
+      function useCatchTailOptional(el) { useEffect(() => { try { thrower(); } catch { el?.x; } }); }
+      function useCatchTailInATry(el) { useEffect(() => { try { try { thrower(); } catch { el.x; } } catch {} }); }
+      function useForUpdateInATry(el) { useEffect(() => { try { for (let i = 0; i < 1; el.x) i++; } catch {} }); }
+      // What reads the value is kept only for its throw.
+      function useUnderACaughtRead(el, d) { useEffect(() => { try { (d && el?.x).y; } catch {} }); }
+      // It is stored in a variable that nothing reads, or a pattern reads it.
+      function useCommaStore(el, d) { useEffect(() => { let p; sink(d), p = el?.x; }); }
+      function useStatementsStore(el, d) { useEffect(() => { let p; sink(d); p = el?.x; }); }
+      function useAndStore(el, d) { useEffect(() => { let p; d && (p = el?.x); }); }
+      function useForInitPattern(el, d) { useEffect(() => { for (const { b } = el.a; d; ) break; }); }
+      // In a loop, what reads it can be what it is stored in. A variable can hold it.
+      function useForUpdateSum(el) { useEffect(() => { let sum = 0; for (let i = 0; i < 1; sum += el?.x) i++; }); }
+      function useDoWhileSum(el) { useEffect(() => { let sum = 0, i = 0; do { i++; } while ((sum = sum + el?.x), i < 1); }); }
+      function useForUpdateOfAConst(el) { useEffect(() => { const v = el?.x; for (let i = 0; i < 1; v) i++; }); }
+      function useForUpdateOfAFunction(el) { useEffect(() => { const v = el?.x; for (let i = 0; ; () => v) { if (i++) break; } }); }
+      function useCommaIncrement(el, d) { useEffect(() => { let p = el?.x; sink(d), p++; }); }
+      // It is under what only makes a value of it, and nothing reads that value.
+      function useStatementsPlus(el, d) { useEffect(() => { sink(d); el?.x + 1; }); }
+      function useCommaPlus(el, d) { useEffect(() => { sink(d), el?.x + 1; }); }
+      function useForUpdateVoid(el) { useEffect(() => { for (let i = 0; i < 1; void el?.x) i++; }); }
+      function useForUpdatePlus(el) { useEffect(() => { for (let i = 0; i < 1; el?.x + 1) i++; }); }
+      function useForUpdateTemplate(el) { useEffect(() => { for (let i = 0; i < 1; \`\${el?.x}\`) i++; }); }
+      function useForUpdateArray(el) { useEffect(() => { for (let i = 0; i < 1; [el?.x]) i++; }); }
+      function useForUpdateObject(el) { useEffect(() => { for (let i = 0; i < 1; { x: el?.x }) i++; }); }
+      function useForUpdateElement(el) { useEffect(() => { for (let i = 0; i < 1; <i x={el?.x} />) i++; }); }
+      function useForUpdateFragment(el) { useEffect(() => { for (let i = 0; i < 1; <>{el?.x}</>) i++; }); }
+      // Where the read is, and what holds the function.
+      function useUnderIf(el, d) { useEffect(() => { if (d) { el?.x; } }); }
+      function useUnderWhile(el) { useEffect(() => { let i = 0; while (i++ < 1) { el?.x; } }); }
+      function useUnderLabel(el, d) { useEffect(() => { out: { if (!d) break out; el?.x; } }); }
+      function useCleanup(el) { useEffect(() => () => { el?.x; }); }
+      function useDeclaration(el) { function flush() { el?.x; } useEffect(flush); }
+      function useAsync(el) { useEffect(() => { (async () => { el?.x; })(); }); }
+      function useMethod(el) { const o = { m() { el?.x; } }; useEffect(o.m); }
+      function useInner(el) { useEffect(() => { const g = () => { el?.x; }; g(); }); }
+      function Handler({ el }) { return <div onClick={() => { el?.x; }} />; }
+      function useLayout(node) { useLayoutEffect(() => { node?.x; }, [node]); }
+      // A ref that the function gets is a variable like another.
+      function useRefParameter(ref) { useLayoutEffect(() => { ref.current?.x; }); }
+      function RefProp({ innerRef }) { useLayoutEffect(() => { innerRef.current?.x; }); return <div />; }
+      // No getter: the handler of the first render holds the \`list\` that was null.
+      function HandlerOfAList({ list }) { return <div onClick={() => { list[0]?.id; log.push("read"); }} />; }
+      // The guard reads the variable and no path: this handler is not called, and \`node.inner\` is undefined.
+      function HandlerThatIsNotCalled({ node }) { const onClick = () => { node.inner.deep?.x; }; return <div onClick={onClick} />; }
+      // The function is made again only when \`el\` is another: each number is a function.
+      function useSame(el) { useNothing(); return () => { el?.x; }; }
+      // What else the function reads keeps its path: the props of the second render are another object.
+      function useSameWithAPath(props, el) { useNothing(); return () => { sink(props.a.b); el?.x; }; }
+      // What the function depends on is declared in a memo block before it: \`ReferenceError: el is not defined\`.
+      function useRest({ el, ...rest }) { useEffect(() => { el?.x; }); return rest; }
+      // A store into another local after memo blocks that merge.
+      function MethodNextToAStore({ c }) {
+        let w = [c];
+        const info = [w[0]];
+        count(w), count(info);
+        const v = { a: [c] };
+        count(v);
+        const o = { m() { v?.length; return "read"; } };
+        const stored = [(w = ["k"])];
+        mutate(stored);
+        return <div state={o.m()} info={info} />;
+      }
+      // The body reads, for nothing, another variable of the memo block that the variable of the function is from.
+      function BodyReadBesideAFunction({ c }) {
+        const { node, rows } = measure(c);
+        count(node, rows);
+        useLayoutEffect(() => { node?.x; });
+        const firstId = rows[0]?.id;
+        return <div state="read" />;
+      }
+      function BodyForUpdateBesideAFunction({ c }) {
+        let w = [c];
+        const v = [c, 1];
+        count(w, v);
+        const f = () => { w?.length; return "read"; };
+        for (let i = 0; i < 2; v) i++;
+        return <div state={f()} />;
+      }
+      // A dependency array that names the variable.
+      function useCallbackOfEl(el) { useNothing(); return useCallback(() => { el?.x; }, [el]); }
+      function useCallbackOfAPathAndEl(props, el) { useNothing(); return useCallback(() => { sink(props.a.b); el?.x; }, [props.a.b, el]); }
+      // Left as written, as with a read that is used: the array does not name the variable that the compiler infers.
+      // Main compiles the first two, and they log what the source logs. Its third keeps the first element.
+      function useCallbackOfNothing(el) { useNothing(); return useCallback(() => { el?.x; }, []); }
+      function useCallbackOfWhatIsRead(el) { useNothing(); return useCallback(() => { el?.x; }, [el?.x]); }
+      function useCallbackOfAPath(props) { useNothing(); return useCallback(() => { props.el?.x; }, [props.el]); }
+      // A read with no \`?.\` that ends a statement is removed, as on main. Where the parser joins it to the statement
+      // before it (above), it is the value of a comma: it stays, and the function follows the variable. An array that
+      // names the path is then not what the compiler infers, and the hook is left as written.
+      function useStatementsPlain(el, d) { useEffect(() => { sink(d); el.x; }); }
+      function useCallbackOfAPlainPath(el, d) { useNothing(); return useCallback(() => { sink(d); el.x; }, [d, el.x]); }
+      // As before: what is read is not a variable of the component.
+      function useRefCurrent(el) { const ref = useRef(el); useEffect(() => { ref.current?.x; }); }
+      function useOwnParameter(list) { useEffect(() => { list.forEach(item => { item?.x; }); }); }
+      // As before: a call, a read in a \`try\`, a read that is used, a render body.
+      function useCall(el) { useEffect(() => { el?.flush(); }); }
+      function useTry(el) { useEffect(() => { try { el?.x; } catch {} }); }
+      function useUsed(el) { useEffect(() => { sink(el?.x); }); }
+      function RenderBody({ el, k }) { const list = []; el?.x; list.push(k); return <div>{list}</div>; }
+      // As before: a store in a \`try\` of a render body, which only the update of a \`for\` reads.
+      function StoreInATry({ k }) {
+        let x = [];
+        const before = count(x);
+        let state = "not run";
+        try { x = {}, sink(k), state = "ran"; } catch (e) { state = "caught " + e.name; }
+        for (let i = 0; i < 1; x.probe) i++;
+        return <div before={before} state={state} />;
+      }
+
+      // A read that nothing reads is compiled as a use of its variable: \`if (el) sink()\` beside it changes nothing.
+      function useOptionalAndUse(el) { useEffect(() => { el?.x; if (el) sink(); }); }
+      function useCommaLastAndUse(el, d) { useEffect(() => { sink(d), el?.x; if (el) sink(); }); }
+      function useForUpdateAndUse(el) { useEffect(() => { for (let i = 0; i < 1; el.x) i++; if (el) sink(); }); }
+      function HandlerAndUse({ el }) { return <div onClick={() => { el?.x; if (el) sink(); }} />; }
+      function useRestAndUse({ el, ...rest }) { useEffect(() => { el?.x; if (el) sink(); }); return rest; }
+
+      const measure = c => ({ node: c === 1 ? a : b, rows: [{ id: c }] });
+      const render = (fn, args, then) => {
+        globalThis.rendering = fn;
+        globalThis.hook = 0;
+        log = [];
+        try { const out = fn(...args); if (then) then(out); } catch (e) { log.push("throws " + e.name); }
+        return log.join(" ") || "-";
+      };
+      const logs = (fn, renders, then) => renders.map(args => render(fn, args, then)).join(" | ") + " [" + size(fn) + "]";
+      const row = (fn, renders, then) => console.log(fn.name + ": " + logs(fn, renders, then));
+      const call = callback => callback();
+      const click = element => { try { element.p.onClick(); } catch (e) { log.push("throws " + e.name); } };
+      const same = (seen = []) => f => { if (!seen.includes(f)) seen.push(f); log.push(seen.indexOf(f)); };
+      const state = element => log.push(element.p.state);
+      const els = [[a, true], [a, true], [b, true]];
+      const renderedWith = [[{ c: 1 }], [{ c: 1 }], [{ c: 2 }]];
+      const keyed = [[a, "b"], [a, "b"], [b, "b"]];
+      const props = [[{ el: a, k: 1 }], [{ el: a, k: 1 }], [{ el: b, k: 1 }]];
+      const one = { a: { b: 1 } }, two = { a: { b: 2 } };
+      const paths = [[one, a], [{ ...one }, a], [one, b], [two, b]];
+      for (const fn of [useOptional, useOptionalDeep, useOptionalInner, useOptionalTwice]) row(fn, els);
+      row(useOptionalOfProps, props);
+      for (const fn of [useVoid, useUnusedConst, useTwoReads, useStatementAfter, useUsedToo]) row(fn, els);
+      row(useComputed, keyed);
+      row(useComputedKey, [[a, a], [a, a], [b, b]]);
+      for (const fn of [useCommaFirst, useCommaLast, useCommaLastDeep]) row(fn, els);
+      row(useCommaComputed, keyed);
+      for (const fn of [useAnd, useOr, useTernaryArms, useAndComma, useAndDeep]) row(fn, els);
+      for (const fn of [useForUpdate, useCatchTail, useCatchTailOptional, useCatchTailInATry, useForUpdateInATry, useUnderACaughtRead]) row(fn, els);
+      for (const fn of [useCommaStore, useStatementsStore, useAndStore]) row(fn, els);
+      row(useForInitPattern, els);
+      for (const fn of [useForUpdateSum, useDoWhileSum, useForUpdateOfAConst, useForUpdateOfAFunction, useCommaIncrement]) row(fn, els);
+      for (const fn of [useStatementsPlus, useCommaPlus, useForUpdateVoid, useForUpdatePlus, useForUpdateTemplate, useForUpdateArray, useForUpdateObject, useForUpdateElement, useForUpdateFragment]) row(fn, els);
+      for (const fn of [useUnderIf, useUnderWhile, useUnderLabel, useCleanup, useDeclaration, useAsync, useMethod, useInner]) row(fn, els);
+      row(Handler, props, click);
+      row(useLayout, [[null], [a], [a], [b]]);
+      const refA = { current: a }, refB = { current: b };
+      row(useRefParameter, [[refA], [refA], [refB]]);
+      row(RefProp, [[{ innerRef: refA }], [{ innerRef: refA }], [{ innerRef: refB }]]);
+      row(HandlerOfAList, [[{ list: null }], [{ list: [1] }], [{ list: [2] }]], click);
+      row(HandlerThatIsNotCalled, [[{ node: {} }], [{ node: {} }]]);
+      row(useSame, [a, a, b, b, a, null, a].map(el => [el]), same());
+      row(useSameWithAPath, paths, same());
+      row(useRest, props);
+      row(MethodNextToAStore, renderedWith, state);
+      row(BodyReadBesideAFunction, renderedWith, state);
+      row(BodyForUpdateBesideAFunction, renderedWith, state);
+      row(useCallbackOfEl, els, call);
+      row(useCallbackOfAPathAndEl, paths, call);
+      row(useCallbackOfNothing, els, call);
+      row(useCallbackOfWhatIsRead, els, call);
+      row(useCallbackOfAPath, props, call);
+      row(useStatementsPlain, els);
+      row(useCallbackOfAPlainPath, els, call);
+      row(useRefCurrent, els);
+      row(useOwnParameter, [[[a]], [[a]], [[b]]]);
+      for (const fn of [useCall, useTry, useUsed]) row(fn, els);
+      row(RenderBody, props);
+      row(StoreInATry, [[{ k: 1 }], [{ k: 1 }], [{ k: 2 }]], state);
+      const twins = [
+        [useOptional, useOptionalAndUse, els],
+        [useCommaLast, useCommaLastAndUse, els],
+        [useForUpdate, useForUpdateAndUse, els],
+        [Handler, HandlerAndUse, props, click],
+        [useRest, useRestAndUse, props],
+      ];
+      console.log("twins: " + twins.map(([fn, twin, renders, then]) => (logs(fn, renders, then) === logs(twin, renders, then) ? "same" : fn.name)).join(" | ") + " [-]");
+    `;
+    const followed = "a.x | a.x | b.x";
+    const followedDeep = "a.a a.a.b | a.a a.a.b | b.a b.a.b";
+    // The fourth column: what the compiled build logs, where that is another log. The fifth: the log and the size
+    // of the compiled build with `minify.syntax`, where they are others.
+    type Size = number | "-";
+    const rows: [name: string, log: string, size: Size, compiled?: string, minified?: [string, Size]][] = [
+      ["useOptional", followed, 2],
+      ["useOptionalDeep", followedDeep, 2],
+      ["useOptionalInner", followedDeep, 2],
+      ["useOptionalTwice", followedDeep, 2],
+      ["useOptionalOfProps", followed, 2],
+      ["useVoid", followed, 2],
+      ["useUnusedConst", followed, 2],
+      ["useTwoReads", "a.x a.y | a.x a.y | b.x b.y", 2],
+      ["useStatementAfter", followed, 3],
+      ["useUsedToo", "a.x a.x | a.x a.x | b.x b.x", 2],
+      ["useComputed", followedDeep, 3],
+      ["useComputedKey", "a.y | a.y | b.y", 3],
+      ["useCommaFirst", followed, 3],
+      ["useCommaLast", followed, 3],
+      ["useCommaLastDeep", followedDeep, 3],
+      ["useCommaComputed", followedDeep, 3],
+      ["useAnd", followed, 3],
+      ["useOr", followed, 3],
+      ["useTernaryArms", followed, 3],
+      ["useAndComma", followed, 3],
+      ["useAndDeep", followed, 3],
+      ["useForUpdate", followed, 2],
+      ["useCatchTail", followed, 2],
+      ["useCatchTailOptional", followed, 2],
+      ["useCatchTailInATry", followed, 2],
+      ["useForUpdateInATry", followed, 2],
+      ["useUnderACaughtRead", followed, 3],
+      ["useCommaStore", followed, 3],
+      ["useStatementsStore", followed, 3],
+      ["useAndStore", followed, 3],
+      ["useForInitPattern", followedDeep, 3],
+      ["useForUpdateSum", followed, 2],
+      ["useDoWhileSum", followed, 2],
+      ["useForUpdateOfAConst", followed, 2],
+      ["useForUpdateOfAFunction", followed, 2],
+      ["useCommaIncrement", followed, 3],
+      ["useStatementsPlus", followed, 3],
+      ["useCommaPlus", followed, 3],
+      ["useForUpdateVoid", followed, 2],
+      ["useForUpdatePlus", followed, 2],
+      ["useForUpdateTemplate", followed, 2],
+      ["useForUpdateArray", followed, 2],
+      ["useForUpdateObject", followed, 2],
+      ["useForUpdateElement", followed, 2],
+      ["useForUpdateFragment", followed, 2],
+      ["useUnderIf", followed, 3],
+      ["useUnderWhile", followed, 2],
+      ["useUnderLabel", followed, 3],
+      ["useCleanup", followed, 2],
+      ["useDeclaration", followed, 2],
+      ["useAsync", followed, 2],
+      ["useMethod", followed, 2],
+      ["useInner", followed, 2],
+      ["Handler", followed, 2],
+      ["useLayout", "- | a.x | - | b.x", 3],
+      ["useRefParameter", followed, 2],
+      ["RefProp", followed, 3],
+      ["HandlerOfAList", "throws TypeError | read | read", 2],
+      ["HandlerThatIsNotCalled", "- | -", 2],
+      ["useSame", "0 | 1 | 2 | 3 | 4 | 5 | 6", 2, "0 | 0 | 1 | 1 | 2 | 3 | 4"],
+      ["useSameWithAPath", "0 | 1 | 2 | 3", 3, "0 | 0 | 1 | 2"],
+      ["useRest", followed, 5],
+      ["MethodNextToAStore", "read | read | read", 11],
+      ["BodyReadBesideAFunction", "a.x read | a.x read | b.x read", 6],
+      ["BodyForUpdateBesideAFunction", "read | read | read", 5],
+      ["useCallbackOfEl", followed, 2],
+      ["useCallbackOfAPathAndEl", "a.x | a.x | b.x | b.x", 3],
+      ["useCallbackOfNothing", "a.x | a.x | a.x", "-"],
+      ["useCallbackOfWhatIsRead", "a.x a.x | a.x a.x | b.x a.x", "-"],
+      ["useCallbackOfAPath", followed, "-"],
+      ["useStatementsPlain", followed, 2, "- | - | -", [followed, 3]],
+      ["useCallbackOfAPlainPath", "a.x a.x | a.x a.x | b.x a.x", 2, "- | - | -", ["a.x a.x | a.x a.x | b.x a.x", "-"]],
+      ["useRefCurrent", "a.x | a.x | a.x", 1],
+      ["useOwnParameter", followed, 2],
+      ["useCall", "a.flush() | a.flush() | b.flush()", 2],
+      ["useTry", followed, 2],
+      // The guard reads `el?.x` at render, and takes `a` and `b` for the same: upstream's rule for a read that is used.
+      ["useUsed", followed, 2, "a.x a.x a.x | a.x a.x | b.x a.x"],
+      // Render code is pure for upstream: the read is in the memo block of `list`, which `k` alone guards.
+      ["RenderBody", followed, 2, "a.x | - | -"],
+      ["StoreInATry", "ran | ran | ran", 6],
+      ["twins", "same | same | same | same | same", "-"],
+    ];
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/FunctionThatKeepsAnUnreadRead-plain-syntax=${minifySyntax}`, {
+        files: { "/entry.jsx": entry, ...files },
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        run: { stdout: rows.map(([name, log]) => `${name}: ${log} [-]`).join("\n") },
+      });
+      const compiled = rows.map(([name, log, size, compiled = log, minified]) =>
+        minifySyntax && minified ? `${name}: ${minified[0]} [${minified[1]}]` : `${name}: ${compiled} [${size}]`,
+      );
+      itBundled(`react-compiler/FunctionThatKeepsAnUnreadRead-compiled-syntax=${minifySyntax}`, {
+        files: { "/entry.jsx": entry, ...files },
+        reactCompiler: true,
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        run: { stdout: compiled.join("\n") },
+      });
+    }
+  }
+
   // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
   itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
     files: {
@@ -2954,26 +3338,26 @@ describe("bundler", () => {
       FunctionCalledAboveItsDeclaration: read | read | read | read | read [as written]
       FunctionThatCallsItself: read | read | read | read | read [as written]
       HoistedAboveAnUnreachableConst: read | read | read | read | read [7]
-      InAClosure: read | read | read | read | read [7]
-      InAHandler: read | read | read | read | read [7]
+      InAClosure: read | read | read | read | read [6]
+      InAHandler: read | read | read | read | read [2]
       InALaterScope: read | read | read | read | read [8]
       InAMergedScopeAndAfterIt: read | read | read | read | read [5]
-      InAMethod: read | read | read | read | read [7]
+      InAMethod: read | read | read | read | read [6]
       InAScopeMergedTwice: read | read | read | read | read [7]
       LastStatementOfAHandler: read | read | read | read | read [5]
       LocalFunctionThatALaterClosureCalls: read | read | read | read | read [7]
       NestedScopeWithoutAnotherOutput: read | read | read | read | read [6]
       NestedScopes: read | read | read | read | read [9]
       OneOfTwoDestructuredNames: read | read | read | read | read [5]
-      OptionalChainInAClosure: read | read | read | read | read [7]
+      OptionalChainInAClosure: read | read | read | read | read [6]
       ReadAboveTheLetIsCaught: read | read | read | read | read [as written]
-      ReadInAMethodNextToAStore: read | read | read | read | read [8]
+      ReadInAMethodNextToAStore: read | read | read | read | read [11]
       ReadInTheScopeThatFollows: read | read | read | read | read [2]
       ReadThenStore: read | read | read | read | read [3]
       ScopeThatReturnsItsValueEarly: read | read | read | read | read [4]
       ScopeWithAHookCall: read | read | read | read | read [5]
       ScopeWithAnEarlyReturn: read | read | read | read | read [5]
-      ScopeWithoutAnotherOutput: read | read | read | read | read [3]
+      ScopeWithoutAnotherOutput: read | read | read | read | read [4]
       Sidebar: read | read | read | read | read [10]
       StatementInTry: read | read | read | read | read [5]
       UsedReadThenStore: read | read | read | read | read [3]
@@ -2995,10 +3379,9 @@ describe("bundler", () => {
       });
     }
 
-    // A read that nothing uses is still no input of the closure that holds it. `onClick` is built once and keeps
-    // the first `list`: when that one is `null`, each call throws.
+    // A read that nothing uses makes the closure that holds it depend on its variable: `onClick` is built again
+    // for another `list`. See `react-compiler/FunctionThatKeepsAnUnreadRead`.
     itBundled("react-compiler/UnusedReadIsAnInputOfItsClosure", {
-      todo: true,
       files: {
         "/entry.jsx": /* jsx */ `
           function Handler({ list }) {
@@ -5602,6 +5985,49 @@ test("react-compiler does not end the process on a try in which nothing but a re
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toContain("function Component(props)");
+  expect(exitCode).toBe(0);
+});
+
+// `bun test --react-compiler` compiles what a test imports. See `react-compiler/FunctionThatKeepsAnUnreadRead`.
+test("bun test --react-compiler makes a function that keeps an unread read again for another element", async () => {
+  using dir = tempDir("react-compiler-unread-read", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+    }),
+    "node_modules/react/index.js": `export const useEffect = effect => { effect(); };`,
+    "node_modules/react/compiler-runtime.js": `
+      let cache;
+      export const c = size => (cache ??= Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "useFlush.jsx": `
+      import { useEffect } from "react";
+      export function useFlush(el) { useEffect(() => { el?.offsetHeight; }); }
+    `,
+    "flush.test.js": `
+      import { expect, test } from "bun:test";
+      import { useFlush } from "./useFlush";
+      test("each render reads the element that it got", () => {
+        const log = [];
+        const element = name => ({ get offsetHeight() { log.push(name); return 0; } });
+        const a = element("a"), b = element("b");
+        for (const el of [a, a, b]) useFlush(el);
+        expect(String(useFlush)).toMatch(/\\$\\[\\d+\\]/);
+        expect(log).toEqual(["a", "a", "b"]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./flush.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });
 

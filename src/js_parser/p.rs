@@ -3447,6 +3447,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // The directive of a function also makes strict what its parameters hold, such as a function in a decorator.
+        if scope.kind == js_ast::scope::Kind::FunctionArgs
+            && scope.strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        {
+            for child in scope.children.slice_mut() {
+                child.recursive_set_strict_mode(js_ast::StrictModeKind::ExplicitStrictMode);
+            }
+        }
+
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the

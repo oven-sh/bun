@@ -605,6 +605,26 @@ describe("bundler", () => {
     run: { stdout: "dec=outer" },
   });
 
+  // `(b = function ...) : c => { "use strict" ... }` is first read as an arrow function with a return type.
+  itBundled("directive/UseStrictOfAnAbandonedArrowFunction", {
+    files: {
+      "/entry.cts": /* ts */ `
+        var x: any = 1, b: any;
+        var r: any = x ? (b = function (n: any) {
+          { function g() { return "inner" } }
+          arguments[0] = 9;
+          var package = 1;
+          let: for (;;) break let;
+          return [typeof g, n, package];
+        }) : c => { "use strict"; return c };
+        console.log(JSON.stringify(r(1)));
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: '["function",9,1]' },
+  });
+
   // A bundle keeps the directive of a wrapped file, so each of these would make the whole bundle unparsable.
   for (const [name, code, error] of [
     ["With", `with (o) { x; }`, `With statements cannot be used in strict mode`],

@@ -156,7 +156,7 @@ describe("Bun.serve() cookies", () => {
   });
 
   test("set-cookie", async () => {
-    const res = await fetch(server.url + "/tester", {
+    const res = await fetch(new URL("/tester", server.url), {
       method: "POST",
       body: JSON.stringify([["test", "test"]]),
     });
@@ -174,7 +174,7 @@ describe("Bun.serve() cookies", () => {
     `);
   });
   test("set two cookies", async () => {
-    const res = await fetch(server.url + "/tester", {
+    const res = await fetch(new URL("/tester", server.url), {
       method: "POST",
       body: JSON.stringify([
         ["test", "test"],
@@ -197,7 +197,7 @@ describe("Bun.serve() cookies", () => {
     `);
   });
   test("delete cookie", async () => {
-    const res = await fetch(server.url + "/tester", {
+    const res = await fetch(new URL("/tester", server.url), {
       method: "POST",
       body: JSON.stringify([["test", null]]),
     });
@@ -211,7 +211,7 @@ describe("Bun.serve() cookies", () => {
     `);
   });
   test("request with cookies", async () => {
-    const res = await fetch(server.url + "/tester", {
+    const res = await fetch(new URL("/tester", server.url), {
       method: "POST",
       body: JSON.stringify([
         ["do_modify", "c"],
@@ -238,7 +238,7 @@ describe("Bun.serve() cookies", () => {
     `);
   });
   test("request that doesn't modify cookies doesn't set cookies", async () => {
-    const res = await fetch(server.url + "/tester", {
+    const res = await fetch(new URL("/tester", server.url), {
       method: "POST",
       body: JSON.stringify([]),
       headers: {
@@ -325,7 +325,7 @@ describe("Bun.serve() cookies 2", () => {
     `);
   });
   test("server sets cookie on redirect", async () => {
-    const response = await fetch(server.url + "/redirect", {
+    const response = await fetch(new URL("/redirect", server.url), {
       headers: {
         "Cookie": "abc=def; ghi=jkl",
       },
@@ -359,7 +359,7 @@ describe("cookie path option", () => {
   afterAll(() => server.stop());
 
   test("cookie path option", async () => {
-    const response = await fetch(server.url + "/x/y");
+    const response = await fetch(new URL("/x/y", server.url));
     expect(response.status).toBe(200);
     expect(response.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [

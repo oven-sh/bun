@@ -22,29 +22,31 @@ test("fetch with Request object respects redirect: 'manual' option", async () =>
     },
   });
 
+  const redirect = new URL("/redirect", server.url).href;
+
   // Test 1: Direct fetch with redirect: "manual" (currently works)
-  const directResponse = await fetch(`${server.url}/redirect`, {
+  const directResponse = await fetch(redirect, {
     redirect: "manual",
   });
   expect(directResponse.status).toBe(302);
-  expect(directResponse.url).toBe(`${server.url}/redirect`);
+  expect(directResponse.url).toBe(redirect);
   expect(directResponse.headers.get("location")).toBe("/target");
   expect(directResponse.redirected).toBe(false);
 
   // Test 2: Fetch with Request object and redirect: "manual" (currently broken)
-  const request = new Request(`${server.url}/redirect`, {
+  const request = new Request(redirect, {
     redirect: "manual",
   });
   const requestResponse = await fetch(request);
   expect(requestResponse.status).toBe(302);
-  expect(requestResponse.url).toBe(`${server.url}/redirect`); // This should be the original URL, not the target
+  expect(requestResponse.url).toBe(redirect); // This should be the original URL, not the target
   expect(requestResponse.headers.get("location")).toBe("/target");
   expect(requestResponse.redirected).toBe(false);
 
   // Test 3: Verify the behavior matches Node.js and Deno
   const testScript = `
     async function main() {
-      const request = new Request("${server.url}/redirect", {
+      const request = new Request("${redirect}", {
         redirect: "manual",
       });
       const response = await fetch(request);
@@ -76,7 +78,7 @@ test("fetch with Request object respects redirect: 'manual' option", async () =>
   // Actual (bug): status=200, url=target, redirected=true
   expect(bunResult).toEqual({
     status: 302,
-    url: `${server.url}/redirect`,
+    url: redirect,
     redirected: false,
     location: "/target",
   });
@@ -98,7 +100,8 @@ test("fetch with Request object respects redirect: 'manual' for external URLs", 
     },
   });
 
-  const request = new Request(`${server.url}/redirect`, {
+  const redirect = new URL("/redirect", server.url).href;
+  const request = new Request(redirect, {
     redirect: "manual",
   });
 
@@ -106,7 +109,7 @@ test("fetch with Request object respects redirect: 'manual' for external URLs", 
 
   // When redirect: "manual" is set, we should get the redirect response
   expect(response.status).toBe(302);
-  expect(response.url).toBe(`${server.url}/redirect`);
+  expect(response.url).toBe(redirect);
   expect(response.redirected).toBe(false);
   expect(response.headers.get("location")).toBe("/target");
 });
@@ -139,7 +142,8 @@ test("fetch with Request respects redirect when fetch has other options but no r
   });
 
   // Create a Request with redirect: "manual"
-  const request = new Request(`${server.url}/redirect`, {
+  const redirect = new URL("/redirect", server.url).href;
+  const request = new Request(redirect, {
     redirect: "manual",
     headers: {
       "X-Original": "request",
@@ -156,7 +160,7 @@ test("fetch with Request respects redirect when fetch has other options but no r
   });
 
   expect(response1.status).toBe(302);
-  expect(response1.url).toBe(`${server.url}/redirect`);
+  expect(response1.url).toBe(redirect);
   expect(response1.redirected).toBe(false);
   expect(response1.headers.get("location")).toBe("/target");
 
@@ -177,6 +181,6 @@ test("fetch with Request respects redirect when fetch has other options but no r
   const response3 = await fetch(request, {});
 
   expect(response3.status).toBe(302);
-  expect(response3.url).toBe(`${server.url}/redirect`);
+  expect(response3.url).toBe(redirect);
   expect(response3.redirected).toBe(false);
 });

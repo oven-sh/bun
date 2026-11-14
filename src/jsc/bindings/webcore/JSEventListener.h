@@ -48,6 +48,10 @@ public:
 
     bool wasCreatedFromMarkup() const { return m_wasCreatedFromMarkup; }
 
+    // node's kIsNodeStyleListener: the listener is called with the NodeStyleEventValue of the dispatch, not the Event.
+    bool isNodeStyle() const { return m_isNodeStyle; }
+    void setIsNodeStyle() { m_isNodeStyle = true; }
+
     JSC::JSObject* ensureJSFunction(ScriptExecutionContext&) const;
     DOMWrapperWorld* isolatedWorld() const { return m_isolatedWorld.get(); }
 
@@ -85,12 +89,36 @@ private:
 
     bool m_isAttribute : 1;
     bool m_wasCreatedFromMarkup : 1;
+    bool m_isNodeStyle : 1;
 
     mutable bool m_isInitialized : 1;
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;
     mutable JSC::Weak<JSC::JSObject> m_wrapper;
 
     RefPtr<DOMWrapperWorld> m_isolatedWorld;
+};
+
+// node's kHybridDispatch(nodeValue, type, event): dispatch() calls the node-style listeners of `event` with `value`.
+class NodeStyleEventValue {
+    WTF_MAKE_NONCOPYABLE(NodeStyleEventValue);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    static void dispatch(JSC::VM&, EventTarget&, Event&, JSC::JSValue);
+
+    // Empty when the dispatch of `event` supplied no value.
+    static JSC::JSValue find(JSC::VM&, const Event&);
+
+private:
+    NodeStyleEventValue(JSC::VM&, const Event&, JSC::JSValue);
+    ~NodeStyleEventValue();
+
+    JSVMClientData& m_clientData;
+    const Event& m_event;
+    JSC::JSValue m_value;
+    // The Event wrapper, held for the dispatch: a listener that got m_value in its place does not hold it.
+    JSC::JSObject* m_eventWrapper { nullptr };
+    NodeStyleEventValue* m_outer;
 };
 
 // For "onxxx" attributes that automatically set up JavaScript event listeners.

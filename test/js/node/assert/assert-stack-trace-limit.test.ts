@@ -63,13 +63,18 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
     });
   }
 
-  // util.inspect of Bun throws an error of its own for a throw below the first level.
+  // util.inspect of node ignores a `stack` that throws, so node throws what the hook throws for the AssertionError.
+  // util.inspect of Bun throws an error of its own until #45254.
   test("Error.prepareStackTrace throws for an Error inside an object", () => {
     const { thrown, limit } = run(() => {
       Error.prepareStackTrace = throwFromHook;
       assert.deepStrictEqual({ error: new Error("actual") }, { error: null });
     });
-    assert.ok(thrown instanceof Error);
+    if (isNode) {
+      assert.strictEqual(thrown, fromHook);
+    } else {
+      assert.strictEqual(`${thrown}`, "AssertionError: handleMaxCallStackSize assertion failed: Error: from the hook");
+    }
     assert.strictEqual(limit, limitOfTest);
   });
 
@@ -147,10 +152,10 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
     });
   }
 
-  // node throws the AssertionError here. Bun throws a TypeError until util.inspect can print the copy of the reason.
+  // node throws the AssertionError. util.inspect of Bun throws a TypeError for the copy of the reason until #45254.
   test("an operand is the reason of an aborted AbortSignal", () => {
     const { thrown, limit } = run(() => assert.deepStrictEqual(AbortSignal.abort().reason, new Error("expected")));
-    assert.ok(thrown instanceof Error);
+    assert.ok(thrown instanceof (isNode ? AssertionError : TypeError), `threw ${thrown}`);
     assert.strictEqual(limit, limitOfTest);
   });
 });

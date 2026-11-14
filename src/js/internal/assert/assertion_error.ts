@@ -274,15 +274,12 @@ class AssertionError extends Error {
     } = options;
     let { actual, expected } = options;
 
-    // The program can make Error.stackTraceLimit read-only, for example with Object.freeze(Error): then the writes
-    // throw. node asks isErrorStackTraceLimitWritable() before each write. That costs a property descriptor, and it
-    // lets the error of a setter that throws out of the assertion, which these `catch` do not:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/assertion_error.js#L266-L267
+    // The program can make Error.stackTraceLimit read-only, for example with Object.freeze(Error).
     const limit = Error.stackTraceLimit;
     try {
       Error.stackTraceLimit = 0;
     } catch {}
-    // node restores the limit with no `finally` (#L353): there an operand whose getter throws leaves it at 0.
+    // node has no `finally`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/assertion_error.js#L353
     try {
       if (message != null) {
         if (kMethodsWithCustomMessageDiff.has(operator)) {

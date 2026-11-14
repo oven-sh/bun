@@ -2989,7 +2989,7 @@ fn maybe_watch_file(
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
     if matches!(
-        watcher.add_file::<true>(input_file_fd, path.text, hash, bun_sys::Fd::INVALID),
+        watcher.add_file(input_file_fd, path.text, hash, bun_sys::Fd::INVALID),
         Ok(bun_watcher::FdOwnership::Watcher)
     ) {
         *should_close_input_file_fd = false;
@@ -3023,7 +3023,7 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let added = watcher.add_file::<true>(input_fd, path_text, hash, bun_sys::Fd::INVALID);
+    let added = watcher.add_file(input_fd, path_text, hash, bun_sys::Fd::INVALID);
     if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
         // Not adopted (already watched, or add failed); close the fd opened above.
         if input_fd.is_valid() {

@@ -1,0 +1,20 @@
+# Cells of "what a later file reads after each kind of earlier file" in mock-module.test.ts: a run of the two files reads something else than a run with --isolate.
+# <earlier file> > <later file> > <what is read>: <read> (with --isolate: <read>)
+# Why each of them differs, and what the same run read before a mock kept the modules that the test file imports:
+#   two mocks behind import(): import() leaves no link in the registry, so the first mock still evicts what the file got from it. The same before.
+#   top.js at its load: the earlier file evaluated the module, and the test file is linked to that instance. The same before. "from import()" is new: the mock no longer evicts the module.
+#   a hoisted mock with an export of its own: the mock updates the module of the earlier file in place, which adds no export, and the later mock no longer evicts it. New.
+#   a mock, then a call of a function that requires: the require() that the earlier file made listed the module as a child of the module that the test file imports. New.
+a call of a function that requires > a hoisted mock with an export of its own > the exports of utils.js: ["util"] (with --isolate: ["extra","util"])
+a call of a function that requires > a mock, then a call of a function that requires > snap.js at its load: "real-dep" (with --isolate: "mock-dep")
+a call of a function that requires > two mocks behind import() > the import of the file: "real-util+mock-dep" (with --isolate: "mock-util")
+a call of a function that requires > two mocks in a module that the file imports first, then what a module computed at its load > top.js at its load, from import(): "real-util+real-dep" (with --isolate: "mock-util")
+a call of a function that requires > two mocks in a module that the file imports first, then what a module computed at its load > top.js at its load: "real-util+real-dep" (with --isolate: "mock-util")
+require() > a hoisted mock with an export of its own > the exports of utils.js: ["util"] (with --isolate: ["extra","util"])
+require() > two mocks behind import() > the import of the file: "real-util+mock-dep" (with --isolate: "mock-util")
+require() > two mocks in a module that the file imports first, then what a module computed at its load > top.js at its load, from import(): "real-util+real-dep" (with --isolate: "mock-util")
+require() > two mocks in a module that the file imports first, then what a module computed at its load > top.js at its load: "real-util+real-dep" (with --isolate: "mock-util")
+static imports > a hoisted mock with an export of its own > the exports of utils.js: ["util"] (with --isolate: ["extra","util"])
+static imports > two mocks behind import() > the import of the file: "real-util+mock-dep" (with --isolate: "mock-util")
+static imports > two mocks in a module that the file imports first, then what a module computed at its load > top.js at its load, from import(): "real-util+real-dep" (with --isolate: "mock-util")
+static imports > two mocks in a module that the file imports first, then what a module computed at its load > top.js at its load: "real-util+real-dep" (with --isolate: "mock-util")

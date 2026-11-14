@@ -5,9 +5,9 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
+import { afterAll, describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
@@ -6552,6 +6552,464 @@ describe.concurrent("vi.mock() with an async factory, of a module that is loaded
     ["by a preload, as its mock, under --isolate", ["--preload", "./preload.js", "--isolate"]],
   ])("%s: the imports of the file get the mock", async (_, args) => {
     await expectFixturesToPass(files, 3, args);
+  });
+});
+
+describe.concurrent("a test file that holds modules an earlier test file loaded", () => {
+  const mockDep = `("./dep.js", () => ({ dep: () => "mock-dep" }));`;
+  const mockUtils = `("./utils.js", () => ({ util: () => "mock-util" }));`;
+  const graph = {
+    "dep.js": `export const dep = () => "real-dep";`,
+    "utils.js": `import { dep } from "./dep.js"; export const util = () => "real-util+" + dep();`,
+    "consumer.js": `import { util } from "./utils.js"; export const consume = () => util();`,
+    // Each reads the module below it while it is evaluated.
+    "snap.js": `import { dep } from "./dep.js"; export const atLoad = dep();`,
+    "top.js": `import { consume } from "./consumer.js"; export const atLoad = consume();`,
+    "other.js": `export const other = () => "real-other";`,
+    "dep.cjs": `exports.dep = () => "real-dep";`,
+    "utils.cjs": `const dep = require("./dep.cjs"); exports.util = () => "real-util+" + dep.dep();`,
+    "consumer.cjs": `const utils = require("./utils.cjs"); exports.consume = () => utils.util();`,
+    "host.js": `import { hostname } from "node:os"; export const host = () => "host+" + hostname();`,
+    // An ES module that gets a CommonJS module from require() while it is evaluated, and one that does so when it is called.
+    "loader.js": `export const consumer = require("./consumer.cjs");`,
+    "lazy.js": `export const load = () => require("./snap.js");`,
+    // The second evaluation of flaky.js throws if a test says so.
+    "flaky.js": `if (globalThis.flakyThrows) throw new Error("flaky"); export const flaky = "flaky";`,
+    "both.js": `import { dep } from "./dep.js"; import { flaky } from "./flaky.js"; export const both = () => dep() + "+" + flaky;`,
+    // No test file but the second one loads these two.
+    "fresh.js": `import { consume } from "./consumer.js"; export const viaFresh = () => consume();`,
+    "mocks.js": `import { mock } from "bun:test"; mock.module${mockDep} mock.module${mockUtils}`,
+    "preload.js": `import * as consumer from "./consumer.js"; globalThis.consumerOfPreload = consumer;`,
+    "a.test.js": `
+      import { expect, test } from "bun:test";
+      import { consume } from "./consumer.js";
+      import { atLoad as snap } from "./snap.js";
+      import { atLoad as top } from "./top.js";
+      import { other } from "./other.js";
+      import { host } from "./host.js";
+      import { consumer } from "./loader.js";
+      import { both } from "./both.js";
+      test("loads the modules, and mocks none", () => {
+        expect([consume(), snap, top, other(), require("./consumer.cjs").consume(), both()]).toEqual([
+          "real-util+real-dep",
+          "real-dep",
+          "real-util+real-dep",
+          "real-other",
+          "real-util+real-dep",
+          "real-dep+flaky",
+        ]);
+        expect(require("./consumer.cjs")).toBe(consumer);
+        expect(host()).toStartWith("host+");
+      });
+    `,
+  };
+  const imports = `import { beforeAll, expect, jest, mock, test, vi } from "bun:test";`;
+  const twoMocks = `mock.module${mockDep} mock.module${mockUtils}`;
+  const secondMockReachesFile = `test("the second mock reaches it", () => expect(consume()).toBe("mock-util"));`;
+  const mocksInTestReachFile = `test("the second mock reaches it", () => { ${twoMocks} expect(consume()).toBe("mock-util"); });`;
+
+  // [title, the second test file, the tests in it]. What each expects is what the file gets when it runs alone.
+  const laterFiles: [string, string, number?][] = [
+    ...[
+      ["mock.module()", twoMocks],
+      ["jest.doMock()", `jest.doMock${mockDep} jest.doMock${mockUtils}`],
+      ["mock.module() in beforeAll()", `beforeAll(() => { ${twoMocks} });`],
+      ["jest.mock() in beforeAll()", `beforeAll(() => { jest.mock${mockDep} jest.mock${mockUtils} });`],
+      ["vi.mock() in beforeAll()", `beforeAll(() => { vi.mock${mockDep} vi.mock${mockUtils} });`],
+      ["a module that the file imports", `import "./mocks.js";`],
+    ].map(([by, mocks]): [string, string] => [
+      `a mock of a module, then of its importer, by ${by}`,
+      `${imports} import { consume } from "./consumer.js"; ${mocks} ${secondMockReachesFile}`,
+    ]),
+    [
+      "a mock of a module, then of its importer, by a module that the file imports first",
+      `${imports} import "./mocks.js"; import { consume } from "./consumer.js"; ${secondMockReachesFile}`,
+    ],
+    ...[
+      ["require()", `const { consume } = require("./consumer.js");`],
+      ["a module that only this file loads", `import { viaFresh as consume } from "./fresh.js";`],
+    ].map(([by, hold]): [string, string] => [
+      `the file has the importer from ${by}`,
+      `${imports} ${hold} ${twoMocks} ${secondMockReachesFile}`,
+    ]),
+    [
+      "the file imports from vitest",
+      `
+        import { expect, test } from "vitest";
+        import { mock } from "bun:test";
+        import { consume } from "./consumer.js";
+        test("the second mock reaches it", async () => {
+          ${twoMocks}
+          expect(consume()).toBe("mock-util");
+          expect((await import("./consumer.js")).consume).toBe(consume);
+        });
+      `,
+    ],
+    ["the mocks are made in a test", `${imports} import { consume } from "./consumer.js"; ${mocksInTestReachFile}`],
+    [
+      "a mock of the module that the file imports itself",
+      `
+        ${imports}
+        import { consume } from "./consumer.js";
+        mock.module${mockDep}
+        mock.module("./consumer.js", () => ({ consume: () => "mock-consumer" }));
+        test("the file's binding is the mock", () => expect(consume()).toBe("mock-consumer"));
+      `,
+    ],
+    [
+      "a mock of a builtin module, then of its importer",
+      `
+        ${imports}
+        import { host } from "./host.js";
+        mock.module("node:os", () => ({ hostname: () => "mock-os" }));
+        mock.module("./host.js", () => ({ host: () => "mock-host" }));
+        test("the second mock reaches the file", () => expect(host()).toBe("mock-host"));
+      `,
+    ],
+    [
+      "import() after a mock gives the module that the file is linked to",
+      `
+        ${imports}
+        import * as utils from "./utils.js";
+        mock.module${mockDep}
+        test("one instance", async () => {
+          expect(await import("./utils.js")).toBe(utils);
+          expect(utils.util()).toBe("real-util+mock-dep");
+        });
+      `,
+    ],
+    [
+      "CommonJS modules that the file got out of require.cache stay in it",
+      `
+        ${imports}
+        import { basename } from "node:path";
+        const consumer = require("./consumer.cjs");
+        mock.module("./dep.cjs", () => ({ dep: () => "mock-dep" }));
+        test("one instance", () => {
+          expect(Object.keys(require.cache).filter(key => key.endsWith(".cjs")).map(key => basename(key)).sort()).toEqual(["consumer.cjs", "dep.cjs", "utils.cjs"]);
+          expect(require("./consumer.cjs")).toBe(consumer);
+        });
+      `,
+    ],
+    [
+      "what an ES module that the file imports got from require() stays in require.cache",
+      `
+        ${imports}
+        import { consumer } from "./loader.js";
+        mock.module("./dep.cjs", () => ({ dep: () => "mock-dep" }));
+        test("one instance", () => expect(require("./consumer.cjs")).toBe(consumer));
+      `,
+    ],
+    [
+      "CommonJS modules that the file got out of require.cache stay in it after module.children is read",
+      `
+        ${imports}
+        const consumer = require("./consumer.cjs");
+        for (const key of Object.keys(require.cache)) if (key.endsWith(".cjs")) require.cache[key].children;
+        mock.module("./dep.cjs", () => ({ dep: () => "mock-dep" }));
+        test("one instance", () => expect(require("./consumer.cjs")).toBe(consumer));
+      `,
+    ],
+    [
+      "a module that the file holds stays when another of its imports fails to load again",
+      `
+        ${imports}
+        import * as both from "./both.js";
+        test("one instance", async () => {
+          delete require.cache[require.resolve("./flaky.js")];
+          globalThis.flakyThrows = true;
+          expect(await import("./flaky.js").catch(error => error.message)).toBe("flaky");
+          globalThis.flakyThrows = false;
+          mock.module${mockDep}
+          expect(await import("./both.js")).toBe(both);
+          expect(both.both()).toBe("mock-dep+flaky");
+        });
+      `,
+    ],
+    // The rest passes without the fix too: what the file doesn't hold when the mock is made is still evaluated again.
+    [
+      "an importer that the file has yet to import is evaluated with the mock",
+      `
+        ${imports}
+        import { consume } from "./consumer.js";
+        mock.module${mockDep}
+        test("evaluated again", async () => {
+          expect((await import("./snap.js")).atLoad).toBe("mock-dep");
+          expect(consume()).toBe("real-util+mock-dep");
+        });
+      `,
+    ],
+    [
+      "an importer of a module that the file holds is evaluated with the mock, and linked to that module",
+      `
+        ${imports}
+        import * as consumer from "./consumer.js";
+        mock.module${mockDep}
+        test("evaluated again", async () => {
+          expect((await import("./top.js")).atLoad).toBe("real-util+mock-dep");
+          expect(await import("./consumer.js")).toBe(consumer);
+        });
+      `,
+    ],
+    [
+      "the text of a module that the file imports is no hold of the module",
+      `
+        ${imports}
+        import source from "./snap.js" with { type: "text" };
+        mock.module${mockDep}
+        test("evaluated again", async () => {
+          expect(source).toContain("atLoad");
+          expect((await import("./snap.js")).atLoad).toBe("mock-dep");
+        });
+      `,
+    ],
+    ...["import", "vi.importActual"].map((load): [string, string] => [
+      `${load}() that is under way when the mock is made is evaluated with the mock`,
+      `
+        ${imports}
+        const snap = ${load}("./snap.js");
+        mock.module${mockDep}
+        test("evaluated again", async () => expect((await snap).atLoad).toBe("mock-dep"));
+      `,
+    ]),
+  ];
+
+  test.each(laterFiles)("%s", async (_, later, tests = 1) => {
+    await expectFixturesToPass({ ...graph, "b.test.js": later }, 1 + tests, ["./a.test.js", "./b.test.js"]);
+  });
+
+  // One after another in one run: what a file leaves behind must not change what the next one gets.
+  test.each([
+    ["in the written order", false],
+    ["the other way round", true],
+  ])("all of those files after one another, %s", async (_, reversed) => {
+    const files: Record<string, string> = { ...graph };
+    const order = reversed ? laterFiles.toReversed() : laterFiles;
+    order.forEach(([, later], index) => (files[`later${index}.test.js`] = later));
+    const pass = order.reduce((sum, [, , tests = 1]) => sum + tests, 1);
+    await expectFixturesToPass(files, pass, ["./a.test.js", ...order.map((_, index) => `./later${index}.test.js`)]);
+  });
+
+  // Several of them to a child run: each file gets a registry of its own there.
+  const perRun = 6;
+  describe.each(isolationFlags.slice(1))("every one of those files gets the same by itself %j", args => {
+    test.each(Array.from({ length: Math.ceil(laterFiles.length / perRun) }, (_, run) => run * perRun))(
+      "from file %i on",
+      async first => {
+        const files: Record<string, string> = { ...graph };
+        const run = laterFiles.slice(first, first + perRun);
+        run.forEach(([, later], index) => (files[`later${index}.test.js`] = later));
+        const pass = run.reduce((sum, [, , tests = 1]) => sum + tests, 1);
+        await expectFixturesToPass(files, pass, [
+          ...args,
+          "./a.test.js",
+          ...run.map((_, index) => `./later${index}.test.js`),
+        ]);
+      },
+    );
+  });
+
+  test("the next test file gets the modules that were not mocked", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "b.test.js": `${imports} import { consume } from "./consumer.js"; ${twoMocks} ${secondMockReachesFile}`,
+        "c.test.js": `
+          ${imports}
+          import { consume } from "./consumer.js";
+          import { atLoad } from "./snap.js";
+          test("not mocked", () => expect([consume(), atLoad]).toEqual(["real-util+real-dep", "real-dep"]));
+        `,
+      },
+      3,
+      ["./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+  });
+
+  test("a module that an earlier test file loaded makes the mocks, and the second one reaches what it imports", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "helper.js": `
+          import { mock } from "bun:test";
+          import { consume } from "./consumer.js";
+          globalThis.helper = { consume, mockBoth() { ${twoMocks} } };
+        `,
+        "a.test.js": `import { test } from "bun:test"; import "./helper.js"; test("loads the modules", () => {});`,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the second mock reaches it", () => {
+            helper.mockBoth();
+            expect(helper.consume()).toBe("mock-util");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  // A second run of a file finds what its first run left, as a later file does.
+  test.each([[[]], [["--isolate"]]])("every run of a file under --rerun-each gets the same %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "unmock.test.js": `
+          ${imports}
+          import { consume } from "./consumer.js";
+          test("the second mock reaches it", () => {
+            ${twoMocks}
+            expect(consume()).toBe("mock-util");
+            jest.unmock("./utils.js");
+            jest.unmock("./dep.js");
+          });
+          test("imports it again", async () => expect((await import("./consumer.js")).consume()).toBe("real-util+real-dep"));
+        `,
+        "require.test.js": `
+          ${imports}
+          import { afterEach } from "bun:test";
+          afterEach(() => { vi.doUnmock("./dep.js"); });
+          test("with the mock", () => {
+            mock.module${mockDep}
+            expect(require("./snap.js").atLoad).toBe("mock-dep");
+          });
+          test("without the mock", () => expect(require("./snap.js").atLoad).toBe("real-dep"));
+        `,
+      },
+      8,
+      [...args, "--rerun-each=2", "./unmock.test.js", "./require.test.js"],
+    );
+  });
+
+  test("modules that a preload loaded stay as they are", async () => {
+    await expectFixturesToPass(
+      {
+        ...graph,
+        "b.test.js": `
+          ${imports}
+          import * as consumer from "./consumer.js";
+          ${twoMocks}
+          test("the second mock reaches it", async () => {
+            expect(consumer.consume()).toBe("mock-util");
+            expect([consumer, await import("./consumer.js")]).toEqual([consumerOfPreload, consumerOfPreload]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+    );
+  });
+
+  // What a later file reads after each kind of earlier file, against what it reads with --isolate, where every file gets a registry of its own.
+  // mock-module.known.txt holds the cells where the two differ, a line `<earlier file> > <later file> > <what is read>: <read> (with --isolate: <read>)`.
+  // A line that is cured, one that changes and a new one all fail. BUN_REWRITE_MOCK_MODULE_KNOWN=1 writes the list anew.
+  describe("what a later file reads after each kind of earlier file", () => {
+    const loaded = ["consumer", "snap", "top", "lazy"];
+    const earlier: Record<string, string> = {
+      "static imports": `${loaded.map(name => `import "./${name}.js";`).join(" ")} test("loads", () => {});`,
+      "require()": `test("loads", () => { ${loaded.map(name => `require("./${name}.js");`).join(" ")} });`,
+      "a call of a function that requires": `import { load } from "./lazy.js"; import "./top.js"; test("loads", () => expect(load().atLoad).toBe("real-dep"));`,
+    };
+    const readsImport = `say("the import of the file", consume());`;
+    const readsExports = `say("the exports of utils.js", Object.keys(await import("./utils.js")).sort());`;
+    const later: Record<string, string> = {
+      ...Object.fromEntries(
+        [
+          ["a static import", `import { consume } from "./consumer.js";`],
+          ["import()", `const { consume } = await import("./consumer.js");`],
+          ["require()", `const { consume } = require("./consumer.js");`],
+        ].map(([by, hold]) => [
+          `two mocks behind ${by}`,
+          `${hold} test("reads", async () => { ${twoMocks} ${readsImport} say("snap.js at its load", (await import("./snap.js")).atLoad); });`,
+        ]),
+      ),
+      "two mocks in a module that the file imports first": `import "./mocks.js"; import { consume } from "./consumer.js"; test("reads", async () => { ${readsImport} say("top.js at its load", (await import("./top.js")).atLoad); });`,
+      "two mocks in a module that the file imports first, then what a module computed at its load": `import "./mocks.js"; import { atLoad } from "./top.js"; test("reads", async () => { say("top.js at its load", atLoad); say("top.js at its load, from import()", (await import("./top.js")).atLoad); });`,
+      "a mock, then a call of a function that requires": `import { load } from "./lazy.js"; test("reads", () => { mock.module${mockDep} say("snap.js at its load", load().atLoad); });`,
+      "a mock behind a callback that an earlier file left": `test("reads", async () => { await globalThis.leftover?.(); mock.module${mockDep} say("top.js at its load", (await import("./top.js")).atLoad); });`,
+      ...Object.fromEntries(
+        [
+          ["a hoisted mock", `jest.mock("./utils.js", () => ({ util: () => "mock-util", extra: 1 }));`, ""],
+          ["a mock", "", `mock.module("./utils.js", () => ({ util: () => "mock-util", extra: 1 }));`],
+          [
+            "a mock that spreads jest.requireActual()",
+            "",
+            `mock.module("./utils.js", () => ({ ...jest.requireActual("./utils.js"), extra: 1 }));`,
+          ],
+        ].map(([by, hoisted, inTest]) => [
+          `${by} with an export of its own`,
+          `import { consume } from "./consumer.js"; ${hoisted} test("reads", async () => { mock.module${mockDep} ${inTest} ${readsImport} ${readsExports} });`,
+        ]),
+      ),
+    };
+    const fileOf = (kind: string) => `${kind.replace(/\W+/g, "-")}.test.js`;
+    const files: Record<string, string> = { ...graph };
+    // Every earlier file leaves a callback behind. One later file calls it.
+    for (const [kind, source] of Object.entries(earlier))
+      files[`earlier-${fileOf(kind)}`] =
+        `import { expect, test } from "bun:test"; globalThis.leftover = () => import("./top.js"); ${source}`;
+    for (const [kind, source] of Object.entries(later))
+      files[`later-${fileOf(kind)}`] =
+        `import { expect, jest, mock, test, vi } from "bun:test"; const say = (what, read) => console.log(${JSON.stringify(`| ${kind} > `)} + what + ": " + JSON.stringify(read)); ${source}`;
+
+    let dir: ReturnType<typeof tempDir> | undefined;
+    // Every file of a run has one test, and none of them fails: what a later file reads is printed, not asserted.
+    async function read(args: string[], pass: number) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        cwd: String((dir ??= tempDir("mock-module-order", files))),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
+      expect(exitCode).toBe(0);
+      const said = new Map<string, string>();
+      for (const line of stdout.split("\n")) {
+        const found = line.match(/^\| (.+?): (.*)$/);
+        if (found) said.set(found[1], found[2]);
+      }
+      return said;
+    }
+
+    const list = join(import.meta.dir, "mock-module.known.txt");
+    const known = readFileSync(list, "utf8").split("\n");
+    const found: string[] = [];
+    let isolated: ReturnType<typeof read> | undefined;
+    let cells = 0;
+    afterAll(() => {
+      dir?.[Symbol.dispose]();
+      if (!process.env.BUN_REWRITE_MOCK_MODULE_KNOWN) return;
+      // A run of some of the cells would drop the lines of the others.
+      if (cells !== Object.keys(earlier).length * Object.keys(later).length)
+        throw new Error("BUN_REWRITE_MOCK_MODULE_KNOWN=1 needs every cell: run the file without a filter");
+      writeFileSync(list, [...known.filter(line => line.startsWith("#")), ...found.sort(), ""].join("\n"));
+    });
+
+    describe.each(Object.keys(earlier))("after %s", before => {
+      test.each(Object.keys(later))("%s", async after => {
+        isolated ??= read(
+          ["--isolate", ...Object.keys(later).map(kind => `./later-${fileOf(kind)}`)],
+          Object.keys(later).length,
+        );
+        const [expected, got] = await Promise.all([
+          isolated,
+          read([`./earlier-${fileOf(before)}`, `./later-${fileOf(after)}`], 2),
+        ]);
+        cells++;
+        const reads = [...expected].filter(([what]) => what.startsWith(`${after} > `));
+        // Every later file says one line at the least.
+        expect(reads).not.toBeEmpty();
+        const differing = reads
+          .filter(([what, read]) => got.get(what) !== read)
+          .map(([what, read]) => `${before} > ${what}: ${got.get(what) ?? "nothing"} (with --isolate: ${read})`)
+          .sort();
+        found.push(...differing);
+        if (!process.env.BUN_REWRITE_MOCK_MODULE_KNOWN)
+          expect(differing).toEqual(known.filter(line => line.startsWith(`${before} > ${after} > `)));
+      });
+    });
   });
 });
 

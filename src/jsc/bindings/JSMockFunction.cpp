@@ -3030,7 +3030,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     JSC::JSObject* object = objectValue.getObject();
-    // A step below can name an object that an earlier step is for, such as globalThis from the factory of a module mock. A cycle of them ends at the limit.
+    // A step below can name an object that an earlier step is for, such as globalThis from the factory of a module mock. So the steps repeat until none applies. The limit ends a cycle of them.
     for (unsigned redirects = 0;; ++redirects) {
         if (object->type() == JSC::JSType::GlobalProxyType)
             object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
@@ -3041,8 +3041,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             return {};
         }
 
-        if (redirects == maxSpyTargetRedirects)
-            break;
         JSObject* resolved = object;
 
         // A node:vm global reads a key that the contextified object inherits from that object, but says it has no such key. So spy there.
@@ -3084,6 +3082,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
         if (object == resolved)
             break;
+        if (redirects == maxSpyTargetRedirects) {
+            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKey), "` property because it is behind more than "_s, maxSpyTargetRedirects, " node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it"_s));
+            return {};
+        }
     }
 
     if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {

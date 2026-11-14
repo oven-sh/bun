@@ -3206,6 +3206,25 @@ describe.concurrent("a mocked module's exports are read from the object the fact
             expect(read()).toEqual(["original", "original", "original"]);
           });
 
+          // Each context reads toString() through the global of the context inside it. The module mock is one more step.
+          test.each([7, 8])("the global of %d node:vm contexts, each made of the global of the next", async depth => {
+            const sandbox = {};
+            let context = vm.createContext(sandbox);
+            for (let i = 1; i < depth; i++) context = vm.createContext(vm.runInContext("this", context));
+            mock.module("contexts-" + depth, () => vm.runInContext("this", context));
+            const ns = await import("contexts-" + depth);
+            if (depth === 7) {
+              const spy = spyOn(ns, "toString").mockReturnValue("spied");
+              expect([ns.toString(), vm.runInContext("toString()", context)]).toEqual(["spied", "spied"]);
+              spy.mockRestore();
+            } else {
+              expect(() => spyOn(ns, "toString")).toThrow(
+                new TypeError("Cannot spy on the \`toString\` property because it is behind more than 8 node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it"),
+              );
+            }
+            expect([vm.runInContext("toString", context), Object.keys(sandbox)]).toEqual([Object.prototype.toString, []]);
+          });
+
           test("import.meta.env", async () => {
             process.env.HANDED_ON = "original";
             mock.module("the-env", () => import.meta.env);
@@ -3245,7 +3264,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
           });
         `,
       },
-      7,
+      9,
     );
   });
 });

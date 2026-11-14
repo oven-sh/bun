@@ -1778,6 +1778,44 @@ describe("spyOn", () => {
       ]).toEqual([original, false, []]);
     });
 
+    // Every global inherits toString(), so each context reads it through its contextified object: the global of the context inside it.
+    describe("made of the global of another context, many times over", () => {
+      function nestContexts(depth) {
+        const sandbox = {};
+        let context = vm.createContext(sandbox);
+        for (let i = 1; i < depth; i++) context = vm.createContext(vm.runInContext("this", context));
+        return { sandbox, context, global: vm.runInContext("this", context) };
+      }
+
+      test("8 contexts: spies on the sandbox of the innermost one", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = nestContexts(8);
+        const fn = spyOn(global, "toString").mockReturnValue("spied");
+        expect([vm.runInContext("toString()", context), sandbox.toString]).toEqual(["spied", fn]);
+        fn.mockRestore();
+        expect([vm.runInContext("toString", context), Object.getOwnPropertyNames(sandbox)]).toEqual([
+          Object.prototype.toString,
+          [],
+        ]);
+      });
+
+      test("9 contexts: throws, and installs nothing", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = nestContexts(9);
+        const spy = () => spyOn(global, "toString");
+        expect(spy).toThrow(TypeError);
+        expect(spy).toThrow(
+          new TypeError(
+            "Cannot spy on the `toString` property because it is behind more than 8 node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it",
+          ),
+        );
+        expect([vm.runInContext("toString", context), Object.getOwnPropertyNames(sandbox)]).toEqual([
+          Object.prototype.toString,
+          [],
+        ]);
+      });
+    });
+
     // A window of jsdom is such a context, and its addEventListener() is EventTarget.prototype's.
     test("made of an instance of a class: spies on a method of the class, calls through and restores it", () => {
       class Sandbox {

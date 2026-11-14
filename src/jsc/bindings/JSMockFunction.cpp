@@ -308,12 +308,12 @@ static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, Pro
     return object->type() == ProxyObjectType;
 }
 
-// Lets a spy replace a property of a locked built-in. No JavaScript may run meanwhile, and the traps of an opaque object are JavaScript.
+// Lets a spy replace a property of a locked built-in, or an export. No JavaScript may run meanwhile. Only an object whose write hooks are the engine's own can be locked, and those run none.
 class ThroughLockOfBuiltins {
 public:
-    ThroughLockOfBuiltins(VM& vm, bool isOpaque)
+    ThroughLockOfBuiltins(VM& vm, JSObject* target, bool replacesExport = false)
     {
-        if (!isOpaque)
+        if (replacesExport || target->structure()->mayHaveImmutableProperties())
             m_allow.emplace(vm);
     }
 
@@ -986,7 +986,7 @@ private:
         if (attributes & SpyAttributeESModuleNamespace) {
             if (!original)
                 return;
-            ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
+            ThroughLockOfBuiltins throughLock(globalObject->vm(), target, true);
 #if ENABLE(AOT)
             if (JSC::AOT::isModuleNamespace(target)) {
                 bool isBack = JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
@@ -1013,13 +1013,12 @@ private:
                 return;
         }
 
-        // Behind the lookup above: the global of a node:vm context asks its sandbox, which may be a Proxy.
-        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
+        ThroughLockOfBuiltins throughLock(globalObject->vm(), target);
         scope.release();
         if (original) {
             putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
-        } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
-            // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
+        } else if (!isOpaque && target->inherits<NodeVMGlobalObject>() && !parseIndex(identifier)) {
+            // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy of a name never was. putDirectIndex() put the spy of an index there.
             DeletePropertySlot slot;
             NodeVMGlobalObject::Base::deleteProperty(target, globalObject, identifier, slot);
         } else {
@@ -2984,6 +2983,8 @@ enum class SpyAccess : uint8_t {
     Set,
 };
 
+static constexpr unsigned maxSpyTargetRedirects = 8;
+
 __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -3029,50 +3030,63 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     JSC::JSObject* object = objectValue.getObject();
-    if (object->type() == JSC::JSType::GlobalProxyType)
-        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+    // A step below can name an object that an earlier step is for, such as globalThis from the factory of a module mock. So the steps repeat until none applies. The limit ends a cycle of them.
+    for (unsigned redirects = 0;; ++redirects) {
+        if (object->type() == JSC::JSType::GlobalProxyType)
+            object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
-    // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
-    if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
-        throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
-        return {};
-    }
-
-    // A node:vm global reads a key that the contextified object inherits from that object, but says it has no such key. So spy there.
-    if (auto* contextGlobal = dynamicDowncast<NodeVMGlobalObject>(object)) {
-        if (JSObject* contextified = contextGlobal->contextifiedObject()) {
-            bool isOwn = contextified->hasOwnProperty(globalObject, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
-            bool isInherited = !isOwn && contextified->hasProperty(globalObject, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (isInherited)
-                object = contextified;
+        // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
+        if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
+            throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
+            return {};
         }
-    }
 
-    // In tests `import.meta.env` is backed by `process.env`, so spy there.
-    if (object->structure()->typeInfo().prohibitsPropertyCaching()) [[unlikely]] {
-        if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object))
-            object = env;
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+        JSObject* resolved = object;
 
-    // A module mock's exports are read live from the object its factory returned, so spy on that object.
+        // A node:vm global reads a key that the contextified object inherits from that object, but says it has no such key. So spy there.
+        if (auto* contextGlobal = dynamicDowncast<NodeVMGlobalObject>(object)) {
+            if (JSObject* contextified = contextGlobal->contextifiedObject()) {
+                bool isOwn = contextified->hasOwnProperty(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool isInherited = !isOwn && contextified->hasProperty(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (isInherited)
+                    object = contextified;
+            }
+        }
+
+        // In tests `import.meta.env` is backed by `process.env`, so spy there.
+        if (object->structure()->typeInfo().prohibitsPropertyCaching()) [[unlikely]] {
+            if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object))
+                object = env;
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        // A module mock's exports are read live from the object its factory returned, so spy on that object.
 #if ENABLE(AOT)
-    while (globalObject->aotInstance()) {
-        JSObject* exports = Bun::compiledMockExportHolder(globalObject, object, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exports)
-            break;
-        object = exports;
-    }
+        while (globalObject->aotInstance()) {
+            JSObject* exports = Bun::compiledMockExportHolder(globalObject, object, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!exports)
+                break;
+            object = exports;
+        }
 #endif
-    while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
-        JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exports)
+        while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
+            JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!exports)
+                break;
+            object = exports;
+        }
+
+        if (object == resolved)
             break;
-        object = exports;
+        if (redirects == maxSpyTargetRedirects) {
+            static_assert(maxSpyTargetRedirects == 8, "the message below names the limit");
+            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKey), "` property because it is behind more than 8 node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it"_s));
+            return {};
+        }
     }
 
     if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
@@ -3180,7 +3194,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             wrapFunction(globalObject, mock, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ThroughLockOfBuiltins throughLock(vm, isOpaque);
+            ThroughLockOfBuiltins throughLock(vm, object, isNamespace);
             if (!replaceExport(mock))
                 putOwnPropertyStorage(globalObject, object, propertyKey, mock, attributes, isOpaque);
             RETURN_IF_EXCEPTION(scope, {});
@@ -3195,7 +3209,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ThroughLockOfBuiltins throughLock(vm, isOpaque);
+            ThroughLockOfBuiltins throughLock(vm, object, isNamespace);
             if (!replaceExport(mock))
                 putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes | PropertyAttribute::Accessor, isOpaque);
             RETURN_IF_EXCEPTION(scope, {});
@@ -3279,7 +3293,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     // Always configurable, so that restoring can delete or redefine it.
-    ThroughLockOfBuiltins throughLock(vm, isOpaque);
+    ThroughLockOfBuiltins throughLock(vm, object);
     putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | (descriptor.attributes() & PropertyAttribute::DontEnum), isOpaque);
     RETURN_IF_EXCEPTION(scope, {});
 

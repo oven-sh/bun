@@ -3159,6 +3159,115 @@ describe.concurrent("a mocked module's exports are read from the object the fact
       5,
     );
   });
+
+  // The factory's object can hand the spy on once more: a global object's proxy to its global, import.meta.env to process.env.
+  test("spyOn() on the namespace object spies where the object the factory returned keeps the key", async () => {
+    await expectFixturesToPass(
+      {
+        "handed-on.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          import vm from "node:vm";
+
+          test("globalThis", async () => {
+            globalThis.method = () => "original";
+            mock.module("this-realm", () => globalThis);
+            const ns = await import("this-realm");
+            const spy = spyOn(ns, "method").mockReturnValue("spied");
+            expect([ns.method(), globalThis.method()]).toEqual(["spied", "spied"]);
+            spy.mockRestore();
+            expect([ns.method(), globalThis.method()]).toEqual(["original", "original"]);
+          });
+
+          test.each(["name", 5])("the global of a node:vm context, which inherits the key %s", async key => {
+            const sandbox = {};
+            const context = vm.createContext(sandbox);
+            const member = "[" + JSON.stringify(String(key)) + "]";
+            vm.runInContext("Object.prototype" + member + ' = () => "original"', context);
+            mock.module("context-" + key, () => vm.runInContext("this", context));
+            const ns = await import("context-" + key);
+            const read = () => [ns[key](), vm.runInContext("this" + member + "()", context)];
+            const spy = spyOn(ns, key).mockReturnValue("spied");
+            expect(read()).toEqual(["spied", "spied"]);
+            spy.mockRestore();
+            expect([...read(), Object.keys(sandbox)]).toEqual(["original", "original", []]);
+          });
+
+          test.each([
+            ["owns", () => ({ method() { return "original"; } })],
+            ["inherits", () => new (class { method() { return "original"; } })()],
+          ])("the global of a node:vm context whose contextified object %s the key", async (kind, makeSandbox) => {
+            const sandbox = makeSandbox();
+            const context = vm.createContext(sandbox);
+            mock.module("context-that-" + kind, () => vm.runInContext("this", context));
+            const ns = await import("context-that-" + kind);
+            const read = () => [ns.method(), vm.runInContext("method()", context), sandbox.method()];
+            const spy = spyOn(ns, "method").mockReturnValue("spied");
+            expect(read()).toEqual(["spied", "spied", "spied"]);
+            spy.mockRestore();
+            expect(read()).toEqual(["original", "original", "original"]);
+          });
+
+          // Each context reads toString() through the global of the context inside it. The module mock is one more step.
+          test.each([7, 8])("the global of %d node:vm contexts, each made of the global of the next", async depth => {
+            const sandbox = {};
+            let context = vm.createContext(sandbox);
+            for (let i = 1; i < depth; i++) context = vm.createContext(vm.runInContext("this", context));
+            mock.module("contexts-" + depth, () => vm.runInContext("this", context));
+            const ns = await import("contexts-" + depth);
+            if (depth === 7) {
+              const spy = spyOn(ns, "toString").mockReturnValue("spied");
+              expect([ns.toString(), vm.runInContext("toString()", context)]).toEqual(["spied", "spied"]);
+              spy.mockRestore();
+            } else {
+              expect(() => spyOn(ns, "toString")).toThrow(
+                new TypeError("Cannot spy on the \`toString\` property because it is behind more than 8 node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it"),
+              );
+            }
+            expect([vm.runInContext("toString", context), Object.keys(sandbox)]).toEqual([Object.prototype.toString, []]);
+          });
+
+          test("import.meta.env", async () => {
+            process.env.HANDED_ON = "original";
+            mock.module("the-env", () => import.meta.env);
+            const ns = await import("the-env");
+            const read = () => [ns.HANDED_ON, import.meta.env.HANDED_ON, process.env.HANDED_ON];
+            // On Windows process.env is a Proxy that rejects the accessor a spy on a value is.
+            if (process.platform === "win32") {
+              expect(() => spyOn(ns, "HANDED_ON")).toThrow("'process.env' does not accept an accessor(getter/setter) descriptor");
+            } else {
+              const spy = spyOn(ns, "HANDED_ON").mockReturnValue("spied");
+              expect(read()).toEqual(["spied", "spied", "spied"]);
+              spy.mockRestore();
+            }
+            expect(read()).toEqual(["original", "original", "original"]);
+            delete process.env.HANDED_ON;
+          });
+
+          test("a WebAssembly GC object, which takes no spy", async () => {
+            // (type $s (struct (field (mut i32)))) (func (export "s") (result (ref null $s)) struct.new_default $s)
+            const bytes = new Uint8Array([
+              0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0, 3, 2, 1, 1, 7, 5, 1, 1, 0x73, 0, 0,
+              10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+            ]);
+            const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.s();
+            const refusal = "spyOn(target, prop) does not support WebAssembly GC objects";
+            mock.module("a-struct", () => struct);
+            const ns = await import("a-struct");
+            expect(() => spyOn(ns, "x")).toThrow(refusal);
+
+            const env = process.env;
+            process.env = struct;
+            try {
+              expect(() => spyOn(import.meta.env, "x")).toThrow(refusal);
+            } finally {
+              process.env = env;
+            }
+          });
+        `,
+      },
+      9,
+    );
+  });
 });
 
 describe.concurrent("a factory that returns a module namespace object", () => {

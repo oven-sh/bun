@@ -202,7 +202,7 @@ pub struct HTTPClient<const SSL: bool> {
     hostname: JsCell<ZBox>,
     /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
     context: bun_jsc::ContextId,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
 
@@ -380,7 +380,7 @@ where
         };
         let connect_port = if using_proxy { proxy_port } else { port };
 
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.r#ref(vm.loop_ctx());
 
         log!(
@@ -463,7 +463,7 @@ where
             response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
             context: context.id(),
-            poll_ref: JsCell::new(poll_ref),
+            poll_ref,
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
             ssl_config: JsCell::new(ssl_config),
@@ -1048,13 +1048,11 @@ where
         let tcp = this.tcp.get();
         if paused {
             tcp.set_timeout(0);
-            this.poll_ref
-                .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+            this.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
             tcp.pause_stream();
         } else {
             tcp.set_timeout(handshake_timeout_seconds());
-            this.poll_ref
-                .with_mut(|p| p.r#ref(VirtualMachineRef::get().loop_ctx()));
+            this.poll_ref.r#ref(VirtualMachineRef::get().loop_ctx());
             tcp.resume_stream();
         }
     }
@@ -1464,8 +1462,7 @@ where
                 // so free it now.
                 this.body.set(Vec::new());
                 // The connected client holds its own.
-                this.poll_ref
-                    .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+                this.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
                 // Create the WebSocket client with the tunnel
                 ws.did_connect_with_tunnel(tunnel, overflow(), deflate_params.as_ref());
@@ -1621,8 +1618,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub(crate) fn clear_data(&self) {
-        self.poll_ref
-            .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+        self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
         self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();

@@ -107,7 +107,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         debug_assert!(adopted, "the caller checks that the socket is open");
         this.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
         if this.ref_pollref_on_connect.get() {
-            this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            this.poll_ref.ref_(bun_io::js_vm_ctx());
         }
         // Every reason but the handle's own pause, which is node:net's full buffer, belonged to the HTTP connection.
         if reads_paused && !this.flags.get().contains(SocketFlags::IS_PAUSED) {
@@ -194,7 +194,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.bytes_written
             .set(self.bytes_written.get() + upgrade.handshake.len() as u64);
         // The server holds the event loop for its WebSockets.
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         if self.flags.get().contains(SocketFlags::IS_PAUSED) {
             self.update_flags(|f| f.remove(SocketFlags::IS_PAUSED));
             self.socket.get().resume_stream();

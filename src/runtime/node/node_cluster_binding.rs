@@ -280,9 +280,9 @@ pub(crate) fn set_ref(enabled: bool) {
     let vm = VirtualMachine::get();
     vm.channel_ref_overridden.set(true);
     if enabled {
-        vm.channel_ref.with_mut(|r| r.ref_(vm.loop_ctx()));
+        vm.channel_ref.ref_(vm.loop_ctx());
     } else {
-        vm.channel_ref.with_mut(|r| r.unref(vm.loop_ctx()));
+        vm.channel_ref.unref(vm.loop_ctx());
     }
 }
 
@@ -290,7 +290,7 @@ pub(crate) fn set_ref(enabled: bool) {
 pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm();
     if !vm.channel_ref_overridden.get() {
-        vm.channel_ref.with_mut(|r| r.ref_(vm.loop_ctx()));
+        vm.channel_ref.ref_(vm.loop_ctx());
     }
 }
 
@@ -298,7 +298,7 @@ pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
 pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm();
     if !vm.channel_ref_overridden.get() {
-        vm.channel_ref.with_mut(|r| r.unref(vm.loop_ctx()));
+        vm.channel_ref.unref(vm.loop_ctx());
     }
 }
 

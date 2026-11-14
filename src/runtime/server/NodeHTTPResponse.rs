@@ -75,10 +75,10 @@ pub(crate) struct NodeHTTPResponse {
 
     pub(crate) flags: Cell<Flags>,
 
-    pub poll_ref: JsCell<jsc::Ref>,
+    pub poll_ref: jsc::Ref,
 
     pub(crate) body_read_state: Cell<BodyReadState>,
-    pub(crate) body_read_ref: JsCell<jsc::Ref>,
+    pub(crate) body_read_ref: jsc::Ref,
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
@@ -575,9 +575,8 @@ impl NodeHTTPResponse {
         }
         self.body_read_state.set(to);
         self.update_parked();
-        if self.body_read_ref.get().has {
-            self.body_read_ref
-                .with_mut(|r| r.unref(VirtualMachine::get()));
+        if self.body_read_ref.has.get() {
+            self.body_read_ref.unref(VirtualMachine::get());
         }
         true
     }
@@ -598,8 +597,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.toggle(Flags::PARKED));
         self.server.note_request_parked(parked);
         if parked {
-            self.body_read_ref
-                .with_mut(|r| r.unref(VirtualMachine::get()));
+            self.body_read_ref.unref(VirtualMachine::get());
             if let Some(raw) = self.reader() {
                 Bun__NodeHTTP__onRequestParked(
                     any_response_is_ssl(&raw) as core::ffi::c_int,
@@ -607,8 +605,7 @@ impl NodeHTTPResponse {
                 );
             }
         } else if pending {
-            self.body_read_ref
-                .with_mut(|r| r.r#ref(VirtualMachine::get()));
+            self.body_read_ref.r#ref(VirtualMachine::get());
         }
     }
 
@@ -706,7 +703,7 @@ impl NodeHTTPResponse {
         drop(self.held.replace(None));
 
         let server = self.server;
-        self.poll_ref.with_mut(|r| r.unref(vm));
+        self.poll_ref.unref(vm);
         self.unregister_auto_flush();
 
         server.on_request_complete();
@@ -1711,7 +1708,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
-        self.poll_ref.with_mut(|r| r.unref(VirtualMachine::get()));
+        self.poll_ref.unref(VirtualMachine::get());
 
         self.update_parked();
         self.mark_request_as_done_if_necessary();
@@ -1972,9 +1969,8 @@ impl NodeHTTPResponse {
 
         // The callback can run 'end' -> autoDestroy -> `ondata = undefined`, which drops the ref first.
         if last {
-            if self.body_read_ref.get().has {
-                self.body_read_ref
-                    .with_mut(|r| r.unref(VirtualMachine::get()));
+            if self.body_read_ref.has.get() {
+                self.body_read_ref.unref(VirtualMachine::get());
             }
             self.mark_request_as_done_if_necessary();
         }
@@ -2572,7 +2568,7 @@ impl NodeHTTPResponse {
         }
 
         // `body_read_ref` is still held from create(): every unref also leaves `.pending` or parks the request.
-        debug_assert!(self.body_read_ref.get().has != flags.contains(Flags::PARKED));
+        debug_assert!(self.body_read_ref.has.get() != flags.contains(Flags::PARKED));
     }
 
     pub(crate) fn write(
@@ -2775,16 +2771,15 @@ impl NodeHTTPResponse {
 
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
-        debug_assert!(!self.body_read_ref.get().has);
-        debug_assert!(!self.poll_ref.get().has);
+        debug_assert!(!self.body_read_ref.has.get());
+        debug_assert!(!self.poll_ref.has.get());
         debug_assert!(!self.pending_pinned_write.get().is_some());
         let flags = self.flags.get();
         debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
         debug_assert!(flags.intersects(Flags::SOCKET_CLOSED | Flags::REQUEST_HAS_COMPLETED));
 
-        self.poll_ref.with_mut(|r| r.unref(VirtualMachine::get()));
-        self.body_read_ref
-            .with_mut(|r| r.unref(VirtualMachine::get()));
+        self.poll_ref.unref(VirtualMachine::get());
+        self.body_read_ref.unref(VirtualMachine::get());
 
         self.promise.with_mut(|p| p.deinit());
     }
@@ -2857,8 +2852,8 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         } else {
             Flags::default() | Flags::HOLDS
         }),
-        poll_ref: JsCell::new(jsc::Ref::default()),
-        body_read_ref: JsCell::new(jsc::Ref::default()),
+        poll_ref: jsc::Ref::default(),
+        body_read_ref: jsc::Ref::default(),
         promise: JsCell::new(StrongOptional::empty()),
         request_trailers: JsCell::new(Vec::new()),
         this_value: Cell::new(JSValue::ZERO),
@@ -2871,9 +2866,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     });
 
     if *has_body {
-        response.body_read_ref.with_mut(|r| r.r#ref(vm));
+        response.body_read_ref.r#ref(vm);
     }
-    response.poll_ref.with_mut(|r| r.r#ref(vm));
+    response.poll_ref.r#ref(vm);
     let response = bun_core::heap::into_raw(response);
     // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
     // the +1 wrapper ref transfers to the GC.

@@ -455,7 +455,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
@@ -575,7 +575,7 @@ impl GetHostByAddrInfoRequest {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
@@ -677,7 +677,7 @@ impl CAresNameInfo {
         context: bun_jsc::ContextId,
         name: Box<[u8]>,
     ) -> Box<Self> {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Box::new(Self {
             global_this: bun_ptr::BackRef::new(global_this),
@@ -789,7 +789,7 @@ impl GetNameInfoRequest {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
@@ -1114,7 +1114,7 @@ impl GetAddrInfoRequest {
         cache_field: PendingCacheField,
     ) -> *mut Self {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
@@ -1391,7 +1391,7 @@ impl CAresReverse {
         context: bun_jsc::ContextId,
         name: &[u8],
     ) -> Box<Self> {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Box::new(Self {
             resolver: Some(resolver.ref_guard()),
@@ -1474,7 +1474,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         context: bun_jsc::ContextId,
         name: &[u8],
     ) -> Box<Self> {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Box::new(Self {
             resolver: Some(resolver.ref_guard()),
@@ -1582,7 +1582,7 @@ impl DNSLookup {
     ) -> Box<Self> {
         bun_output::scoped_log!(DNSLookup, "init");
 
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
 
         Box::new(Self {

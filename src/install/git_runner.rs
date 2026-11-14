@@ -18,7 +18,7 @@ use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
+use bun_spawn::{ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
 use bun_sys::Fd;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -1344,7 +1344,7 @@ impl GitSubprocess {
     }
 
     /// May free `this`.
-    fn on_process_exit(this: ThisPtr<Self>, _: &Process, status: Status, _: &Rusage) {
+    fn on_process_exit(this: ThisPtr<Self>, status: Status, _: &Rusage) {
         this.exit_status.set(Some(status));
         Self::maybe_finished(this);
     }
@@ -1624,8 +1624,8 @@ impl Drop for GitSubprocess {
 bun_spawn::link_impl_ProcessExit! {
     InstallGit for GitSubprocess => |this| {
         // SAFETY: `this` is the live runner installed via `set_exit_handler`.
-        on_process_exit(process, status, rusage) =>
-            GitSubprocess::on_process_exit(ThisPtr::new(this), &*process, status, rusage),
+        on_process_exit(status, rusage) =>
+            GitSubprocess::on_process_exit(ThisPtr::new(this), status, rusage),
     }
 }
 

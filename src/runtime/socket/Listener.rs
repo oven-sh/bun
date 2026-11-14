@@ -54,7 +54,7 @@ pub(crate) struct Listener {
     pub(crate) handlers: Rc<Handlers>,
     pub(crate) listener: Cell<ListenerType>,
 
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     pub(crate) connection: JsCell<UnixOrHost>,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
@@ -190,7 +190,7 @@ impl Listener {
         Listener {
             handlers: Rc::clone(&config.handlers),
             listener: Cell::new(ListenerType::None),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             connection: JsCell::new(connection),
             group: uws::SocketGroup::default(),
             secure_ctx: JsCell::new(secure_ctx),
@@ -426,7 +426,7 @@ impl Listener {
                 this_ref
                     .this_value
                     .with_mut(|r| r.set_strong(js_value, cx.global()));
-                this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
                 // SAFETY: its address does not change; leaves its context in `Drop`.
                 unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
                 this_ref.register_for_hot_reload(hot_key);
@@ -570,7 +570,7 @@ impl Listener {
         this_ref
             .this_value
             .with_mut(|r| r.set_strong(js_value, cx.global()));
-        this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: its address does not change; leaves its context in `Drop`.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
         this_ref.register_for_hot_reload(hot_key);
@@ -652,7 +652,7 @@ impl Listener {
         // client socket after `connect_finish`), so `conn.unref()` works and
         // `server.unref()`/`server.close()` don't tear out live connections'
         // hold. on_close/mark_inactive already unref this.
-        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        s.poll_ref.ref_(bun_io::js_vm_ctx());
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -721,7 +721,7 @@ impl Listener {
         // sockets each have their own (see `on_create`). Drop it now so a
         // closed server whose connections the caller unref'd lets the process
         // exit like Node does.
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         if connections == 0 {
             self.this_value.with_mut(|r| r.downgrade());
             self.strong_data
@@ -803,7 +803,7 @@ impl Listener {
         if matches!(self.listener.get(), ListenerType::None) {
             return;
         }
-        self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value
             .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
     }
@@ -812,7 +812,7 @@ impl Listener {
         // `this_value` stays strong: the wrapper roots the handlers a future
         // accept dispatches into. `do_stop` / `mark_inactive` downgrade it
         // once the listen socket is closed.
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn connect(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
@@ -981,7 +981,7 @@ impl Drop for Listener {
             ListenerType::None => {}
         }
         this.this_value.with_mut(|r| r.finalize());
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll_ref.unref(bun_io::js_vm_ctx());
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);
@@ -1059,9 +1059,7 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::WRITE_ONLY_FD, fd_is_write_only);
     });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
-    socket_ref
-        .poll_ref
-        .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+    socket_ref.poll_ref.ref_(bun_io::js_vm_ctx());
     let opened = match socket_ref.do_connect(cx, owned_ssl_ctx) {
         Ok(opened) => opened,
         Err(errno) => {

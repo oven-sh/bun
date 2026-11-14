@@ -58,9 +58,7 @@ extern "C" fn Bun__WebViewHost__kill() {
             .load(core::sync::atomic::Ordering::Relaxed)
             .as_mut()
         {
-            // SAFETY: INSTANCE is set to a live heap-allocated pointer in
-            // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = (*i.process.as_ptr()).kill(9);
+            let _ = i.process.kill(9);
         }
     }
 }
@@ -121,7 +119,7 @@ bun_spawn::link_impl_ProcessExit! {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
         // pending promises and mark the host dead.
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
             // A retired host was already unpublished by Bun__WebViewHost__retire.
             if !(*this).retired {
@@ -209,19 +207,20 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // and outlives it.
     let process = unsafe {
         let process = &(*self_ptr).process;
-        process
-            .process_mut()
-            .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+        bun_spawn::Process::set_exit_handler(
+            process,
+            ProcessExit::new(ProcessExitKind::HostProcess, self_ptr),
+        );
         process
     };
-    match process.process_mut().watch() {
+    match process.watch() {
         Ok(()) => {
             // Weak handle: parent exits when no views + nothing pending,
             // child gets socket EOF and exits, EVFILT_PROC fires into a
             // dead process (kernel discards). If we ref'd, parent would
             // stay alive forever waiting on a child that is waiting on us.
             // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
-            process.process_mut().disable_keeping_event_loop_alive();
+            process.disable_keeping_event_loop_alive();
         }
         Err(e) => {
             scoped_log!(WebViewHost, "watch failed: {}", e);

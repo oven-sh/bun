@@ -3,7 +3,7 @@
 //   bun record.ts [--accept] [new-cases.json]
 //
 // The results in the repository come from the last Bun that read tarballs with libarchive (1.4.4).
-// Tarballs with a pax size that is not all digits have been refused since.
+// Tarballs that npm reads differently have been refused since.
 import { join } from "node:path";
 import { loadCases, recordArguments } from "../../../js/bun/archive-golden/observe";
 import { install, type Case } from "./install";

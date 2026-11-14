@@ -200,7 +200,7 @@ pub(crate) struct QuicEndpoint {
     udp: Cell<*mut uws::quic::Udp>,
     bind_config: JsCell<BindConfig>,
     local_addr: Cell<StoredAddr>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     this_value: JsCell<JsRef>,
 
     /// At most one server engine, and one client engine for each distinct settings struct in use.
@@ -837,7 +837,7 @@ impl QuicEndpoint {
             udp: Cell::new(null_mut()),
             bind_config: JsCell::new(bind_config),
             local_addr: Cell::new(StoredAddr::default()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             this_value: JsCell::new(JsRef::empty()),
             engines: JsCell::new(Vec::new()),
             server_tls: JsCell::new(None),
@@ -1067,8 +1067,11 @@ impl QuicEndpoint {
         let listening = self.with_state(|s| s.listening) != 0;
         let busy = listening || !self.sessions.get().is_empty();
         let ctx = bun_io::js_vm_ctx();
-        self.poll_ref
-            .with_mut(|p| if busy { p.ref_(ctx) } else { p.unref(ctx) });
+        if busy {
+            self.poll_ref.ref_(ctx);
+        } else {
+            self.poll_ref.unref(ctx);
+        }
     }
 
     fn process(&self, global: &JSGlobalObject) {
@@ -1540,7 +1543,7 @@ impl QuicEndpoint {
             return;
         }
         // Node closes asynchronously, so the driver's next pass calls onEndpointClose.
-        self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
         self.pending_endpoint_close.set(true);
         self.driver();
     }
@@ -1562,7 +1565,7 @@ impl QuicEndpoint {
     }
 
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
-        self.poll_ref.with_mut(|p| p.disable());
+        self.poll_ref.disable();
         callbacks::call(
             global,
             "onEndpointClose",
@@ -1875,7 +1878,7 @@ impl QuicEndpoint {
         self.pending_endpoint_close.set(false);
         self.teardown();
         self.free_driver();
-        self.poll_ref.with_mut(|p| p.disable());
+        self.poll_ref.disable();
     }
 
     pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {

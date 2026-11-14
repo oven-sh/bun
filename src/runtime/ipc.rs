@@ -946,7 +946,7 @@ pub(crate) struct SendQueue {
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
 
     pub(crate) retry_count: Cell<u32>,
-    pub(crate) keep_alive: JsCell<KeepAlive>,
+    pub(crate) keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -1068,7 +1068,7 @@ impl SendQueue {
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
-            keep_alive: JsCell::new(KeepAlive::default()),
+            keep_alive: KeepAlive::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1178,7 +1178,7 @@ impl SendQueue {
             }
             self.windows.with_mut(|w| w.windows_write = None);
         }
-        self.keep_alive.with_mut(|k| k.disable());
+        self.keep_alive.disable();
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1495,13 +1495,11 @@ impl SendQueue {
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
         let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
         let should_ref = self.should_ref();
-        self.keep_alive.with_mut(|k| {
-            if should_ref {
-                k.ref_(ctx);
-            } else {
-                k.unref(ctx);
-            }
-        });
+        if should_ref {
+            self.keep_alive.ref_(ctx);
+        } else {
+            self.keep_alive.unref(ctx);
+        }
     }
 
     fn continue_send(&self, global: &JSGlobalObject, reason: ContinueSendReason) {

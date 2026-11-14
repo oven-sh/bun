@@ -45,7 +45,7 @@ pub(crate) struct ViWait {
     test: Option<RunningEntry>,
     pub(crate) timer: EventLoopTimer,
     abort_handle: AbortHandle,
-    keep_alive: JsCell<KeepAlive>,
+    keep_alive: KeepAlive,
     /// Roots the wrapper until the wait settles or is cancelled.
     root: JsCell<Option<Strong>>,
 }
@@ -190,7 +190,7 @@ impl ViWait {
             test,
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::ViWait),
             abort_handle: AbortHandle::for_owner::<ViWait>(),
-            keep_alive: JsCell::new(KeepAlive::default()),
+            keep_alive: KeepAlive::default(),
             root: JsCell::new(None),
         }
         .to_js(global);
@@ -210,8 +210,7 @@ impl ViWait {
         // SAFETY: the wrapper owns the payload, and `this_value` is kept alive to the end of this function.
         let this = unsafe { &*this_ptr };
         this.root.set(Some(Strong::create(this_value, global)));
-        this.keep_alive
-            .with_mut(|keep_alive| keep_alive.ref_(bun_io::js_vm_ctx()));
+        this.keep_alive.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
 
@@ -254,8 +253,7 @@ impl ViWait {
             timer_all().remove(&self.timer);
         }
         self.abort_handle.leave();
-        self.keep_alive
-            .with_mut(|keep_alive| keep_alive.unref(bun_io::js_vm_ctx()));
+        self.keep_alive.unref(bun_io::js_vm_ctx());
         self.root.set(None);
     }
 

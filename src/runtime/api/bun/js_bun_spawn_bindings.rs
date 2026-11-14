@@ -1582,7 +1582,10 @@ fn spawn_maybe_sync(
     }
 
     let mut setup_err = match subprocess.stdin.get() {
-        Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
+        Writable::Buffer(buffer) => {
+            let start_ref = buffer.clone();
+            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+        }
         _ => None,
     };
     if let Some(err) = &setup_err {

@@ -647,6 +647,11 @@ struct Http2Context {
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
     unsigned idleTimeoutS = 10;
+    /* closeIdle(true) has run (graceful stop): every connection we had then
+     * has its GOAWAY. One adopted later (its TLS handshake or cleartext
+     * preface was pending) serves its first stream, as the HTTP/1 socket it
+     * was would serve one request, and sends GOAWAY with it. */
+    bool stopping = false;
 
     /* Output buffer lent to whichever connection is inside a socket event;
      * see Http2Connection::out. */
@@ -796,9 +801,11 @@ struct Http2Context {
 
     /* Close connections with nothing in flight (after a GOAWAY). With
      * `closeWhenIdle`, busy connections also get GOAWAY so no new streams
-     * start and they close once their last stream retires (graceful stop);
-     * without it they are left alone. */
+     * start and they close once their last stream retires (graceful stop;
+     * `stopping` covers connections adopted afterwards); without it they are
+     * left alone. */
     size_t closeIdle(bool closeWhenIdle) {
+        if (closeWhenIdle) stopping = true;
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
             if (!conn->streams.empty() && !closeWhenIdle) return;
@@ -1313,8 +1320,9 @@ inline void Http2Connection::onData(const char *data, size_t length) {
         in.append((const char *) p + consumed, avail - consumed);
     }
     /* Only frames that move a stream count as activity: a peer holding
-     * streams open at a zero window can't keep the connection alive on PINGs. */
-    if (progressed || streams.empty()) touch();
+     * streams open at a zero window can't keep the connection alive on PINGs.
+     * Nor can one with no stream at all once a graceful stop has run. */
+    if (progressed || (streams.empty() && !ctx->stopping)) touch();
     progressed = false;
     busy--;
     Http2Context::epilogue(this, s);
@@ -1648,6 +1656,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         return streamError(streamId, nullptr, http2::ERR_REFUSED_STREAM);
     }
     lastProcessedStreamId = streamId;
+    /* No GOAWAY sent although a graceful stop has run: adopted after it. */
+    if (ctx->stopping) writeGoaway(http2::ERR_NO_ERROR);
     if (tooLarge) {
         Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
         stream->remoteClosed = endStream;

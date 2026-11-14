@@ -11,7 +11,7 @@ FAIL oxlint/vitest/prefer-importing-vitest-globals#15 messages differ
 
 0 cases have their messages in another order
 
-432 cases have a fix that --fix holds back
+434 cases have a fix that --fix holds back
 
 504 rules, 500 without failures, 0 not implemented
 27694 cases passed, 8 failed, 63 skipped

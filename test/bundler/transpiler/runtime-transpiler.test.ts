@@ -285,4 +285,6 @@ test.skipIf(isDebug || isASAN)(
     expect(stdout).toBe("function\n");
     expect(exitCode).toBe(0);
   },
+  // The 2 GiB of work is fixed. On a slow machine a release build needs more than the default 5 seconds.
+  60_000,
 );

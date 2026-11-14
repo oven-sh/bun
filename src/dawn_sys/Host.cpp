@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "dawn/native/DawnNative.h"
+#include "src/dawn/common/GPUInfo.h"
 #include "src/dawn/native/Adapter.h"
 #include "src/dawn/native/Buffer.h"
 #include "src/dawn/native/Instance.h"
@@ -132,6 +133,11 @@ extern "C" WGPUAdapter BunDawn__requestAdapter(WGPUInstance instance, WGPUFeatur
 #endif
 
     std::vector<dawn::Ref<AdapterBase>> adapters = FromAPI(instance)->EnumerateAdapters(&options);
+    // Without a display driver Windows lists WARP twice. The first stands in for a GPU, and is removed once there is a driver.
+    std::erase_if(adapters, [](const auto& adapter) {
+        const PhysicalDeviceBase* device = adapter->GetPhysicalDevice();
+        return dawn::gpu_info::IsMicrosoftWARP(device->GetVendorId(), device->GetDeviceId()) && device->GetAdapterType() != wgpu::AdapterType::CPU;
+    });
     auto find = [&](bool fallback) {
         return std::ranges::find_if(adapters, [&](const auto& adapter) {
             return (adapter->GetPhysicalDevice()->GetAdapterType() == wgpu::AdapterType::CPU) == fallback;

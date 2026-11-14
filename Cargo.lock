@@ -1317,7 +1317,6 @@ dependencies = [
  "bun_paths",
  "bun_sys",
  "bun_url",
- "scopeguard",
  "strum",
 ]
 

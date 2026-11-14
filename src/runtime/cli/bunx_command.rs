@@ -950,6 +950,7 @@ impl BunxCommand {
             ConfigureEnvOptions {
                 log_errors: true,
                 store_root_fd: false,
+                defer_package_errors: false,
             },
         )?;
 

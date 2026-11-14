@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
@@ -969,5 +969,186 @@ describe("Bun.serve http2 in-process", () => {
       lateWriteFailed: true,
       pendingRequests: 0,
     });
+  });
+
+  // stop(true) and the idle timeout are closes the server decides alone. Over
+  // TLS neither may keep the connection until the client lets go of it.
+  // allowHalfOpen keeps this client's side open after the server's close_notify, so it never answers it.
+  const silentClient = async (port: number, settings?: Buffer) => {
+    const raw = await RawH2.connect(port, true, { settings });
+    raw.socket.allowHalfOpen = true;
+    return raw;
+  };
+  const hasGoaway = (raw: RawH2) => raw.frames.some(f => f.type === T.GOAWAY);
+
+  describe.concurrent("a TLS client that never answers the close_notify", () => {
+    test("stop(true) aborts a stream in flight and resolves", async () => {
+      const started = Promise.withResolvers<void>();
+      const onAbort = mock();
+      await using server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout: 0,
+        fetch(req) {
+          req.signal.addEventListener("abort", onAbort);
+          started.resolve();
+          return new Promise<Response>(() => {});
+        },
+      });
+      const raw = await silentClient(server.port!);
+      try {
+        raw.socket.once("close", () => started.reject(new Error("closed before the request reached the handler")));
+        raw.headers(1, baseHeaders("/"));
+        await started.promise;
+        const stopped = server.stop(true);
+        await raw.waitForEnd();
+        // stop(true) closed the connection itself, so the abort event did not wait for the client.
+        expect({ aborts: onAbort.mock.calls.length, goaway: hasGoaway(raw) }).toEqual({ aborts: 1, goaway: true });
+        await stopped;
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("stop(true) closes an idle connection and resolves", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout: 0,
+        fetch: () => new Response("ok"),
+      });
+      const raw = await silentClient(server.port!);
+      try {
+        raw.headers(1, baseHeaders("/"));
+        expect((await raw.body(1)).toString()).toBe("ok");
+        const onStopped = mock();
+        const stopped = server.stop(true).then(onStopped);
+        // A task of the loop settles the promise, so read it one turn after the call.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        const settled = onStopped.mock.calls.length;
+        await raw.waitForEnd();
+        expect({ settled, goaway: hasGoaway(raw) }).toEqual({ settled: 1, goaway: true });
+        await stopped;
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("stop(true) from inside a handler closes the connection of that handler", async () => {
+      const onAbort = mock();
+      await using server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout: 0,
+        fetch(req, server) {
+          req.signal.addEventListener("abort", onAbort);
+          server.stop(true);
+          return new Response("stopped");
+        },
+      });
+      const raw = await silentClient(server.port!);
+      try {
+        raw.headers(1, baseHeaders("/"));
+        await raw.waitForEnd();
+        expect({ aborts: onAbort.mock.calls.length, goaway: hasGoaway(raw) }).toEqual({ aborts: 1, goaway: true });
+      } finally {
+        raw.close();
+      }
+    });
+
+    // usockets ticks timeouts in 4 s steps, so an idleTimeout test needs real seconds.
+    test("idleTimeout aborts a stream in flight", async () => {
+      const onAbort = mock();
+      await using server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout: 1,
+        fetch(req) {
+          req.signal.addEventListener("abort", onAbort);
+          return new Promise<Response>(() => {});
+        },
+      });
+      const raw = await silentClient(server.port!);
+      try {
+        raw.headers(1, baseHeaders("/"));
+        await raw.waitForEnd();
+        expect({ aborts: onAbort.mock.calls.length, goaway: hasGoaway(raw) }).toEqual({ aborts: 1, goaway: true });
+      } finally {
+        raw.close();
+      }
+    }, 10_000);
+  });
+
+  // The other wait of a graceful TLS close is for ciphertext the kernel did not take.
+  describe.concurrent("a TLS client that stopped reading the response", () => {
+    const SETTINGS_INITIAL_WINDOW_SIZE = 0x4;
+    const maxWindow = 0x7fffffff;
+    const streamWindow = Buffer.alloc(6);
+    streamWindow.writeUInt16BE(SETTINGS_INITIAL_WINDOW_SIZE, 0);
+    streamWindow.writeUInt32BE(maxWindow, 2);
+    const connectionWindow = Buffer.alloc(4);
+    connectionWindow.writeUInt32BE(maxWindow - 65535);
+
+    // /big is a 64 MiB response. With both windows open, only the socket of a client
+    // that does not read stops it. Each small request after it makes the server write
+    // again, until it holds ciphertext that the kernel refused.
+    function bigResponse(idleTimeout: number) {
+      const aborted = Promise.withResolvers<void>();
+      const onAbort = mock(() => aborted.resolve());
+      let arrived = Promise.withResolvers<void>();
+      const options = {
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout,
+        fetch(req: Request) {
+          const big = new URL(req.url).pathname === "/big";
+          if (big) req.signal.addEventListener("abort", onAbort);
+          arrived.resolve();
+          return new Response(big ? Buffer.alloc(64 * 1024 * 1024, "x") : "");
+        },
+      };
+      async function stall(raw: RawH2) {
+        raw.socket.once("close", () => arrived.reject(new Error("closed before a request reached the handler")));
+        raw.write(frame(T.WINDOW_UPDATE, 0, 0, connectionWindow));
+        raw.socket.pause();
+        for (let id = 1; id <= 17; id += 2) {
+          arrived = Promise.withResolvers<void>();
+          raw.headers(id, baseHeaders(id === 1 ? "/big" : "/"));
+          await arrived.promise;
+        }
+      }
+      return { options, onAbort, aborted: aborted.promise, stall };
+    }
+
+    test("stop(true) aborts the response inside the call", async () => {
+      const { options, onAbort, stall } = bigResponse(0);
+      await using server = Bun.serve(options);
+      const raw = await silentClient(server.port!, streamWindow);
+      try {
+        await stall(raw);
+        const stopped = server.stop(true);
+        expect(onAbort).toHaveBeenCalledTimes(1);
+        await stopped;
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("idleTimeout aborts the response", async () => {
+      const { options, aborted, stall } = bigResponse(1);
+      await using server = Bun.serve(options);
+      const raw = await silentClient(server.port!, streamWindow);
+      try {
+        await stall(raw);
+        await aborted;
+      } finally {
+        raw.close();
+      }
+    }, 10_000);
   });
 });

@@ -349,6 +349,39 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     },
   );
 
+  test.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "a refused client is closed without waiting for its close_notify (%s)",
+    async version => {
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        tls: { key: serverKey, cert: serverCert, ca: clientCa, requestCert: true, rejectUnauthorized: true },
+        fetch: () => new Response("served"),
+      });
+      // With allowHalfOpen this client reads the server's close_notify and never answers it.
+      const refused = tls.connect({
+        host: "127.0.0.1",
+        port: server.port,
+        rejectUnauthorized: false,
+        allowHalfOpen: true,
+        minVersion: version,
+        maxVersion: version,
+        ...untrustedClient,
+      } as tls.ConnectionOptions);
+      const closed = Promise.withResolvers<void>();
+      refused.on("error", () => {});
+      refused.on("close", () => closed.resolve());
+      try {
+        await once(refused, "end");
+        // The server's kernel resets a write to a socket that is closed, and that reset closes this one.
+        refused.write("x");
+        await closed.promise;
+      } finally {
+        refused.destroy();
+      }
+    },
+  );
+
   test("a session established on the open default name cannot be resumed to bypass a gated name", async () => {
     using server = Bun.serve({
       port: 0,

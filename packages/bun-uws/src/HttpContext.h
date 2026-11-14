@@ -155,7 +155,7 @@ private:
             if(rejectUnauthorized) {
                 if(!success || verify_error.error != 0) {
                     // we failed to handshake, close the socket
-                    us_socket_close(s, 0, nullptr);
+                    us_socket_close_now(s);
                     return;
                 }
             }

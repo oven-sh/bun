@@ -1457,6 +1457,34 @@ describe("bundler", () => {
       });
     }
 
+    // Like react-refresh's Babel plugin, so that a component keeps its state when its module runs again.
+    itBundled("jsx/FastRefreshRegistersWrappedComponents", {
+      files: {
+        "/index.jsx": /* js */ `
+          const registered = [];
+          globalThis.$RefreshSig$ = () => t => t;
+          globalThis.$RefreshReg$ = (type, id) => registered.push(id.split(":").pop());
+          const memo = f => ({ memo: f }), forwardRef = memo, createContext = () => ({});
+          const React = { memo };
+          const useThing = () => 1;
+          const Memo = memo(function Memo() { return useThing(); });
+          const Fwd = forwardRef((props, ref) => null);
+          const Both = memo(forwardRef((props, ref) => null));
+          const Dotted = React.memo(() => null);
+          const Plain = () => null;
+          const Wrapped = memo(Plain);
+          const Theme = createContext("none");
+          const Total = Math.max(1, 2);
+          const Nothing = memo();
+          const lower = memo(() => null);
+          console.log(registered.join());
+          if ([Memo, Fwd, Both, Dotted, Plain, Wrapped, Theme, Total, Nothing, lower].length < 10) throw 0;
+        `,
+      },
+      reactFastRefresh: true,
+      run: { stdout: "Memo,Fwd,Both,Dotted,Plain,Wrapped" },
+    });
+
     // Each component gets its own signature binding, in the scope its `var` is
     // declared in. Two siblings used to share one name under minification.
     itBundled("jsx/FastRefreshSiblingSignaturesAreDistinct", {

@@ -8489,6 +8489,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    /// Like react-refresh's Babel plugin: a function, or a call such as `memo()` or `forwardRef()` whose first
+    /// argument is a function, a component or such a call.
+    pub(crate) fn makes_react_component(&self, value: Expr) -> bool {
+        let mut value = value;
+        let mut is_argument = false;
+        loop {
+            match value.data {
+                js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => return true,
+                js_ast::ExprData::EIdentifier(id) if is_argument => {
+                    let name = self.symbols[id.ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    return ReactRefresh::is_componentish_name(name);
+                }
+                js_ast::ExprData::ECall(call)
+                    if matches!(
+                        call.target.data,
+                        js_ast::ExprData::EIdentifier(_)
+                            | js_ast::ExprData::EImportIdentifier(_)
+                            | js_ast::ExprData::EDot(_)
+                    ) =>
+                {
+                    let Some(first) = call.args.slice().first() else {
+                        return false;
+                    };
+                    value = *first;
+                    is_argument = true;
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(crate) fn handle_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,

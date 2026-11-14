@@ -149,7 +149,7 @@ devTest("component state after a hot update evaluates the modules below a Fast R
         return <button id="ctx" onClick={() => setN(n => n + 1)}>{theme + " ctx " + n}</button>;
       }
     `,
-    // Not a boundary: Bun does not register the result of forwardRef() with react-refresh.
+    // A boundary: the result of forwardRef() is registered with react-refresh.
     "Fwd.tsx": `
       import { forwardRef, useState } from "react";
       import { config } from "./config";
@@ -179,11 +179,10 @@ devTest("component state after a hot update evaluates the modules below a Fast R
     await c.expectElemText("#plain", "plain 2");
     // The lines marked "Lost" are the cost. An update that evaluates only config.ts and the boundaries
     // keeps that state, and leaves the label at v1.
-    // Lost: memo() makes a new component that react-refresh does not know, so it mounts again.
-    await c.expectElemText("#memo", "memo 0");
+    // Kept too: the results of memo() and forwardRef() are registered.
+    await c.expectElemText("#memo", "memo 2");
     // Lost: theme.ts makes a new context. Its provider is a new one, so the consumer mounts again.
     await c.expectElemText("#ctx", "label(v2) ctx 0");
-    // Lost: forwardRef() makes a new component too.
-    await c.expectElemText("#fwd", "v2 fwd 0");
+    await c.expectElemText("#fwd", "v2 fwd 2");
   },
 });

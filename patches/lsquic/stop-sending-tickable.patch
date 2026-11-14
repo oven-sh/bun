@@ -1,0 +1,16 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1810,6 +1810,13 @@
+         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
+                                                     next_send_stream);
+     stream->sm_qflags |= SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF;
++    /* bun: the frame is written from the connection's tick, and nothing
++     * here made the connection tickable: lsquic_stream_shutdown() does that
++     * only `if (how && ...)`.  A read shutdown outside a tick left the
++     * frame queued until something else ticked the connection.
++     * stream_reset() and stream_consumed_bytes() pair their queued frame
++     * with this same call. */
++    maybe_conn_to_tickable_if_writeable(stream, 1);
+ }
+ 
+ 

@@ -129,7 +129,13 @@ const importing = (source: string, mock: string): Record<string, Case> => ({
     held: true,
     breaks: true,
   },
-  // These do the same with the fix. `--fix` doesn't look at what the code above the line does.
+  // These do the same with the fix. The type may not have the new names, and the Jest rule writes the line without it.
+  "a line with a type": {
+    file: "greet.test.ts",
+    text: `const { test }: { test: any } = require("${source}");\n` + spy(mock) + logs("spy()"),
+    held: true,
+  },
+  // `--fix` doesn't look at what the code above the line does.
   "a statement above the line that uses none of the names": {
     text: other + line(source) + `const spy = ${mock}.fn(() => greeting);\n` + logs("spy()"),
     held: true,
@@ -315,24 +321,18 @@ const groups: Record<string, Record<string, Case>> = {
       held: true,
       breaks: true,
     },
-    // The type is all that the new text drops.
-    "a line with a type": {
-      file: "greet.test.ts",
-      text: 'const { test }: { test: any } = require("@jest/globals");\n' + spy("jest") + logs("spy()"),
-      held: true,
-    },
     // The new text would have `not-a-name: other`.
     "a line with a key that is no name": {
       text: 'const { "not-a-name": other, test } = require("@jest/globals");\n' + spy("jest") + logs("spy()"),
       held: true,
       refused: true,
     },
-    // Types and casts run no code.
-    "the line below types and a cast": {
+    // Types run no code.
+    "the line below types": {
       file: "greet.test.cts",
       text:
         "type Name = string;\ninterface Greeter {}\ndeclare const shape: Greeter;\n;\n" +
-        'const path = require("node:path") as typeof import("node:path");\n' +
+        'const path = require("node:path");\n' +
         jestLine +
         'const spy = jest.fn(() => path.basename("real"));\n' +
         logs("spy()"),
@@ -587,7 +587,18 @@ const groups: Record<string, Record<string, Case>> = {
   "jest/prefer-jest-mocked + jest/prefer-importing-jest-globals": {
     "a cast above the line, and a call below it": {
       file: "greet.test.ts",
-      text: greet + "const typed = greet as jest.Mock;\n" + jestLine + logs("jest.fn(typed)()"),
+      text: greet + "const typed = greet as jest.Mock;\n" + jestLine + "const spy = jest.fn(typed);\n" + logs("spy()"),
+      breaks: true,
+    },
+    // A cast is no plain `require()` line, so the line below it isn't at the top.
+    "a cast of a require() above the line, and a call below it": {
+      file: "greet.test.ts",
+      files: { "greet.cjs": 'module.exports = () => "real";\n' },
+      text:
+        'const typed = require("./greet.cjs") as jest.MockedFunction<() => string>;\n' +
+        jestLine +
+        "const spy = jest.fn(typed);\n" +
+        logs("spy()"),
       breaks: true,
     },
   },
@@ -597,6 +608,15 @@ const groups: Record<string, Record<string, Case>> = {
     "a cast above the line that declares jest": {
       file: "greet.test.ts",
       text: greet + "const typed = greet as jest.Mock;\n" + jestAndTest + logs("typed()"),
+      held: true,
+      breaks: true,
+    },
+    // The cast is in a `require()` line. The fix makes it a call, which reads `jest` above the line that declares it.
+    "a cast of a require() above the line that declares jest": {
+      file: "greet.test.ts",
+      files: { "greet.cjs": 'module.exports = () => "real";\n' },
+      text:
+        'const typed = require("./greet.cjs") as jest.MockedFunction<() => string>;\n' + jestAndTest + logs("typed()"),
       held: true,
       breaks: true,
     },
@@ -651,6 +671,14 @@ const groups: Record<string, Record<string, Case>> = {
         "const typed = greet as jest.Mock;\n" +
         logs("typed()"),
     },
+    "a cast in a file that declares a namespace jest for its types": {
+      file: "greet.test.ts",
+      text:
+        "declare namespace jest {\n  interface Matchers<R> {\n    toGreet(): R;\n  }\n}\n" +
+        greet +
+        "const typed = greet as jest.Mock;\n" +
+        logs("typed()"),
+    },
     // An import of a type declares nothing that runs.
     "a cast in a file that exports a value and imports jest as a type": {
       file: "greet.test.ts",
@@ -698,6 +726,70 @@ const groups: Record<string, Record<string, Case>> = {
     },
     "jasmine.any() above a let that declares expect without a value": {
       text: jasmine + "const matcher = jasmine.any(Number);\nlet expect;\n" + logs('matcher ? "real" : String(expect)'),
+      held: true,
+      breaks: true,
+    },
+    "jasmine.any() above two vars that declare expect without a value": {
+      text:
+        jasmine +
+        "const matcher = jasmine.any(Number);\nvar expect;\nvar expect;\n" +
+        logs('matcher ? "real" : String(expect)'),
+      held: true,
+      breaks: true,
+    },
+    // A `declare` gives no value either.
+    "jasmine.any() above a var without a value, beside a function that is declared for its types": {
+      file: "greet.test.ts",
+      text:
+        "declare function expect(value: unknown): void;\n" +
+        jasmine +
+        "const matcher = jasmine.any(Number);\nvar expect;\n" +
+        logs('matcher ? "real" : String(expect)'),
+      held: true,
+      breaks: true,
+    },
+    // A function declaration has its value from the start, and a parameter has it in the body. A `var` without a
+    // value beside one of them changes nothing.
+    "jasmine.any() above a function declaration named expect": {
+      text:
+        jasmine +
+        "function matcher() {\n  expect.any = kind => kind.name;\n  return jasmine.any(Number);\n" +
+        "  function expect() {}\n  var expect;\n}\n" +
+        logs('matcher() ? "real" : ""'),
+    },
+    "jasmine.any() in the body of a function with a parameter named expect": {
+      text:
+        jasmine +
+        "function matcher(expect) {\n  var expect;\n  return jasmine.any(Number);\n}\n" +
+        logs('matcher({ any: kind => kind.name }) ? "real" : ""'),
+    },
+    // The class has no value yet where its keys are computed.
+    "jasmine.any() in a computed key of a class expression named expect": {
+      text:
+        jasmine +
+        'const Matchers = class expect {\n  static [jasmine.any(Number)]() {\n    return "real";\n  }\n};\n' +
+        logs("Matchers.Number()"),
+      held: true,
+      breaks: true,
+    },
+    // The type parameter doesn't hide the variable from the code.
+    "jasmine.any() below an expect that isn't Jest's, in a function with a type parameter of that name": {
+      file: "greet.test.ts",
+      text:
+        'const expect = { any: () => "" };\n' +
+        jasmine +
+        "function matcher<expect>() {\n  return jasmine.any(Number);\n}\n" +
+        logs('matcher() ? "real" : String(expect.any())'),
+      held: true,
+      breaks: true,
+    },
+    // In an enum, the name of a member stands for its value.
+    "jasmine.any() in an enum with a member named expect": {
+      file: "greet.test.ts",
+      text:
+        jasmine +
+        "enum Kind {\n  expect = 1,\n  size = jasmine.any(Number).length,\n}\n" +
+        logs('Kind.size === 6 ? "real" : ""'),
       held: true,
       breaks: true,
     },

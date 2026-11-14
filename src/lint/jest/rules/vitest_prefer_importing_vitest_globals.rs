@@ -189,7 +189,7 @@ impl<'a> Target<'a> {
     }
 }
 
-/// False if the fix can change what the file does: the file assigns to one of the names, code of the file can run before the names have their values, or the new text drops a comment or doesn't parse.
+/// False if the fix can change what the file does: the file assigns to one of the names, code of the file can run before the names have their values, or the new text drops a comment, doesn't parse or may not fit a type.
 #[cold]
 fn is_safe<'a>(file: &'a File<'a>, missing_globals: &[&str], target: Target<'a>) -> bool {
     if jest::assigns_to_global(file, missing_globals.iter().map(|it| it.as_bytes())) {
@@ -202,9 +202,10 @@ fn is_safe<'a>(file: &'a File<'a>, missing_globals: &[&str], target: Target<'a>)
             let is_alone = import_entries_of(entry.declaration).count() == 1;
             !jest::exports_value(file) && (!is_default || is_alone)
         }
+        // A type on the line may not have the new names.
         Target::Require(declarator, _) => {
             let has_comment = file.comments_in(declarator.pat().span()).next().is_some();
-            jest::takes_names(file, declarator) && !has_comment
+            jest::takes_names(file, declarator) && declarator.ty().is_none() && !has_comment
         }
         // A new first `import` has its names before all other code of the file.
         Target::Insert => true,

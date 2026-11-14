@@ -446,31 +446,23 @@ fn require_binding(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     Some((declarator.pat(), static_string(source?)?))
 }
 
-/// The `require("a")` or `await import("a")` under the casts of `value`.
-fn module_of(mut value: Expr<'_>) -> Option<Expr<'_>> {
+/// True for `require("a")` and for `await import("a")`.
+fn loads_module(value: Expr<'_>) -> bool {
     let is_text = |it: Expr<'_>| match it.kind() {
         ExprKind::String(_) => true,
         ExprKind::Template(template) => template.exprs().is_empty(),
         _ => false,
     };
-    loop {
-        value = match value.kind() {
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
-            ExprKind::NonNull(expr) => expr,
-            ExprKind::Call(call) => {
-                let is_module = is_require_call(call) && call.args().iter().all(is_text);
-                return is_module.then_some(value);
-            }
-            ExprKind::Await(import) => {
-                let is_module = matches!(import.kind(), ExprKind::ImportCall { args } if args.iter().all(is_text));
-                return is_module.then_some(value);
-            }
-            _ => return None,
-        };
+    match value.kind() {
+        ExprKind::Call(call) => is_require_call(call) && call.args().iter().all(is_text),
+        ExprKind::Await(import) => {
+            matches!(import.kind(), ExprKind::ImportCall { args } if args.iter().all(is_text))
+        }
+        _ => false,
     }
 }
 
-/// True if `value` loads a module and runs no code of the file: a [module](module_of), a member of one, or a call of one with only literals: `require("a").b("c")`.
+/// True if `value` [loads a module](loads_module) and runs no code of the file: it can also be a member of the module, or a call of one with only literals: `require("a").b("c")`. Not a cast: the fix of `jest/prefer-jest-mocked` writes a call for one, which reads `jest`.
 fn is_plain_require(mut value: Expr<'_>) -> bool {
     let is_literal = |it: Expr<'_>| match it.kind() {
         ExprKind::Template(template) => template.exprs().is_empty(),
@@ -479,13 +471,11 @@ fn is_plain_require(mut value: Expr<'_>) -> bool {
         _ => false,
     };
     loop {
-        if module_of(value).is_some() {
+        if loads_module(value) {
             return true;
         }
         value = match value.kind() {
             ExprKind::Dot { obj, .. } => obj,
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
-            ExprKind::NonNull(expr) => expr,
             ExprKind::Call(call) if call.args().iter().all(is_literal) => call.callee(),
             _ => return false,
         };
@@ -571,13 +561,13 @@ fn is_at_top<'a>(file: &'a File<'a>, line: Span) -> bool {
     line.end <= end
 }
 
-/// True if a fix can add the names of more exports to `declarator`, a `const { .. } = require("a")`, and every read gets its value: the line is at the [top](top_end) of `file`, it takes its names from the [module](module_of) itself, and no `...rest` loses the names.
+/// True if a fix can add the names of more exports to `declarator`, a `const { .. } = require("a")`, and every read gets its value: the line is at the [top](top_end) of `file`, it takes its names from the [module](loads_module) itself, and no `...rest` loses the names.
 pub(crate) fn takes_names<'a>(file: &'a File<'a>, declarator: VarDecl<'a>) -> bool {
     let has_rest = match declarator.pat().kind() {
         PatKind::Object(properties) => properties.iter().any(|it| it.is_rest()),
         _ => false,
     };
-    let is_module = declarator.init().and_then(module_of).is_some();
+    let is_module = declarator.init().is_some_and(loads_module);
     is_at_top(file, declarator.span()) && is_module && !has_rest
 }
 
@@ -600,6 +590,15 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
     // A file that this one imports can call an export of this one before a later `import` has its module. `bun:test` is there from the start.
     let has_module =
         |it: Import<'a>| it.is_type_only() || it.spec().bytes() == BUN_TEST || !exports_value(file);
+    // True for a declaration that gives `name` a value where a `var it;` of the same name gives none.
+    let gives_value = |it: Declaration<'a>| match it {
+        Declaration::Var(_) => {
+            matches!(it.node(), Some(Node::VarDecl(it)) if it.init().is_some())
+        }
+        Declaration::Fn(function) => function.has_body(),
+        Declaration::Param(_) => true,
+        _ => false,
+    };
     symbol.declarations().all(|it| match it {
         Declaration::Var(_) => match it.node() {
             Some(Node::VarDecl(declarator)) if declarator.init().is_some() => {
@@ -608,13 +607,12 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
                     && binds_only(declarator.pat());
                 is_at_top(file, declarator.span()) || is_line_of_read
             }
-            // A `declare`, or a `var it;` beside the declaration that gives `it` its value.
+            // A `declare`, or a `var it;` beside a declaration that gives `it` its value.
             Some(Node::VarDecl(declarator)) => {
-                let is_again =
-                    declarator.var_kind() == VarKind::Var && symbol.declaration_count() > 1;
-                declarator.flags().contains(Flags::AMBIENT) || is_again
+                declarator.flags().contains(Flags::AMBIENT)
+                    || symbol.declarations().any(gives_value)
             }
-            _ => true,
+            _ => false,
         },
         // Bun runs `import a = require("a")` as a `const`.
         Declaration::ImportEquals(it) => {
@@ -622,10 +620,10 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
         }
         Declaration::ImportSpec(it) => it.is_type_only() || has_module(it.import()),
         Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => has_module(it),
-        Declaration::Class(class) => match Node::Class(class).parent() {
-            Node::Stmt(statement) => is_ambient(statement),
-            _ => true,
-        },
+        // Only a `declare class` gives no value. A class has none yet above its line, nor in its own `extends` and computed keys.
+        Declaration::Class(class) => {
+            matches!(Node::Class(class).parent(), Node::Stmt(it) if is_ambient(it))
+        }
         Declaration::Enum(it) => is_ambient(it.stmt()),
         Declaration::Module(it) => is_ambient(it.stmt()),
         // A default in the parameter list can run before a later parameter has its value.
@@ -636,12 +634,13 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
             };
             !list.is_some_and(|it| it.start <= at.span().start && at.span().end <= it.end)
         }
-        Declaration::Fn(_)
-        | Declaration::Interface(_)
+        Declaration::Fn(_) => true,
+        // A type can stand in front of a variable of the same name. Bun writes the value of an enum's member for its name.
+        Declaration::Interface(_)
         | Declaration::TypeAlias(_)
-        | Declaration::EnumMember(_)
         | Declaration::TypeParam(_)
-        | Declaration::Other => true,
+        | Declaration::EnumMember(_)
+        | Declaration::Other => false,
     })
 }
 

@@ -19,6 +19,10 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
+/// The lists that a plain `Vec` has to be copied into.
+pub trait InAstHeap {}
+impl<T> InAstHeap for bun_alloc::AstVec<T> {}
+
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Self;
@@ -26,8 +30,12 @@ pub trait VecExt<T>: Sized {
     fn from_slice(items: &[T]) -> Self
     where
         T: Clone;
-    fn move_from_list(list: Vec<T>) -> Self;
-    fn from_owned_slice(items: Box<[T]>) -> Self;
+    fn move_from_list(list: Vec<T>) -> Self
+    where
+        Self: InAstHeap;
+    fn from_owned_slice(items: Box<[T]>) -> Self
+    where
+        Self: InAstHeap;
     /// Copies `items` into a fresh `A` allocation.
     fn from_arena_slice(items: &[T]) -> Self
     where
@@ -72,23 +80,6 @@ pub trait VecExt<T>: Sized {
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
-    /// `reserve(additional)` then `set_len(capacity)`, returning the
-    /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
-    /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
-    /// This exposes the *full* over-allocated
-    /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
-    /// callee can use the allocator's slack. Pass `additional = 0` when the
-    /// caller has already reserved.
-    ///
-    /// # Safety
-    /// Every byte in `[prev_len, cap)` must be
-    /// written by the FFI callee (or `len` truncated back) before any read.
-    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize);
-
-    // ── ownership transfer ────────────────────────────────────────────────
-    fn move_to_list(&mut self) -> Vec<T>;
-    fn move_to_list_managed(&mut self) -> Vec<T>;
-    fn to_owned_slice(&mut self) -> Box<[T]>;
 
     fn memory_cost(&self) -> usize;
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
@@ -105,7 +96,7 @@ pub trait VecExt<T>: Sized {
 // `PropertyList`). `A: Default` lets every constructor produce the right
 // allocator without a value in hand; both `Global` and `AstAlloc` are ZSTs
 // with `Default`, so `A::default()` is free.
-impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
+impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     #[inline]
     fn init_capacity(n: usize) -> Self {
         Vec::with_capacity_in(n, A::default())
@@ -127,23 +118,15 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     }
     #[inline]
     fn move_from_list(list: Vec<T>) -> Self {
-        // Mirror of the `move_to_list` fast-path: when `A == Global` this is a
-        // pointer adopt, not a realloc.
-        // Hot Global callers: `FileReader`, `ByteStream`, `shell::Cmd`.
-        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
-            let mut list = core::mem::ManuallyDrop::new(list);
-            // SAFETY: `A == Global`, so `Vec<T>` and `Vec<T, A>` have identical
-            // layout, allocator, and drop semantics.
-            return unsafe {
-                Vec::from_raw_parts_in(list.as_mut_ptr(), list.len(), list.capacity(), A::default())
-            };
-        }
         let mut v = Vec::with_capacity_in(list.len(), A::default());
         v.extend(list);
         v
     }
     #[inline]
-    fn from_owned_slice(items: Box<[T]>) -> Self {
+    fn from_owned_slice(items: Box<[T]>) -> Self
+    where
+        Self: InAstHeap,
+    {
         Self::move_from_list(items.into_vec())
     }
     #[inline]
@@ -269,47 +252,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>] {
         self.reserve(additional);
         &mut self.spare_capacity_mut()[..additional]
-    }
-    #[inline]
-    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize) {
-        let prev = self.len();
-        if additional != 0 {
-            self.reserve(additional);
-        }
-        let cap = self.capacity();
-        // SAFETY: caller contract — `[prev, cap)` is FFI-written or truncated before any read.
-        unsafe { self.set_len(cap) };
-        // SAFETY: `prev <= cap`; ptr is within (or one-past) the allocation.
-        (unsafe { self.as_mut_ptr().add(prev) }, cap - prev)
-    }
-
-    #[inline]
-    fn move_to_list(&mut self) -> Vec<T> {
-        let taken = core::mem::replace(self, Vec::new_in(A::default()));
-        // Fast path: `Vec<T, Global>` → `Vec<T>` is a pointer move, not a
-        // realloc+memcpy. Restores zero-copy behavior on the HTTP streaming
-        // paths (`RequestContext::response_buf`, `ByteStream`); the copying
-        // path is still required for `AstAlloc` etc. where the buffer must
-        // migrate heaps.
-        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
-            let mut taken = core::mem::ManuallyDrop::new(taken);
-            // SAFETY: `A == Global`, so `Vec<T, A>` and `Vec<T>` have the
-            // same layout, allocator, and drop semantics.
-            return unsafe {
-                Vec::from_raw_parts(taken.as_mut_ptr(), taken.len(), taken.capacity())
-            };
-        }
-        let mut out = Vec::with_capacity(taken.len());
-        out.extend(taken);
-        out
-    }
-    #[inline]
-    fn move_to_list_managed(&mut self) -> Vec<T> {
-        self.move_to_list()
-    }
-    #[inline]
-    fn to_owned_slice(&mut self) -> Box<[T]> {
-        self.move_to_list().into_boxed_slice()
     }
 
     #[inline]
@@ -445,43 +387,5 @@ impl OffsetByteList {
     pub fn clear_and_free(&mut self) {
         // Drop on the taken value frees `byte_list`; nothing is reused.
         drop(core::mem::take(self));
-    }
-}
-
-/// Bitwise-move every element of `src` to the **front** of `dst`, shifting
-/// `dst`'s existing contents right by `src.len()`. `src` is left empty
-/// (capacity retained). This is the mirror of std [`Vec::append`], which
-/// moves to the back.
-///
-/// Free function (not a `VecExt` method) so it is generic over *any*
-/// `A: Allocator` — the `VecExt` blanket impl carries an
-/// `A: Default + 'static` bound that `&'a MimallocArena` (i.e.
-/// [`bun_alloc::ArenaVec`]) does not satisfy. `src` and `dst` may use
-/// distinct allocators.
-///
-/// Implemented as `reserve → ptr::copy(shift) → copy_nonoverlapping →
-/// set_len`, which works for non-`Copy` element types.
-pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mut Vec<T, B>) {
-    let src_len = src.len();
-    if src_len == 0 {
-        return;
-    }
-    let dst_len = dst.len();
-    dst.reserve(src_len);
-    // SAFETY: `reserve` guarantees capacity for `dst_len + src_len`. The shift
-    // memmove and the front copy together fully initialize `[0, dst_len+src_len)`.
-    // We commit `dst`'s new length only *after* `src` has been logically emptied
-    // so no element is ever owned by both vecs (no double-drop on unwind — and
-    // none of the ptr ops below can panic anyway).
-    unsafe {
-        let base = dst.as_mut_ptr();
-        // Shift existing `dst` elements right (overlapping → memmove).
-        core::ptr::copy(base, base.add(src_len), dst_len);
-        // `src` is a separate allocation → non-overlapping with `dst`'s buffer.
-        core::ptr::copy_nonoverlapping(src.as_ptr(), base, src_len);
-        // Elements were bitwise-moved out of `src`; relinquish ownership first…
-        src.set_len(0);
-        // …then claim it in `dst`.
-        dst.set_len(dst_len + src_len);
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -164,6 +164,71 @@ describe("child.stdin", () => {
     expect({ ret, cbCode: cbErr?.code }).toEqual({
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
+    });
+  });
+
+  // destroy() with a chunk still buffered ends the sink, and 'close' comes from the promise of
+  // that end(). The sink used to settle the promise before it closed the pipe, so a 'close'
+  // listener ran with the child's stdin still open. The fixture gives the same output in node.
+  it("'close' after destroy() with a backlog comes once the child's stdin has ended", async () => {
+    using dir = tempDir("child-stdin-destroy", {});
+    const marker = join(String(dir), "eof");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const { spawn } = require("node:child_process");
+          const marker = process.argv.at(-1);
+          // The grandchild creates the marker file when its stdin ends.
+          const reader = 'process.stdin.resume(); process.stdin.on("end", () => require("fs").writeFileSync(process.argv.at(-1), ""));';
+          const child =
+            process.platform === "win32"
+              ? spawn(process.execPath, ["-e", reader, marker], { stdio: ["pipe", "ignore", "inherit"] })
+              : spawn("sh", ["-c", 'cat >/dev/null; : >"$0"', marker], { stdio: ["pipe", "ignore", "inherit"] });
+          child.stdin.write(Buffer.alloc(1024 * 1024, 120));
+          child.stdin.on("error", () => {});
+          child.stdin.on("close", () => {
+            // The thread stays here until the grandchild has reported end-of-file.
+            const pause = new Int32Array(new SharedArrayBuffer(4));
+            const deadline = Date.now() + 2000;
+            while (!fs.existsSync(marker) && Date.now() < deadline) Atomics.wait(pause, 0, 0, 1);
+            console.log(JSON.stringify({ eofInClose: fs.existsSync(marker) }));
+          });
+          child.stdin.destroy();
+        `,
+        marker,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ eofInClose: true }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The sink flushes a small write after the callback that made it, and used to queue a task each
+  // time. The task settled the promise of the next write(): its callback, the end() callback and
+  // 'finish' ran with every byte of that write still in the sink. The fixture opens a gate for the
+  // child to start reading, and reports what had called back before that. Node reports nothing.
+  it.skipIf(!isPosix)("write() and end() call back once the child has read the backlog", async () => {
+    using dir = tempDir("child-stdin-backlog", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "child-stdin-backlog-fixture.js"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ before: [], bytes: 5 + 1024 * 1024 }) + "\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

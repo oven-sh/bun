@@ -2347,6 +2347,182 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
       ["--preload", "./preload.js", "./once.test.js"],
     );
   });
+
+  // The callback answers once the factory has asked for the module. The two loads share no module.
+  test.each([
+    ["import() of that module", `(await asks(import("./data.js"))).id`],
+    ["import() of a module that imports it", `(await asks(import("./mid.js"))).mid.id`],
+    ["vi.importActual()", `(await asks(vi.importActual("./mid.js"))).mid.id`],
+    ["vi.importMock()", `(await asks(vi.importMock("./mid.js"))).mid.id`],
+  ])("the factory's %s waits for the fetch of the other load", async (_, id) => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "other.js": `import { mid } from "./mid.js"; export const seen = mid;`,
+        "user.js": `import { x } from "./k.js"; export const seen = x;`,
+        "preload.js": `
+          globalThis.calls = 0;
+          globalThis.asked = Promise.withResolvers();
+          globalThis.gate = Promise.withResolvers();
+          Bun.plugin({
+            name: "reads the file when the gate is open",
+            setup(build) {
+              build.onLoad({ filter: /data\\.js$/ }, async ({ path }) => {
+                if (++globalThis.calls > 1) throw new Error("the callback was called twice for " + path);
+                globalThis.asked.resolve();
+                await globalThis.gate.promise;
+                return { contents: await Bun.file(path).text(), loader: "js" };
+              });
+            },
+          });
+        `,
+        "held.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          const asks = imported => (globalThis.gate.resolve(), imported);
+          test("the factory gets the module of the other load", async () => {
+            mock.module("./k.js", async () => ({ x: ${id} }));
+            const first = import("./other.js");
+            await globalThis.asked.promise;
+            const b = await import("./user.js"), a = await first;
+            expect([a.seen.id, b.seen, globalThis.calls, globalThis.evaluations]).toEqual([1, 1, 1, 1]);
+          });
+          test("also after Bun.plugin.clearAll()", async () => {
+            globalThis.gate = Promise.withResolvers();
+            const waits = Promise.withResolvers();
+            mock.module("./k2.js", async () => (waits.resolve(), { x: (await import("./mid2.js")).mid.id }));
+            Bun.plugin({
+              name: "answers when the gate is open",
+              setup(build) {
+                build.onLoad({ filter: /data2\\.js$/ }, async () => (await globalThis.gate.promise, { contents: "export const id = 2;", loader: "js" }));
+              },
+            });
+            const first = import("./other2.js");
+            const second = import("./user2.js");
+            await waits.promise;
+            Bun.plugin.clearAll();
+            globalThis.gate.resolve();
+            expect([(await first).seen.id, (await second).seen]).toEqual([2, 2]);
+          });
+        `,
+        "data2.js": ``,
+        "mid2.js": `import { id } from "./data2.js"; export const mid = { id };`,
+        "other2.js": `import { mid } from "./mid2.js"; export const seen = mid;`,
+        "k2.js": `export const x = "real";`,
+        "user2.js": `import { x } from "./k2.js"; export const seen = x;`,
+      },
+      2,
+      ["--preload", "./preload.js", "./held.test.js"],
+    );
+  });
+
+  test("an import() that waits is resolved again for the factory that called it", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "helper.js": `export const load = specifier => import(specifier);`,
+        "ka.js": `export const x = "real";`,
+        "kb.js": `export const x = "real";`,
+        "uses-kb.js": `import { x } from "./kb.js"; export const seen = x;`,
+        "holds.js": `import "./data.js"; import "./uses-kb.js";`,
+        "user-a.js": `import { x } from "./ka.js"; export const seen = x;`,
+        "user-b.js": `import { x } from "./kb.js"; export const seen = x;`,
+        "preload.js": `
+          Object.assign(globalThis, { asked: [Promise.withResolvers(), Promise.withResolvers()], gate: Promise.withResolvers() });
+          Bun.plugin({
+            name: "reads the files when the gate is open",
+            setup(build) {
+              build.onLoad({ filter: /(data|uses-kb)\\.js$/ }, async ({ path }) => {
+                globalThis.asked[path.endsWith("data.js") ? 0 : 1].resolve();
+                await globalThis.gate.promise;
+                return { contents: await Bun.file(path).text(), loader: "js" };
+              });
+            },
+          });
+        `,
+        // Both factories call import() through one module, so only the async context tells which of them asks.
+        "held.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { load } from "./helper.js";
+          test("the copy is for the factory whose module it waits for", async () => {
+            const waits = [Promise.withResolvers(), Promise.withResolvers()];
+            mock.module("./kb.js", async () => {
+              const user = load("./uses-kb.js");
+              waits[0].resolve();
+              return { x: "b, made with " + (await user).seen };
+            });
+            mock.module("./ka.js", async () => {
+              const data = load("./data.js");
+              waits[1].resolve();
+              return { x: "a, made with " + (await data).id };
+            });
+            void import("./holds.js");
+            await Promise.all(globalThis.asked.map(asked => asked.promise));
+            const b = import("./user-b.js");
+            await waits[0].promise;
+            const a = import("./user-a.js");
+            await waits[1].promise;
+            globalThis.gate.resolve();
+            expect([(await a).seen, (await b).seen]).toEqual(["a, made with 1", "b, made with real"]);
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./held.test.js"],
+    );
+  });
+
+  test("an import() that waits doesn't go on after its test file", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "other.js": `import { mid } from "./mid.js"; export const seen = mid;`,
+        "user.js": `import { x } from "./k.js"; export const seen = x;`,
+        "plain.js": `export const plain = true;`,
+        "preload.js": `
+          Object.assign(globalThis, { events: [], asked: Promise.withResolvers(), gate: Promise.withResolvers(), answered: Promise.withResolvers() });
+          Bun.plugin({
+            name: "answers when the gate is open",
+            setup(build) {
+              build.onLoad({ filter: /data\\.js$/ }, async ({ path }) => {
+                globalThis.asked.resolve();
+                await globalThis.gate.promise;
+                globalThis.answered.resolve();
+                return { contents: await Bun.file(path).text(), loader: "js" };
+              });
+            },
+          });
+        `,
+        "a.test.js": `
+          import { mock, test } from "bun:test";
+          test("leaves a factory whose import() waits", async () => {
+            const waits = Promise.withResolvers();
+            mock.module("./k.js", async () => {
+              globalThis.events.push("the factory asks");
+              waits.resolve();
+              await import("./mid.js");
+              globalThis.events.push("the factory goes on");
+              return { x: 1 };
+            });
+            void import("./other.js");
+            await globalThis.asked.promise;
+            void import("./user.js").catch(() => {});
+            await waits.promise;
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("the fetch ends in the next file", async () => {
+            globalThis.gate.resolve();
+            await globalThis.answered.promise;
+            await import("./plain.js");
+            expect(globalThis.events).toEqual(["the factory asks"]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+    );
+  });
 });
 
 test.concurrent.each([
@@ -6633,6 +6809,48 @@ describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrel
               return { x: "mock, made with " + (await user).seen };
             });
             expect((await import("./k.js")).x).toBe("mock, made with real");
+            expect([(await other).seen, fetches]).toEqual(["mock, made with real", 2]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // Another module calls import() for the factory, so only the async context of the call tells who asks. The test makes the loader
+  // go on in its own context before the callback answers.
+  test("and so does a factory whose import() went on in another async context", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "other.js": `export { seen } from "./user.js";`,
+        "helper.js": `export const load = specifier => import(specifier);`,
+        "j.js": `export const x = "real";`,
+        "context.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { load } from "./helper.js";
+          const started = Promise.withResolvers(), gate = Promise.withResolvers(), asked = Promise.withResolvers();
+          let fetches = 0;
+          Bun.plugin({
+            name: "held",
+            setup(build) {
+              build.onLoad({ filter: /user\\.js/ }, async () => (fetches++, started.resolve(), await gate.promise, undefined));
+            },
+          });
+          test("and the other load gets the mock", async () => {
+            const other = import("./other.js");
+            await started.promise;
+            vi.doMock("./k.js", async () => {
+              const user = load("./user.js");
+              asked.resolve();
+              return { x: "mock, made with " + (await user).seen };
+            });
+            const k = import("./k.js");
+            await asked.promise;
+            vi.doMock("./j.js", () => ({ x: "mock j" }));
+            expect((await import("./j.js")).x).toBe("mock j");
+            gate.resolve();
+            expect((await k).x).toBe("mock, made with real");
             expect([(await other).seen, fetches]).toEqual(["mock, made with real", 2]);
           });
         `,

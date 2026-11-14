@@ -1,5 +1,7 @@
 use bun_ast::runtime::ReactCompilerMode;
-use bun_sema::hir::{BinOp, CallId, ExprKind, Flags, FnBody, FnKind, IdList, StmtId, StmtKind};
+use bun_sema::hir::{
+    BinOp, CallId, ExprKind, Flags, FnBody, FnKind, IdList, StmtId, StmtKind, UnOp,
+};
 use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings};
 
 use super::{
@@ -285,6 +287,37 @@ fn local_never_shares_a_name_with_an_outside_variable() {
             assert_eq!(targets.collect::<Vec<_>>(), [outside], "{name}");
         });
     }
+}
+
+#[test]
+fn number_that_is_not_finite_is_no_name() {
+    let text = "const NaN = 'a binding';\n\
+                const Infinity = 'a binding';\n\
+                export function Quota({ used }: { used: number }) {\n\
+                const zero = 0;\n\
+                return <span>{[used, 1 / 0, -1e999, zero / 0].join()}</span>;\n\
+                }\n";
+    with_compiled_tree(text, |tree| {
+        assert!(tree.cache_size(tree.function_named("Quota")).is_some());
+        assert_eq!(tree.count_names("NaN") + tree.count_names("Infinity"), 0);
+        let hir = tree.hir();
+        let number = |kind: ExprKind| match kind {
+            ExprKind::Number(at) => hir.numbers[at as usize],
+            _ => 0.0,
+        };
+        assert_eq!(tree.count_expressions(|kind| number(kind).is_nan()), 1);
+        assert_eq!(
+            tree.count_expressions(|kind| number(kind) == f64::INFINITY),
+            2
+        );
+        let is_negated = |kind: ExprKind| match kind {
+            ExprKind::Unary { op, operand } => {
+                op == UnOp::Minus && number(hir[operand].kind) == f64::INFINITY
+            }
+            _ => false,
+        };
+        assert_eq!(tree.count_expressions(is_negated), 1);
+    });
 }
 
 #[test]

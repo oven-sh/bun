@@ -295,11 +295,6 @@ impl Host for RecordingHost<'_> {
             },
         )
     }
-    fn global_ref(&mut self, name: &[u8]) -> Ref {
-        let reference = self.host.global_ref(name);
-        self.referenced.push(reference);
-        reference
-    }
     fn record_usage(&mut self, ref_: Ref) {
         self.referenced.push(ref_);
         self.host.record_usage(ref_);

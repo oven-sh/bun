@@ -13,7 +13,7 @@ use core::ops::Range;
 /// npm ignores an extension header with a longer body.
 pub(crate) const BODY_LIMIT: i64 = 1024 * 1024;
 /// `Z_DEFAULT_CHUNK` of `node:zlib`.
-const INFLATED_AT_ONCE: usize = 16 * 1024;
+pub(crate) const INFLATED_AT_ONCE: usize = 16 * 1024;
 
 /// npm takes a block for a zero block whatever is in its checksum field, short of a number.
 const EMPTY_SUM: i64 = 8 * b' ' as i64;
@@ -158,9 +158,14 @@ fn may_be_cut(text: &[u8], offset: usize) -> bool {
 /// Whether a piece ends within a character of `text`, which is at `position` in an archive that npm has all of.
 pub(crate) fn is_cut(text: &[u8], position: u64) -> bool {
     let to_next = position.wrapping_neg() % INFLATED_AT_ONCE as u64;
-    (text.iter().skip(to_next as usize))
+    (to_next as usize..text.len())
         .step_by(INFLATED_AT_ONCE)
-        .any(|byte| byte & 0xc0 == 0x80)
+        // A character starts at most three bytes before its last one.
+        .filter_map(|at| text.get(at.saturating_sub(3)..=at)?.utf8_chunks().last())
+        .any(|last| match last.invalid() {
+            [] => !last.valid().ends_with(|c: char| c.is_ascii()),
+            invalid => invalid.len() > 1,
+        })
 }
 
 /// `parseInt(line, 10)`, if that is a length.

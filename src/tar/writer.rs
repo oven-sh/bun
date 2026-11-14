@@ -86,6 +86,19 @@ impl<O: Output> Writer<O> {
         Ok(())
     }
 
+    fn put_pax(&mut self, typeflag: u8, name: &[u8], pax: &[u8], file: &File<'_>) -> Result<()> {
+        self.put(&format_header(&Fields {
+            name,
+            perm: file.perm & 0o777,
+            size: pax.len() as u64,
+            mtime: file.mtime.clamp(0, USTAR_MTIME_MAX),
+            typeflag,
+            strict: true,
+        }))?;
+        self.put(pax)?;
+        self.put_zeros(padding_for(pax.len() as u64))
+    }
+
     /// Starts an entry, after finishing the one before it.
     pub fn header(&mut self, file: &File<'_>) -> Result<()> {
         self.finish_entry()?;
@@ -138,6 +151,19 @@ impl<O: Output> Writer<O> {
                     .is_some_and(|read| read.path.unwrap_or(name) == path);
             if !npm_reads_it {
                 pax.clear();
+                // A global header moves the name: an entry has one `x` header, which it may need below.
+                let (mut moved, mut filler) = (position, b".".to_vec());
+                while npm::is_cut(path, moved) && filler.len() < npm::INFLATED_AT_ONCE {
+                    pax.clear();
+                    add_record(&mut pax, b"comment", &filler)?;
+                    let by = BLOCK_SIZE + pax.len().next_multiple_of(BLOCK_SIZE);
+                    moved = position.saturating_add(by as u64);
+                    filler.write(&[b'.'; BLOCK_SIZE])?;
+                }
+                if !pax.is_empty() && !npm::is_cut(path, moved) {
+                    self.put_pax(b'g', b"pax_global_header", &pax, file)?;
+                }
+                pax.clear();
                 let with_nul = (path.len() as u64).saturating_add(1);
                 self.put(&format_header(&Fields {
                     name: b"././@LongLink",
@@ -169,17 +195,7 @@ impl<O: Output> Writer<O> {
         }
 
         if !pax.is_empty() {
-            let block = format_header(&Fields {
-                name: &pax_attribute_name(name),
-                perm: file.perm & 0o777,
-                size: pax.len() as u64,
-                mtime: file.mtime.clamp(0, USTAR_MTIME_MAX),
-                typeflag: b'x',
-                strict: true,
-            });
-            self.put(&block)?;
-            self.put(&pax)?;
-            self.put_zeros(padding_for(pax.len() as u64))?;
+            self.put_pax(b'x', &pax_attribute_name(name), &pax, file)?;
         }
 
         let block = format_header(&Fields {

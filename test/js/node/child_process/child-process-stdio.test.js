@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { readSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
@@ -294,34 +293,45 @@ describe.concurrent("stdio _handle", () => {
   // The synchronous fd-based IPC pattern used by TypeScript 7's sync API:
   // grab the raw fds from _handle, make them blocking, keep the streams
   // paused, and drive a request/response cycle with writeSync/readSync.
+  // The exchange runs in its own process: a blocking read on the test
+  // thread would outlive the test timeout.
   it.skipIf(isWindows)("_handle.fd supports blocking readSync/writeSync IPC", async () => {
-    const child = spawn(
-      bunExe(),
-      ["-e", `process.stdin.once("data", d => process.stdout.write("pong:" + d.toString().trim()))`],
-      { env: bunEnv, stdio: ["pipe", "pipe", "inherit"] },
-    );
-    try {
-      const readFd = child.stdout._handle.fd;
-      const writeFd = child.stdin._handle.fd;
-      expect(child.stdout._handle.setBlocking(true)).toBe(0);
-      expect(child.stdin._handle.setBlocking(true)).toBe(0);
-      child.stdout.pause();
-      child.stdout.unref();
-      child.stdin.unref();
-      child.unref();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { spawn } = require("node:child_process");
+        const { readSync, writeSync } = require("node:fs");
+        const child = spawn(process.execPath, ["-e", 'process.stdin.once("data", d => process.stdout.write("pong:" + d.toString().trim()))'], {
+          stdio: ["pipe", "pipe", "inherit"],
+        });
+        process.on("exit", () => child.kill());
+        const readFd = child.stdout._handle.fd;
+        const writeFd = child.stdin._handle.fd;
+        const blocking = [child.stdout._handle.setBlocking(true), child.stdin._handle.setBlocking(true)];
+        child.stdout.pause();
+        child.stdout.unref();
+        child.stdin.unref();
+        child.unref();
 
-      writeSync(writeFd, "ping\n");
-      const buf = Buffer.alloc(64);
-      let out = "";
-      while (!out.includes("pong:ping")) {
-        const n = readSync(readFd, buf, 0, buf.length, null);
-        expect(n).toBeGreaterThan(0);
-        out += buf.toString("utf8", 0, n);
-      }
-      expect(out).toBe("pong:ping");
-    } finally {
-      child.kill();
-    }
-    await once(child, "exit");
+        writeSync(writeFd, "ping");
+        const buf = Buffer.alloc(64);
+        let out = "";
+        while (!out.includes("pong:ping")) {
+          const n = readSync(readFd, buf, 0, buf.length, null);
+          if (n === 0) break;
+          out += buf.toString("utf8", 0, n);
+        }
+        console.log(JSON.stringify({ blocking, out }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ blocking: [0, 0], out: "pong:ping" });
+    expect(exitCode).toBe(0);
   });
 });

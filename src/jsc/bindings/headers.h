@@ -395,11 +395,6 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObj
 
 #ifdef __cplusplus
 
-
-#endif
-
-#ifdef __cplusplus
-
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     JSC::JSGlobalObject* globalObject, CppWebSocket* websocket,
@@ -538,84 +533,6 @@ ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globa
 
 BUN_DECLARE_HOST_FUNCTION(BunServe__onResolvePlugins);
 BUN_DECLARE_HOST_FUNCTION(BunServe__onRejectPlugins);
-
-#endif
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
-
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
-
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onRejectStream);
-
-BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);
-
-#endif
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onResolveStream);
-
-#endif
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onResolveStream);
-
-#endif
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
-
-#endif
-
-#pragma mark - Bun__HTMLRewriter
-
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onHandlerResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onHandlerReject);
-
-#endif
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestThen);
-BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestCatch);
-BUN_DECLARE_HOST_FUNCTION(Bun__CronJob__onPromiseResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__CronJob__onPromiseReject);
 
 #endif
 

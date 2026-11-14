@@ -69,6 +69,3 @@ export const jscNames = {
     "then",
   ],
 };
-
-// Types and namespaces of src/js/*.d.ts. They have no value.
-export const typeNames = ["AnyObject", "Bindgen"];

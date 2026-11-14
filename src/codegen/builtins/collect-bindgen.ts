@@ -48,7 +48,6 @@ import {
   type DispatchDeclaration,
   type MemberDeclaration,
   type Problems,
-  type SignatureDeclaration,
   type SourcedDeclaration,
 } from "./declarations.ts";
 import * as b from "./lib.ts";
@@ -58,7 +57,6 @@ import {
   maximumDirectParameterCount,
   realmParameter,
   type BuiltinPath,
-  type CallMode,
   type Capability,
   type DirectEntrySpec,
   type DirectForm,
@@ -94,8 +92,6 @@ interface Joins {
   writtenFeatureUses: ReadonlyMap<BuiltinPath, readonly FeatureUseSpec[]>;
   nativeBindings: ReadonlySet<BuiltinPath>;
 }
-
-const unplacedPath: BuiltinPath = "%Unplaced%";
 
 const externalStateHeap: Heap = "ExternalState";
 const externalState: readonly Heap[] = [externalStateHeap];
@@ -433,18 +429,6 @@ function createField(
     writes: pinsBytes && writes && !writes.includes("TypedArrayStorage") ? [...writes, "TypedArrayStorage"] : writes,
     implementation: columns.implementation ?? b.hostCall,
   };
-}
-
-export function signatureOfBindgen(
-  signature: Signature,
-  mode: CallMode,
-  receiver: ParameterType | null,
-): SignatureDeclaration {
-  const field = createField(signature, createReceiver(signature, receiver, null), signature.returns.resultType);
-  const [declared] = b
-    .fn(unplacedPath, field)
-    .flatMap(declaration => (declaration.declares === "Member" ? declaration.signatures : []));
-  return { ...declared, mode };
 }
 
 // The object that is made of a dictionary has a property for each member that is there, in their order, and the file that declares the dictionary declares the layout.

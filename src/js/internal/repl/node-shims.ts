@@ -105,17 +105,6 @@ function getOptionValue(name: string) {
   }
 }
 
-// ---- internal/process/permission ----------------------------------------------
-
-function isEnabled() {
-  return false;
-}
-
-function has(scope: string, reference?: string): boolean;
-function has() {
-  return true;
-}
-
 // ---- internal/bootstrap/realm ----------------------------------------------
 
 const BuiltinModule = {
@@ -388,9 +377,6 @@ export default {
   isProxy,
   // internal/options
   getOptionValue,
-  // internal/process/permission (consumed as a namespace: permission.isEnabled())
-  isEnabled,
-  has,
   // internal/bootstrap/realm
   BuiltinModule,
   // internal/modules/esm/get_format

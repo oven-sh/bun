@@ -1994,6 +1994,35 @@ test.skipIf(!isLinux)("every request of one read is dispatched when the client l
   expect({ requests, closed }).toEqual({ requests: 20, closed: 20 });
 });
 
+// The wait for the peer's close_notify takes 8 s or more.
+test.concurrent.each([
+  ["close()", (server: http.Server) => void server.close()],
+  ["close() and closeIdleConnections()", (server: http.Server) => server.close().closeIdleConnections()],
+  ["closeIdleConnections() and close()", (server: http.Server) => (server.closeIdleConnections(), server.close())],
+])("%s doesn't wait for an idle peer to answer the close_notify", async (_label, stop) => {
+  const body = Buffer.alloc(32 * 1024, "x").toString();
+  const finished = Promise.withResolvers<void>();
+  const server = https.createServer({ ...validCert, keepAliveTimeout: 60_000 }, (_req, res) =>
+    res.end(body, finished.resolve),
+  );
+  const client = tls.connect({ port: await listen(server), host: "127.0.0.1", ca: validCert.cert, allowHalfOpen: true } as tls.ConnectionOptions); // prettier-ignore
+  try {
+    await once(client, "secureConnect");
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await finished.promise;
+    const startedAt = performance.now();
+    stop(server);
+    await once(server, "close");
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+    let response = "";
+    client.on("data", chunk => (response += chunk));
+    await once(client, "end");
+    expect(response.split("\r\n\r\n")[1]).toBe(body);
+  } finally {
+    client.destroy();
+  }
+});
+
 describe("https.Server reads its TLS options the way Node does", () => {
   const keysDir = join(import.meta.dir, "../test/fixtures/keys");
   const keys = (file: string) => readFileSync(join(keysDir, file));

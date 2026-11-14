@@ -251,6 +251,39 @@ describe.skipIf(!fault.available() || isWindows)("TLS sockets whose sends the ke
     });
   });
 
+  // The shutdown waits for the response, which the close right behind it gets out. The peer never answers.
+  test("https close() ends an idle connection whose response leaves between the shutdown and the close", async () => {
+    const server = https.createServer({ ...nodeTls, keepAliveTimeout: 60_000 }, (_req, res) => {
+      fault.set({ syscall: "send", action: "zero", repeat: -1 });
+      res.end("hello");
+      setImmediate(() => {
+        fault.set({ syscall: "send", action: "zero", repeat: 1 });
+        server.close();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const relayed = await relay((server.address() as AddressInfo).port);
+    const client = tls.connect({ port: relayed.port, host: "127.0.0.1", ca: certs.cert, allowHalfOpen: true } as any);
+    try {
+      let response = "";
+      client.on("data", chunk => (response += chunk));
+      await once(client, "secureConnect");
+      const startedAt = performance.now();
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await Promise.all([once(server, "close"), once(client, "end")]);
+      // The deadline is 8 s away or more.
+      expect(performance.now() - startedAt).toBeLessThan(5_000);
+      client.end();
+      await relayed.closed;
+      expect({ wire: relayed.events, body: response.split("\r\n\r\n")[1] }).toEqual({
+        wire: ["close_notify", "FIN"],
+        body: "hello",
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
   test("node:tls end() sends the close_notify that the kernel refused", async () => {
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();

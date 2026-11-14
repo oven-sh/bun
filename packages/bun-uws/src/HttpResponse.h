@@ -348,9 +348,14 @@ public:
         /* A socket is idle from the moment its response completes. When
          * that happens inside onData's parse loop the response can still
          * sit in the cork buffer, and JS that runs before the loop ends
-         * (a graceful stop() from a microtask) gets here. close() sends
-         * it first. */
-        Super::close();
+         * (a graceful stop() from a microtask) gets here. */
+        Super::uncork();
+        if (SSL && !Super::getBufferedAmount()) {
+            /* close() counts the connection until the peer has answered the close_notify, which a peer that is gone never does. */
+            closeAfterLastByte();
+        } else {
+            Super::close();
+        }
         return true;
     }
 

@@ -2272,6 +2272,14 @@ static void ssl_defer_close(struct us_socket_t *s, int code) {
   s->ssl_pending_close_code = (unsigned char) code;
 }
 
+/* The spill is out: a shutdown that waited for it goes on, and waits again if the kernel refuses its close_notify. */
+static void ssl_resume_shutdown(struct us_socket_t *s) {
+  if (!s->ssl_shutdown_after_spill) return;
+  s->ssl_shutdown_after_spill = 0;
+  if (ssl_sent_close_notify(s)) us_internal_socket_raw_shutdown(s);
+  else us_internal_ssl_shutdown(s);
+}
+
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
@@ -2308,8 +2316,8 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   if ((code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN || code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN)
       && !reason
       && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
-    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+    if (ssl_drain_spill((struct loop_ssl_data *)s->group->loop->data.ssl_data, s)) ssl_resume_shutdown(s);
+    if (s->ssl_spilled) {
       ssl_defer_close(s, code);
       return s;
     }
@@ -2618,12 +2626,8 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   /* Ciphertext from a partial batch flush goes out before anything else;
    * while it is pending nothing new may be written for this socket. */
   if (!ssl_drain_spill(loop_ssl_data, s) || s->send_rejected) return s;
-  if (s->ssl_shutdown_after_spill) {
-    s->ssl_shutdown_after_spill = 0;
-    if (ssl_sent_close_notify(s)) us_internal_socket_raw_shutdown(s);
-    else us_internal_ssl_shutdown(s);
-    if (ssl_gone(s) || s->ssl_shutdown_after_spill) return s;
-  }
+  ssl_resume_shutdown(s);
+  if (ssl_gone(s) || s->ssl_spilled) return s;
   if (s->ssl_close_after_spill) {
     s->ssl_close_after_spill = 0;
     return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);

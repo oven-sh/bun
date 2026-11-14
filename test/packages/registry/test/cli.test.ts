@@ -26,6 +26,20 @@ async function seed(registry: TestRegistry, manifest: Manifest, user: string) {
   expect(reply.status).toBe(200);
 }
 
+/** Takes one version out of the registry over HTTP, with the PUT that `npm unpublish <name>@<version>` sends. */
+async function unpublish(registry: TestRegistry, name: string, version: string, user: string) {
+  const headers = jsonHeaders(registry.auth.createToken(registry.auth.users.get(user)!).token);
+  const url = registry.url + name.replace("/", "%2f");
+  const document = (await request(`${url}?write=true`, { headers })).json;
+  delete document.versions[version];
+  const reply = await request(`${url}/-rev/${document._rev}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(document),
+  });
+  expect(reply.status).toBe(200);
+}
+
 async function bun(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -197,6 +211,28 @@ describe.concurrent("bun against the registry", () => {
     const tolerated = await bun(String(dir), "publish", "--tolerate-republish");
     expect(tolerated.stderr).toBe("warn: Registry already knows about version 1.2.3; skipping.\n");
     expect(tolerated.exitCode).toBe(0);
+  });
+
+  // The registry does not list the version, so --tolerate-republish finds nothing to skip. The upload is an error
+  // with and without it.
+  test.each([
+    ["publish", []],
+    ["publish --tolerate-republish", ["--tolerate-republish"]],
+  ])("%s of a version number that was unpublished", async (_, flags) => {
+    using registry = new TestRegistry().start();
+    registry.auth.addUser("author", "secret");
+    const manifest = { name: "taken-back", version: "1.2.4" };
+    await seed(registry, { ...manifest, version: "1.2.3" }, "author");
+    await seed(registry, manifest, "author");
+    await unpublish(registry, "taken-back", "1.2.4", "author");
+    using dir = project(registry, manifest, "author");
+
+    const again = await bun(String(dir), "publish", ...flags);
+    expect(again.stderr).toBe(
+      `\n400 Bad Request: ${registry.url}taken-back\n\n` +
+        ` - Cannot publish over previously published version "1.2.4".\n`,
+    );
+    expect(again.exitCode).toBe(1);
   });
 
   test("whoami", async () => {

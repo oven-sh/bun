@@ -432,9 +432,9 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         }
 
         SavedRequest {
-            js_request: jsc::StrongOptional::create(self.request.js, global),
+            js_request: jsc::Strong::create(self.request.js, global),
             request: self.request.native,
-            ctx: AnyRequestContext::init(self.ctx),
+            ctx: any_request_context::AnyRequestContextRef::new(AnyRequestContext::init(self.ctx)),
             response: any_response_from::<SSL>(resp),
         }
     }
@@ -1001,10 +1001,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             SavedRequestUnion::Saved(data) => PreparedRequest {
                 request: DispatchedRequest {
-                    js: data
-                        .js_request
-                        .get()
-                        .expect("Request was unexpectedly freed"),
+                    js: data.js_request.get(),
                     native: data.request,
                 },
                 // SAFETY: `SavedRequest` was produced by `PreparedRequest::save`
@@ -4068,29 +4065,17 @@ pub(crate) mod http_server_agent {
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────
 pub(crate) struct SavedRequest {
-    /// May be `.empty` until
-    /// `prepare_js_request_context` populates it; `deinit` must tolerate the
-    /// empty state.
-    pub(crate) js_request: jsc::StrongOptional,
+    pub(crate) js_request: jsc::Strong,
     pub(crate) request: bun_ptr::ThisPtr<crate::webcore::Request>,
-    pub ctx: AnyRequestContext,
+    pub(crate) ctx: any_request_context::AnyRequestContextRef,
     pub(crate) response: uws::AnyResponse,
-}
-
-impl SavedRequest {
-    /// Release the JS strong ref and
-    /// drop the request-context refcount. `request`/`response` are non-owning.
-    pub(crate) fn deinit(&mut self) {
-        self.js_request.deinit();
-        self.ctx.deref();
-    }
 }
 
 pub(crate) enum SavedRequestUnion<'a> {
     /// Direct pointer to a µWebSockets request that is still on the stack.
     Stack(&'a mut uws::Request),
     /// Heap-allocated copy that persists beyond the initial handler frame.
-    Saved(SavedRequest),
+    Saved(&'a SavedRequest),
 }
 
 // ─── schedule_deinit's tasks ─────────────────────────────────────────────────

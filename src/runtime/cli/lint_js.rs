@@ -248,7 +248,7 @@ fn start_vm() -> Result<(), Vec<u8>> {
         .map_err(|error| failed(error.name()))?;
     vm.load_extra_env_and_source_code_printer();
     vm.argv = bun_core::argv().iter().skip(1).map(Box::from).collect();
-    vm.event_loop_mut().ensure_waker();
+    vm.event_loop().ensure_waker();
     Ok(())
 }
 
@@ -285,7 +285,7 @@ impl Vm for ThreadVm {
                 // Like `wait_for_promise`, but gives up on a promise that nothing can settle anymore. Node.js exits in
                 // that case.
                 while promise.status() == jsc::js_promise::Status::Pending {
-                    vm.as_mut().event_loop_mut().tick();
+                    vm.event_loop().tick();
                     if promise.status() != jsc::js_promise::Status::Pending {
                         break;
                     }

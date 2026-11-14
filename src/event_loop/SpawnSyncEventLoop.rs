@@ -47,7 +47,7 @@ unsafe extern "Rust" {
     /// on `uws_loop`. Returns erased `*mut jsc::EventLoop`.
     safe fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut ();
     safe fn __bun_spawn_sync_destroy_event_loop(el: *mut ());
-    /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
+    /// Re-bind `event_loop.global` to `vm`'s (prepare path).
     safe fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ());
     safe fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
     #[cfg(windows)]

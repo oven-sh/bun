@@ -166,9 +166,7 @@ impl FileResponseStream {
                 ref_count: Cell::new(1),
                 resp: Cell::new(opts.resp),
                 vm: Cell::new(opts.vm),
-                event_loop_handle: Cell::new(EventLoopHandle::init(
-                    opts.vm.event_loop().cast::<()>(),
-                )),
+                event_loop_handle: Cell::new(EventLoopHandle::init(opts.vm.event_loop_ptr())),
                 fd: Cell::new(opts.fd),
                 auto_close: Cell::new(opts.auto_close),
                 idle_timeout: Cell::new(opts.idle_timeout),
@@ -596,7 +594,7 @@ impl FileResponseStream {
     }
 
     fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.get().event_loop().cast::<()>())
+        EventLoopHandle::init(self.vm.get().event_loop_ptr())
     }
 
     fn r#loop(&self) -> *mut bun_io::Loop {

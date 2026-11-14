@@ -163,7 +163,7 @@ impl Instance {
         let vm = VirtualMachine::get();
         let kind = vm.current_loop_kind();
         if let Some(task) = self.host.task_unless_queued(kind) {
-            vm.event_loop_mut().enqueue_task_after_yield(task);
+            vm.event_loop().enqueue_task_after_yield(task);
         }
         if kind == LoopKind::Macro {
             // The macro may return first.

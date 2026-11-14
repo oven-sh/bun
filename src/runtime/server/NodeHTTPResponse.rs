@@ -1467,7 +1467,7 @@ impl NodeHTTPResponse {
             if on_aborted.is_cell() {
                 let vm = vm_get();
                 let global_this = vm.global();
-                let event_loop = vm.event_loop_ref();
+                let event_loop = vm.event_loop();
 
                 event_loop.run_callback(
                     bun_event_loop::ContextId::NONE,
@@ -1829,7 +1829,7 @@ impl NodeHTTPResponse {
             if callback.is_cell() {
                 let vm = vm_get();
                 let global_this = vm.global();
-                let event_loop = vm.event_loop_ref();
+                let event_loop = vm.event_loop();
 
                 let bytes = self.get_bytes(global_this, chunk);
 
@@ -1970,7 +1970,7 @@ impl NodeHTTPResponse {
         let global_this = vm.global();
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
-        vm.event_loop_ref().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             on_writable,
             global_this,
@@ -2491,7 +2491,7 @@ impl NodeHTTPResponse {
         self.auto_flusher.get().registered.set(true);
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let found_existing = vm_get()
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
@@ -2503,10 +2503,7 @@ impl NodeHTTPResponse {
         }
         debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = vm_get()
-            .event_loop_ref()
-            .deferred_tasks
-            .unregister_task(ctx);
+        let removed = vm_get().event_loop().deferred_tasks.unregister_task(ctx);
         debug_assert!(removed);
         self.auto_flusher.get().registered.set(false);
         self.deref();

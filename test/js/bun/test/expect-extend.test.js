@@ -843,9 +843,11 @@ describe("MatcherContext", () => {
     });
 
     // Jest's results. The diff printer of every matcher takes a last line for changed if only one side ends it with a line break.
-    test.todo("printDiffOrStringify marks no line that both strings have", () => {
-      expect(markedLines("a\n", "b\n")).toEqual(["- a", "+ b", ...counts(1, 1)]);
-      expect(markedLines("a\nb", "a")).toEqual(["- b", ...counts(1, 0)]);
+    test.failing.each([
+      ["a\n", "b\n", ["- a", "+ b", ...counts(1, 1)]],
+      ["a\nb", "a", ["- b", ...counts(1, 0)]],
+    ])("printDiffOrStringify(%p, %p) marks no line that both strings have", (expected, received, lines) => {
+      expect(markedLines(expected, received)).toEqual(lines);
     });
 
     // jest-matcher-utils 30.5.2 prints a line diff for `expect.any(Object)` and `expect.objectContaining()` as `expected`.

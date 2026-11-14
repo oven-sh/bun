@@ -33,7 +33,7 @@ impl PosixSignalHandle {
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
     /// Called by the main thread, the ring's single consumer.
-    pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
+    pub(crate) fn drain(&self, event_loop: &EventLoop) {
         while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
@@ -62,10 +62,9 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
         };
-        // SAFETY: `vm` and its event loop are process-lifetime; raw place
-        // projection reads only the `signal_handler` slot (no `&EventLoop`
-        // formed — the main thread may hold `&mut EventLoop` concurrently).
-        let handler = unsafe { (*(*vm).event_loop()).signal_handler };
+        // SAFETY: `vm` and its event loop are process-lifetime. This is any thread: it reads only
+        // the `signal_handler` slot, which is written once.
+        let handler = unsafe { (*vm).event_loop().signal_handler.get() };
         if let Some(handler) = handler {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
@@ -77,7 +76,7 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             if handler.enqueue(signal) {
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
                 // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*(*vm).event_loop()).wakeup() };
+                unsafe { (*vm).event_loop().wakeup() };
             }
         }
     }
@@ -221,12 +220,14 @@ extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime.
-            let this = unsafe { &mut *(*vm).event_loop() };
-            if this.signal_handler.is_none() {
+            // SAFETY: `vm` and its event loop are process-lifetime. A Worker can be the caller:
+            // only this slot is reached.
+            let handler = &unsafe { &*vm }.event_loop().signal_handler;
+            if handler.get().is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler =
-                    Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
+                handler.set(Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(
+                    boxed,
+                ))));
             }
         }
     }

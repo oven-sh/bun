@@ -13,7 +13,6 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
     StringJsc as _,
 };
-use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
@@ -184,34 +183,24 @@ impl<'a> TestRunner<'a> {
                 }
             }
         }
-        if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+        if active_file.timer.state.get() != TimerState::ACTIVE
+            || active_file.timer.next.get() == bun_core::Timespec::EPOCH
         {
             return bun_core::Timespec::EPOCH;
         }
-        // bun_event_loop carries a local Timespec stub with the
-        // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
-        // until the lower tier unifies on bun_core::Timespec (see
-        // src/runtime/timer/mod.rs ElTimespec alias).
-        bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
+        active_file.timer.next.get()
     }
 
-    pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
-        let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
+    pub(crate) fn remove_active_timeout(&self) {
+        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return;
         };
-        // SAFETY: single-threaded JS VM; only borrow of this BunTest for the
-        // duration of the timer-removal below. The const→mut projection is
-        // centralized in `buntest_as_mut` pending the BunTestPtr interior-mut
-        // reshape (see bun_test.rs).
-        let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
-        if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+        if active_file.timer.state.get() != TimerState::ACTIVE
+            || active_file.timer.next.get() == bun_core::Timespec::EPOCH
         {
             return;
         }
-        let _ = vm;
-        bun_test::vm_timer().remove(&raw mut active_file.timer);
+        crate::jsc_hooks::timer_all().remove(&active_file.timer);
     }
 
 
@@ -322,8 +311,7 @@ pub(crate) mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: a thread's VM outlives the code running on it.
-        if VirtualMachine::get_or_null().is_some_and(|vm| unsafe { (*vm).worker_ref().is_some() }) {
+        if VirtualMachine::get_or_null().is_some_and(|vm| vm.worker_ref().is_some()) {
             return None;
         }
         // SAFETY: only written and read on the thread that runs the test files.
@@ -563,7 +551,7 @@ fn is_loading_under_vitest(vm: &VirtualMachine) -> bool {
     thread_local! {
         static LAST_TEST_FILE: core::cell::RefCell<(Vec<u8>, bool)> = const { core::cell::RefCell::new((Vec::new(), false)) };
     }
-    if vm.has_globals_of_vitest() || vm.is_in_preload {
+    if vm.has_globals_of_vitest() || vm.is_in_preload.get() {
         return vm.has_globals_of_vitest();
     }
     let Some(main) = vm.main() else {
@@ -588,7 +576,7 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
-    if vm.is_in_preload || Jest::runner().is_none() {
+    if vm.is_in_preload.get() || Jest::runner().is_none() {
         // in preload, no arguments needed
     } else {
         let Some(path) = path else {
@@ -611,7 +599,7 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
 pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
     let vm = VirtualMachine::get();
     match own_globals {
-        true => vm.transpiler.options.own_test_globals,
+        true => vm.transpiler.get().options.own_test_globals,
         false => u32::from(is_loading_under_vitest(vm)),
     }
 }
@@ -678,7 +666,7 @@ pub(crate) mod on_unhandled_rejection {
 
     #[optimize(size)]
     pub(crate) fn on_unhandled_rejection(
-        jsc_vm: &mut VirtualMachine,
+        jsc_vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {
@@ -732,7 +720,7 @@ pub(crate) mod on_unhandled_rejection {
         // live `NonNull<ExceptionList>` owned by the VM; reborrow as `&mut`
         // for the duration of `run_error_handler` (single-threaded JS thread).
         let exception_list = jsc_vm
-            .on_unhandled_rejection_exception_list
+            .on_unhandled_rejection_exception_list.get()
             .map(|p| unsafe { &mut *p.as_ptr() });
         bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }

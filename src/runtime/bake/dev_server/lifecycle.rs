@@ -598,9 +598,8 @@ impl Drop for DevServer {
             debug_assert!(self.active_websocket_connections.is_empty());
         }
 
-        if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
-            self.timer_heap().remove(timer_ptr);
+        if self.memory_visualizer_timer.state.get() == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all().remove(&self.memory_visualizer_timer);
         }
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
@@ -637,9 +636,8 @@ impl Drop for DevServer {
         for value in self.source_maps.entries.values() {
             debug_assert!(value.ref_count > 0);
         }
-        if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
-            self.timer_heap().remove(timer_ptr);
+        if self.source_maps.weak_ref_sweep_timer.state.get() == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all().remove(&self.source_maps.weak_ref_sweep_timer);
         }
 
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
@@ -740,10 +738,7 @@ impl DevServer {
                 return Err(err);
             }
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                // `print_error_like_object_to_console` needs `&mut VM`, so cast
-                // the shared borrow through a raw pointer (single-threaded JS).
-                self.vm_mut()
+                self.vm()
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }

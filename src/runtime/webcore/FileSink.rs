@@ -195,7 +195,7 @@ impl Drop for FileSink {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         self.release_pipe();
         if let Some(global) = self.js_global() {
-            let vm = global.bun_vm().as_mut();
+            let vm = global.bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, vm);
         }
     }
@@ -302,11 +302,7 @@ impl FileSink {
             if let Some(stream) = (*this).pipe.get().take_stream() {
                 if let Some(global) = (*this).js_global() {
                     if !status.is_ok() {
-                        // SAFETY: `bun_vm()` is non-null when `global_object()` was;
-                        // `event_loop()` returns the live VM-owned `*mut EventLoop`.
-                        let _entered = bun_jsc::event_loop::EventLoop::enter_scope(
-                            global.bun_vm().as_mut().event_loop(),
-                        );
+                        let _entered = global.bun_vm().enter_event_loop_scope();
                         crate::dispatch::fold(stream.cancel(global));
                     } else {
                         stream.done();
@@ -918,17 +914,16 @@ impl FileSink {
     }
 
     /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the
-    /// typed `&mut VirtualMachine` (None for the mini loop or null).
+    /// typed `&VirtualMachine` (None for the mini loop or null).
     #[inline]
-    #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
-    fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
+    fn js_vm(&self) -> Option<&bun_jsc::VirtualMachineRef> {
         let p = self.event_loop_handle.bun_vm();
         if p.is_null() {
             return None;
         }
         // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
-        // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
+        // Js arm; non-null implies the per-thread VM.
+        Some(unsafe { &*p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
     pub(crate) fn start(

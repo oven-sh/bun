@@ -6699,6 +6699,17 @@ declare module "bun" {
     contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     /**
      * The loader to use for this file
+     *
+     * In a runtime plugin (`Bun.plugin`), `loader` can be `"js"`, `"jsx"`,
+     * `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`,
+     * `"xml"`, `"text"`, `"md"` or `"css"`. Any other name, such as `"file"`,
+     * makes the import throw. If the result has no `loader`, Bun picks one from
+     * the `type` attribute of the import, or else from the path. In that case, a
+     * `type` that names a loader outside this list, such as `"file"`, makes the
+     * import throw.
+     *
+     * In `Bun.build`, `loader` can be any `Loader`. Without one, Bun uses
+     * `args.loader`.
      */
     loader?: Loader;
   }
@@ -6916,6 +6927,10 @@ declare module "bun" {
 
     /**
      * Create a lazy-loaded virtual module that can be `import`ed or `require`d from other modules
+     *
+     * Only a runtime plugin (`Bun.plugin`) can call `module()`. In `Bun.build`,
+     * `module()` throws. The `loader` of the callback's result can be `"object"`
+     * or a name that a runtime plugin accepts (see `OnLoadResultSourceCode.loader`).
      *
      * @param specifier The module specifier to register the callback for
      * @param callback The function to run when the module is imported or required

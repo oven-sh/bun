@@ -45,6 +45,8 @@ type Loader =
   "js" | "jsx" | "ts" | "tsx" | "json" | "jsonc" | "toml" | "yaml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 ```
 
+At runtime, Bun accepts only some of these loaders from an `onLoad` callback. The [`onLoad`](#onload) section lists them.
+
 ## Usage
 
 A plugin is a JavaScript object containing a `name` property and a `setup` function.

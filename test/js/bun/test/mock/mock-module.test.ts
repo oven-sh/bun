@@ -3007,8 +3007,34 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
           test("no ES module of them ran", () => expect(globalThis.loaded).toEqual(["dual cjs", "dual/sub cjs"]));
         `,
+        // Runs after build-module.test.js, whose last test lists the files that have run.
+        "patched.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          const virtual = path =>
+            Bun.plugin({ name: "virtual", setup: build => void build.module(path, () => ({ exports: { which: "build.module()" }, loader: "object" })) });
+          test("the ES module that the mock had patched has its exports again", async () => {
+            const imported = await import("#dep");
+            mock.module("#dep", () => ({ which: "mock" }));
+            expect(imported.which).toBe("mock");
+            virtual(Bun.resolveSync("#dep", import.meta.dir));
+            expect([imported.which, require("#dep").which, (await import("#dep")).which]).toEqual(["real esm", "mock", "build.module()"]);
+            jest.unmock(require.resolve("#dep"));
+            expect([require("#dep").which, (await import("#dep")).which]).toEqual(["real cjs", "build.module()"]);
+          });
+          test("so has the module object, where build.module() takes the path that require() resolves the name to", async () => {
+            const required = require("./lib");
+            const moduleObject = require.cache[require.resolve("./lib")];
+            mock.module("./lib", () => ({ which: "mock" }));
+            expect(moduleObject.exports.which).toBe("mock");
+            virtual(require.resolve("./lib"));
+            expect(moduleObject.exports).toBe(required);
+            expect([require("./lib").which, (await import("./lib")).which]).toEqual(["build.module()", "mock"]);
+            jest.unmock("./lib");
+            expect([require("./lib").which, (await import("./lib")).which]).toEqual(["build.module()", "real esm"]);
+          });
+        `,
       },
-      3,
+      5,
     );
   });
 
@@ -4181,6 +4207,56 @@ describe.concurrent("a name that import and require() resolve to two files", () 
                 jest.unmock("dual");
                 expect(await withActual("dual")).toEqual(real);
               });
+              test("a mock of the name over such a mock leaves nothing of it in require.cache", async () => {
+                const path = Bun.resolveSync("dual/sub", import.meta.dir);
+                mock.module(path, () => ({ which: "by import path" }));
+                expect([require(path).which, ...(await both("dual/sub"))]).toEqual(["by import path", "real cjs", "by import path"]);
+                mock.module("dual/sub", () => ({ which: "by name" }));
+                expect([require(path).which, ...(await both("dual/sub"))]).toEqual(["by name", "by name", "by name"]);
+                jest.unmock("dual/sub");
+                expect([require(path).which, ...(await withActual("dual/sub"))]).toEqual(["real esm", ...real]);
+              });
+              test("an import of the path that require() resolves the name to gets the mock of the name from then on", async () => {
+                const requirePath = require.resolve("#dep");
+                expect((await import(requirePath)).which).toBe("real cjs");
+                mock.module("#dep", () => ({ which: "by name" }));
+                mock.module(Bun.resolveSync("#dep", import.meta.dir), () => ({ which: "by import path" }));
+                expect([(await import(requirePath)).which, ...(await both("#dep"))]).toEqual(["by name", "by name", "by import path"]);
+                jest.unmock(Bun.resolveSync("#dep", import.meta.dir));
+                jest.unmock("#dep");
+                expect([(await import(requirePath)).which, ...(await withActual("#dep"))]).toEqual(["real cjs", ...real]);
+              });
+              test("an import that waits for the factory of the mock of the name gets that mock", async () => {
+                const { promise, resolve } = Promise.withResolvers();
+                mock.module("./lib", async () => {
+                  await promise;
+                  return { which: "by name" };
+                });
+                const waiting = import("./lib");
+                mock.module(Bun.resolveSync("./lib", import.meta.dir), () => ({ which: "by import path" }));
+                resolve();
+                expect([(await waiting).which, ...(await both("./lib"))]).toEqual(["by name", "by name", "by import path"]);
+                jest.unmock(Bun.resolveSync("./lib", import.meta.dir));
+                jest.unmock("./lib");
+                expect(await withActual("./lib")).toEqual(real);
+              });
+              test("a factory of the mock of the name that settles after that patches the file of require() alone", async () => {
+                const ran = require("./folder");
+                await import("./folder");
+                const { promise, resolve } = Promise.withResolvers();
+                const settled = mock.module("./folder", async () => {
+                  await promise;
+                  return { which: "by name" };
+                });
+                mock.module(Bun.resolveSync("./folder", import.meta.dir), () => ({ which: "by import path" }));
+                resolve();
+                await settled;
+                expect(await both("./folder")).toEqual(["by name", "by import path"]);
+                jest.unmock(Bun.resolveSync("./folder", import.meta.dir));
+                jest.unmock("./folder");
+                expect(await withActual("./folder")).toEqual(real);
+                expect(require("./folder")).toBe(ran);
+              });
               test("both are left to the end of the test file", async () => {
                 byName();
                 expect(require("dual").which).toBe("by name");
@@ -4193,7 +4269,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               test("the next test file gets the files", async () => expect(await withActual("dual")).toEqual(real));
             `,
           },
-          5,
+          9,
           args,
         );
       },
@@ -4303,9 +4379,29 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               }
               expect(await both("#dep")).toEqual(["real cjs", "real esm"]);
             });
+            test("vi.doMock() of the path that require() resolves the name to, after a mock of the name", async () => {
+              const ran = require("./lib");
+              mock.module("./lib", () => ({ which: "mock" }));
+              vi.doMock(require.resolve("./lib"), () => ({ which: "vi" }));
+              expect(await both("./lib")).toEqual(["vi", "mock"]);
+              vi.doUnmock(require.resolve("./lib"));
+              expect(await both("./lib")).toEqual(["real cjs", "mock"]);
+              jest.unmock("./lib");
+              expect(await both("./lib")).toEqual(["real cjs", "real esm"]);
+              expect(require("./lib")).toBe(ran);
+            });
+            test("a factory of the mock of the name that requires the name gets the later mock of that path", async () => {
+              mock.module("./folder", () => ({ ofRequire: require("./folder").which, which: "mock" }));
+              mock.module(require.resolve("./folder"), () => ({ which: "by path" }));
+              const imported = await import("./folder");
+              expect([imported.which, imported.ofRequire]).toEqual(["mock", "by path"]);
+              jest.unmock(require.resolve("./folder"));
+              jest.unmock("./folder");
+              expect(await both("./folder")).toEqual(["real cjs", "real esm"]);
+            });
           `,
         },
-        3,
+        5,
       );
     });
   });

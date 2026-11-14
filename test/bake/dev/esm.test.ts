@@ -287,6 +287,328 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+// The client side of this rule is in test/bake/dev-and-prod.test.ts.
+{
+  const importer = `
+    import d from "babel-default";
+    import local from "../local.cjs";
+    export { d };
+    export const readLocal = () => local;
+  `;
+  const importCall = `exports.load = () => import("babel-default");`;
+  devTest("the default import of a CommonJS module in server code follows the module type of the importer", {
+    framework: minimalFramework,
+    files: {
+      "node_modules/babel-default/package.json": JSON.stringify({ name: "babel-default", main: "index.js" }),
+      "node_modules/babel-default/index.js": `
+        exports.__esModule = true;
+        exports.default = function Modal() {};
+      `,
+      "which.js": `
+        export const which = value =>
+          value === require("babel-default")
+            ? "module.exports"
+            : value === require("babel-default").default
+              ? "exports.default"
+              : typeof value;
+      `,
+      "local.cjs": `module.exports = { __esModule: true, default: "first" };`,
+      "untyped/importer.js": importer,
+      "untyped/import-call.cjs": importCall,
+      "type-module/package.json": `{ "type": "module" }`,
+      "type-module/importer.js": importer,
+      "type-module/required.js": importer,
+      "type-module/import-call.js": importCall,
+      // The record of this file has no list of export names, so the manifest comes from its evaluation.
+      "type-module/client.js": `"use client"; exports.Button = function Button() {};`,
+      "routes/index.ts": `
+        import { serverManifest } from "bun:bake/server";
+        import "../type-module/client.js";
+        import * as untyped from "../untyped/importer.js";
+        import * as typed from "../type-module/importer.js";
+        import untypedImportCall from "../untyped/import-call.cjs";
+        import typedImportCall from "../type-module/import-call.js";
+        import { which } from "../which.js";
+        export default async function () {
+          return new Response(JSON.stringify({
+            'no "type"': which(untyped.d),
+            '"type": "module"': which(typed.d),
+            'first loaded by require(), "type": "module"': which(require("../type-module/required.js").d),
+            "import() in .cjs": which((await untypedImportCall.load()).default),
+            'import() in CommonJS, "type": "module"': which((await typedImportCall.load()).default),
+            'the manifest of a "use client" CommonJS module, "type": "module"': Object.keys(serverManifest).map(
+              key => key.replaceAll("\\\\", "/"),
+            ),
+            "a module that a hot update replaces": [untyped.readLocal(), typed.readLocal()],
+          }));
+        }
+      `,
+    },
+    async test(dev) {
+      const expected = {
+        'no "type"': "exports.default",
+        '"type": "module"': "module.exports",
+        'first loaded by require(), "type": "module"': "module.exports",
+        "import() in .cjs": "exports.default",
+        'import() in CommonJS, "type": "module"': "module.exports",
+        'the manifest of a "use client" CommonJS module, "type": "module"': ["type-module/client.js#Button"],
+      };
+      await dev.fetch("/").equals({
+        ...expected,
+        "a module that a hot update replaces": ["first", { __esModule: true, default: "first" }],
+      });
+      // The server graph sends only the changed file again. The runtime patches the binding of each importer.
+      await dev.patch("local.cjs", { find: "first", replace: "second" });
+      await dev.fetch("/").equals({
+        ...expected,
+        "a module that a hot update replaces": ["second", { __esModule: true, default: "second" }],
+      });
+    },
+  });
+}
+// The namespace of a CommonJS module inherits from the prototype of `module.exports`. A `then` from there is
+// not an export: `import()` and `await ns` must not call it.
+{
+  const importer = `
+    import * as promise from "../promise.cjs";
+    import * as subclass from "../subclass.cjs";
+    import * as instance from "../instance.cjs";
+    import * as proto from "../proto.cjs";
+    import * as statics from "../static.cjs";
+    import * as esModule from "../esmodule.cjs";
+    import * as getter from "../getter.cjs";
+    import * as ownThen from "../own-then.cjs";
+    import * as ownAndInherited from "../own-and-inherited.cjs";
+    import * as plain from "../plain.cjs";
+    import * as notCallable from "../not-callable.cjs";
+    import * as late from "../late.cjs";
+    import query, { where } from "../instance.cjs";
+    import counter, * as counterNs from "../counter.cjs";
+    import { Query } from "../query.cjs";
+
+    const outcome = async (get, ns) => {
+      try {
+        const value = await get();
+        return value === ns ? "the namespace" : value;
+      } catch (error) {
+        return "rejected with " + error.constructor.name;
+      }
+    };
+    const forIn = object => {
+      const keys = [];
+      for (const key in object) keys.push(key);
+      return keys;
+    };
+    export const read = async () => ({
+      "import()": {
+        promise: await outcome(() => import("../promise.cjs"), promise),
+        subclass: await outcome(() => import("../subclass.cjs"), subclass),
+        instance: await outcome(() => import("../instance.cjs"), instance),
+        proto: await outcome(() => import("../proto.cjs"), proto),
+        static: await outcome(() => import("../static.cjs"), statics),
+        esModule: await outcome(() => import("../esmodule.cjs"), esModule),
+        getter: await outcome(() => import("../getter.cjs"), getter),
+        ownThen: await outcome(() => import("../own-then.cjs"), ownThen),
+        ownAndInherited: await outcome(() => import("../own-and-inherited.cjs"), ownAndInherited),
+        plain: await outcome(() => import("../plain.cjs"), plain),
+      },
+      "import * as": {
+        await: await outcome(() => promise, promise),
+        asyncReturn: await outcome(async () => instance, instance),
+        promiseResolve: await outcome(() => Promise.resolve(proto), proto),
+        promiseAll: await outcome(async () => (await Promise.all([statics]))[0], statics),
+        getter: await outcome(() => getter, getter),
+      },
+      "every other member": {
+        namedImport: typeof where,
+        method: instance.where(),
+        instanceOf: instance instanceof Query,
+        ownNames: Object.getOwnPropertyNames(instance),
+        forIn: forIn(proto),
+        then: typeof instance.then,
+        thenOfDefault: typeof query.then,
+        thenNotCallable: typeof notCallable.then,
+        thenGetterReads: getter.reads(),
+        samePrototypeWithoutThen: Object.getPrototypeOf(counterNs) === Object.getPrototypeOf(counter),
+        thenInWithoutThen: "then" in counterNs,
+        defaultWithEsModule:
+          esModule.default === 5
+            ? "exports.default"
+            : esModule.default === require("../esmodule.cjs")
+              ? "module.exports"
+              : typeof esModule.default,
+      },
+      "a then that the prototype gets after the import": (late.addThen(), await outcome(() => late, late)),
+    });
+  `;
+  const expected = (defaultWithEsModule: "exports.default" | "module.exports") => ({
+    "import()": {
+      promise: "the namespace",
+      subclass: "the namespace",
+      instance: "the namespace",
+      proto: "the namespace",
+      static: "the namespace",
+      esModule: "the namespace",
+      getter: "the namespace",
+      ownThen: "the exported then was called",
+      ownAndInherited: "the exported then was called",
+      plain: "the namespace",
+    },
+    "import * as": {
+      await: "the namespace",
+      asyncReturn: "the namespace",
+      promiseResolve: "the namespace",
+      promiseAll: "the namespace",
+      getter: "the namespace",
+    },
+    "every other member": {
+      namedImport: "function",
+      method: "where 2",
+      instanceOf: true,
+      ownNames: ["default", "rows"],
+      forIn: ["default"],
+      then: "undefined",
+      thenOfDefault: "function",
+      thenNotCallable: "undefined",
+      thenGetterReads: 0,
+      samePrototypeWithoutThen: true,
+      thenInWithoutThen: false,
+      defaultWithEsModule,
+    },
+    // A known difference from Node and `bun run`, which give the namespace. A bundle of these files calls it too.
+    "a then that the prototype gets after the import": "the late then was called",
+  });
+  devTest("the namespace of a CommonJS module hides a then that module.exports inherits", {
+    framework: minimalFramework,
+    files: {
+      "promise.cjs": `module.exports = Promise.resolve(42);`,
+      // `then` is two prototypes away.
+      "subclass.cjs": `
+        class Cancelable extends Promise {}
+        module.exports = Cancelable.resolve(42);
+      `,
+      "query.cjs": `
+        exports.Query = class Query {
+          rows = [1, 2];
+          then(resolve) {
+            resolve("Query.prototype.then was called");
+          }
+          where() {
+            return "where " + this.rows.length;
+          }
+        };
+      `,
+      "instance.cjs": `module.exports = new (require("./query.cjs").Query)();`,
+      "proto.cjs": `
+        module.exports = Object.create({
+          then(resolve) {
+            resolve("the inherited then was called");
+          },
+        });
+      `,
+      "static.cjs": `
+        class Base {
+          static then(resolve) {
+            resolve("Base.then was called");
+          }
+        }
+        module.exports = class Derived extends Base {};
+      `,
+      // Without `nodeMode`, the `default` of this namespace is `exports.default`, not `module.exports`.
+      "esmodule.cjs": `
+        module.exports = Object.create({
+          then(resolve) {
+            resolve("the inherited then was called");
+          },
+        });
+        module.exports.__esModule = true;
+        module.exports.default = 5;
+      `,
+      // `toESM` asks whether `then` is there and does not read it.
+      "getter.cjs": `
+        let reads = 0;
+        class Counter {
+          get then() {
+            reads++;
+          }
+        }
+        module.exports = new Counter();
+        module.exports.reads = () => reads;
+      `,
+      // An own "then" is an export. `import()` calls it, as it does for an ES module.
+      "own-then.cjs": `
+        exports.then = function (resolve) {
+          resolve("the exported then was called");
+        };
+      `,
+      "own-and-inherited.cjs": `
+        module.exports = Object.create({
+          then(resolve) {
+            resolve("the inherited then was called");
+          },
+        });
+        module.exports.then = function (resolve) {
+          resolve("the exported then was called");
+        };
+      `,
+      "plain.cjs": `exports.x = 1;`,
+      "not-callable.cjs": `module.exports = Object.create({ then: "not a function" });`,
+      "counter.cjs": `
+        class Counter {
+          count = 1;
+        }
+        module.exports = new Counter();
+      `,
+      "late.cjs": `
+        class Late {}
+        module.exports = new Late();
+        module.exports.addThen = () => {
+          Late.prototype.then = function (resolve) {
+            resolve("the late then was called");
+          };
+        };
+      `,
+      "untyped/importer.js": importer,
+      "typed/importer.mjs": importer,
+      "routes/index.ts": `
+        import * as untyped from "../untyped/importer.js";
+        import * as typed from "../typed/importer.mjs";
+        export default async function () {
+          return Response.json({ 'no "type"': await untyped.read(), ".mjs": await typed.read() });
+        }
+      `,
+    },
+    async test(dev) {
+      expect(await dev.fetch("/").json()).toEqual({
+        'no "type"': expected("exports.default"),
+        ".mjs": expected("module.exports"),
+      });
+    },
+  });
+}
+// The server graph sends only the JSON file again. The file that imports it does not run a second time.
+devTest("a hot update of a JSON file in server code reaches a file that imports it and does not run again", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { read } from "../importer.js";
+      export default function () {
+        return new Response(JSON.stringify(read()));
+      }
+    `,
+    "importer.js": `
+      import data from "./data.json";
+      globalThis.importerRuns = (globalThis.importerRuns ?? 0) + 1;
+      export const read = () => ({ data, importerRuns: globalThis.importerRuns });
+    `,
+    "data.json": `{ "__esModule": true, "default": 1 }`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ data: { __esModule: true, default: 1 }, importerRuns: 1 });
+    await dev.patch("data.json", { find: "1", replace: "2" });
+    await dev.fetch("/").equals({ data: { __esModule: true, default: 2 }, importerRuns: 1 });
+  },
+});
 devTest("importer tracking survives flipping a module from ESM to CJS", {
   // https://github.com/oven-sh/bun/issues/31942
   files: {

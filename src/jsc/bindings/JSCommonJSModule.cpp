@@ -1284,6 +1284,19 @@ JSCommonJSModule::~JSCommonJSModule()
     recordsBesideModuleObjects().remove(this);
 }
 
+// The Get-kind lookup of a Proxy or of a node:vm global is the read.
+static bool exportUndefinedAfterThrowingRead(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSObject* exports, const Identifier& property, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
+{
+    TRY_CLEAR_EXCEPTION(scope, false);
+    // A revoked Proxy throws here too, and the import fails.
+    PropertySlot own(exports, PropertySlot::InternalMethodType::GetOwnProperty);
+    exports->methodTable()->getOwnPropertySlot(exports, globalObject, property, own);
+    RETURN_IF_EXCEPTION(scope, false);
+    exportNames.append(property);
+    exportValues.append(jsUndefined());
+    return true;
+}
+
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSValue result,
@@ -1375,7 +1388,12 @@ void populateESMExports(
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                     auto has = exports->getPropertySlot(globalObject, property, slot);
-                    RETURN_IF_EXCEPTION(scope, );
+                    if (scope.exception()) [[unlikely]] {
+                        if (!exportUndefinedAfterThrowingRead(globalObject, scope, exports, property, exportNames, exportValues))
+                            return;
+                        needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
+                        continue;
+                    }
                     if (!has) continue;
 
                     // Allow DontEnum properties which are not getter/setters
@@ -1418,7 +1436,11 @@ void populateESMExports(
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 auto has = exports->getPropertySlot(globalObject, property, slot);
-                RETURN_IF_EXCEPTION(scope, );
+                if (scope.exception()) [[unlikely]] {
+                    if (!exportUndefinedAfterThrowingRead(globalObject, scope, exports, property, exportNames, exportValues))
+                        return;
+                    continue;
+                }
                 if (!has) continue;
 
                 if (slot.attributes() & PropertyAttribute::DontEnum) {

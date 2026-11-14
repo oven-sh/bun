@@ -1022,6 +1022,7 @@ impl CreateCommand {
                     JSPrinter::PrintJsonOptions {
                         mangled_props: None,
                         indent: indentation,
+                        ill_formed_bytes: JSPrinter::IllFormedBytes::Keep,
                         ..Default::default()
                     },
                 ) {

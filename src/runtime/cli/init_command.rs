@@ -825,6 +825,7 @@ impl InitCommand {
                 js_printer::PrintJsonOptions {
                     indent: Default::default(),
                     mangled_props: None,
+                    ill_formed_bytes: js_printer::IllFormedBytes::Keep,
                     ..Default::default()
                 },
             );

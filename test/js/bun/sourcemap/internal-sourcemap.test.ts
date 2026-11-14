@@ -55,7 +55,7 @@ function extractPositions(stack: string): string[] {
     .filter((s): s is string => s !== null);
 }
 
-async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+async function run(files: Record<string, string | Buffer>, env: Record<string, string> = {}) {
   using dir = tempDir("internal-sourcemap", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.ts"],
@@ -110,6 +110,29 @@ describe("InternalSourceMap", () => {
     expect(exited).toBe(0);
   });
 
+  // Latin-1 from an old editor. In UTF-8, 0xE9 starts a sequence of three bytes and 0xE2 0x82 is the start of one
+  // that the space after it does not go on with. Each is one U+FFFD, as an editor that reads the file as UTF-8
+  // shows it. Counted as three bytes, the line break after 0xE9 was stepped over and the frames were one line off.
+  test.concurrent("lines and columns after bytes that are not UTF-8 remap exactly", async () => {
+    const lines = [
+      `// caf\xE9`,
+      `function a1() { return new Error("A").stack!; }`,
+      `/* \xE2\x82 */ function b1() { return new Error("B").stack!; } // caf\xE9`,
+      `function c1() { return new Error("C").stack!; }`,
+      `console.log(a1());`,
+      `console.log(b1());`,
+      `console.log(c1());`,
+    ];
+
+    const { stdout, stderr, exited } = await run({ "index.ts": Buffer.from(lines.join("\n") + "\n", "latin1") });
+
+    expect(stderr).toBe("");
+    const frames = [...stdout.matchAll(/at ([a-c]1) \(.*index\.ts:(\d+):(\d+)\)/g)].map(m => `${m[1]} ${m[2]}:${m[3]}`);
+    const read = lines.map(line => new TextDecoder().decode(Buffer.from(line, "latin1")));
+    expect(frames).toEqual(["a1", "b1", "c1"].map((fn, i) => `${fn} ${i + 2}:${read[i + 1].indexOf("Error(") + 1}`));
+    expect(exited).toBe(0);
+  });
+
   // `toMatchInlineSnapshot` resolves its call site from the remapped stack
   // position, which counts UTF-16 code units. An astral character earlier on
   // the line made the updater land past the callee and fail with
@@ -145,6 +168,42 @@ describe("InternalSourceMap", () => {
         ``,
       ].join("\n"),
     );
+    expect(exited).toBe(0);
+  });
+
+  // The updater finds the call by its line and column in the text of the file, so bytes that are not UTF-8 count
+  // there as they count in the source map: a lead byte that starts no sequence, with the continuation bytes that
+  // go with it, is one column. `\xABcaf\xE9\xBB` is Latin-1 for «café».
+  test.concurrent("inline snapshot call sites resolve after bytes that are not UTF-8", async () => {
+    const calls = ["caf\xE9", "\xE0\xA0", "\xE2\x82", "\xF0\x9F\x98", "\xABcaf\xE9\xBB"];
+    const fixture = (snapshot: (i: number) => string) =>
+      [
+        `import { test, expect } from "bun:test";`,
+        `// caf\xE9`,
+        `test("bytes", () => {`,
+        ...calls.map((bytes, i) => `  /* ${bytes} */ expect(${i}).toMatchInlineSnapshot(${snapshot(i)});`),
+        `});`,
+        ``,
+      ].join("\n");
+    using dir = tempDir("inline-snapshot-not-utf8", {
+      "bytes.test.ts": Buffer.from(
+        fixture(() => ""),
+        "latin1",
+      ),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "-u", "bytes.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Failed to update inline snapshot");
+    const written = await Bun.file(join(String(dir), "bytes.test.ts")).bytes();
+    expect(Buffer.from(written).toString("latin1")).toBe(fixture(i => "`" + i + "`"));
     expect(exited).toBe(0);
   });
 
@@ -226,5 +285,49 @@ describe("InternalSourceMap", () => {
       expect(stdout).toMatch(new RegExp(`index\\.ts:${ln}:`));
     }
     expect(exited).toBe(0);
+  });
+
+  // Both line tables behind a remapped frame are built by walking raw bytes: the
+  // source's by LineOffsetTable::generate, the transpiled output's by the builder.
+  // A lead byte without the continuation bytes it declares (the file is Latin-1,
+  // not UTF-8) is one character. Stepping over the declared width instead swallows
+  // the line break after it, and every frame below comes out a line early. The
+  // fixtures are written to disk as latin1, so "\xe9" is the one byte 0xE9.
+  describe.concurrent("an ill-formed UTF-8 byte right before a line break", () => {
+    async function framePositions(latin1Source: string) {
+      const { stdout, stderr, exited } = await run({ "index.ts": Buffer.from(latin1Source, "latin1") });
+      expect(stderr).toBe("");
+      expect(exited).toBe(0);
+      return [...stdout.matchAll(/index\.ts:(\d+:\d+)/g)].map(m => m[1]);
+    }
+
+    test("in a comment that is dropped from the output", async () => {
+      // Lines: 1 "/* caf<E9>", 2 "b */", 3 the Error, 4 console.log.
+      const positions = await framePositions(
+        '/* caf\xe9\nb */\nconst err = new Error("x");\nconsole.log(err.stack);\n',
+      );
+      expect(positions).toEqual(["3:17"]);
+    });
+
+    test("in a legal comment that is kept in the output", async () => {
+      // Lines: 1 "/*! caf<E9>", 2 "b */", 3 the Error, 6 console.log. The output
+      // has no blank lines, so the walks over the source and over the output
+      // cannot each be a line off and still produce the right answer together.
+      const positions = await framePositions(
+        '/*! caf\xe9\nb */\nconst err = new Error("x");\n\n\nconsole.log(err.stack);\n',
+      );
+      expect(positions).toEqual(["3:17"]);
+    });
+
+    test("in a template literal, next to a U+FFFD the printer wrote out for another one", async () => {
+      // Line 1 breaks inside the template literal right after the ill-formed
+      // byte. The string on line 3 is printed with a real U+FFFD (three bytes,
+      // one column) ahead of the Error on the same line, which the walk over
+      // the output must not mistake for an ill-formed byte either.
+      const positions = await framePositions(
+        'const s = `caf\xe9\n`;\nconst err = ["caf\xe9", new Error("x")][1];\nconsole.log(err.stack);\n',
+      );
+      expect(positions).toEqual(["3:26"]);
+    });
   });
 });

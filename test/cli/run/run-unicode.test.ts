@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir, textThatIsNotUtf8 } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -39,5 +39,24 @@ describe.concurrent("run-unicode", () => {
   "Fran\u00E7ais": 123,
   bbb: 123,
 }`);
+  });
+
+  test("importing text that is not UTF-8 works", async () => {
+    const table = textThatIsNotUtf8(3);
+    using dir = tempDir("run-text-not-utf8", {
+      "table.txt": table.bytes,
+      "entry.ts": `import text from "./table.txt"; process.stdout.write(JSON.stringify(text));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(table.linesThatDiffer(JSON.parse(stdout))).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });

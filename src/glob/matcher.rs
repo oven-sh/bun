@@ -24,6 +24,7 @@
 
 use bun_collections::smallvec::SmallVec;
 use bun_core::{Once, strings};
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
@@ -253,6 +254,9 @@ fn match_from_first_byte(
                 b'\\' if differs_at_once() => MatchResult::NO,
                 _ => match_warm(glob, shape, path, mode),
             };
+        }
+        if uses == Shape::WALKS_TWICE {
+            return match_missed(glob, shape, path, mode);
         }
         shape.count(glob, uses);
     }
@@ -998,6 +1002,25 @@ enum Answer {
     NotAscii,
 }
 
+/// The loop only has a say where a walk isn't sure.
+#[inline(never)]
+fn match_missed(glob: &[u8], shape: &Shape, path: &[u8], mode: Mode) -> MatchResult {
+    let parsed = shape.parsed(glob);
+    if let Some(matched) = parsed.walk(glob, path, mode, true) {
+        let negated = parsed.top % 2 == 1;
+        return MatchResult {
+            matches: matched != negated,
+            negated,
+        };
+    }
+    let start = Start {
+        glob_start: parsed.top,
+        glob_index: parsed.top,
+        ..Start::of(mode)
+    };
+    match_more(glob, Some(shape), path, start, None)
+}
+
 /// Matches a pattern that has been matched often. This is where such a pattern spends its time.
 #[inline(never)]
 fn match_warm(glob: &[u8], shape: &Shape, path: &[u8], mode: Mode) -> MatchResult {
@@ -1245,15 +1268,15 @@ fn match_slowly(
         }
     }
     let is_kept = groups.prepared.is_some();
-    match_groups(
-        glob,
-        glob_start,
-        path,
-        groups.parsed(glob),
-        dots,
-        is_kept,
-        is_windows,
-    )
+    let parsed = groups.parsed(glob);
+    let walked = match parsed.has_missed_matches {
+        true => parsed.walk(glob, path, mode, is_kept),
+        false => {
+            let matched = match_groups(glob, glob_start, path, parsed, dots, is_kept, is_windows);
+            (!(matched && parsed.ends_late(path, is_windows))).then_some(matched)
+        }
+    };
+    walked.unwrap_or_else(|| parsed.match_as_read(glob, path, mode, is_kept))
 }
 
 /// Matches with a [`Walk`] instead of the loop. With `is_kept`, what's found out about the pattern stays with `parsed`.
@@ -3064,7 +3087,7 @@ impl Sequence {
 pub struct Shape {
     /// Empty until a match needs it, so that a shape costs next to nothing to make and to drop.
     known: Once<Arc<Known>>,
-    /// How many matches the loop has decided, or one of the two constants.
+    /// How many matches the loop has decided, or one of the three constants.
     uses: AtomicU8,
 }
 
@@ -3080,6 +3103,8 @@ impl Shape {
     const WALKS: u8 = u8::MAX;
     /// The pattern isn't regular, or it's so plain that the loop is as fast.
     const NEVER_WALKS: u8 = u8::MAX - 1;
+    /// Like `WALKS`, for a pattern with [`Parsed::has_missed_matches`].
+    const WALKS_TWICE: u8 = u8::MAX - 2;
     const WALKS_AFTER: u8 = 32;
 
     /// `glob` is the pattern that the shape will be used with.
@@ -3135,7 +3160,9 @@ impl Shape {
             parsed.text = parsed.text_of(glob);
             parsed
         });
-        if !parsed.may_walk(Dots::Match) {
+        if parsed.has_missed_matches {
+            self.uses.store(Shape::WALKS_TWICE, Ordering::Relaxed);
+        } else if !parsed.may_walk(Dots::Match) {
             self.uses.store(Shape::NEVER_WALKS, Ordering::Relaxed);
         } else if parsed.has_group || uses == Shape::WALKS_AFTER {
             self.uses.store(Shape::WALKS, Ordering::Relaxed);
@@ -3607,6 +3634,14 @@ struct Parsed {
     /// All that keeps it from being regular are classes that can match a separator. It has neither `*` nor groups, so there's only
     /// one way to match it, and the loop finds that.
     is_fixed: bool,
+    /// One of those classes comes after a `*`, so the loop misses matches that a walk finds. See [`WrittenOut`].
+    has_missed_matches: bool,
+    /// `{**,a}/*`: a walk doesn't see that it ends with `**/*`, which doesn't match at the end of the path.
+    has_late_end: bool,
+    /// Like `program`, but no class takes a separator.
+    strict: Once<Box<Program>>,
+    /// Made when it's first needed.
+    written_out: Once<Box<WrittenOut>>,
     /// It has only literal bytes that need no second look, which nothing compares faster than the loop.
     is_plain_text: bool,
     /// If all of it is literal, the one text that it matches.
@@ -3647,6 +3682,8 @@ struct Open {
     last_start: u32,
     /// A path segment of the pattern starts with the group.
     starts_segment: bool,
+    /// One of its alternatives ends with a `**` that is a globstar if a `/` follows the group.
+    ends_with_globstar: bool,
 }
 
 /// Bytes that are always literal in a pattern and never end anything.
@@ -3660,13 +3697,325 @@ static IS_TEXT: [bool; 256] = {
     table
 };
 
+/// `*y*` and `*[!x]*` for `*{y,[!x]}*`: the pattern without its groups, once for each choice of alternatives.
+#[derive(Default)]
+struct WrittenOut {
+    patterns: Vec<u8>,
+    /// Where each of them ends.
+    ends: Vec<u32>,
+    /// How many of them mean what the pattern means here. The others are what it means to Node, where that isn't the same.
+    own: usize,
+}
+
+impl WrittenOut {
+    /// `plain` is the path the way Node reads it, with and without a `/` at its end.
+    fn matches(&self, path: &[u8], plain: [&[u8]; 2], mode: Mode) -> bool {
+        let mut start = 0;
+        self.ends.iter().enumerate().any(|(index, end)| {
+            let pattern = &self.patterns[start..*end as usize];
+            start = *end as usize;
+            let matches = |it: &[u8]| may_end_with(pattern, it) && match_written(pattern, it, mode);
+            if index < self.own {
+                return matches(path);
+            }
+            // Node's `*` takes at least one character, so `a/*` doesn't match `a/`.
+            let has_both = plain[1].len() < plain[0].len();
+            matches(plain[1]) || has_both && !pattern.ends_with(b"/*") && matches(plain[0])
+        })
+    }
+
+    fn add(&mut self, pattern: &[u8]) {
+        self.patterns.extend_from_slice(pattern);
+        self.ends.push(self.patterns.len() as u32);
+    }
+}
+
+/// Node reads `//` and `/./` as `/`, and leaves out `a/../`.
+fn read_like_node(text: &[u8], is_windows: bool) -> SmallVec<[u8; 128]> {
+    let mut read: SmallVec<[u8; 128]> = SmallVec::new();
+    let mut is_joined = true;
+    let separators: &[u8] = if is_windows { b"/\\" } else { b"/" };
+    let mut segments = strings::split_any(text, separators).enumerate().peekable();
+    while let Some((index, segment)) = segments.next() {
+        if index > 0 && segments.peek().is_some() && matches!(segment, b"" | b".") {
+            continue;
+        }
+        let last = strings::last_index_of_char(&read, b'/').map_or(0, |it| it + 1);
+        if segment == b".." && !matches!(&read[last..], b"" | b"." | b".." | b"**") {
+            read.truncate(last.saturating_sub(1));
+            is_joined = last == 0;
+            continue;
+        }
+        if !std::mem::take(&mut is_joined) {
+            read.push(b'/');
+        }
+        read.extend_from_slice(segment);
+    }
+    if matches!(&*read, b"./." | b"./") {
+        read.truncate(1);
+    }
+    read
+}
+
+/// What [`Parsed::write`] still has to write: this part of the pattern, then `next`.
+struct Rest<'a> {
+    from: usize,
+    to: usize,
+    next: Option<&'a Rest<'a>>,
+}
+
+/// How [`Parsed::write`] reads a pattern.
+#[derive(Clone, Copy, PartialEq)]
+enum Reading {
+    /// A `**` that ends an alternative is a `*`, which is all that the loop has ever taken it for.
+    Loop,
+    /// It's a `**`, as it is to a walk.
+    Walk,
+    /// So is everything else that comes to stand side by side.
+    Node,
+}
+
+/// What [`Parsed::write`] writes to.
+struct Writer {
+    written: SmallVec<[u8; 128]>,
+    all: WrittenOut,
+    reading: Reading,
+    /// This isn't what [`Reading::Loop`] gives. Of the other two, only such patterns are kept.
+    differs: bool,
+}
+
 impl Parsed {
+    const MOST_WRITTEN_OUT: usize = 64;
+    const LONGEST_WRITTEN_OUT: usize = 1024;
+
+    /// Writes `rest` in every way there is.
+    fn write(&self, glob: &[u8], rest: Option<&Rest<'_>>, to: &mut Writer) {
+        let Some(&Rest {
+            mut from,
+            to: end,
+            next,
+        }) = rest
+        else {
+            if to.reading == Reading::Node {
+                let mut pattern = read_like_node(&to.written, false);
+                if to.differs || pattern.len() < to.written.len() {
+                    if pattern.first() == Some(&b'!') {
+                        pattern.insert(0, b'\\');
+                    }
+                    to.all.add(&pattern);
+                }
+                return;
+            }
+            if to.reading == Reading::Loop || to.differs {
+                to.all.add(&to.written);
+            }
+            // To the loop, only at the end of the pattern itself does `a/**/*` not match `a/`, and there a walk knows.
+            if to.reading == Reading::Loop && to.written.ends_with(b"**/*") {
+                to.all.add(&to.written[..to.written.len() - 1]);
+            }
+            return;
+        };
+        match (to.written.last(), glob[from..end].first()) {
+            // Two `*` that come to stand side by side would be a `**`, and are one to Node.
+            (Some(b'*'), Some(b'*')) if !to.written.ends_with(b"\\*") => match to.reading {
+                Reading::Node => to.differs = true,
+                _ => from += glob[from..end].iter().take_while(|it| **it == b'*').count(),
+            },
+            // These would start a group, or negate the pattern.
+            (Some(b'?' | b'*' | b'+' | b'@' | b'!'), Some(b'(')) | (None, Some(b'!')) => {
+                to.written.push(b'\\');
+            }
+            _ => {}
+        }
+        // The first group in it.
+        let first = self
+            .alternatives
+            .partition_point(|it| it.start as usize <= from);
+        let Some(first) = self
+            .alternatives
+            .get(first)
+            .filter(|it| it.start as usize <= end)
+        else {
+            let text = &glob[from..end];
+            let ends_with_globstar = end < glob.len() && (text == b"**" || text.ends_with(b"/**"));
+            let mut after = next;
+            while let Some(it) = after.filter(|it| it.from == it.to) {
+                after = it.next;
+            }
+            let is_kept = match to.reading {
+                Reading::Loop => false,
+                // Only if nothing, a `/` or a group that may start with one comes after the groups that end with it.
+                Reading::Walk => after.is_none_or(|it| matches!(glob[it.from], b'/' | b'{')),
+                Reading::Node => true,
+            };
+            to.differs |= ends_with_globstar && is_kept;
+            let len = text.len() - (ends_with_globstar && !is_kept) as usize;
+            to.written.extend_from_slice(&text[..len]);
+            return self.write(glob, next, to);
+        };
+        to.written
+            .extend_from_slice(&glob[from..first.start as usize - 1]);
+        let after = Rest {
+            from: first.close as usize + 1,
+            to: end,
+            next,
+        };
+        let (len, differs) = (to.written.len(), to.differs);
+        let mut alternative = Some(first);
+        while let Some(it) = alternative {
+            let rest = Rest {
+                from: it.start as usize,
+                to: it.end as usize,
+                next: Some(&after),
+            };
+            self.write(glob, Some(&rest), to);
+            to.written.truncate(len);
+            to.differs = differs;
+            alternative = self.alternatives.get(it.next as usize);
+        }
+    }
+
+    fn write_out(&self, glob: &[u8]) -> WrittenOut {
+        let all = Rest {
+            from: self.top as usize,
+            to: glob.len(),
+            next: None,
+        };
+        let mut to = Writer {
+            written: SmallVec::new(),
+            all: WrittenOut::default(),
+            reading: Reading::Loop,
+            differs: false,
+        };
+        let ends_with_globstar = strings::contains(glob, b"**,") || strings::contains(glob, b"**}");
+        for reading in [Reading::Loop, Reading::Walk, Reading::Node] {
+            if reading == Reading::Node {
+                to.all.own = to.all.ends.len();
+            } else if reading == Reading::Walk && !ends_with_globstar {
+                continue;
+            }
+            (to.reading, to.differs) = (reading, false);
+            to.written.clear();
+            self.write(glob, Some(&all), &mut to);
+        }
+        to.all
+    }
+
+    /// The answer of a walk, or `None` for a yes that's in doubt. The loop agrees with every other answer.
+    #[inline(never)]
+    fn walk(&self, glob: &[u8], path: &[u8], mode: Mode, is_kept: bool) -> Option<bool> {
+        let is_windows = mode.is_windows();
+        let Some(after_front) = self.take_front(glob, self.top, path, is_windows) else {
+            return Some(false);
+        };
+        if self.first_group != u32::MAX
+            && !self.may_start_at(self.first_group, glob, path, after_front)
+            || path.len() >= Program::IS_LONG && !self.may_pass_first_group(glob, path, after_front)
+        {
+            return Some(false);
+        }
+        let dots =
+            match mode.dots != Dots::Match && has_closed_segment_on(path, mode.dots, is_windows) {
+                true => mode.dots,
+                false => Dots::Match,
+            };
+        let mut unkept = None;
+        // Also returns whether a class may have been offered a separator. If not, both programs find the same.
+        let mut ask = |is_strict: bool| {
+            let program = match is_kept {
+                true => {
+                    let kept = if is_strict {
+                        &self.strict
+                    } else {
+                        &self.program
+                    };
+                    &**kept.get_or_init(|| {
+                        let mut program = Box::new(Program::new());
+                        program.is_strict = is_strict;
+                        program.read(glob, self, self.front_end as usize);
+                        if self.is_matched_often {
+                            program.walks = AtomicU8::new(Program::CACHES_AFTER);
+                        }
+                        program
+                    })
+                }
+                false => {
+                    let program = unkept.get_or_insert_with(Program::new);
+                    if program.masks.is_empty() {
+                        program.read(glob, self, self.front_end as usize);
+                    }
+                    program.is_strict = is_strict;
+                    program.caches = [Once::new(), Once::new()];
+                    &*program
+                }
+            };
+            match program.cache(glob, is_windows, path.len()) {
+                Some(cache) => (
+                    cache.matches(program, glob, path, after_front as usize, dots),
+                    true,
+                ),
+                None => {
+                    let on = program.on(glob, path, after_front as usize, is_windows, dots);
+                    (on.walk(), on.has_separator_for_class.get())
+                }
+            }
+        };
+        // With a cache a no is cheap, and most paths don't match. Without one, most paths that get here match.
+        let is_strict_first = !is_kept && self.has_missed_matches;
+        let (first, is_offered) = ask(is_strict_first);
+        // A yes of the strict program is final, and so is a no of the other one. Anything else takes both, and they have to agree.
+        let answer = match first == is_strict_first || !is_offered || !self.has_missed_matches {
+            true => Some(first),
+            false => (ask(!is_strict_first).0 == first).then_some(first),
+        };
+        answer.filter(|matched| !(*matched && self.ends_late(path, is_windows)))
+    }
+
+    fn ends_late(&self, path: &[u8], is_windows: bool) -> bool {
+        self.has_late_end && path.last().is_none_or(|it| is_separator(*it, is_windows))
+    }
+
+    /// Where the yes of a walk is in doubt, the pattern matches if it does the way the loop reads it or the way Node does.
+    #[cold]
+    #[inline(never)]
+    fn match_as_read(&self, glob: &[u8], path: &[u8], mode: Mode, is_kept: bool) -> bool {
+        let is_windows = mode.is_windows();
+        let plain = read_like_node(path, is_windows);
+        // Node also leaves a `/` at the end out of account.
+        let shorter = match plain.split_last() {
+            Some((last, rest)) if is_separator(*last, is_windows) => rest,
+            _ => &plain,
+        };
+        let has_both = shorter.len() < plain.len();
+        let is_asked = plain.len() < path.len() && !(has_both && glob.ends_with(b"/*"));
+        if is_asked && self.walk(glob, &plain, mode, is_kept) == Some(true)
+            || has_both && self.walk(glob, shorter, mode, is_kept) == Some(true)
+        {
+            return true;
+        }
+        let unkept;
+        let written = match is_kept {
+            true => &**self
+                .written_out
+                .get_or_init(|| Box::new(self.write_out(glob))),
+            false => {
+                unkept = self.write_out(glob);
+                &unkept
+            }
+        };
+        written.matches(path, [&plain, shorter], mode)
+    }
+
     #[inline(always)]
     fn new() -> Parsed {
         Parsed {
             alternatives: SmallVec::new(),
             is_regular: false,
             is_fixed: false,
+            has_missed_matches: false,
+            has_late_end: false,
+            strict: Once::new(),
+            written_out: Once::new(),
             is_plain_text: false,
             text: None,
             has_group: false,
@@ -3719,6 +4068,7 @@ impl Parsed {
             first_len: 0,
             last_start: 0,
             starts_segment: false,
+            ends_with_globstar: false,
         };
         let mut depth = 0_usize;
         let mut outer: SmallVec<[Open; 4]> = SmallVec::new();
@@ -3739,6 +4089,10 @@ impl Parsed {
         let mut front_end = i;
         self.is_plain_text = i == glob.len();
         let (mut has_star, mut has_separator_class) = (false, false);
+        // A `*` that isn't part of a `**`, and a class after it that can match a separator.
+        let (mut has_lone_star, mut has_missed_matches) = (false, false);
+        // An alternative ends with a `**`, which isn't regular either, and what follows its group is `/*`.
+        let (mut ends_with_globstar, mut has_late_end) = (false, false);
         let mut is_one_segment = !strings::contains_char(&glob[top..i], b'/');
         while let Some(&ch) = glob.get(i) {
             if IS_TEXT[ch as usize] {
@@ -3795,6 +4149,7 @@ impl Parsed {
                         first_len: 0,
                         last_start: i as u32 + 1,
                         starts_segment: starts_segment(at, &group),
+                        ends_with_globstar: false,
                     };
                     if depth > 0 {
                         outer.push(std::mem::replace(&mut group, inner));
@@ -3847,18 +4202,31 @@ impl Parsed {
                     {
                         it.next = Alternative::IS_SEQUENCE;
                     }
+                    let ends_with_globstar = group.ends_with_globstar;
+                    has_late_end |= ends_with_globstar && glob[i + 1..] == *b"/*";
                     if let Some(it) = outer.pop() {
                         group = it;
                         group.is_plain = false;
+                        group.ends_with_globstar |=
+                            ends_with_globstar && matches!(glob.get(i + 1), Some(b',' | b'}'));
                     }
                 }
                 b'*' if glob.get(i + 1) == Some(&b'*') => {
                     // Only a `**` that is a whole segment of the pattern.
-                    is_regular &=
-                        matches!(glob.get(i + 2), None | Some(b'/')) && starts_segment(i, &group);
+                    match glob.get(i + 2) {
+                        Some(b',' | b'}') => {
+                            ends_with_globstar = true;
+                            group.ends_with_globstar |= starts_segment(i, &group);
+                        }
+                        it => {
+                            is_regular &=
+                                matches!(it, None | Some(b'/')) && starts_segment(i, &group)
+                        }
+                    }
                     is_one_segment = false;
                     i += 1;
                 }
+                b'*' => has_lone_star = true,
                 b'\\' => {
                     i += 1;
                     escaped = i;
@@ -3876,6 +4244,7 @@ impl Parsed {
                         // The rules for dot segments overlook `[(`, so it can match where a `**` can't go on.
                         is_regular &= glob[i + 1] != b'(';
                         has_separator_class |= may_be_separator;
+                        has_missed_matches |= may_be_separator && has_lone_star;
                         i = end - 1;
                     }
                     None => {
@@ -3888,6 +4257,28 @@ impl Parsed {
             i += 1;
         }
         self.is_fixed = is_regular && depth == 0 && !has_star && found.is_empty();
+        // Each `{a,b}` multiplies the number of patterns to write out, and is one more call inside the last. No other group is.
+        let patterns = || {
+            let groups = found.iter().filter(|it| it.close > 0);
+            groups.fold(1_usize, |so_far, first| {
+                if glob[first.start as usize - 1] != b'{' || first.next == Alternative::IS_SEQUENCE
+                {
+                    return usize::MAX;
+                }
+                let rest = std::iter::successors(Some(first), |it| found.get(it.next as usize));
+                so_far.saturating_mul(rest.count().max(2))
+            })
+        };
+        let is_written_out = is_regular
+            && depth == 0
+            && !found.is_empty()
+            && (has_missed_matches || ends_with_globstar)
+            && glob.len() <= Parsed::LONGEST_WRITTEN_OUT
+            && patterns() <= Parsed::MOST_WRITTEN_OUT
+            && (glob.is_ascii() || std::str::from_utf8(glob).is_ok());
+        self.has_missed_matches = is_written_out && has_missed_matches;
+        self.has_late_end = is_written_out && has_late_end;
+        is_regular &= !ends_with_globstar;
         self.is_regular = is_regular && depth == 0 && !has_separator_class;
         self.has_group = has_group || has_choice && !self.is_regular;
         self.is_one_segment = is_one_segment;
@@ -4254,6 +4645,8 @@ struct Program {
     sequences: Vec<Sequence>,
     /// Index of the pattern that the first node stands for. See [`Parsed::front_end`].
     start: u32,
+    /// No class takes a separator.
+    is_strict: bool,
     /// How many walks it has been through without a cache.
     walks: AtomicU8,
     /// A small cache, and a large one for when that is full.
@@ -4442,6 +4835,7 @@ impl Program {
             ends: SmallVec::new(),
             sequences: Vec::new(),
             start: 0,
+            is_strict: false,
             walks: AtomicU8::new(0),
             caches: [Once::new(), Once::new()],
         }
@@ -4778,6 +5172,7 @@ impl Program {
             first,
             is_windows,
             dots,
+            has_separator_for_class: Cell::new(false),
         }
     }
 
@@ -4855,6 +5250,8 @@ struct On<'a> {
     is_windows: bool,
     /// `Dots::Match` unless the path has a closed segment.
     dots: Dots,
+    /// A class has taken a separator, or would have, had the program not been strict.
+    has_separator_for_class: Cell<bool>,
 }
 
 impl On<'_> {
@@ -4893,7 +5290,14 @@ impl On<'_> {
                 unescape(&mut wanted, self.pattern, &mut at);
                 wanted == byte
             }
-            b'[' => class_has(self.pattern, node as u32, character) == Some(true),
+            b'[' => {
+                let has = class_has(self.pattern, node as u32, character) == Some(true);
+                if has && is_separator(byte, self.is_windows) {
+                    self.has_separator_for_class.set(true);
+                    return !self.program.is_strict;
+                }
+                has
+            }
             // Only to rule out most bytes. `Sequence::has` decides.
             _ => matches!(byte, b'0'..=b'9' | b'-' | b'A'..=b'z'),
         }

@@ -191,6 +191,10 @@ The following command runs only tests #2 and #3.
 bun test --only
 ```
 
+Without `--only`, a file that contains `.only` runs its focused tests and skips its other tests. The other files still run all of their tests. With `--only`, a file that contains no `.only` runs no tests.
+
+In CI environments, `.only` throws an error unless you pass `--only`. Without the error, a `.only` that you commit by accident skips the other tests in its file, and the run still passes. The `only` option in a file that imports from `"vitest"` throws the same error. To turn the error off for a whole run, set `CI=false`.
+
 ### test.if
 
 To run a test conditionally, use `test.if()`. The test runs if the condition is truthy. Use it for tests that should only run on a specific architecture or operating system.

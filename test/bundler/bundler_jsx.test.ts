@@ -1270,6 +1270,62 @@ describe("bundler", () => {
       },
     });
 
+    // The JSX source re-exports a CommonJS runtime with `export *`, so `jsx`
+    // is a property of that file's exports object at run time. The JSX that is
+    // used keeps the file, with and without "sideEffects": false.
+    // https://github.com/oven-sh/bun/issues/18008
+    const exportStarRuntime = (sideEffects: false | undefined) => ({
+      "/node_modules/myjsx/package.json": JSON.stringify({
+        name: "myjsx",
+        sideEffects,
+        exports: {
+          "./jsx-runtime": "./jsx-runtime.js",
+          "./jsx-dev-runtime": "./jsx-runtime.js",
+        },
+      }),
+      "/node_modules/myjsx/jsx-runtime.js": /* js */ `export * from './impl.cjs';`,
+      "/node_modules/myjsx/impl.cjs": /* js */ `
+        console.log('JSX_RUNTIME_SIDE_EFFECT');
+        function jsx(type, props) { return { type, props }; }
+        module.exports = { jsx, jsxs: jsx, jsxDEV: jsx, Fragment: 'F' };
+      `,
+    });
+    for (const sideEffects of [undefined, false] as const) {
+      itBundled(`jsx/AutoImportKeptWhenJsxUsedExportStarOfCjs${sideEffects === false ? "SideEffectsFalse" : ""}`, {
+        files: {
+          "/index.tsx": /* tsx */ `
+            const el = <div>live</div>;
+            console.log(JSON.stringify(el));
+          `,
+          ...exportStarRuntime(sideEffects),
+        },
+        target: "bun",
+        jsx: { runtime: "automatic", importSource: "myjsx" },
+        run: {
+          stdout: `JSX_RUNTIME_SIDE_EFFECT\n{"type":"div","props":{"children":"live"}}`,
+        },
+      });
+    }
+
+    itBundled("jsx/AutoImportDroppedWhenJsxUnusedExportStarOfCjs", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          console.log('only-this');
+        `,
+        ...exportStarRuntime(false),
+      },
+      target: "bun",
+      jsx: { runtime: "automatic", importSource: "myjsx" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("JSX_RUNTIME_SIDE_EFFECT");
+        expect(file).not.toContain("jsx_runtime");
+        expect(file).not.toContain("unused");
+      },
+      run: { stdout: "only-this" },
+    });
+
     // key-after-spread falls back to `createElement` from the bare JSX package,
     // which is a second synthesized JsxImport part. When the only reference is
     // inside a dead function, that import must go too.

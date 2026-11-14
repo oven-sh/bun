@@ -40,6 +40,7 @@ const skipped: Record<string, string> = {
 };
 
 const untypedJsxRuntime = "TS7016: react/jsx-runtime, which an element stands for, has no type declarations";
+const missingJsxRuntime = "TS2875: react/jsx-runtime, which an element stands for, is not in the fixture";
 const undeclaredIntrinsicElements = "TS7026: nothing declares JSX.IntrinsicElements";
 const fastRefresh = "bundler > a hook call in a method, with React Fast Refresh";
 const classFields = "tsconfig compilerOptions.useDefineForClassFields";
@@ -82,6 +83,9 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > jsx/AutomaticLocalShadowDev": untypedJsxRuntime,
     "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedBundledCjs": undeclaredIntrinsicElements,
     "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedBundledCjs": undeclaredIntrinsicElements,
+    "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedExportStarOfCjs": missingJsxRuntime,
+    "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedExportStarOfCjsSideEffectsFalse": missingJsxRuntime,
+    "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedExportStarOfCjs": missingJsxRuntime,
     [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: "TS2339: the class C declares neither c nor v",
   },
   "test/bundler/esbuild/ts.test.ts": {

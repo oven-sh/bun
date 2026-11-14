@@ -586,6 +586,39 @@ describe("Bun.build", () => {
         sourcemap: "invalid",
       } as any),
     ).toThrow();
+    expect(() =>
+      Bun.build({
+        entrypoints: ["hello"],
+        loader: { ".cfg": 42 },
+      } as any),
+    ).toThrow("loader must be a string");
+  });
+
+  test("error for an unknown loader name lists the names the loader map accepts", async () => {
+    let error: Error | undefined;
+    try {
+      Bun.build({
+        entrypoints: ["hello"],
+        loader: { ".cfg": "not-a-loader" },
+      } as any);
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error?.message).toStartWith("loader must be one of ");
+    const listed = [...error!.message.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+    expect(listed).toEqual(
+      expect.arrayContaining(["jsonc", "json5", "yaml", "xml", "md", "sqlite", "sqlite_embedded", "napi", "sh"]),
+    );
+    // "sh" is the accepted spelling of the shell loader; its enum variant is "bunsh".
+    expect(listed).not.toContain("bunsh");
+
+    // Every listed name is accepted.
+    const dir = tempDirWithFiles("bun-build-loader-names", { "entry.js": "export default 1;" });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      loader: Object.fromEntries(listed.map((name, i) => [`.l${i}`, name])) as any,
+    });
+    expect(build.success).toBe(true);
   });
 
   test("returns errors properly", async () => {

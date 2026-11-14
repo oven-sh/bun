@@ -1461,6 +1461,7 @@ describe("bundler", () => {
     itBundled("jsx/FastRefreshRegistersWrappedComponents", {
       files: {
         "/index.tsx": /* js */ `
+          import { Other, other } from "./other";
           const registered = [];
           globalThis.$RefreshSig$ = () => t => t;
           globalThis.$RefreshReg$ = (type, id) => registered.push(id.split(":").pop());
@@ -1473,17 +1474,20 @@ describe("bundler", () => {
           const Dotted = React.memo(() => null);
           const Plain = () => null;
           const Wrapped = memo(Plain);
+          const Imported = memo(Other);
+          const NotImported = memo(other);
           const Theme = createContext("none");
           const Total = Math.max(1, 2);
           const Nothing = memo();
           const lower = memo(() => null);
           console.log(registered.join());
-          if ([Memo, Fwd, Both, Dotted, Plain, Wrapped, Theme, Total, Nothing, lower].length < 10) throw 0;
+          if ([Memo, Fwd, Both, Dotted, Plain, Wrapped, Theme, Total, Nothing, lower, Imported, NotImported].length < 12) throw 0;
         `,
+        "/other.ts": `export const Other = 1; export const other = 2;`,
       },
       backend: "cli",
       reactFastRefresh: true,
-      run: { stdout: "Memo,Fwd,Both,Dotted,Plain,Wrapped" },
+      run: { stdout: "Memo,Fwd,Both,Dotted,Plain,Wrapped,Imported" },
     });
 
     // Each component gets its own signature binding, in the scope its `var` is

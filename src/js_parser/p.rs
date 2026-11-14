@@ -8497,8 +8497,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             match value.data {
                 js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => return true,
-                js_ast::ExprData::EIdentifier(id) if is_argument => {
-                    let name = self.symbols[id.ref_.inner_index() as usize]
+                js_ast::ExprData::EIdentifier(js_ast::E::Identifier { ref_, .. })
+                | js_ast::ExprData::EImportIdentifier(js_ast::E::ImportIdentifier {
+                    ref_, ..
+                }) if is_argument => {
+                    let name = self.symbols[ref_.inner_index() as usize]
                         .original_name
                         .slice();
                     return ReactRefresh::is_componentish_name(name);

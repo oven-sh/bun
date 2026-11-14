@@ -121,14 +121,14 @@ impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL
 /// INVARIANT (single point of unsafe): a tagged pointer stored in a live
 /// socket's ext slot identifies an object that is alive for the duration of
 /// the dispatched callback — `HTTPClient` until its terminal result callback,
-/// `h2::ClientSession` while the slot holds its socket-ext ref, `PooledSocket`
+/// `h2::ClientSession` while it is in `active_h2_sessions`, `PooledSocket`
 /// while its HiveArray bit is set. All accesses are HTTP-thread-only, so no
 /// concurrent `&mut` exists. Callers obtain the tagged value via
 /// [`HTTPContext::get_tagged`] / [`HTTPContext::get_tagged_from_socket`] and
 /// must not retain the returned reference past the callback.
 ///
 /// An h2 session is handed out as a [`h2::SessionPtr`] rather than a `&mut`:
-/// its entry points release the slot's ref themselves (the socket closing, or
+/// its entry points release the registry's ref themselves (the socket closing, or
 /// the last request finishing on an unpoolable connection), so a `&mut`
 /// argument to them could be freed while still live.
 pub(crate) trait ActiveSocketExt<const SSL: bool>: Copy {
@@ -157,8 +157,7 @@ impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
     }
     #[inline]
     fn session(self) -> Option<h2::SessionPtr> {
-        // INVARIANT: see the trait doc — while tagged as the session the slot
-        // holds the socket-ext ref, which is what `this_ptr` requires.
+        // INVARIANT: see the trait doc.
         self.get::<h2::ClientSession>()
             .and_then(NonNull::new)
             .map(h2::ClientSession::this_ptr)
@@ -252,8 +251,7 @@ pub struct PooledSocket<const SSL: bool> {
 ///
 /// INVARIANT: the holder owns one ref on the session, a distinct heap
 /// allocation; HTTP-thread-only, so no concurrent `&mut`. Each call re-derives
-/// a fresh `&mut`, so callers may interleave raw `as_ptr()` reads (e.g.
-/// `register_h2`) without a spanning Unique tag.
+/// a fresh `&mut`, so callers may interleave raw `as_ptr()` reads.
 #[inline]
 #[allow(clippy::mut_from_ref)]
 fn h2_session_mut(s: &RefPtr<h2::ClientSession>) -> &mut h2::ClientSession {
@@ -402,40 +400,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         )
     }
 
-    /// Tail of [`Self::unregister_h2_raw`]: swap-remove the entry at `idx`
-    /// from `list`, fix up the swapped-in entry's index, and release the ref
-    /// taken in [`Self::register_h2`] through the pointer the registry held.
-    /// `session` only identifies the entry being removed.
-    fn h2_swap_remove_and_deref(
-        list: &mut Vec<RefPtr<h2::ClientSession>>,
-        idx: u32,
-        session: *const h2::ClientSession,
-    ) {
-        debug_assert!(
-            (idx as usize) < list.len()
-                && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
-        );
-        let _removed = list.swap_remove(idx as usize);
-        if (idx as usize) < list.len() {
-            // The swapped-in entry is a distinct allocation from `session`
-            // (the entry at `idx` was just removed); `set_registry_index`
-            // only touches a `Cell<u32>`.
-            list[idx as usize].set_registry_index(idx);
-        }
-    }
-
-    pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {
-        if !SSL {
-            return;
-        }
-        let s = Self::h2_session_ref(session);
-        if s.registry_index() != u32::MAX {
-            return;
-        }
-        s.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
-        // SAFETY: `session` is live (caller contract).
-        self.active_h2_sessions
-            .push(unsafe { RefPtr::init_ref(session) });
+    pub(crate) fn register_h2(&mut self, session: RefPtr<h2::ClientSession>) -> h2::SessionPtr {
+        debug_assert!(SSL && session.registry_index() == u32::MAX);
+        session.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
+        let this = session.this_ptr();
+        self.active_h2_sessions.push(session);
+        this
     }
 
     /// Called from drainQueuedShutdowns when the abort-tracker lookup
@@ -467,7 +437,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         false
     }
 
-    /// Take `session` out of `active_h2_sessions`, releasing the registry's
+    /// Take `session` out of `active_h2_sessions`, returning the registry's
     /// ref. Takes the context as a raw pointer because it is reached on
     /// re-entrant call paths (`connect` → `adopt` → `maybe_release` /
     /// `fail_all` → `fail_streams`) where an ancestor stack frame already
@@ -481,22 +451,28 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// hold a `&mut` to it but must not be mid-iteration over
     /// `active_h2_sessions` (this swap_removes from that Vec). `session` must
     /// be live for the duration of the call; it is only used to find and
-    /// identify the registry entry, which is what gets released.
-    pub(crate) unsafe fn unregister_h2_raw(ctx: *mut Self, session: *const h2::ClientSession) {
-        if !SSL {
-            return;
-        }
+    /// identify the registry entry, which is what gets returned.
+    #[must_use]
+    pub(crate) unsafe fn unregister_h2_raw(
+        ctx: *mut Self,
+        session: *const h2::ClientSession,
+    ) -> Option<RefPtr<h2::ClientSession>> {
         let s = Self::h2_session_ref(session);
         let idx = s.registry_index();
         if idx == u32::MAX {
-            return;
+            return None;
         }
         s.set_registry_index(u32::MAX);
         // SAFETY: `ctx` is live per caller contract. Project the field via raw
         // place expression — no intermediate `&mut Self` is formed, so we do
         // not alias an ancestor frame's `&mut HTTPContext`.
         let list = unsafe { &mut (*ctx).active_h2_sessions };
-        Self::h2_swap_remove_and_deref(list, idx, session);
+        let removed = list.swap_remove(idx as usize);
+        debug_assert!(core::ptr::eq(removed.as_ptr(), session));
+        if let Some(swapped_in) = list.get(idx as usize) {
+            swapped_in.set_registry_index(idx);
+        }
+        Some(removed)
     }
 
     pub(crate) fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {
@@ -1122,13 +1098,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(session) = found.h2_session.take() {
                     debug_assert!(SSL);
                     h2_session_mut(&session).socket = sock.assume_ssl();
-                    // The pool's ref becomes the socket ext's; `adopt` goes
+                    // The pool's ref becomes the registry's; `adopt` goes
                     // through that handle and may release it again if the
                     // session turns out to be unusable, so nothing touches
                     // `session` afterwards.
-                    let session = session.into_this_ptr();
+                    let session = self.register_h2(session);
                     Self::tag_as_h2(sock, session.as_ptr());
-                    self.register_h2(session.as_ptr());
                     h2::ClientSession::adopt(session, client);
                     return Ok(None);
                 }

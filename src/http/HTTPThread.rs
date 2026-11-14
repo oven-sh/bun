@@ -728,7 +728,7 @@ impl HttpThread {
                             }
                             if let Some(session) = tagged.session() {
                                 // The resume may tear the session down and
-                                // release the socket's ref; hold one across
+                                // release its last ref; hold one across
                                 // the second call.
                                 let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);

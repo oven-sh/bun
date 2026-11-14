@@ -1012,6 +1012,24 @@ describe("async write buffer lifetime", () => {
       deflate.close();
     }
   });
+
+  // A Buffer of this size has no ArrayBuffer until `.buffer` is read. zlibBuffer() gives it one before the
+  // native write, so the write pins it and a transfer during the job copies.
+  it("zlib.gzip(buffer, callback) keeps a large Buffer attached while its job runs", async () => {
+    const input = Buffer.allocUnsafeSlow(1024 * 1024).fill(97);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    zlib.gzip(input, (error, output) => (error ? reject(error) : resolve(output)));
+
+    const moved = input.buffer.transfer(0);
+    expect({ detached: input.buffer.detached, length: input.byteLength, moved: moved.byteLength }).toEqual({
+      detached: false,
+      length: 1024 * 1024,
+      moved: 0,
+    });
+
+    const output = await promise;
+    expect(zlib.gunzipSync(output).equals(input)).toBe(true);
+  });
 });
 
 describe("async write pins are released", () => {

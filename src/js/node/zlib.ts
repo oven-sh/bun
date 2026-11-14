@@ -19,7 +19,7 @@ const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
+const { isAnyArrayBuffer, isArrayBufferView, isUint8Array } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const { Transform, finished } = require("node:stream");
@@ -67,7 +67,11 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
   validateFunction(callback, "callback");
   // Streams do not support non-Uint8Array ArrayBufferViews yet. Convert it to a Buffer without copying.
   if (isArrayBufferView(buffer)) {
-    buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const byteLength = buffer.byteLength;
+    // The wrap gives the view an ArrayBuffer for the native write to pin. An empty Uint8Array has no bytes, and a detached one cannot be wrapped.
+    if (byteLength !== 0 || !isUint8Array(buffer)) {
+      buffer = Buffer.from(buffer.buffer, buffer.byteOffset, byteLength);
+    }
   } else if (isAnyArrayBuffer(buffer)) {
     buffer = Buffer.from(buffer);
   }

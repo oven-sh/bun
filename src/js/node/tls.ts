@@ -1667,7 +1667,7 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
     if (typeof cert !== "string" && !isArrayBufferView(cert)) {
       throw $ERR_INVALID_ARG_TYPE(`certs[${i}]`, "string or an instance of ArrayBufferView", cert);
     }
-    snapshot.push(cert);
+    $arrayPush(snapshot, cert);
   }
   const normalized = parseCACertificates(snapshot);
   if (normalized.length === 0 && snapshot.length > 0) {

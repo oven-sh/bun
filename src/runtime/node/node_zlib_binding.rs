@@ -350,10 +350,17 @@ pub(crate) trait CompressionStreamImpl:
         let in_buf: Option<jsc::ArrayBuffer> = if in_js.is_null() {
             None
         } else {
-            let Some(buf) = in_js.as_pinned_arraybuffer(global_this) else {
-                return Err(global_this.throw_out_of_memory());
-            };
-            Some(buf)
+            match in_js.as_pinned_arraybuffer(global_this) {
+                Some(buf) => Some(buf),
+                // A detached view has no bytes and nothing to pin. It is a write with no input.
+                None if in_js
+                    .as_array_buffer(global_this)
+                    .is_some_and(|buf| buf.is_detached()) =>
+                {
+                    None
+                }
+                None => return Err(global_this.throw_out_of_memory()),
+            }
         };
         let Some(mut out_buf) = out_js.as_pinned_arraybuffer(global_this) else {
             if let Some(buf) = &in_buf {
@@ -389,7 +396,13 @@ pub(crate) trait CompressionStreamImpl:
         self.write_in_progress().set(true);
         self.ref_();
 
-        Self::pending_input_set_cached(this_value, global_this, in_js);
+        // `unpin_pending_buffers` releases what is kept here, and a write with no input pinned nothing.
+        let pending_input = if in_buf.is_some() {
+            in_js
+        } else {
+            JSValue::NULL
+        };
+        Self::pending_input_set_cached(this_value, global_this, pending_input);
         Self::pending_output_set_cached(this_value, global_this, out_js);
 
         self.stream().with_mut(|s| {

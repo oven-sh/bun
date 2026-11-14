@@ -313,6 +313,35 @@ describe("HTTPParser.prototype.execute", () => {
     // Once the outer execute() has returned, the parser accepts new data again.
     expect(parser.execute(input)).toBe(input.length);
   });
+
+  // A view whose ArrayBuffer was transferred is an empty chunk. node-http-parser-detached-view.test.ts has what
+  // Node gives for it. These three results are Bun's own: each is what Bun gives for any chunk in that state.
+  test("the checks that Bun makes for a chunk apply to a detached view", () => {
+    const detached = () => {
+      const view = Buffer.from(new ArrayBuffer(8));
+      view.buffer.transfer();
+      return view;
+    };
+    expect(() => new HTTPParser().execute(detached())).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+
+    const closed = new HTTPParser();
+    closed.close();
+    expect(closed.execute(detached())).toBeUndefined();
+
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {});
+    let nested: unknown;
+    parser[kOnHeadersComplete] = function (this: typeof parser) {
+      try {
+        nested = this.execute(detached());
+      } catch (error) {
+        nested = (error as Error).message;
+      }
+    };
+    const message = Buffer.from("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+    expect(parser.execute(message)).toBe(message.length);
+    expect(nested).toBe("HTTPParser.execute is not reentrant");
+  });
 });
 
 describe("a callback that throws stops the parse", () => {

@@ -75,9 +75,20 @@ Object.assign(globalThis, {
   __fake_mouse_events() {
     return mouseEvents;
   },
+  // The page called console[type](...values): Chrome reports the call to the session.
+  __fake_console(type: string, values: string[]) {
+    send({
+      method: "Runtime.consoleAPICalled",
+      params: { type, args: values.map(value => ({ type: "string", value })) },
+      sessionId: evaluatingSession,
+    });
+  },
 });
 
 const mouseEvents: { type: string; x: number; y: number }[] = [];
+
+// The session of the Runtime.evaluate that is running.
+let evaluatingSession: string | undefined;
 
 function sendBytes(bytes: Buffer) {
   let written = 0;
@@ -156,6 +167,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
         return reply({ result: { type: "object", value: [12, 34] } });
       }
       let value: unknown;
+      evaluatingSession = sessionId;
       try {
         value = await (0, eval)(params.expression);
       } catch (e) {

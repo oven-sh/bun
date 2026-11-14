@@ -1367,7 +1367,7 @@ describe.concurrent("bun run", () => {
     });
     const run = async (...args: string[]) => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "say", ...args],
+        cmd: [bunExe(), ...args],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1377,21 +1377,32 @@ describe.concurrent("bun run", () => {
       return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
     };
 
-    expect(await run("hello")).toMatchObject({ stdout: "hello", exitCode: 0 });
-    expect(await run('x" & echo marker & "')).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining(
-        'error: Failed to run "say.cmd": argument "x\\" & echo marker & \\"" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
-      ),
-      exitCode: 1,
-    });
-    expect(await run("hello", "%PATH%")).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining(
-        'error: Failed to run "say.cmd": argument "%PATH%" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
-      ),
-      exitCode: 1,
-    });
+    expect(await run("run", "say", "hello")).toMatchObject({ stdout: "hello", exitCode: 0 });
+    expect(await run("x", "say", "hello")).toMatchObject({ stdout: "hello", exitCode: 0 });
+
+    // bunx and --silent leave out the report of the exit code of the bin.
+    // Nothing else explains this exit code, so they still print this error,
+    // and it is all they print.
+    for (const command of [
+      ["run", "say"],
+      ["run", "--silent", "say"],
+      ["x", "say"],
+    ]) {
+      expect({ command, ...(await run(...command, 'x" & echo marker & "')) }).toEqual({
+        command,
+        stdout: "",
+        stderr:
+          'error: Failed to run "say.cmd": argument "x\\" & echo marker & \\"" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+        exitCode: 1,
+      });
+      expect({ command, ...(await run(...command, "hello", "%PATH%")) }).toEqual({
+        command,
+        stdout: "",
+        stderr:
+          'error: Failed to run "say.cmd": argument "%PATH%" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+        exitCode: 1,
+      });
+    }
   });
 
   // The node/bun shims live in one directory shared by every bun process of

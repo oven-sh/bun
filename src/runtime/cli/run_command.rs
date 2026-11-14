@@ -2180,13 +2180,12 @@ impl RunCommand {
             && let Some(arg) =
                 (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
         {
-            if !ctx.debug.silent {
-                pretty_errorln!(
-                    "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
-                    bstr::BStr::new(Self::basename_or_bun(executable)),
-                    bun_core::fmt::quote(&arg[..]),
-                );
-            }
+            // Printed under `silent` too: bunx sets it, and nothing else explains this exit code.
+            pretty_errorln!(
+                "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
+                bstr::BStr::new(Self::basename_or_bun(executable)),
+                bun_core::fmt::quote(&arg[..]),
+            );
             Global::exit(1);
         }
 

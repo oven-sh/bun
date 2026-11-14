@@ -412,8 +412,9 @@ import { createConnection } from "./database-driver";
 function parseConfig(config: any) {
   return JSON.parse(
     JSON.stringify(config).replace(
-      /\${([^:-]+)(?::([^}]+))?}/g,
-      (_, key, defaultValue) => process.env[key] || defaultValue || "",
+      /\${([^:}]+)(?::-([^}]*))?}/g,
+      // The default is already JSON text. Escape the environment value the same way.
+      (_, key, defaultValue = "") => (process.env[key] ? JSON.stringify(process.env[key]).slice(1, -1) : defaultValue),
     ),
   );
 }

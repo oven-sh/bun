@@ -812,6 +812,9 @@ public:
         return this->getDirect(vm, vm.propertyNames->prototype);
     }
 
+    bool hasConstructed() const { return m_lists & hasConstructedBit; }
+    void willConstruct() { m_lists |= hasConstructedBit; }
+
     // Instances are created from `mock.prototype`, so the implementation's `prototype` is chained behind it.
     // An object the test assigned to `prototype`, or a chain it set up by hand, isn't changed.
     void setPrototypeParent(JSGlobalObject* globalObject, JSValue constructor)
@@ -826,12 +829,19 @@ public:
         if (!prototype || prototype != JSValue(this->ownPrototype.get()))
             return;
 
-        JSObject* parent = this->globalObject()->objectPrototype();
+        JSObject* parent = nullptr;
         if (constructor && constructor.isObject()) {
             JSValue constructorPrototype = asObject(constructor)->get(globalObject, vm.propertyNames->prototype);
             RETURN_IF_EXCEPTION(scope, );
             if (constructorPrototype.isObject())
                 parent = asObject(constructorPrototype);
+        }
+        if (!parent) {
+            // Vitest chains such a mock to Object.prototype again. Outside vi a reset, a restore or a stub is what leaves
+            // the mock without a `prototype` to inherit from, and the objects it has built keep their class through that.
+            if (!this->isVitest && this->hasConstructed())
+                return;
+            parent = this->globalObject()->objectPrototype();
         }
         if (prototype == parent)
             return;
@@ -909,6 +919,10 @@ private:
         Configured = 1 << 1,
         Spies = 1 << 2,
     };
+    // The one bit of `m_lists` that is not a list: `new` has entered this mock, so objects may inherit from its `prototype`.
+    // It is set before the constructor runs, which can leak `this`, throw or reset the mock. Nothing clears it,
+    // because those objects outlive a reset, a restore and the test file.
+    static constexpr uint8_t hasConstructedBit = 1 << 7;
 
     static JSC::WriteBarrier<JSC::Unknown>& setOf(JSMockModule& mockModule, List list)
     {
@@ -1794,6 +1808,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
         constructor = impl->underlyingValue.get();
     fn->setPrototypeParent(globalObject, constructor);
     RETURN_IF_EXCEPTION(scope, {});
+    fn->willConstruct();
     JSC::CallData constructData;
     if (constructor)
         constructData = JSC::getConstructData(constructor);

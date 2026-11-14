@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
+import { once } from "node:events";
+import { connect, createServer, type AddressInfo } from "node:net";
 
 // connect_finish must tear down a still-live previous native socket before
 // reusing the wrapper, not alias two native sockets onto one ext slot.
@@ -99,40 +101,24 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     });
   });
 
-  it("does not crash when reconnecting while the first connect is still in flight", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const { createServer, connect } = require("node:net");
-          const srv = createServer(c => c.on("error", () => {})).listen(0, "127.0.0.1", () => {
-            const port = srv.address().port;
-            const s = connect(port, "127.0.0.1");
-            // Second connect while the first is still connecting.
-            s.connect(port, "127.0.0.1");
-            s.once("connect", () => {
-              process.stdout.write("connect");
-              s.destroy();
-              srv.close();
-            });
-            s.once("error", e => {
-              process.stdout.write("err:" + e.code);
-              s.destroy();
-              srv.close();
-            });
-          });
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Node emits EALREADY here; Bun drops the first in-flight connect and
-    // completes the second. Either is acceptable so long as the process
-    // exits cleanly.
-    expect(["connect", "err:EALREADY"]).toContain(stdout);
-    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+  // libuv fails a second connect on a handle that has one in flight (Windows: EISCONN): https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
+  it("fails when reconnecting while the first connect is still in flight", async () => {
+    const events: string[] = [];
+    const server = createServer(connection => connection.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.connect(port, "127.0.0.1");
+      socket.on("connect", () => {
+        events.push("connect");
+        socket.destroy();
+      });
+      socket.on("error", (error: NodeJS.ErrnoException) => events.push(`err:${error.code}`));
+      await new Promise(resolve => socket.on("close", resolve));
+      expect(events).toEqual([isWindows ? "err:EISCONN" : "err:EALREADY"]);
+    } finally {
+      server.close();
+    }
   });
 });

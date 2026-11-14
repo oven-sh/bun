@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunRun, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "path";
 test.concurrent("empty jsonc - package.json", async () => {
   await using dir = tempDir("jsonc", {
@@ -56,4 +56,34 @@ test.concurrent("imported JSON strings match JSON.parse exactly (escapes, lone s
     `,
   });
   expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+});
+
+// https://github.com/oven-sh/bun/issues/8524
+describe("a loader map gives jsonc by its name to a file ending", () => {
+  const imports = (file: string) => `import data from "./${file}";\nconsole.log(JSON.stringify(data));\n`;
+  const requires = (file: string) => `console.log(JSON.stringify(require("./${file}")));\n`;
+
+  test.concurrent.each([
+    // [what names the loader, the data file, the entry point, flags, bunfig.toml]
+    ["--loader .x:jsonc", "data.x", imports, ["--loader", ".x:jsonc"], undefined],
+    ["--loader .json:jsonc", "data.json", imports, ["--loader", ".json:jsonc"], undefined],
+    ["--loader .json=jsonc", "data.json", imports, ["--loader", ".json=jsonc"], undefined],
+    ["--loader .txt:jsonc, by require()", "data.txt", requires, ["--loader", ".txt:jsonc"], undefined],
+    [`[loader] ".x" = "jsonc" in bunfig.toml`, "data.x", imports, [], `[loader]\n".x" = "jsonc"\n`],
+    [`[loader] ".json" = "jsonc" in bunfig.toml`, "data.json", requires, [], `[loader]\n".json" = "jsonc"\n`],
+  ] as const)("%s", async (_, file, entry, flags, bunfig) => {
+    using dir = tempDir("jsonc-by-name", {
+      [file]: `// a comment\n{"a":[1,],}\n`,
+      "index.js": entry(file),
+      ...(bunfig && { "bunfig.toml": bunfig }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `{"a":[1]}\n`, stderr: "", exitCode: 0 });
+  });
 });

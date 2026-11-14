@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
+// Written against that file with the SHA-256 23dee88a4169821dff1a9e31cd4c88ce1ee8d2d857b409b2b3ce8306909a00b4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -848,6 +848,8 @@ function moveMessagePortToContext(port, _context) {
 }
 
 class Worker extends EventEmitter {
+  declare _events: Record<string | symbol, unknown>;
+  declare _eventsCount: number;
   #worker: WebWorker;
   #performance;
   #name: string;
@@ -860,6 +862,9 @@ class Worker extends EventEmitter {
   #stdin: ReturnType<typeof makePortWritable> | undefined;
   #stdout: ReturnType<typeof makePortReadable> | undefined;
   #stderr: ReturnType<typeof makePortReadable> | undefined;
+
+  #refHook;
+  #unrefHook;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -1020,12 +1025,18 @@ class Worker extends EventEmitter {
     this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#publicPort.unref();
     const publicPort = this.#publicPort;
-    this.on("newListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
-    });
-    this.on("removeListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
-    });
+    this.on(
+      "newListener",
+      (this.#refHook = function (this: Worker, name) {
+        if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
+      }),
+    );
+    this.on(
+      "removeListener",
+      (this.#unrefHook = function (this: Worker, name) {
+        if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
+      }),
+    );
     // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
     // pair, which travels through the Worker object itself; surface those too.
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
@@ -1253,12 +1264,33 @@ class Worker extends EventEmitter {
           this.emit("message", entry.message);
         }
       } finally {
-        this.#publicPort.close();
-        this.#onExitPromise = e.code;
         try {
-          this.emit("exit", e.code);
+          this.removeAllListeners("message");
+          // Node 24 intentionally uses the plural spelling before 'exit':
+          // https://github.com/nodejs/node/blob/v24.21.0/lib/internal/worker.js#L385-L402
+          this.removeAllListeners("messageerrors");
         } finally {
-          this.#resolveOnExit?.(e.code);
+          this.#publicPort.unref();
+          this.#publicPort.close();
+          this.#onExitPromise = e.code;
+          try {
+            this.emit("exit", e.code);
+            // Keep the internal port hooks: removing them delays transferred-buffer release on Windows ARM64.
+            const names = this.eventNames().filter(name => name !== "removeListener");
+            names.push("removeListener");
+            for (const name of names) {
+              const listeners = this.rawListeners(name);
+              for (let i = listeners.length - 1; i >= 0; i--) {
+                const listener = listeners[i];
+                if (listener !== this.#refHook && listener !== this.#unrefHook) this.removeListener(name, listener);
+              }
+            }
+            // Like removeAllListeners(), discard listeners added by removal callbacks.
+            this._events = { __proto__: null, newListener: this.#refHook, removeListener: this.#unrefHook };
+            this._eventsCount = 2;
+          } finally {
+            this.#resolveOnExit?.(e.code);
+          }
         }
       }
     }

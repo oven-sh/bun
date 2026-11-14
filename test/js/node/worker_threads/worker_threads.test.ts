@@ -1,6 +1,7 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -3421,4 +3422,40 @@ test("Worker exit listener cleanup settles termination when removeListener throw
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "settled\n", stderr: "", exitCode: 0 });
+});
+
+describe.skipIf(!!aotUnsupported)("compiled Worker exit listener cleanup", () => {
+  test.concurrent.each(["normal", "terminate", "error"])("releases listeners after %s", async mode => {
+    using dir = tempDir("compiled-worker-exit-" + mode, {});
+    const executable = join(String(dir), isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--compile-exec-argv=--expose-gc",
+        join(import.meta.dir, "worker-exit-cleanup-fixture.mjs"),
+        "--outfile",
+        executable,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildError, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+      buildOut: "",
+      buildError: "",
+      buildExit: 0,
+    });
+    await using proc = Bun.spawn({ cmd: [executable, mode], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    expect(JSON.parse(stdout).collected).toEqual([true, true, true, true]);
+  });
 });

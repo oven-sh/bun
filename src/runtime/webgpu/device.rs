@@ -16,7 +16,7 @@ use bun_jsc::console_object::{self, MessageLevel, MessageType};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortCause, AbortHandle, DOMExceptionCode, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsError, JsResult, LoopKind, StopReason, Strong,
+    JsClass as _, JsError, JsResult, StopReason, Strong,
 };
 use bun_threading::Guarded;
 
@@ -54,8 +54,7 @@ enum Event {
 }
 
 struct Events {
-    /// With the loop of the script that caused it, if one did.
-    queue: Guarded<Vec<(Event, Option<LoopKind>)>>,
+    queue: Guarded<Vec<Event>>,
     host: Arc<Host>,
     /// Only the JS thread follows it. Null while nobody is there to tell.
     device: AtomicPtr<Device>,
@@ -63,16 +62,14 @@ struct Events {
 
 impl Events {
     fn push(&self, event: Event) {
+        self.queue.lock().push(event);
         if !self.host.is_js_thread() {
-            self.queue.lock().push((event, None));
             return self.host.wake();
         }
         // SAFETY: a device clears this before it is dropped, on this thread.
-        let device = unsafe { self.device.load(Ordering::SeqCst).as_ref() };
-        let loop_kind = device
-            .filter(|device| !device.instance.is_processing_events())
-            .map(Device::stay_alive_for_events);
-        self.queue.lock().push((event, loop_kind));
+        if let Some(device) = unsafe { self.device.load(Ordering::SeqCst).as_ref() } {
+            device.stay_alive_for_events();
+        }
     }
 }
 
@@ -145,6 +142,27 @@ impl Drop for Device {
     }
 }
 
+/// For what has memory of the driver, or can be the last to let go of a buffer or a texture.
+pub(crate) struct HoldsMemory(Weak<Device>);
+
+impl HoldsMemory {
+    pub(super) fn of(device: &Rc<Device>) -> Self {
+        Self(Rc::downgrade(device))
+    }
+
+    fn will_release(&self) {
+        if let Some(device) = self.0.upgrade() {
+            device.will_release_memory();
+        }
+    }
+}
+
+impl Drop for HoldsMemory {
+    fn drop(&mut self) {
+        self.will_release();
+    }
+}
+
 /// An operation that ends when the GPU has come to it.
 pub(super) struct QueueWait {
     device: Rc<Device>,
@@ -192,11 +210,29 @@ impl Device {
         }
     }
 
+    /// Dawn looks at all waits at each wake, so those for very many submits end in batches.
+    fn serial_to_wake_after(&self) -> Option<Serial> {
+        const BATCHES: usize = 256;
+        let waits = self.queue_waits.borrow();
+        if waits.values().len() < BATCHES {
+            return waits.values().iter().min().copied();
+        }
+        let mut serials = waits.values().to_vec();
+        serials.sort_unstable();
+        serials.dedup();
+        Some(serials[serials.len() / BATCHES])
+    }
+
+    pub(super) fn will_release_memory(&self) {
+        self.dawn.will_release_memory();
+        self.instance.schedule();
+    }
+
     pub(super) fn watch_queue(&self) {
-        let first = self.queue_waits.borrow().values().iter().min().copied();
-        match self.dawn.wake_after(first) {
+        let serial = self.serial_to_wake_after();
+        match self.dawn.wake_after(serial) {
             Wake::Follows => {}
-            Wake::None if first.is_none() => {}
+            Wake::None if serial.is_none() => {}
             Wake::None | Wake::Missed => self.instance.schedule(),
         }
     }
@@ -225,19 +261,16 @@ impl Device {
             .inspect(|buffer| buffer.is_listed_by_device.set(false))
     }
 
-    /// Returns the loop that is going to look at them.
-    fn stay_alive_for_events(&self) -> LoopKind {
-        let loop_kind = VirtualMachine::get().current_loop_kind();
+    fn stay_alive_for_events(&self) {
         let mut pending = self.pending_events.borrow_mut();
-        if (pending.as_ref()).is_none_or(|(_, operation)| operation.loop_kind() != loop_kind)
+        if pending.is_none()
             && let Some(wrapper) = self.wrapper.get().get()
         {
             *pending = Some((
                 Strong::create(wrapper, &self.origin.global),
-                Operation::new(&self.instance, self.origin.on(loop_kind)),
+                Operation::new(&self.instance, self.origin),
             ));
         }
-        loop_kind
     }
 
     fn stop_events(&self) {
@@ -254,11 +287,10 @@ impl Device {
         let Some(wrapper) = self.wrapper.get().get() else {
             return;
         };
-        for (event, loop_kind) in events {
+        for event in events {
             let device = Rc::clone(self);
             let wrapper = Strong::create(wrapper, &self.origin.global);
-            let origin = loop_kind.map_or(self.origin, |kind| self.origin.on(kind));
-            Operation::new(&self.instance, origin)
+            Operation::new(&self.instance, self.origin)
                 .complete(move |global| device.deliver(global, wrapper.get(), event));
         }
     }
@@ -443,7 +475,10 @@ impl GPUDevice {
         for buffer in device.take_mapped_buffers() {
             match result {
                 Ok(()) => result = buffer.unmap_for_destroyed_device(cx.global()),
-                Err(_) => buffer.detach_views(cx.global().vm()),
+                Err(_) => {
+                    buffer.detach_views(cx.global().vm());
+                    device.add_mapped_buffer(&buffer);
+                }
             }
         }
         device.dawn.destroy();
@@ -490,7 +525,7 @@ impl GPUDevice {
             compare: (descriptor.compare).map_or(dawn::CompareFunction::Undefined, Into::into),
             max_anisotropy: descriptor.max_anisotropy,
         }));
-        Object::new(handle, &descriptor.label).into_js(heap)
+        Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state)).into_js(heap)
     }
 
     pub(crate) fn create_bind_group_layout<'a>(
@@ -594,7 +629,7 @@ impl GPUDevice {
             layout: &descriptor.layout.handle,
             entries: (*entries).into(),
         });
-        Object::new(handle, &descriptor.label).into_js(heap)
+        Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state)).into_js(heap)
     }
 
     pub(crate) fn create_shader_module<'a>(
@@ -626,7 +661,8 @@ impl GPUDevice {
         let handle = with_compute_pipeline_descriptor(descriptor, |descriptor| {
             self.handle.create_compute_pipeline(descriptor)
         });
-        Ok(Object::new(handle, &descriptor.label).into_child_of(heap, this_value.to_js()))
+        let pipeline = Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state));
+        Ok(pipeline.into_child_of(heap, this_value.to_js()))
     }
 
     pub(crate) fn create_render_pipeline<'a>(
@@ -640,7 +676,8 @@ impl GPUDevice {
             (self.state).with_render_pipeline_descriptor(heap, descriptor, |descriptor| {
                 self.handle.create_render_pipeline(descriptor)
             })?;
-        Ok(Object::new(handle, &descriptor.label).into_child_of(heap, this_value.to_js()))
+        let pipeline = Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state));
+        Ok(pipeline.into_child_of(heap, this_value.to_js()))
     }
 
     /// The callback for Dawn, and the promise that it settles.
@@ -656,16 +693,17 @@ impl GPUDevice {
         JSValue,
     )
     where
-        Object<T>: Child,
+        Object<T, HoldsMemory>: Child,
     {
         let (deferred, promise) = Deferred::new(&self.state.instance, cx);
         let device = Strong::create(this_value, cx.global());
         let label = label.clone();
+        let state = HoldsMemory::of(&self.state);
         let callback = move |status, handle: Option<_>, message: dawn::StringView<'_>| {
             let message = String::clone_utf8(message.as_bytes());
             deferred.complete(move |global, promise| match handle {
                 Some(handle) => {
-                    let pipeline = Object::new(handle, &label)
+                    let pipeline = Object::with_state(handle, &label, state)
                         .into_child_of(JsHeap::from_global(global), device.get());
                     promise.resolve(global, pipeline.to_js())
                 }
@@ -760,7 +798,11 @@ impl GPUDevice {
             r#type: r#type.into(),
             count,
         });
-        let state = QuerySet { r#type, count };
+        let state = QuerySet {
+            r#type,
+            count,
+            memory: HoldsMemory::of(&self.state),
+        };
         Ok(Object::with_state(handle, &descriptor.label, state).into_js(heap))
     }
 
@@ -797,11 +839,13 @@ pub(crate) type GPUQuerySet = Object<dawn::QuerySet, QuerySet>;
 pub(crate) struct QuerySet {
     r#type: idl::GPUQueryType,
     count: u32,
+    memory: HoldsMemory,
 }
 
 impl GPUQuerySet {
     pub(crate) fn destroy(&self) {
         self.handle.destroy();
+        self.state.memory.will_release();
     }
 
     pub(crate) fn get_type(&self) -> idl::GPUQueryType {

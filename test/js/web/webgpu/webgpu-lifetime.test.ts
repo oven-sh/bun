@@ -7,6 +7,8 @@ runWithDriverOfChrome(import.meta.path);
 
 // As in CI. With ASAN the process ends in exit(), which runs the destructors of a driver whose threads may be at work.
 const bunEnv = isASAN ? { ...defaultEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" } : defaultEnv;
+// It would wake an event loop that has missed something.
+const withoutGCTimer = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
 
 const helpers = `
   import { readdirSync, readFileSync } from "node:fs";
@@ -15,11 +17,18 @@ const helpers = `
     try { return readFileSync(\`/proc/self/task/\${thread}/comm\`, "utf8") === "GPUQueue\\n"; } catch {}
   }).length;
   export const requestDevice = async () => (await navigator.gpu.requestAdapter()).requestDevice();
-  export const slowModule = (device, seed) => device.createShaderModule({ code: \`
+  /** The finalizer of a buffer would make the process look at the device by chance. */
+  export function keepBuffers(device) {
+    const createBuffer = device.createBuffer.bind(device);
+    device.buffers = [];
+    device.createBuffer = descriptor => device.buffers[device.buffers.push(createBuffer(descriptor)) - 1];
+    return (globalThis.device = device);
+  }
+  export const slowModule = (device, seed, rounds = 10000) => device.createShaderModule({ code: \`
     @group(0) @binding(0) var<storage, read_write> out: array<u32, 64>;
     @compute @workgroup_size(64) fn main(@builtin(local_invocation_index) index: u32) {
       var x = index + \${seed};
-      for (var i = 0; i < 10000; i++) { x = x * 1664525 + 1013904223; }
+      for (var i = 0; i < \${rounds}; i++) { x = x * 1664525 + 1013904223; }
       out[index] = x;
     }\` });
   export const compile = (device, seed) =>
@@ -56,16 +65,13 @@ const helpers = `
       navigator.gpu.requestAdapter(),
     ];
   }`;
-const imports = `import { compile, countWatchers, keepBusy, prepare, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
+const imports = `import { compile, countWatchers, keepBuffers, keepBusy, prepare, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
 
-const withHelpers = (files: Record<string, string>) =>
-  tempDir("webgpu", {
+async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
+  using dir = tempDir("webgpu", {
     ...Object.fromEntries(Object.entries(files).map(([name, source]) => [name, imports + source])),
     "helpers.js": helpers,
   });
-
-async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
-  using dir = withHelpers(files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: String(dir),
@@ -111,26 +117,66 @@ describe.concurrent("with or without a driver", () => {
 
   test("promises settle after an unhandled error under --hot", async () => {
     const script = `
-      setImmediate(() => {
-        require("node:fs").stat(".", () => ${noAdapter}.then(adapter => (console.log(adapter), process.exit(0))));
-        throw new Error("unhandled");
+      setImmediate(() => { throw new Error("unhandled"); });
+      setImmediate(async () => {
+        for (let i = 0; i < 40; i++) await ${noAdapter}, await new Promise(setImmediate);
+        console.log("done");
+        process.exit(0);
       });`;
-    const { stdout, stderr, exitCode } = await run({ "index.js": script }, ["--hot", "index.js"]);
+    const { stdout, stderr, exitCode } = await run({ "index.js": script }, ["--hot", "index.js"], withoutGCTimer);
     expect(stderr).toContain("error: unhandled");
-    expect({ stdout, exitCode }).toEqual({ stdout: "null\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
   });
 
-  test("a macro does not continue the program", async () => {
+  test("a worker ends before a promise settles", async () => {
+    const files = {
+      "index.js": `new Worker("./worker.js").addEventListener("close", () => console.log("closed"));`,
+      // LeakSanitizer is told to ignore what the top level of a module allocates.
+      "worker.js": `require("node:fs").stat(".", () => (${noAdapter}.then(console.log), process.exit(0)));`,
+    };
+    expect(await run(files)).toEqual(printed("closed"));
+  });
+
+  test.each([
+    ["at once", `require("./inlined.js");`],
+    [
+      "from a task that is ahead in the queue",
+      `new PerformanceObserver(() => require("./inlined.js")).observe({ type: "mark" });
+       performance.mark("queues a task");`,
+    ],
+  ])("a macro waits for what the program started, %s", async (_, load) => {
+    const files = {
+      "index.js": `setImmediate(() => { globalThis.started = ${noAdapter}; ${load} });`,
+      ...withMacro("inlined", `async () => String(await started)`),
+    };
+    const { stdout, exitCode } = await run(files, undefined, withoutGCTimer);
+    expect(withoutMacroLog(stdout)).toBe("null\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["at the top level", `await rounds();`],
+    ["in a callback", `setImmediate(rounds);`],
+  ])("the program waits %s for what a macro started as it returned", async (_, start) => {
     const files = {
       "index.js": `
-        const started = ${noAdapter}.then(() => console.log("program")).then(() => new Promise(setImmediate));
-        require("./inlined.js");
-        await started;
-        console.log("done");`,
-      ...withMacro("inlined", `async () => String(await ${noAdapter})`),
+        // A timer of the garbage collector can end the first waits.
+        async function rounds() {
+          for (let i = 0; i < 8; i++) {
+            delete require.cache[require.resolve("./inlined.js")];
+            require("./inlined.js");
+            console.log(await left);
+            await new Promise(setImmediate);
+          }
+        }
+        ${start}`,
+      ...withMacro(
+        "inlined",
+        `() => new Promise(resolve => setImmediate(() => ((globalThis.left = ${noAdapter}), resolve("macro"))))`,
+      ),
     };
-    const { stdout, exitCode } = await run(files);
-    expect(withoutMacroLog(stdout)).toBe("null\nprogram\ndone\n");
+    const { stdout, exitCode } = await run(files, undefined, withoutGCTimer);
+    expect(withoutMacroLog(stdout)).toBe(Array(8).fill("macro\nnull\n").join(""));
     expect(exitCode).toBe(0);
   });
 
@@ -174,6 +220,7 @@ describe.concurrent("with or without a driver", () => {
         globalThis.load = () => require("./again.js");
         for (let timeout = 50; globalThis.spins !== "yes"; timeout *= 2) {
           globalThis.spins = "should";
+          delete require.cache[require.resolve("./again.js")];
           try {
             require("node:vm").runInThisContext("load()", { timeout });
           } catch {}
@@ -288,7 +335,7 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     const script = `
       import { getEventLoopStats } from "bun:internal-for-testing";
       const device = await requestDevice();
-      const results = Array.from({ length: 10 }, () => keepBusy(device));
+      const results = Array.from({ length: 10 }, () => keepBusy(device, 30));
       const before = getEventLoopStats().iteration;
       await results.at(-1).mapAsync(GPUMapMode.READ);
       console.log(getEventLoopStats().iteration - before < 50);`;
@@ -300,17 +347,17 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     ["mapAsync() after the next submit", "[[early(), late()][0].mapAsync(GPUMapMode.READ)]"],
     ["mapAsync() in a later task", "[[early(), late(), await new Promise(setImmediate)][0].mapAsync(GPUMapMode.READ)]"],
     ["onSubmittedWorkDone()", "[(early(), device.queue.onSubmittedWorkDone()), late()]"],
+    [
+      "with many waits for that",
+      "[early().mapAsync(GPUMapMode.READ), late(), Array.from({ length: 600 }, () => device.queue.onSubmittedWorkDone())]",
+    ],
   ])("does not wait for what was submitted later: %s", async (_, start) => {
     const script = `
-      const device = await requestDevice();
-      // A finalizer would look at the queue by chance.
-      const createBuffer = device.createBuffer.bind(device);
-      globalThis.buffers = [];
-      device.createBuffer = descriptor => buffers[buffers.push(createBuffer(descriptor)) - 1];
-      await keepBusy(device).mapAsync(GPUMapMode.READ);
+      keepBuffers(await requestDevice());
+      await keepBusy(device, 1).mapAsync(GPUMapMode.READ);
       // More each time, as the GPU may finish all of it before this thread gets to run.
-      for (let workgroups = 1000; workgroups <= 64000; workgroups *= 4) {
-        const [early, late] = [prepare(device, 400), prepare(device, workgroups)];
+      for (let workgroups = 60; workgroups < 65536; workgroups *= 4) {
+        const [early, late] = [prepare(device, workgroups / 2), prepare(device, workgroups)];
         const [first] = ${start};
         const last = device.queue.onSubmittedWorkDone();
         await first;
@@ -323,42 +370,136 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
-  test("turns the event loop for each frame, though the GPU is done before the script is", async () => {
+  test("does not miss what the GPU finishes just as it asks to be woken", async () => {
     const script = `
       const device = await requestDevice();
-      const frames = Array.from({ length: 12 }, () => prepare(device));
-      let turns = 0;
-      let immediate = setImmediate(function count() { turns++, (immediate = setImmediate(count)); });
-      let pending = device.queue.onSubmittedWorkDone();
-      const turnOfFrame = [];
-      for (const submit of frames) {
-        Bun.sleepSync(10);
-        const next = submit().mapAsync(GPUMapMode.READ);
-        await pending;
-        pending = next;
-        turnOfFrame.push(turns);
+      const source = device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_SRC });
+      const target = device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_DST });
+      for (let i = 0; i < 500; i++) {
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(source, target);
+        device.queue.submit([encoder.finish()]);
+        for (let delay = (i % 64) * 200; delay > 0; delay--) globalThis.delay = delay;
+        await device.queue.onSubmittedWorkDone();
       }
-      clearImmediate(immediate);
-      // Two are in flight, which may be found done at once.
-      console.log(turnOfFrame.every((turn, i) => turn !== turnOfFrame[i + 2]));`;
+      console.log("done");`;
+    expect(await run({ "index.js": script }, undefined, withoutGCTimer)).toEqual(printed("done"));
+  });
+
+  test("sleeps through most of very many waits", async () => {
+    const script = `
+      import { getEventLoopStats } from "bun:internal-for-testing";
+      const device = await requestDevice();
+      const pipeline = device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0, 1000) } });
+      const resource = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE });
+      const bindGroup = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource }] });
+      const waits = Array.from({ length: 2048 }, () => {
+        const encoder = device.createCommandEncoder();
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(pipeline), pass.setBindGroup(0, bindGroup), pass.dispatchWorkgroups(1), pass.end();
+        return encoder.finish();
+      }).map(commands => (device.queue.submit([commands]), device.queue.onSubmittedWorkDone()));
+      const before = getEventLoopStats().iteration;
+      await Promise.all(waits);
+      console.log(getEventLoopStats().iteration - before < 1200);`;
     expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
 
-  test("destroys a device even if node:vm ends the script meanwhile", async () => {
+  test.each([
+    ["before the GPU has come to its mappings", "end()"],
+    ["after the first of its mappings", "await results[0].then(end)"],
+    [
+      "and the next call unmaps what is left",
+      `end(), device.destroy(), console.assert(buffers.every(buffer => buffer.mapState === "unmapped"))`,
+    ],
+  ])("destroys a device even if node:vm ends the script meanwhile, %s", async (_, start) => {
     const script = `
-      const buffer = (device, usage, mappedAtCreation) => device.createBuffer({ size: 4, usage, mappedAtCreation });
-      for (let timeout = 1; timeout <= 4; timeout++) {
+      const count = 300;
+      for (let timeout = 20, depth = 1000, pending = 0; pending === 0 || pending >= count - 1; ) {
         const device = await requestDevice();
-        const pending = Array.from({ length: 2000 }, () => buffer(device, GPUBufferUsage.MAP_READ).mapAsync(GPUMapMode.READ));
-        const range = buffer(device, GPUBufferUsage.COPY_SRC, true).getMappedRange();
-        try {
-          require("node:vm").runInNewContext("device.destroy()", { device }, { timeout });
-        } catch {}
-        device.destroy();
-        const results = await Promise.allSettled(pending);
-        console.log(range.byteLength, [...new Set(results.map(result => result.reason.name))].join());
+        const create = (usage, mappedAtCreation) => device.createBuffer({ size: 4, usage, mappedAtCreation });
+        const buffers = Array.from({ length: count }, () => create(GPUBufferUsage.MAP_READ));
+        const results = buffers.map(buffer => buffer.mapAsync(GPUMapMode.READ).then(() => "mapped", error => error.name));
+        const range = create(GPUBufferUsage.COPY_SRC, true).getMappedRange();
+        // Each rejection takes as long as the stack is deep.
+        const destroy = depth => (depth ? destroy(depth - 1) + 1 : device.destroy());
+        function end() {
+          Error.stackTraceLimit = Infinity;
+          try {
+            require("node:vm").runInNewContext("destroy(depth)", { destroy, depth }, { timeout });
+          } catch {}
+          Error.stackTraceLimit = 10;
+          pending = buffers.filter(buffer => buffer.mapState === "pending").length;
+        }
+        ${start};
+        if (pending === 0) depth *= 2;
+        else if (pending >= count - 1) timeout *= 2, device.destroy();
+        else console.log(range.byteLength, (await device.lost).reason, [...new Set((await Promise.all(results)).slice(1))].join());
       }`;
-    expect(await run({ "index.js": script })).toEqual(printed(Array(4).fill("0 AbortError").join("\n")));
+    expect(await run({ "index.js": script })).toEqual(printed("0 destroyed AbortError"));
+  });
+
+  test.each(["device.destroy()", "buffer.destroy()", "buffer.unmap()", "texture.destroy()", "device.queue.submit([])"])(
+    "ends though a listener of beforeExit calls %s",
+    async call => {
+      const script = `
+      const device = await requestDevice();
+      const buffer = device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ });
+      const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
+      let calls = 0;
+      process.on("beforeExit", () => (++calls < 10 ? ${call} : process.exit()));
+      process.on("exit", () => console.log(calls < 10));`;
+      expect(await run({ "index.js": script })).toEqual(printed("true"));
+    },
+  );
+
+  test.skipIf(!isLinux).each([
+    ["buffers that it destroys", "buffer", "for (const it of all) it.destroy()"],
+    ["textures that it destroys", "texture", "for (const it of all) it.destroy()"],
+    ["buffers that are collected", "buffer", "(all.length = 0), Bun.gc(true)"],
+    ["textures that are collected", "texture", "(all.length = 0), Bun.gc(true)"],
+    ["buffers that bind groups hold to the last", "buffer", "await collectAfter(bindGroup)"],
+    ["textures that views hold to the last", "texture", "await collectAfter(texture => texture.createView())"],
+  ])("gets back the memory of %s, though it submits nothing more", async (_, kind, release) => {
+    const script = `
+      const device = await requestDevice();
+      const rss = () => process.memoryUsage.rss() >> 20;
+      // 16 MB each
+      const buffer = encoder => {
+        const buffer = device.createBuffer({ size: 16 << 20, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE });
+        encoder.clearBuffer(buffer);
+        return buffer;
+      };
+      const texture = encoder => {
+        const view = device.createTexture({ size: [2048, 2048], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT });
+        encoder.beginRenderPass({ colorAttachments: [{ view, loadOp: "clear", storeOp: "store" }] }).end();
+        return view;
+      };
+      function create() {
+        const encoder = device.createCommandEncoder();
+        const all = Array.from({ length: 8 }, () => ${kind}(encoder));
+        device.queue.submit([encoder.finish()]);
+        return all;
+      }
+      const layout = device.createBindGroupLayout({
+        entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }],
+      });
+      const bindGroup = resource => device.createBindGroup({ layout, entries: [{ binding: 0, resource }] });
+      async function collectAfter(hold) {
+        const holders = all.splice(0).map(hold);
+        Bun.gc(true);
+        for (let i = 0; i < 2; i++) await device.queue.onSubmittedWorkDone();
+        holders.length = 0;
+        Bun.gc(true);
+      }
+      const all = create();
+      await device.queue.onSubmittedWorkDone();
+      const inUse = rss();
+      ${release};
+      while (device.adapterInfo.isFallbackAdapter && inUse - rss() < 64) await new Promise(setImmediate);
+      console.log("done");`;
+    const env = { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":") };
+    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("done"));
   });
 });
 
@@ -383,17 +524,46 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
   test("does not make the process miss the end of what it waits for", async () => {
     const script = `
       const device = await requestDevice();
-      for (let i = 0; i < 8; i++) {
-        const mapped = keepBusy(device, 600).mapAsync(GPUMapMode.READ);
+      for (let longWaits = 0, workgroups = 25; longWaits < 3; ) {
+        const start = performance.now();
+        const mapped = keepBusy(device, workgroups).mapAsync(GPUMapMode.READ);
         await new Promise(setImmediate);
         await new Promise(setImmediate);
-        // Its finalizers run when the event loop is about to sleep.
+        // Its finalizers run 100 ms later, when the event loop is about to sleep again.
         Bun.gc(false);
         await mapped;
+        if (performance.now() - start < 120 && workgroups < 32768) workgroups *= 2;
+        else longWaits++;
       }
       console.log("done");`;
-    const env = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
-    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("done"));
+    expect(await run({ "index.js": script }, undefined, withoutGCTimer)).toEqual(printed("done"));
+  });
+
+  test.skipIf(!isLinux).each([
+    ["samplers", "device.createSampler()"],
+    ["query sets", `device.createQuerySet({ type: "occlusion", count: 1 })`],
+    ["pipelines", `device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0) } })`],
+    ["pipelines that were compiled on another thread", "compile(device, 0)"],
+    [
+      "render pipelines",
+      `device.createRenderPipeline({
+        layout: "auto",
+        vertex: { module: device.createShaderModule({ code: "@vertex fn main() -> @builtin(position) vec4f { return vec4f(); }" }) },
+        depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "always" },
+      })`,
+    ],
+  ])("has the driver free %s, which takes a submit", async (_, create) => {
+    const script = `
+      const device = await requestDevice();
+      await device.queue.onSubmittedWorkDone();
+      console.log(countWatchers());
+      while (countWatchers() === 0) {
+        await (() => ${create})();
+        Bun.gc(true);
+        await device.queue.onSubmittedWorkDone();
+      }
+      console.log(countWatchers());`;
+    expect(await run({ "index.js": script })).toEqual(printed("0\n1"));
   });
 
   test("leaves the listeners of a device while something can report an error to it", async () => {
@@ -522,43 +692,6 @@ describe.skipIf(!hasAdapter).concurrent("a worker", () => {
     };
     expect(await run(files)).toEqual(printed("0"));
   });
-
-  // See test/js/web/workers/worker-late-completion.test.ts.
-  test.skipIf(!isDebug && !isASAN)("is woken while it is torn down", async () => {
-    using dir = withHelpers({
-      "index.js": `
-        // An import would wait at the gate.
-        const worker = new (require("node:worker_threads").Worker)(\`
-          const { compile, requestDevice } = require("./helpers.js");
-          requestDevice().then(async device => {
-            // One that is done before the worker first looks needs no wake.
-            for (let seed = 0, pipeline; Bun.peek.status(pipeline) !== "pending"; seed++) {
-              pipeline = compile(device, seed);
-              await new Promise(setImmediate);
-              await new Promise(setImmediate);
-            }
-            process.exit(0);
-          });\`, { eval: true });
-        await Promise.all([new Promise(resolve => worker.on("exit", resolve)), Bun.stdin.text()]);
-        console.log("closed");`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
-      stdin: "pipe",
-      stderr: "pipe",
-    });
-    const latePost = "[vm] late post: WebGpuProcessEvents (";
-    let stderr = "";
-    for await (const chunk of proc.stderr) {
-      stderr += Buffer.from(chunk).toString();
-      if (stderr.includes(latePost)) proc.stdin.end();
-    }
-    expect(stderr).toContain(latePost);
-    expect(await proc.stdout.text()).toBe("closed\n");
-    expect(await proc.exited).toBe(0);
-  });
 });
 
 describe.skipIf(!hasAdapter).concurrent("what can compile a shader", () => {
@@ -654,6 +787,19 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a macro sleeps until the GPU is done", async () => {
+    const files = {
+      "index.js": `require("./inlined.js");`,
+      ...withMacro(
+        "inlined",
+        `async () => String(await keepBusy(keepBuffers(await requestDevice())).mapAsync(GPUMapMode.READ))`,
+      ),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("a macro waits after another one left the GPU busy", async () => {
     const files = {
       "index.js": `
@@ -664,7 +810,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
         "first",
         `async () => {
           const device = await requestDevice();
-          globalThis.left = keepBusy(device, 2000).mapAsync(GPUMapMode.READ);
+          globalThis.left = keepBusy(device).mapAsync(GPUMapMode.READ);
           await new Promise(setImmediate);
           await new Promise(setImmediate);
           return "first";
@@ -680,8 +826,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
   test("a macro waits for what another one left, which the GPU finished in between", async () => {
     const files = {
       "index.js": `
-        globalThis.device = await requestDevice();
-        keepBusy(device, 1000);
+        keepBusy(keepBuffers(await requestDevice()));
         const done = device.queue.onSubmittedWorkDone();
         require("./first.js");
         await done;
@@ -697,7 +842,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
       ),
       ...withMacro("second", `async () => (await left, "second")`),
     };
-    const { stdout, exitCode } = await run(files, undefined, { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" });
+    const { stdout, exitCode } = await run(files);
     expect(withoutMacroLog(stdout)).toBe("first\nsecond\n");
     expect(exitCode).toBe(0);
   });
@@ -747,23 +892,67 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a macro does not hear what the program makes a device of another macro report", async () => {
+  test("a macro does not change the order of what a device reports", async () => {
     const files = {
       "index.js": `
-        require("./first.js");
-        device.onuncapturederror = event => (event.preventDefault(), console.log(event.error.message.match(/""(.*)""/)[1]));
-        for (const label of ["one", "two"]) {
-          device.createBuffer({ label, size: 4, usage: 0 });
-          require("./" + label + ".js");
+        globalThis.device = await requestDevice();
+        device.onuncapturederror = event => (event.preventDefault(), console.log("error"));
+        device.createBuffer({ size: 4, usage: 0 });
+        keepBusy(device).mapAsync(GPUMapMode.READ).then(() => console.log("mapped"));
+        require("./inlined.js");`,
+      ...withMacro(
+        "inlined",
+        `async () => {
+          await device.queue.onSubmittedWorkDone();
+          console.log("done");
+          device.createBuffer({ size: 4, usage: 0 });
+          device.destroy();
+          return (await device.lost).reason;
         }`,
-      ...withMacro("first", `async () => ((globalThis.device = await requestDevice()), "first")`),
-      ...withMacro("one", `async () => (await device.queue.onSubmittedWorkDone(), "second")`),
-      ...withMacro("two", `async () => (await device.queue.onSubmittedWorkDone(), "third")`),
+      ),
     };
     const { stdout, exitCode } = await run(files);
-    expect(withoutMacroLog(stdout)).toBe("first\nsecond\nthird\none\ntwo\n");
+    expect(withoutMacroLog(stdout)).toBe("error\nmapped\ndone\nerror\ndestroyed\n");
     expect(exitCode).toBe(0);
   });
+
+  test.each(["inlined-macro.js", "inlined.js"])(
+    "the event loop turns for each frame, though the GPU is done before the script is: %s",
+    async file => {
+      const files = {
+        "index.js": `console.log(await require("./${file}").macro?.() ?? "");`,
+        ...withMacro(
+          "inlined",
+          `async () => {
+            const device = await requestDevice();
+            const source = device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_SRC });
+            const target = device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_DST });
+            let turns = 0;
+            let immediate = setImmediate(function count() { turns++, (immediate = setImmediate(count)); });
+            let pending = device.queue.onSubmittedWorkDone();
+            const turnOfFrame = [];
+            for (let i = 0; i < 40; i++) {
+              // What the CPU has to do for a frame.
+              Bun.sleepSync(2);
+              const encoder = device.createCommandEncoder();
+              encoder.copyBufferToBuffer(source, target);
+              device.queue.submit([encoder.finish()]);
+              const next = device.queue.onSubmittedWorkDone();
+              await pending;
+              pending = next;
+              turnOfFrame.push(turns);
+            }
+            clearImmediate(immediate);
+            // Two are in flight, which may be found done at once.
+            return turnOfFrame.every((turn, i) => turn !== turnOfFrame[i + 2]);
+          }`,
+        ),
+      };
+      const { stdout, exitCode } = await run(files);
+      expect(withoutMacroLog(stdout).trim()).toBe("true");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("a macro of Bun.build(), which has a thread of the bundler", async () => {
     const files = {
@@ -787,6 +976,19 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
     const { stdout, exitCode } = await run(files);
     expect(withoutMacroLog(stdout)).toBe("true\ntrue\n");
     expect(exitCode).toBe(0);
+  });
+
+  test("a Bun.ModuleGraph is disposed between two mappings of its device", async () => {
+    const files = {
+      "index.js": `
+        const graph = new Bun.ModuleGraph();
+        const { device } = await graph.import(import.meta.dir + "/device.js");
+        const map = () => device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ }).mapAsync(GPUMapMode.READ);
+        const [, { reason }] = await Promise.allSettled([map().then(() => graph.dispose()), map()]);
+        console.log(reason?.name);`,
+      "device.js": `export const device = await requestDevice();`,
+    };
+    expect(await run(files)).toEqual(printed("AbortError"));
   });
 
   test("a ShadowRealm and a context of node:vm", async () => {
@@ -821,7 +1023,7 @@ describe.skipIf(!hasAdapter)("the process ends while a pipeline compiles", () =>
       test("starts", async () => {
         const device = await requestDevice();
         device.lost.then(() => console.log("lost"));
-        keepBusy(device, 1000);
+        keepBusy(device, 300);
         for (const promise of startEverything(device).slice(0, 4)) promise.then(() => console.log("${name}"), () => console.log("aborted"));
       });`;
     const files = { "a.test.js": file("a"), "b.test.js": file("b") };

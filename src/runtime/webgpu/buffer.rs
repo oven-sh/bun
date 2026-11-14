@@ -92,7 +92,7 @@ pub(crate) struct Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.device.instance.schedule_from_finalizer();
+        self.device.will_release_memory();
     }
 }
 
@@ -207,6 +207,13 @@ impl MapRequest {
     ) -> JsResult<()> {
         let Some(mut promise) = self.take_promise() else {
             return Ok(());
+        };
+        let (status, message) = match status {
+            MapAsyncStatus::Success if self.buffer.device.dawn.is_destroyed() => (
+                MapAsyncStatus::Aborted,
+                &b"The device was destroyed before the mapping was resolved"[..],
+            ),
+            _ => (status, message),
         };
         if status != MapAsyncStatus::Success {
             let code = match status {
@@ -327,7 +334,7 @@ impl GPUBuffer {
         let operation = Operation::new(&device.instance, Origin::of_caller(cx));
         device.wait_for_queue(|wait| {
             let callback = dawn::BufferMapCallbackInfo::new(move |status, message| {
-                wait.finish();
+                drop(wait);
                 let message = message.as_bytes().to_vec();
                 operation.complete(move |global| request.complete(global, status, &message));
             });
@@ -425,7 +432,7 @@ impl GPUBuffer {
         buffer.idle_shadow.take();
         buffer.shadow_size.store(0, Ordering::Relaxed);
         buffer.memory_size.store(0, Ordering::Relaxed);
-        buffer.device.instance.schedule();
+        buffer.device.will_release_memory();
         Ok(result?)
     }
 

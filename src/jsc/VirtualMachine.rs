@@ -13,7 +13,7 @@ use bun_uws as uws;
 
 use crate::bun_string_jsc;
 use crate::counters::Counters;
-use crate::event_loop::EventLoop;
+use crate::event_loop::{EventLoop, TaskSource};
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
@@ -320,6 +320,7 @@ pub struct VirtualMachine {
 
     pub(crate) after_event_loop_callback_ctx: Cell<Option<*mut c_void>>,
     pub(crate) after_event_loop_callback: Cell<Option<OpaqueCallback>>,
+    task_sources: JsCell<Vec<std::rc::Weak<dyn TaskSource>>>,
 
     pub(crate) remap_stack_frames_mutex: bun_threading::Mutex,
 
@@ -1672,6 +1673,32 @@ impl VirtualMachine {
             // SAFETY: `cb` was registered with the matching `ctx`.
             unsafe { cb(ctx.unwrap_or(core::ptr::null_mut())) };
         }
+        if !self.task_sources.get().is_empty() {
+            self.enqueue_from_task_sources();
+        }
+    }
+
+    pub fn add_task_source(&self, source: std::rc::Weak<dyn TaskSource>) {
+        self.task_sources.with_mut(|sources| sources.push(source));
+    }
+
+    #[inline]
+    pub fn has_ready_task_source(&self) -> bool {
+        (self.task_sources.get().iter())
+            .any(|source| source.upgrade().is_some_and(|source| source.is_ready()))
+    }
+
+    fn enqueue_from_task_sources(&self) {
+        let mut ready = bun_collections::smallvec::SmallVec::<[_; 2]>::new();
+        self.task_sources.with_mut(|sources| {
+            sources.retain(|source| {
+                ready.extend(source.upgrade().filter(|source| source.is_ready()));
+                source.strong_count() > 0
+            });
+        });
+        for source in ready {
+            self.enqueue_task(source.task());
+        }
     }
 
     fn is_platform_loop_active(&self) -> bool {
@@ -2611,6 +2638,7 @@ impl VirtualMachine {
     pub fn release_queued_work(&self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
+        self.enqueue_from_task_sources();
         self.transpiler_store.release_queued_jobs_for_teardown();
     }
 }
@@ -3228,6 +3256,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(JsCell::default());
             addr_of_mut!((*vm).child_workers).write(JsCell::default());
+            addr_of_mut!((*vm).task_sources).write(JsCell::default());
             addr_of_mut!((*vm).handle)
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(opts.argv);
@@ -5728,6 +5757,7 @@ impl VirtualMachine {
             core::mem::ManuallyDrop::drop(&mut (*this).handle);
 
             drop(core::mem::take(&mut (*this).auto_killer));
+            drop((*this).task_sources.take());
 
             // A graph context whose release was still queued: teardown stopped what it owned.
             for (_, context) in (*this).graph_contexts.take().iter() {

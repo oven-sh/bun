@@ -27,7 +27,7 @@ pub(crate) use encoder::{
     GPUCommandEncoder, GPUComputePassEncoder, GPURenderBundleEncoder, GPURenderPassEncoder,
 };
 pub(crate) use error::{GPUDeviceLostInfo, GPUError, GPUPipelineError, GPUUncapturedErrorEvent};
-pub(crate) use instance::{Host, Instance};
+pub(crate) use instance::Instance;
 pub(crate) use pipeline::{
     GPUCompilationInfo, GPUCompilationMessage, GPUComputePipeline, GPURenderPipeline,
     GPUShaderModule,
@@ -35,13 +35,13 @@ pub(crate) use pipeline::{
 pub(crate) use queue::GPUQueue;
 pub(crate) use texture::{GPUExternalTexture, GPUTexture};
 
-pub(crate) type GPUBindGroup = Object<dawn::BindGroup>;
+pub(crate) type GPUBindGroup = Object<dawn::BindGroup, device::HoldsMemory>;
 pub(crate) type GPUBindGroupLayout = Object<dawn::BindGroupLayout>;
 pub(crate) type GPUCommandBuffer = Object<dawn::CommandBuffer>;
 pub(crate) type GPUPipelineLayout = Object<dawn::PipelineLayout>;
 pub(crate) type GPURenderBundle = Object<dawn::RenderBundle>;
-pub(crate) type GPUSampler = Object<dawn::Sampler>;
-pub(crate) type GPUTextureView = Object<dawn::TextureView>;
+pub(crate) type GPUSampler = Object<dawn::Sampler, device::HoldsMemory>;
+pub(crate) type GPUTextureView = Object<dawn::TextureView, device::HoldsMemory>;
 
 // HOST_EXPORT(Bun__createNavigatorGPU)
 pub(crate) fn create_navigator_gpu(global: &JSGlobalObject) -> JSValue {

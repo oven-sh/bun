@@ -1,6 +1,7 @@
 #include "Host.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "dawn/native/DawnNative.h"
 #include "src/dawn/native/Adapter.h"
@@ -47,8 +48,15 @@ Wake QueueWatcher::arm(ExecutionSerial serial)
     DeviceBase::State state = m_device->GetState();
     if (state == DeviceBase::State::Disconnecting)
         return Wake::Missed;
-    if (state != DeviceBase::State::Alive || submitted <= completed)
+    if (state != DeviceBase::State::Alive)
         return Wake::None;
+
+    if (submitted <= completed) {
+        if (std::exchange(m_serialThatFreesMemory, kBeginningOfGPUTime) <= submitted)
+            return Wake::None;
+        wgpuQueueSubmit(ToAPI(queue), 0, nullptr);
+        return arm(serial);
+    }
 
     serial = std::min(serial, submitted);
     if (serial <= completed)
@@ -59,7 +67,12 @@ Wake QueueWatcher::arm(ExecutionSerial serial)
             return Wake::None;
         m_armedSerial = serial;
     }
-    return resume(serial) ? Wake::Follows : Wake::Missed;
+    return resume(serial);
+}
+
+void QueueWatcher::willReleaseMemory()
+{
+    m_serialThatFreesMemory = m_device->GetQueue()->GetPendingCommandSerial();
 }
 
 extern "C" WGPUInstance BunDawn__createInstance(const BunDawnHost* descriptor)
@@ -153,6 +166,11 @@ extern "C" QueueWatcher* BunDawn__createQueueWatcher(WGPUDevice device)
 extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial)
 {
     return watcher->arm(ExecutionSerial(serial));
+}
+
+extern "C" void BunDawn__willReleaseMemory(QueueWatcher* watcher)
+{
+    watcher->willReleaseMemory();
 }
 
 extern "C" uint64_t BunDawn__serialOfLastUse(WGPUBuffer buffer)

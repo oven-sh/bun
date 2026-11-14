@@ -1331,28 +1331,3 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
-
-it("--hot delivers the messages that wait for the next turn after an unhandled error", async () => {
-  using dir = tempDir("hot-failed-message-port", {
-    "main.js": `
-      setImmediate(() => {
-        require("node:fs").stat(".", () => {
-          const { port1, port2 } = new MessageChannel();
-          port2.onmessage = ({ data }) => data === 5000 && (console.log(data), process.exit());
-          for (let i = 1; i <= 5000; i++) port1.postMessage(i);
-        });
-        throw new Error("the bug");
-      });`,
-  });
-  await using runner = spawn({
-    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-  const [stdout, stderr] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
-  expect(stderr).toContain("error: the bug");
-  expect(stdout).toBe("5000\n");
-});

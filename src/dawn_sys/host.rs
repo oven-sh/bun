@@ -132,6 +132,7 @@ unsafe extern "C" {
     safe fn BunDawn__textureMemorySize(texture: &Texture) -> u64;
     safe fn BunDawn__createQueueWatcher(device: &Device) -> NonNull<QueueWatcher>;
     fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>, serial: Serial) -> Wake;
+    fn BunDawn__willReleaseMemory(watcher: NonNull<QueueWatcher>);
     safe fn BunDawn__serialOfLastUse(buffer: &Buffer) -> Serial;
     safe fn BunDawn__serialOfScheduledWork(queue: &Queue) -> Serial;
     fn BunDawn__destroyDevice(device: &Device, watcher: NonNull<QueueWatcher>);
@@ -358,9 +359,22 @@ impl OwnedDevice {
     /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. Wakes that were asked for before need not come.
     pub fn wake_after(&self, serial: Option<Serial>) -> Wake {
         self.watcher.get().map_or(Wake::None, |watcher| {
+            let _pool = AutoreleasePool::new();
             // SAFETY: only `destroy` frees it, which takes it out first.
             unsafe { BunDawn__armQueueWatcher(watcher, serial.unwrap_or(Serial(u64::MAX))) }
         })
+    }
+
+    /// Dawn frees it after the next submit, which [`wake_after`](Self::wake_after) makes if nothing else does.
+    pub fn will_release_memory(&self) {
+        if let Some(watcher) = self.watcher.get() {
+            // SAFETY: as in `wake_after`.
+            unsafe { BunDawn__willReleaseMemory(watcher) }
+        }
+    }
+
+    pub fn is_destroyed(&self) -> bool {
+        self.watcher.get().is_none()
     }
 
     /// Waits for the GPU.

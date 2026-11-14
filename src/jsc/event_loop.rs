@@ -12,6 +12,7 @@
 use core::cell::{Cell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
+use std::rc::Rc;
 
 use bun_io as Async;
 use bun_uws as uws;
@@ -46,6 +47,14 @@ bun_core::declare_scope!(EventLoop, hidden);
 pub type Queue =
     bun_collections::LinearFifo<Task, bun_collections::linear_fifo::DynamicBuffer<Task>>;
 
+/// Like a socket or a timer, it belongs to neither loop of the VM: it is served by the one that polls.
+pub trait TaskSource {
+    /// Asked before each poll, which then does not block. It does not keep the loop alive. What makes it hold has to wake the VM.
+    fn is_ready(&self) -> bool;
+    /// Queued after each poll that leaves it ready. A macro that starts or returns puts it off, so a later one can run first.
+    fn task(self: Rc<Self>) -> Task;
+}
+
 /// For the JS thread, but for `post`, `wakeup` and the atomics. No borrow of a queue spans a task.
 pub struct EventLoop {
     pub(crate) tasks: UnsafeCell<Queue>,
@@ -75,7 +84,7 @@ pub struct EventLoop {
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` before the loop polls.
+    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
@@ -1057,7 +1066,7 @@ impl EventLoop {
         !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
     }
 
-    /// Before the loop polls: last iteration's yielded tasks become
+    /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&self) -> bool {
         if !self.has_yield_tasks() {
@@ -1373,7 +1382,7 @@ impl EventLoop {
         }
 
         vm.gc_controller.process_gc_timer();
-        if self.promote_yield_tasks() {
+        if vm.has_ready_task_source() {
             self.wakeup();
         }
         // `tick()` below can start work (e.g. a --hot reload) whose only wake

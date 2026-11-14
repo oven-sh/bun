@@ -34,14 +34,17 @@ private:
 
         std::lock_guard lock(m_mutex);
         m_wanted = serial;
+        m_hasFailed = false;
         m_changed.notify_one();
         return true;
     }
 
-    bool resume(ExecutionSerial serial) override
+    Wake resume(ExecutionSerial serial) override
     {
         std::lock_guard lock(m_mutex);
-        return serial > m_passed;
+        if (m_hasFailed)
+            return Wake::None;
+        return serial > m_passed ? Wake::Follows : Wake::Missed;
     }
 
     void run()
@@ -53,19 +56,23 @@ private:
 
         std::unique_lock lock(m_mutex);
         while (true) {
-            m_changed.wait(lock, [&] { return m_stopping || m_wanted > m_passed; });
+            m_changed.wait(lock, [&] { return m_stopping || (!m_hasFailed && m_wanted > m_passed); });
             if (m_stopping)
                 return;
 
             lock.unlock();
             auto [fence, serial] = queue->LendFenceAfter(m_passed);
-            // A signal can end the wait early. An error means that the device is lost, which Dawn finds out when woken.
-            while (fence != VK_NULL_HANDLE && device->fn.WaitForFences(device->GetVkDevice(), 1, &*fence, true, UINT64_MAX) == VK_TIMEOUT) {
-            }
+            ::VkResult result = fence == VK_NULL_HANDLE ? VK_SUCCESS : VK_TIMEOUT;
+            // A signal can end the wait early.
+            while (result == VK_TIMEOUT)
+                result = device->fn.WaitForFences(device->GetVkDevice(), 1, &*fence, true, UINT64_MAX);
             lock.lock();
 
-            m_passed = serial;
-            if (m_wanted <= m_passed) {
+            // If the device is lost, Dawn finds out when woken.
+            m_hasFailed = result != VK_SUCCESS;
+            if (!m_hasFailed)
+                m_passed = serial;
+            if (m_hasFailed || m_wanted <= m_passed) {
                 lock.unlock();
                 m_host->wake();
                 lock.lock();
@@ -93,6 +100,7 @@ private:
     ExecutionSerial m_wanted { kBeginningOfGPUTime };
     // Only the thread writes it.
     ExecutionSerial m_passed { kBeginningOfGPUTime };
+    bool m_hasFailed { false };
     bool m_stopping { false };
 };
 

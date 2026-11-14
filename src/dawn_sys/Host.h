@@ -54,6 +54,9 @@ public:
     // Asks for a wake at this serial, or at the last one submitted if that comes first. Wakes that were asked for before need not come.
     Wake arm(dawn::native::ExecutionSerial);
 
+    // Dawn frees memory once the GPU has finished the next submit. arm() makes one if the queue runs dry before.
+    void willReleaseMemory();
+
     // Called before the device is destroyed. The watcher is deleted after.
     virtual void stop() {}
 
@@ -66,14 +69,15 @@ protected:
 
     // Called when the serial changes.
     virtual bool wakeAfter(dawn::native::ExecutionSerial) = 0;
-    // Called on every arm(), after wakeAfter(). False if it is too late to count on the wake.
-    virtual bool resume(dawn::native::ExecutionSerial) = 0;
+    // Called last by every arm() that finds the serial in flight.
+    virtual Wake resume(dawn::native::ExecutionSerial) = 0;
 
     dawn::native::DeviceBase* const m_device;
     const dawn::Ref<Host> m_host;
 
 private:
     dawn::native::ExecutionSerial m_armedSerial { dawn::native::kBeginningOfGPUTime };
+    dawn::native::ExecutionSerial m_serialThatFreesMemory { dawn::native::kBeginningOfGPUTime };
 };
 
 } // namespace Bun::Dawn

@@ -4,6 +4,7 @@ import { existsSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
+  canMount,
   bunEnv as env,
   isLinux,
   isWindows,
@@ -5869,3 +5870,54 @@ describe.each(["hoisted", "isolated"] as const)(
     });
   },
 );
+
+// Linux checks that the mount is writable before it looks up the name to remove.
+// So on a read-only mount, the removal of a bun.lock that is not there fails with EROFS.
+it.skipIf(!canMount())("an empty lockfile without a bun.lock is not an error on a read-only mount", async () => {
+  const packageJson = JSON.stringify({ name: "empty", version: "1.0.0" });
+  using dir = tempDir("empty-lockfile-read-only", {
+    // package-lock.json is migrated, so there is a lockfile to delete and no bun.lock.
+    "migrated/package.json": packageJson,
+    "migrated/package-lock.json": JSON.stringify({
+      name: "empty",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: { "": { name: "empty", version: "1.0.0" } },
+    }),
+    "migrated/node_modules/.keep": "",
+    "saved/package.json": packageJson,
+    "saved/bun.lock": JSON.stringify({ lockfileVersion: 1, workspaces: { "": { name: "empty" } }, packages: {} }),
+    "saved/node_modules/.keep": "",
+  });
+  const installReadOnly = async (project: string) => {
+    await using proc = spawn({
+      cmd: [
+        "unshare",
+        "-Urm",
+        "/bin/sh",
+        "-c",
+        'mount -o bind "$1" "$1" && mount -o remount,bind,ro "$1" && cd "$1" && exec "$0" install',
+        bunExe(),
+        project,
+      ],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // The migration line starts with the time it took.
+    return { stderr: stderr.replace(/^\[[^\]]+\] /, ""), exitCode };
+  };
+
+  expect(await installReadOnly("migrated")).toEqual({
+    stderr: "migrated lockfile from package-lock.json\nNo packages! Deleted empty lockfile\n",
+    exitCode: 0,
+  });
+  // A bun.lock that is there stays an error.
+  expect((await installReadOnly("saved")).stderr).toBe(
+    "EROFS: Read-only file system: failed to delete empty lockfile (unlink)\n",
+  );
+});

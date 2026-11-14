@@ -572,6 +572,97 @@ describe("expect()", () => {
     expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
   });
 
+  test("deepEquals regex compares source and flags, however the pattern was written", () => {
+    // `source` escapes "/" and line terminators, and is "(?:)" for an empty pattern.
+    const fromString = new RegExp("a/b", "g");
+    const sameSource = [
+      [new RegExp("a/b"), /a\/b/],
+      [new RegExp("a/b"), new RegExp("a\\/b")],
+      [new RegExp("^/users/(\\d+)$"), /^\/users\/(\d+)$/],
+      [new RegExp("[a]/", "gi"), /[a]\//gi],
+      [new RegExp("\n"), /\n/],
+      [new RegExp("\r"), /\r/],
+      [new RegExp("\u2028\u2029"), /\u2028\u2029/],
+      [new RegExp("\u2029"), /\u2029/],
+      [new RegExp("a\\\nb"), /a\nb/],
+      [new RegExp("\\\r"), /\r/],
+      [new RegExp("\\\u2028"), /\u2028/],
+      [new RegExp(""), /(?:)/],
+      [new RegExp("日/本"), new RegExp("日\\/本")],
+      [fromString, new RegExp(fromString.source, fromString.flags)],
+      [new RegExp("a/b"), structuredClone(/a\/b/)],
+    ];
+    const failureOf = (/** @type {() => void} */ assertion) => {
+      try {
+        assertion();
+      } catch (e) {
+        return stripVTControlCharacters(/** @type {any} */ (e).message);
+      }
+      return "did not fail";
+    };
+    for (const [a, b] of sameSource) {
+      expect(a.source).toBe(b.source);
+      expect(a).toEqual(b);
+      expect(b).toEqual(a);
+      expect(a).toStrictEqual(b);
+      // Jest and Bun name the matcher in the message. Vitest says "to not deeply equal".
+      expect(failureOf(() => expect(a).not.toEqual(b))).toMatch(/not\.toEqual\(expected\)|to not deeply equal/);
+      expect(failureOf(() => expect(a).not.toStrictEqual(b))).toMatch(
+        /not\.toStrictEqual\(expected\)|to not strictly equal/,
+      );
+      expect({ nested: [a] }).toEqual({ nested: [b] });
+      expect([a]).toContainEqual(b);
+      expect({ key: a }).toHaveProperty("key", b);
+      expect({ key: a }).toEqual(expect.objectContaining({ key: b }));
+      expect([a]).toEqual(expect.arrayContaining([b]));
+      expect(new Map([[a, a]])).toEqual(new Map([[b, b]]));
+      expect(new Set([a])).toEqual(new Set([b]));
+      const fn = jest.fn();
+      fn(a);
+      expect(fn).toHaveBeenCalledWith(b);
+    }
+
+    const differentSource = [
+      [new RegExp("a/b", "g"), /a\/b/i],
+      [new RegExp("a/b"), /a\/c/],
+      [new RegExp("a/b"), /a-b/],
+      // "/" is not escaped inside a class.
+      [new RegExp("[a/]"), /[a\/]/],
+      [/foo/, /foobar/],
+      [/foo/, /bar/],
+      [new RegExp(""), /a/],
+      [new RegExp(""), /(?:)(?:)/],
+      [/\d/, /[0-9]/],
+      [new RegExp("日/本"), new RegExp("日/本語")],
+    ];
+    for (const [a, b] of differentSource) {
+      expect(a).not.toEqual(b);
+      expect(b).not.toEqual(a);
+      expect(a).not.toStrictEqual(b);
+      expect([a]).not.toContainEqual(b);
+      expect(new Set([a])).not.toEqual(new Set([b]));
+    }
+
+    const compiled = /x/;
+    compiled.compile("a/b");
+    expect(compiled).toEqual(/a\/b/);
+    compiled.compile("a-b");
+    expect(compiled).not.toEqual(/a\/b/);
+    compiled.compile("a\\/b");
+    expect(compiled).toEqual(new RegExp("a/b"));
+  });
+
+  // https://github.com/oven-sh/bun/issues/34830
+  (isBun ? test.failing : test)("deepEquals of a Map with two keys that are one regex source", () => {
+    const map = () =>
+      new Map([
+        [new RegExp("a/b"), 1],
+        [/a\/b/, 2],
+      ]);
+    expect(map()).toEqual(map());
+    expect(map()).toStrictEqual(map());
+  });
+
   test("deepEquals and deleted properties", () => {
     var obj1 = { a: 1 };
     var obj2 = {};

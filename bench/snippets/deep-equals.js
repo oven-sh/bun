@@ -415,6 +415,48 @@ const fixture = [
         equal: false,
       },
       {
+        description: "equal RegExp objects (same source, one with an unescaped slash)",
+        value1: new RegExp("a/b"),
+        value2: /a\/b/,
+        equal: true,
+      },
+      {
+        description: "equal RegExp objects (same route source, one from a string)",
+        value1: new RegExp("^/users/(\\d+)$"),
+        value2: /^\/users\/(\d+)$/,
+        equal: true,
+      },
+      {
+        description: "equal RegExp objects (same route pattern from two strings)",
+        value1: new RegExp("^/users/(\\d+)$"),
+        value2: new RegExp("^/users/(\\d+)$"),
+        equal: true,
+      },
+      {
+        description: "not equal RegExp objects (different route patterns from strings)",
+        value1: new RegExp("^/users/(\\d+)$"),
+        value2: new RegExp("^/posts/(\\d+)$"),
+        equal: false,
+      },
+      {
+        description: "not equal RegExp objects (256 characters, the last differs)",
+        value1: new RegExp(Buffer.alloc(255, "a").toString() + "b"),
+        value2: new RegExp(Buffer.alloc(255, "a").toString() + "c"),
+        equal: false,
+      },
+      {
+        description: "not equal RegExp objects (256 UTF-16 characters, the last differs)",
+        value1: new RegExp(Buffer.alloc(255 * 3, "あ").toString() + "b"),
+        value2: new RegExp(Buffer.alloc(255 * 3, "あ").toString() + "c"),
+        equal: false,
+      },
+      {
+        description: "equal RegExp objects (empty pattern and (?:))",
+        value1: new RegExp(""),
+        value2: /(?:)/,
+        equal: true,
+      },
+      {
         description: "RegExp and string are not equal",
         value1: /foo/,
         value2: "foo",

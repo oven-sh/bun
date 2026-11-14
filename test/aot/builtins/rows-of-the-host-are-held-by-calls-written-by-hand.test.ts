@@ -127,6 +127,24 @@ async function certificateHandedOver(): Promise<unknown> {
   return promise;
 }
 
+// It fails the test that calls it, and it ends a program that has no listener for the error with status 1. So a child
+// calls it, once with a listener and once without.
+async function answersOfReportUncaughtException(): Promise<Seen[]> {
+  const row = "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException";
+  const { id } = dump.entries.findLast(entry => entry.path === row)!;
+  const program = `
+    const report = require("bun:internal-for-testing").aotBuiltinValue(${id}, "object");
+    const listener = () => {};
+    process.on("uncaughtException", listener);
+    const taken = report(new Error("made for this test"));
+    process.off("uncaughtException", listener);
+    process.stdout.write(JSON.stringify([taken, report(new Error("made for this test"))]));
+  `;
+  await using child = Bun.spawn([bunExe(), "-e", program], { env: bunEnv, stdout: "pipe", stderr: "ignore" });
+  const answers: unknown[] = JSON.parse(await child.stdout.text());
+  return answers.map(value => ({ value }));
+}
+
 type Exit = { receiver: unknown; handed: unknown[] };
 async function exitOf(command: string[], behind?: (child: Bun.Subprocess) => void): Promise<Exit> {
   const { promise, resolve } = Promise.withResolvers<Exit>();
@@ -656,6 +674,13 @@ const cases: Case[] = [
       { value: getEventListeners(listenedTo(), "made-for-this-test") },
       { value: getEventListeners(new EventTarget(), "nobody-listens") },
     ],
+  },
+  {
+    row: "native:NewCppFunction:BunProcess.cpp:jsFunctionReportUncaughtException",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: answersOfReportUncaughtException,
   },
   {
     row: "%MIMEBinding%.MIMEType",

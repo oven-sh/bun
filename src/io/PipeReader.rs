@@ -218,6 +218,8 @@ bitflags::bitflags! {
         const SHORT_READ               = 1 << 12;
         /// A consumer asked for bytes (`request_read`, `resume_reading`) and waits for the poll callback to bring them. Cleared when the read loop delivers a chunk.
         const CONSUMER_WAITING         = 1 << 13;
+        /// The consumer takes bytes from the poll callback only, as a stream over a libuv handle does: `request_read` never reads a poll-driven source for it, also after a full read (https://github.com/oven-sh/bun/issues/48514).
+        const POLL_ONLY                = 1 << 14;
     }
 }
 
@@ -812,6 +814,7 @@ impl PosixBufferedReader {
         let vtable = unsafe { (*this).vtable };
         let streaming = vtable.is_streaming_enabled();
         let mut scratch = vtable.event_loop().claim_pipe_read_scratch();
+        let mut delivered = 0;
         loop {
             // SAFETY: caller contract; borrow ends at `;`.
             let use_scratch = unsafe {
@@ -833,6 +836,7 @@ impl PosixBufferedReader {
                         // SAFETY: caller contract; the borrow ends before the dispatch.
                         armed_early =
                             unsafe { (*this).arm_before_delivery(short, file_type, received_hup) };
+                        delivered += filled;
                         vtable.on_read_chunk(
                             Chunk::Scratch(&scratch[..filled]),
                             Self::read_state(stop.as_ref()),
@@ -863,6 +867,7 @@ impl PosixBufferedReader {
                         // Moved out so a re-entrant read cannot alias or reallocate it under the consumer.
                         // SAFETY: caller contract; borrow ends at `;`.
                         let mut buffer = unsafe { mem::take(&mut (*this)._buffer) };
+                        delivered += buffer.len();
                         let state = Self::read_state(stop.as_ref());
                         if matches!(stop, Some(Stop::Eof | Stop::OverBudget | Stop::Error(_))) {
                             vtable.on_read_chunk(Chunk::Owned(buffer), state)
@@ -923,10 +928,24 @@ impl PosixBufferedReader {
                 }
                 return;
             }
+            // A `POLL_ONLY` consumer that paused the reader inside the delivery gets no read ahead of its next request, also at a hang-up.
+            // SAFETY: caller contract; borrows end at `;`.
+            if unsafe { (*this).flags.contains(PosixFlags::IS_PAUSED) && (*this).is_poll_only() } {
+                return;
+            }
             if streaming && !keep_going && !received_hup {
                 return;
             }
+            // The request of a `POLL_ONLY` consumer inside a delivery has armed the poll for what is left.
+            // SAFETY: caller contract; borrows end at `;`.
+            let armed = unsafe {
+                (*this).flags.contains(PosixFlags::POLL_ONLY) && (*this).has_pending_read()
+            };
             if file_type != FileType::Pipe {
+                // Every read of such a consumer is made here. A writer that stays ahead of it must not keep the event loop from its timers: libuv stops after 32 reads of 64 KiB (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1033-L1036).
+                if armed && delivered >= MAX_BYTES_PER_WAKEUP {
+                    return;
+                }
                 continue;
             }
 
@@ -936,8 +955,10 @@ impl PosixBufferedReader {
             // writer on the same FIFO. Re-check before committing to a read
             // that could block (Linux named FIFOs reject RWF_NOWAIT).
             if !received_hup {
-                // SAFETY: caller contract; the error dispatch may free the parent.
-                unsafe { Self::register_poll(this) };
+                if !armed {
+                    // SAFETY: caller contract; the error dispatch may free the parent.
+                    unsafe { Self::register_poll(this) };
+                }
                 return;
             }
             match bun_core::is_readable(fd) {
@@ -1008,7 +1029,7 @@ impl PosixBufferedReader {
     }
 
     /// Whether the poll callback alone reads this fd after a short read. Not so for a source that is never polled (a regular file, a used-up limit: see `start`). Outside Linux only a socket qualifies: kqueue does not report the last writer's close on an empty named pipe, so there only a read finds that EOF. Not so either while a thread waits for child processes (Linux without pidfd): that thread reports an exit as a task, tasks run before the poll, and the bytes a child wrote before it exited would arrive after its exit.
-    fn is_poll_driven(&self) -> bool {
+    pub fn is_poll_driven(&self) -> bool {
         self.flags.contains(PosixFlags::POLLABLE)
             && !self.limit.reached()
             && (cfg!(any(target_os = "linux", target_os = "android"))
@@ -1016,7 +1037,12 @@ impl PosixBufferedReader {
             && !bun_spawn_sys::waiter_thread_flag::get()
     }
 
-    /// One non-blocking read straight into `dst` for a consumer that asks for bytes; arms the poll when nothing is available. After a short read (`SHORT_READ`) a poll-driven source is not read, also when it has bytes: the poll is armed and they arrive through `on_read_chunk` in a later turn, as libuv's `uv__read` goes back to the loop after a short read (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1147-L1155). EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read.
+    /// Whether every request of the consumer waits for the poll callback (`POLL_ONLY` on a poll-driven source).
+    fn is_poll_only(&self) -> bool {
+        self.flags.contains(PosixFlags::POLL_ONLY) && self.is_poll_driven()
+    }
+
+    /// One non-blocking read straight into `dst` for a consumer that asks for bytes; arms the poll when nothing is available. After a short read (`SHORT_READ`) a poll-driven source is not read, also when it has bytes: the poll is armed and they arrive through `on_read_chunk` in a later turn, as libuv's `uv__read` goes back to the loop after a short read (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1147-L1155). EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read. For a `POLL_ONLY` consumer that holds after a full read too.
     ///
     /// # Safety
     /// Same contract as [`Self::read`]: those dispatches may free the parent.
@@ -1030,7 +1056,10 @@ impl PosixBufferedReader {
         // SAFETY: caller contract; borrows end at each `;`.
         let wait = unsafe {
             (*this).has_pending_read()
-                || ((*this).is_poll_driven() && (*this).flags.contains(PosixFlags::SHORT_READ))
+                || ((*this).is_poll_driven()
+                    && (*this)
+                        .flags
+                        .intersects(PosixFlags::SHORT_READ | PosixFlags::POLL_ONLY))
         };
         if wait {
             // SAFETY: caller contract; `this` is not touched after the arm, whose error dispatch may free the parent.
@@ -1122,6 +1151,9 @@ impl PosixBufferedReader {
 
 /// The default capacity of a Linux pipe, and the size of libuv's read buffer. A read of a blocking pipe that returns less than this left the pipe empty.
 const FULL_PIPE_READ: usize = 64 * 1024;
+
+/// One wakeup stops delivering to a `POLL_ONLY` consumer after this many bytes: what the 32 reads that libuv makes of a stream in one wakeup take at most.
+const MAX_BYTES_PER_WAKEUP: usize = 32 * FULL_PIPE_READ;
 
 enum Stop {
     Eof,

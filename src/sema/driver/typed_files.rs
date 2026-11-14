@@ -3,8 +3,8 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
-    TypeFormatFlags,
+    Child, LiteralValue, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable,
+    TypeFlags, TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -479,6 +479,18 @@ impl<'a, 's> Syntax<'a, 's> {
         false
     }
 
+    /// Where the decorators in front of a member or a parameter end. The bundle calls them: a typed file states none.
+    fn decorators_end(&self, modifiers: &[Modifier]) -> Option<u32> {
+        let is_decorator =
+            |modifier: &&Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
+        let last = modifiers.iter().take_while(is_decorator).last()?;
+        Some(self.modifier_end(last))
+    }
+
+    fn after_decorators(&self, modifiers: &[Modifier], start: u32) -> u32 {
+        (self.decorators_end(modifiers)).map_or(start, |end| self.after_trivia(end))
+    }
+
     fn member_key(&self, member: &Member) -> u32 {
         if self.byte(member.name_pos) != b'[' {
             return member.name_pos;
@@ -499,15 +511,7 @@ impl<'a, 's> Syntax<'a, 's> {
         }
         let key = self.member_key(member);
         let modifiers = self.file.modifier_list(member.modifiers);
-        let is_decorator =
-            |modifier: &&Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
-        let first = modifiers
-            .iter()
-            .take_while(is_decorator)
-            .last()
-            .map_or(member.start, |last| {
-                self.after_trivia(self.modifier_end(last))
-            });
+        let first = self.after_decorators(modifiers, member.start);
         let span_of = |flags: Flags| {
             let mut listed = modifiers.iter().filter(|modifier| {
                 flags.contains(modifier.kind.flag()) && !modifier.kind.flag().is_empty()
@@ -1317,6 +1321,8 @@ enum Order {
     Open(u32),
     Close(u32),
     Slot,
+    /// A line before the `}` of a class. Where no `;` ends the last member, its type and its casts go there too.
+    ClassEnd,
 }
 
 struct Insertions {
@@ -1439,6 +1445,30 @@ impl Written<'_, '_> {
 
     fn trimmed_text(&self, start: u32, end: u32) -> Vec<u8> {
         self.text(start, end).trim_ascii().to_vec()
+    }
+
+    /// A member or a parameter up to `end` as it stands behind `declare`: with no decorator, and with no `override`.
+    fn declared(&self, modifiers: &[Modifier], start: u32, end: u32) -> Vec<u8> {
+        let syntax = &self.syntax;
+        let start = syntax.after_decorators(modifiers, start);
+        let is_override = |modifier: &&Modifier| modifier.kind.flag() == Flags::OVERRIDE;
+        let Some(written) = modifiers.iter().find(is_override) else {
+            return self.text(start, end);
+        };
+        let behind = syntax.after_trivia(syntax.token_end(written.pos));
+        [self.text(start, written.pos), self.text(behind, end)].concat()
+    }
+
+    /// A member with no annotation up to its name or `?`, and then the type that the check of the sources noted.
+    fn noted_member(&self, member: &Member) -> Option<Vec<u8>> {
+        let syntax = &self.syntax;
+        let types = self.types.filter(|_| !self.is_unchecked())?;
+        let noted = types.member_type(syntax.member_key(member))?;
+        let mut slots = Vec::new();
+        syntax.member_slots(member, &mut slots);
+        let modifiers = syntax.file.modifier_list(member.modifiers);
+        let name = self.declared(modifiers, member.start, slots.last()?.end);
+        Some([&name[..], b": ", noted].concat())
     }
 
     fn types_of_namespace(&self, id: StmtId, dropped_modifiers: Flags) -> Option<Vec<u8>> {
@@ -3075,11 +3105,22 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
+                if slot.place == Place::MemberType
+                    && let Some(noted) = module.types.and_then(|types| types.member_type(key))
+                {
+                    insertions.add(slot.start, Order::Slot, [&b": "[..], noted].concat());
+                }
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
+                Place::MemberType if text == b"?" => {
+                    match module.types.and_then(|types| types.member_type(key)) {
+                        Some(noted) => (Order::Slot, [&b"?: "[..], noted].concat()),
+                        None => (Order::Slot, text),
+                    }
+                }
                 Place::MemberType
                     if is_computed
                         && text.starts_with(b":")
@@ -3917,29 +3958,35 @@ impl<'a> Transfer<'_, 'a, '_> {
                     match next {
                         Some(next) => insertions.add_line_before(javascript, next, text),
                         None if is_terminated => {
-                            insertions.add_line_before(javascript, close, text)
+                            insertions.add_line_in_order(javascript, close, Order::ClassEnd, text)
                         }
                         None => {
-                            insertions.add_line_before(javascript, close, &[b";", text].concat())
+                            let line = [b";", text].concat();
+                            insertions.add_line_in_order(javascript, close, Order::ClassEnd, &line)
                         }
                     }
                 };
                 for (place, member) in members.iter().enumerate() {
                     if syntax.is_type_only_member(member) {
-                        add(place, &module.text(member.start, member.loc.end));
+                        let modifiers = file.modifier_list(member.modifiers);
+                        let text = match syntax.decorators_end(modifiers) {
+                            Some(end) => module.trimmed_text(end, member.loc.end),
+                            None => module.text(member.start, member.loc.end),
+                        };
+                        add(place, &text);
                     } else if member.kind == MemberKind::Property
                         && !output_members.contains_key(&(index as u32, syntax.member_key(member)))
-                        && member.ty.is_some()
                     {
-                        add(
-                            place,
-                            &[
-                                &b"declare "[..],
-                                &module.text(member.start, syntax.type_span(member.ty).1),
-                                b";",
-                            ]
-                            .concat(),
-                        );
+                        let typed = if member.ty.is_some() {
+                            let modifiers = file.modifier_list(member.modifiers);
+                            let end = syntax.type_span(member.ty).1;
+                            Some(module.declared(modifiers, member.start, end))
+                        } else {
+                            module.noted_member(member)
+                        };
+                        if let Some(typed) = typed {
+                            add(place, &[&b"declare "[..], &typed, b";"].concat());
+                        }
                     }
                     let Some(constructor) = member
                         .func
@@ -3948,12 +3995,12 @@ impl<'a> Transfer<'_, 'a, '_> {
                     else {
                         continue;
                     };
-                    for parameter in file[constructor]
+                    for id in file[constructor]
                         .params
                         .iter()
-                        .map(|parameter| &file[parameter])
-                        .filter(|parameter| parameter.flags.contains(Flags::PARAMETER_PROPERTY))
+                        .filter(|&id| file[id].flags.contains(Flags::PARAMETER_PROPERTY))
                     {
+                        let parameter = &file[id];
                         let Some(binding) = syntax.binding_slot(
                             parameter.pat,
                             parameter.ty,
@@ -3962,15 +4009,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                             continue;
                         };
                         if !output_members.contains_key(&(index as u32, binding.key)) {
-                            add(
-                                0,
-                                &[
-                                    &b"declare "[..],
-                                    &module.text(parameter.pos, binding.end),
-                                    b";",
-                                ]
-                                .concat(),
-                            );
+                            let modifiers = file.modifier_list(file.param_modifiers(id));
+                            let typed = module.declared(modifiers, parameter.pos, binding.end);
+                            add(0, &[&b"declare "[..], &typed, b";"].concat());
                         }
                     }
                 }
@@ -4120,6 +4161,8 @@ pub struct ModuleTypes {
     pub exports: Vec<(Box<[u8]>, Target)>,
     pub constants: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
+    /// The type of each class member with no annotation and no value, if it names nothing.
+    pub members: Vec<(u32, Box<[u8]>)>,
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
@@ -4127,6 +4170,13 @@ pub struct ModuleTypes {
 }
 
 impl ModuleTypes {
+    fn member_type(&self, key: u32) -> Option<&[u8]> {
+        self.members
+            .iter()
+            .find(|member| member.0 == key)
+            .map(|member| &member.1[..])
+    }
+
     fn constant_type(&self, binding: u32) -> Option<&[u8]> {
         self.constants
             .iter()
@@ -4232,6 +4282,60 @@ fn target_of_declaration(
         path,
         name: name.into(),
     })
+}
+
+/// The text of `ty` where it names nothing: a keyword, or a literal that is no member of an enum.
+fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> Option<Box<[u8]>> {
+    if services.type_flags(ty).contains(TypeFlags::ENUM_LITERAL) {
+        return None;
+    }
+    Some(match services.intrinsic_name(ty) {
+        // No type that a typed file can write: a name that does not resolve, and the `intrinsic` of a library.
+        Some("error" | "intrinsic") => return None,
+        // `boolean` also where the source has an alias of `true | false`, which the printer names.
+        Some(keyword) => keyword.as_bytes().into(),
+        // `Infinity` is a value and no type.
+        None => match services.literal_value(ty)? {
+            LiteralValue::Number(value) if !value.is_finite() => b"number"[..].into(),
+            _ => {
+                let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
+                services.type_to_string(ty, None, format).into()
+            }
+        },
+    })
+}
+
+/// [`text_that_names_nothing`], and for a union the text of each of its types: the printer names an alias of a union.
+fn text_of_types_that_name_nothing(
+    services: &mut Services<'_, '_, '_>,
+    ty: TypeId,
+    drops_missing: bool,
+) -> Option<Box<[u8]>> {
+    if !services.type_flags(ty).contains(TypeFlags::UNION) {
+        return text_that_names_nothing(services, ty);
+    }
+    let mut texts: Vec<Box<[u8]>> = Vec::new();
+    let parts = services.constituents(ty).iter();
+    for &part in parts.filter(|&&part| !(drops_missing && part == TypeId::MISSING)) {
+        let text = text_that_names_nothing(services, part)?;
+        if !texts.contains(&text) {
+            texts.push(text);
+        }
+    }
+    let place_of =
+        |texts: &[Box<[u8]>], wanted: &[u8]| texts.iter().position(|text| &text[..] == wanted);
+    // In the order of the printer: `boolean` for `false | true`, and `null` and `undefined` last.
+    if let (Some(no), Some(yes)) = (place_of(&texts, b"false"), place_of(&texts, b"true")) {
+        texts[no.min(yes)] = b"boolean"[..].into();
+        texts.remove(no.max(yes));
+    }
+    for last in [&b"null"[..], b"undefined"] {
+        if let Some(at) = place_of(&texts, last) {
+            let text = texts.remove(at);
+            texts.push(text);
+        }
+    }
+    Some(texts.join(&b" | "[..]).into())
 }
 
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
@@ -4393,23 +4497,10 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 node: hir.node(id),
             });
             let flags = services.type_flags(ty);
-            let names_nothing = TypeFlags::STRING_LITERAL
-                | TypeFlags::NUMBER_LITERAL
-                | TypeFlags::BIG_INT_LITERAL
-                | TypeFlags::INTRINSIC;
             if flags.contains(TypeFlags::UNIQUE_ES_SYMBOL) {
                 constants.push((hir[declaration.pat].pos, b"unique symbol"[..].into()));
-            } else if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
-                constants.push((
-                    hir[declaration.pat].pos,
-                    services
-                        .type_to_string(
-                            ty,
-                            None,
-                            TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION,
-                        )
-                        .into(),
-                ));
+            } else if let Some(text) = text_that_names_nothing(services, ty) {
+                constants.push((hir[declaration.pat].pos, text));
             }
         }
         let mut functions_returning_undefined = Vec::new();
@@ -4445,6 +4536,34 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 augmented_modules.push((statement.start, path));
             }
         }
+        // The build drops the dead stores that type a member. Only `noImplicitAny` types a member by its stores.
+        let mut members = Vec::new();
+        let options = services.compiler_options();
+        let classes = if options.no_implicit_any {
+            &hir.classes[..]
+        } else {
+            &[]
+        };
+        for id in classes.iter().flat_map(|class| class.members.iter()) {
+            let member = &hir[id];
+            if member.kind != MemberKind::Property
+                || member.ty.is_some()
+                || member.init.is_some()
+                || syntax.is_type_only_member(member)
+            {
+                continue;
+            }
+            let ty = services.type_at_location(NodeRef {
+                file,
+                node: hir.node(id),
+            });
+            // `removeMissingType`: under `exactOptionalPropertyTypes` the `?` of a member says that it can be absent.
+            let is_optional = member.flags.contains(Flags::OPTIONAL);
+            let drops_missing = is_optional && options.exact_optional_property_types;
+            if let Some(text) = text_of_types_that_name_nothing(services, ty, drops_missing) {
+                members.push((syntax.member_key(member), text));
+            }
+        }
         ModuleTypes {
             path,
             text: hir.text[..].into(),
@@ -4453,6 +4572,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             exports,
             constants,
             functions_returning_undefined,
+            members,
             globals,
             augmented_modules,
             locals,

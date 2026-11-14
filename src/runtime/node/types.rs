@@ -832,6 +832,14 @@ pub(crate) trait PathLikeExt {
     where
         Self: Sized;
 
+    /// For the start of a name, like the prefix of `fs.mkdtemp`: more of the name follows its last component.
+    fn from_js_as_start_of_name(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike<'static>>>
+    where
+        Self: Sized;
+
     fn from_js_resolved_by(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -1092,6 +1100,13 @@ impl PathLikeExt for PathLike<'_> {
         Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
     }
 
+    fn from_js_as_start_of_name(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike<'static>>> {
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartNameAtWorkingDirectory)
+    }
+
     fn from_js_as_written(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -1207,17 +1222,36 @@ impl PathLikeExt for PathLike<'_> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RelativePaths {
     StartAtWorkingDirectory,
+    /// The same for the start of a name: its last component stays as written, also where it is `.` or `..`.
+    StartNameAtWorkingDirectory,
     StayAsWritten,
 }
 
 /// The system resolves a relative path against its own working directory, which is never a folder of the executable.
-fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
+fn join_onto_working_directory_in_executable(
+    path: &[u8],
+    relative_paths: RelativePaths,
+) -> Option<Vec<u8>> {
     use bun_paths::resolve_path::{self, platform};
     let directory = bun_core::working_directory_in_executable()?;
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
         return None;
     }
+    if relative_paths == RelativePaths::StartNameAtWorkingDirectory {
+        return Some(join_start_of_name(directory, path));
+    }
     Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+}
+
+/// A join reads a last component `.` or `..` as a folder. Here more of the name follows it, so one byte stands in for the rest.
+#[cold]
+fn join_start_of_name(directory: &[u8], name: &[u8]) -> Vec<u8> {
+    use bun_paths::resolve_path::{self, platform};
+    let whole = [name, b"X"].concat();
+    let mut joined = resolve_path::join_abs_string::<platform::Auto>(directory, &[&whole]).to_vec();
+    let rest = joined.pop();
+    debug_assert_eq!(rest, Some(b'X'));
+    joined
 }
 
 /// Whether `find_path_meant` may find another path than the one that is written.
@@ -1229,7 +1263,9 @@ fn may_mean_another_path() -> bool {
 /// The path that `path` means, where the system would take it for another: a relative one starts at the working directory of the program, and a file of the executable that the program has written is on the disk.
 fn find_path_meant(path: &[u8], relative_paths: RelativePaths) -> Option<PathLike<'static>> {
     let joined = match relative_paths {
-        RelativePaths::StartAtWorkingDirectory => join_onto_working_directory_in_executable(path),
+        RelativePaths::StartAtWorkingDirectory | RelativePaths::StartNameAtWorkingDirectory => {
+            join_onto_working_directory_in_executable(path, relative_paths)
+        }
         RelativePaths::StayAsWritten => None,
     };
     let on_disk = bun_standalone_graph::find_written_file(joined.as_deref().unwrap_or(path));

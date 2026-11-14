@@ -735,8 +735,11 @@ pub(crate) fn error_for_caller(
         for shown in [&mut err.path, &mut err.dest] {
             // Some calls on Windows hand the system the path behind `\\?\`.
             let joined = shown.strip_prefix(b"\\\\?\\").unwrap_or(&shown[..]);
+            // `mkdtemp` names its template: six characters follow the prefix in the same component.
             if let Some(below) = joined.strip_prefix(path.joined.as_slice())
-                && (below.is_empty() || bun_paths::is_sep_any(below[0]))
+                && (below.is_empty()
+                    || bun_paths::is_sep_any(below[0])
+                    || err.syscall == sys::Tag::mkdtemp)
             {
                 *shown = [path.written.as_slice(), below].concat().into_boxed_slice();
             }
@@ -4333,7 +4336,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
-            let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
+            let prefix = PathLike::from_js_as_start_of_name(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"prefix",
                     b"string, Buffer, or URL",
@@ -6791,10 +6794,12 @@ impl NodeFS {
     }
 
     pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
-        if let Some(error) =
-            creation_in_executable(args.prefix.slice(), sys::Tag::mkdtemp, E::EROFS)
-        {
-            return Err(error);
+        // The executable is asked for the template, which is what the system would make.
+        if graph_before_disk(args.prefix.slice()).is_some() {
+            let template = [args.prefix.slice(), &[b'X'; 6]].concat();
+            if let Some(error) = creation_in_executable(&template, sys::Tag::mkdtemp, E::EROFS) {
+                return Err(error);
+            }
         }
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();

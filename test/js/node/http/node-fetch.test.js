@@ -591,6 +591,43 @@ describe("node-fetch applies the TLS options of the agent", () => {
     );
   });
 
+  // tls.connect() checks the key of an entry and then its passphrase, which is a string:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L89-L94
+  test("a key entry with a passphrase of its own", async () => {
+    await using server = await serve({ key, cert, ca, requestCert: true, rejectUnauthorized: false });
+    const trust = { ca, servername, cert };
+    const encryptedKey = createPrivateKey(key).export({
+      type: "pkcs8",
+      format: "pem",
+      cipher: "aes-256-cbc",
+      passphrase: "sample",
+    });
+    const entry = passphrase => [{ pem: encryptedKey, passphrase }];
+    assert.deepStrictEqual(
+      {
+        own: await outcome(server.port, { ...trust, key: entry("sample") }),
+        ownNextToAWrongOne: await outcome(server.port, { ...trust, key: entry("sample"), passphrase: "wrong" }),
+        afterAPem: await outcome(server.port, { ...trust, key: [key, ...entry("sample")] }),
+        beforeAPem: await outcome(server.port, { ...trust, key: [...entry("sample"), key] }),
+        wrong: await outcome(server.port, { ...trust, key: entry("wrong") }),
+        number: await outcome(server.port, { ...trust, key: entry(5) }),
+        buffer: await outcome(server.port, { ...trust, key: entry(Buffer.from("sample")) }),
+        // It does not become the passphrase of the context.
+        null: await outcome(server.port, { ...trust, key: entry(null), passphrase: "sample" }),
+      },
+      {
+        own: "authorized=true",
+        ownNextToAWrongOne: "authorized=true",
+        afterAPem: "authorized=true",
+        beforeAPem: "authorized=true",
+        wrong: "ERR_OSSL_BAD_DECRYPT",
+        number: "ERR_INVALID_ARG_TYPE",
+        buffer: "ERR_INVALID_ARG_TYPE",
+        null: "ERR_OSSL_BAD_DECRYPT",
+      },
+    );
+  });
+
   test("rejectUnauthorized disables verification only when it is false", async () => {
     await using server = await serve();
     assert.strictEqual(await outcome(server.port, { rejectUnauthorized: false }), "authorized=false");

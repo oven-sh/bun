@@ -9,6 +9,8 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > a module that a preload loaded: the file ends while the load waits
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > the mock of a test file over the mock of a preload
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > require() of a module that imports the mock
 # The next one: a require() gives up on a mock whose factory has not settled, an import() of the same file is in flight, and the modules are reset. Every test of the fixture passes. Compiled, one body runs
@@ -33,6 +35,16 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > an import of its own has an async factory from a preload []
 # The next one: the mock is removed while the onLoad() of a plugin waits, before import() has called the factory. Compiled still uses it.
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock that is removed before import() calls its factory
+# The next one: the mock is removed while its factory runs for a load, and the factory rejects. Plain rejects that load, so the file that it was for does not run. Compiled
+# gives the load the module that is loaded, and that file runs. Every test of the fixture passes.
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > the factory rejects after vi.doUnmock()
+# The next one: vi.importActual() is called for a module that waits at a top-level await in an import cycle, and the mock is removed. Plain runs the two files of the cycle
+# a second time for that call, as it does without this order. Compiled runs them once. Every test of the fixture passes.
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > vi.importActual() of a module in an import cycle that still evaluates is the load
+# The next two: a later mock.module() of the module, and vi.importActual() under it or the end of the test file. Every test of the fixture passes. Compiled runs the
+# package at another point in the first, and a library that imports the package a second time in the second.
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > the end of a later mock.module() moves back only what vi.doMock() had set aside
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > the next test file gets the loaded package after vi.doUnmock(), then mock.module() of the package twice, and the file ends
 # The next one: a module of the test file replaces a preload's mock before anything loads the mocked file. Compiled still calls the factory that was replaced.
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > isn't evaluated ahead of an import that is being evaluated, or if it is the module of an earlier mock
 # The next one cannot pass: vi.importMock(path) gets the name of a package from the list of test.each(), nothing else names that package, and --aot only runs code that was compiled.

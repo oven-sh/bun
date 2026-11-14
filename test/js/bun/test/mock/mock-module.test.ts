@@ -4895,6 +4895,1575 @@ describe.concurrent("a module that is evicted while it is still loading", () => 
     );
   });
 
+  describe("as a mock of a loaded module that ends while a load waits for its factory", () => {
+    // A load of importer-<name>.js imports the mocked module and held-<name>.js, which is fetched when the test says so.
+    const importer = (name: string, specifier: string, attributes = "") => ({
+      [`importer-${name}.js`]: `import * as exports from ${JSON.stringify(specifier)}${attributes}; import "./held-${name}.js"; export { exports };`,
+      [`held-${name}.js`]: ``,
+    });
+    // This load asks for the held file first, so the test goes on before the mock is asked for its factory.
+    const heldFirst = (name: string, specifier: string) => ({
+      [`importer-${name}.js`]: `import "./held-${name}.js"; import * as exports from ${JSON.stringify(specifier)}; export { exports };`,
+      [`held-${name}.js`]: ``,
+    });
+    const counted = (name: string, body: string) => `(globalThis.loads ??= []).push(${JSON.stringify(name)}); ${body}`;
+    const esmPackage = (name: string, body: string) => ({
+      [`node_modules/${name}/package.json`]: `{ "name": "${name}", "type": "module", "main": "index.js" }`,
+      [`node_modules/${name}/index.js`]: counted(name, body),
+    });
+    const cjsPackage = (name: string) => ({
+      [`node_modules/${name}/package.json`]: `{ "name": "${name}", "main": "index.js" }`,
+      [`node_modules/${name}/index.js`]: counted(name, `module.exports = { token: Symbol("${name}") };`),
+    });
+    const loaded = {
+      ...esmPackage("esm-pkg", `export const token = Symbol("esm-pkg");`),
+      ...cjsPackage("cjs-pkg"),
+      ...esmPackage(
+        "lib",
+        `import cjs from "cjs-pkg"; import * as esm from "esm-pkg"; export const tokens = [esm.token, cjs.token];`,
+      ),
+      "own.js": counted("own", `export const token = Symbol("own");`),
+      "hold.js": `
+        const holds = new Map();
+        Bun.plugin({
+          name: "hold",
+          setup(build) {
+            build.onLoad({ filter: /held-\\w+\\.js$/ }, async ({ path }) => {
+              const { asked, gate } = holds.get(path.slice(path.lastIndexOf("held-") + 5, -3));
+              asked.resolve();
+              await gate.promise;
+            });
+          },
+        });
+        // The fetch of held-<name>.js waits for the gate.
+        export function hold(name) {
+          const held = { asked: Promise.withResolvers(), gate: Promise.withResolvers() };
+          holds.set(name, held);
+          return held;
+        }
+        // Starts a load that imports the mocked module, and returns once that load waits. open() lets it go on.
+        export async function load(name) {
+          const { asked, gate } = hold(name);
+          const importer = import("./importer-" + name + ".js");
+          await asked.promise;
+          return {
+            open: async () => (gate.resolve(), (await importer).exports),
+            fail: async error => (gate.reject(error), importer.then(() => undefined, error => error)),
+          };
+        }
+      `,
+    };
+
+    test("a plugin of a preload holds the load", async () => {
+      await expectFixturesToPass(
+        {
+          "node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js" }`,
+          "node_modules/pkg/index.js": `globalThis.pkgLoads = (globalThis.pkgLoads ?? 0) + 1; export const id = globalThis.pkgLoads; export const token = Symbol("pkg");`,
+          "node_modules/dep-user/package.json": `{ "name": "dep-user", "type": "module", "main": "index.js" }`,
+          "node_modules/dep-user/index.js": `export { id as depId, token as depToken } from "pkg";`,
+          "preload.js": `
+            globalThis.holds = new Map();
+            globalThis.hold = name => {
+              const held = { asked: Promise.withResolvers(), gate: Promise.withResolvers() };
+              globalThis.holds.set(name, held);
+              return held;
+            };
+            Bun.plugin({
+              name: "holds slow-<name>.js",
+              setup(build) {
+                build.onLoad({ filter: /slow-\\w+\\.js$/ }, async ({ path }) => {
+                  const { asked, gate } = globalThis.holds.get(path.slice(path.lastIndexOf("slow-") + 5, -3));
+                  asked.resolve();
+                  await gate.promise;
+                });
+              },
+            });
+          `,
+          "slow-a.js": `export const s = "slow";`,
+          "slow-b.js": `export const s = "slow";`,
+          "user-a.js": `import { id } from "pkg"; import { s } from "./slow-a.js"; export const seen = id + "/" + s;`,
+          "user-b.js": `import { id } from "pkg"; import { s } from "./slow-b.js"; export const seen = id + "/" + s;`,
+          "a.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import "pkg";
+            import { depToken } from "dep-user";
+
+            test("vi.doUnmock() while a load waits for the factory", async () => {
+              vi.doMock("pkg", () => ({ id: "mock", token: "mock" }));
+              const { asked, gate } = hold("a");
+              const user = import("./user-a.js");
+              await asked.promise;
+              vi.doUnmock("pkg");
+              gate.resolve();
+              const { seen } = await user;
+              const again = await import("pkg");
+              expect({ seen, againId: again.id, sameAsDep: again.token === depToken, pkgLoads: globalThis.pkgLoads }).toEqual({
+                seen: "1/slow",
+                againId: 1,
+                sameAsDep: true,
+                pkgLoads: 1,
+              });
+            });
+
+            // The load still waits for its other file when the second mock is asked for.
+            test("vi.doUnmock(), an import() of the package, then vi.doMock() and an import() before the load goes on", async () => {
+              vi.doMock("pkg", () => ({ id: "mock", token: "mock" }));
+              const { asked, gate } = hold("b");
+              const user = import("./user-b.js");
+              await asked.promise;
+              vi.doUnmock("pkg");
+              const first = await import("pkg");
+              vi.doMock("pkg", () => ({ id: "second", token: "second" }));
+              const second = await import("pkg");
+              gate.resolve();
+              const { seen } = await user;
+              vi.doUnmock("pkg");
+              const again = await import("pkg");
+              expect({ firstId: first.id, secondId: second.id, againId: again.id, sameAsDep: again.token === depToken, pkgLoads: globalThis.pkgLoads }).toEqual({
+                firstId: 1,
+                secondId: "second",
+                againId: 1,
+                sameAsDep: true,
+                pkgLoads: 1,
+              });
+              // A compiled run gives the load the second mock.
+              expect(seen).toBeOneOf(["1/slow", "second/slow"]);
+            });
+          `,
+          "b.test.js": `
+            import { expect, test } from "bun:test";
+            import { id, token } from "pkg";
+            import { depId, depToken } from "dep-user";
+
+            test("the next test file has one instance of the package", () => {
+              expect({ id, depId, same: token === depToken, pkgLoads: globalThis.pkgLoads }).toEqual({ id: 1, depId: 1, same: true, pkgLoads: 1 });
+            });
+          `,
+        },
+        3,
+        ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+      );
+    });
+
+    test("a factory that removes the mock, with no plugin", async () => {
+      const user = (name: string, specifier: string) =>
+        Object.fromEntries(
+          ["import", "require", "again"].map(loader => [
+            `user-${name}-${loader}.js`,
+            `import * as exports from ${JSON.stringify(specifier)}; export { exports };`,
+          ]),
+        );
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...user("esm", "esm-pkg"),
+          ...user("cjs", "cjs-pkg"),
+          ...user("own", "./own.js"),
+          "user-two.js": `import * as first from "cjs-pkg"; import * as exports from "esm-pkg"; export { exports, first };`,
+          "1.test.js": `
+            import { expect, test, vi } from "vitest";
+            import cjs from "cjs-pkg";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+            import * as own from "./own.js";
+
+            const loads = [...globalThis.loads];
+            const loaders = [["import", path => import(path)], ["require", async path => require(path)]];
+            const modules = [
+              ["esm", "esm-pkg", { token: "mock" }, exports => exports.token, esm.token],
+              ["cjs", "cjs-pkg", { default: { token: "mock" } }, exports => exports.default.token, cjs.token],
+              ["own", "./own.js", { token: "mock" }, exports => exports.token, own.token],
+            ];
+
+            test.each(modules.flatMap(module => loaders.map(loader => [...module, ...loader])))(
+              "a factory that removes its own mock: %s",
+              async (name, specifier, mocked, tokenOf, real, loader, load) => {
+                const factory = vi.fn(() => (vi.doUnmock(specifier), mocked));
+                vi.doMock(specifier, factory);
+                expect(tokenOf((await load("./user-" + name + "-" + loader + ".js")).exports)).toBe("mock");
+                expect(tokenOf(await import(specifier))).toBe(real);
+                expect(tokenOf((await import("./user-" + name + "-again.js")).exports)).toBe(real);
+                expect(factory).toHaveBeenCalledTimes(1);
+              },
+            );
+
+            // The load asks for cjs-pkg first. Its factory ends the mock of esm-pkg, whose factory has not been called.
+            test("the factory of another module of the load removes the mock", async () => {
+              const factory = vi.fn(() => ({ token: "mock" }));
+              vi.doMock("cjs-pkg", () => (vi.doUnmock("esm-pkg"), { default: { token: "mock" } }));
+              vi.doMock("esm-pkg", factory);
+              expect((await import("./user-two.js")).exports.token).toBe(esm.token);
+              vi.doUnmock("cjs-pkg");
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect((await import("cjs-pkg")).default).toBe(cjs);
+              expect(factory).not.toHaveBeenCalled();
+            });
+
+            test("nothing that was loaded was evaluated again", () => {
+              expect(globalThis.loads).toEqual(loads);
+              expect(tokens).toEqual([esm.token, cjs.token]);
+            });
+          `,
+          "2.test.js": `
+            import { expect, test } from "vitest";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("the library has the package of this file, and nothing is evaluated again", () => {
+              expect(esm.token).toBe(tokens[0]);
+              expect(globalThis.loads.filter(name => name !== "own").sort()).toEqual(["cjs-pkg", "esm-pkg", "lib"]);
+            });
+          `,
+        },
+        9,
+        ["./1.test.js", "./2.test.js"],
+      );
+    });
+
+    test.each([
+      [
+        "the load goes on",
+        `
+          const inFlight = await load("hoisted");
+          vi.doUnmock("esm-pkg");
+          expect((await inFlight.open()).token).toBe(globalThis.token);
+          expect((await import("esm-pkg")).token).toBe(globalThis.token);
+        `,
+      ],
+      [
+        "the file ends while the load waits",
+        `
+          await load("hoisted");
+          vi.doUnmock("esm-pkg");
+        `,
+      ],
+    ])("a hoisted vi.mock() of a package that an earlier test file loaded: %s", async (_, body) => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("hoisted", "esm-pkg"),
+          "1.test.js": `
+            import { expect, test } from "vitest";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("an earlier test file loads the package", () => {
+              globalThis.token = esm.token;
+              expect(tokens[0]).toBe(esm.token);
+            });
+          `,
+          "2.test.js": `
+            import { expect, test, vi } from "vitest";
+            import { load } from "./hold.js";
+
+            vi.mock("esm-pkg", () => ({ token: "mock" }));
+
+            test("vi.doUnmock() while a load waits for the factory", async () => {${body}});
+          `,
+          "3.test.js": `
+            import { expect, test } from "vitest";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("the next test file has one instance, and nothing is evaluated again", () => {
+              expect(esm.token).toBe(tokens[0]);
+              expect(globalThis.loads).toEqual(["esm-pkg", "cjs-pkg", "lib"]);
+            });
+          `,
+        },
+        3,
+        ["./1.test.js", "./2.test.js", "./3.test.js"],
+      );
+    });
+
+    test.each([
+      [
+        "the load goes on",
+        `
+          expect((await inFlight.open()).token).toBe(globalThis.tokenOfPreload);
+          expect((await import("esm-pkg")).token).toBe(globalThis.tokenOfPreload);
+        `,
+        `
+          vi.doMock("./own.js", () => ({ token: "second" }));
+          expect((await inFlight.open()).token).toBe("second");
+        `,
+      ],
+      ["the file ends while the load waits", "", ""],
+      [
+        "the file ends after Bun.plugin.clearAll() has removed a later mock",
+        "",
+        `
+          mock.module("./own.js", () => ({ token: "later" }));
+          expect((await inFlight.open()).token).toBe("later");
+          Bun.plugin.clearAll();
+        `,
+      ],
+    ])("a module that a preload loaded: %s", async (_, body, bodyOfOwn) => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("preloaded", "esm-pkg"),
+          ...importer("own", "./own.js"),
+          "preload.js": `
+            import * as esm from "esm-pkg";
+            import "lib";
+            import * as own from "./own.js";
+            globalThis.tokenOfPreload = esm.token;
+            globalThis.ownOfPreload = own.token;
+          `,
+          "1.test.js": `
+            import { mock } from "bun:test";
+            import { expect, test, vi } from "vitest";
+            import { load } from "./hold.js";
+
+            test("vi.doUnmock() of a package while a load waits for the factory", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("preloaded");
+              vi.doUnmock("esm-pkg");${body}
+            });
+
+            // The module of the preload leaves with the reset, and comes back when this file ends.
+            test("vi.doUnmock() of a module of your own that replaces the one of the preload", async () => {
+              vi.resetModules();
+              globalThis.ownOfFirstFile = (await import("./own.js")).token;
+              vi.doMock("./own.js", () => ({ token: "mock" }));
+              const inFlight = await load("own");
+              vi.doUnmock("./own.js");${bodyOfOwn}
+            });
+          `,
+          "2.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("the next test file has the package of the preload, and nothing is evaluated again", async () => {
+              expect([esm.token, tokens[0], (await import("esm-pkg")).token]).toEqual(Array(3).fill(globalThis.tokenOfPreload));
+              expect(globalThis.loads.filter(name => name !== "own")).toEqual(["cjs-pkg", "esm-pkg", "lib"]);
+            });
+
+            test("the next test file has the module of the preload, and no copy of the file before is set aside", async () => {
+              expect((await import("./own.js")).token).toBe(globalThis.ownOfPreload);
+              vi.doMock("./own.js", () => ({ token: "mock" }));
+              const { token } = await vi.importActual("./own.js");
+              vi.doUnmock("./own.js");
+              expect([typeof token, token === globalThis.ownOfFirstFile]).toEqual(["symbol", false]);
+            });
+          `,
+        },
+        4,
+        ["--preload", "./preload.js", "./1.test.js", "./2.test.js"],
+      );
+    });
+
+    test.each(isolationFlags)("the load and the next import get the loaded module %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...cjsPackage("cjs-only"),
+          ...esmPackage("later-lib-a", `export { token } from "esm-pkg";`),
+          ...esmPackage("later-lib-b", `export { token } from "esm-pkg";`),
+          ...importer("esm", "esm-pkg"),
+          ...importer("cjs", "cjs-pkg"),
+          ...importer("own", "./own.js"),
+          ...importer("disposed", "esm-pkg"),
+          ...importer("running", "esm-pkg"),
+          ...importer("two", "esm-pkg"),
+          "importer-two.js": `import * as exports from "esm-pkg"; import "./other-two.js"; import "./held-two.js"; export { exports };`,
+          "other-two.js": `import { token } from "esm-pkg"; globalThis.tokenOfOther = token;`,
+          ...importer("required", "cjs-only"),
+          ...importer("fails", "esm-pkg"),
+          ...importer("threw", "esm-pkg"),
+          ...esmPackage("fresh-dep", `export const token = Symbol("fresh-dep");`),
+          ...esmPackage("fresh-lib", `export { token } from "fresh-dep";`),
+          ...importer("freshdep", "fresh-dep"),
+          ...importer("latera", "esm-pkg"),
+          ...importer("laterb", "esm-pkg"),
+          ...importer("earliera", "esm-pkg"),
+          ...importer("earlierb", "esm-pkg"),
+          ...importer("twicea", "esm-pkg"),
+          ...importer("twiceb", "esm-pkg"),
+          ...importer("originala", "esm-pkg"),
+          ...importer("originalb", "esm-pkg"),
+          ...importer("json", "./data.json"),
+          ...importer("kept", "esm-pkg"),
+          ...importer("query", "./suffix.js?v"),
+          ...importer("name", "./sub/actual"),
+          "suffix.js": counted("suffix", `export const token = Symbol("suffix");`),
+          "sub/actual": counted("actual", `export const token = Symbol("actual");`),
+          ...esmPackage("tla-pkg", `await globalThis.tlaGate.promise; export const token = Symbol("tla-pkg");`),
+          ...heldFirst("tla", "tla-pkg"),
+          "data.json": `{ "token": "data" }`,
+          "importer-both.js": `import * as esm from "esm-pkg"; import cjs from "cjs-pkg"; import "./held-both.js"; export { esm, cjs };`,
+          "held-both.js": ``,
+          "throws.js": `globalThis.runsOfThrows = (globalThis.runsOfThrows ?? 0) + 1; throw new Error("run " + globalThis.runsOfThrows);`,
+          "required.js": `export const required = true;`,
+          ...Object.assign(
+            {},
+            ...Array.from({ length: 8 }, (_, jobs) => ({
+              ...heldFirst("again" + jobs, "esm-pkg"),
+              ...heldFirst("patcheda" + jobs, "esm-pkg"),
+              ...heldFirst("patchedb" + jobs, "esm-pkg"),
+              ...heldFirst("patchedc" + jobs, "esm-pkg"),
+              ...heldFirst("againjson" + jobs, "./data.json"),
+            })),
+          ),
+          "1.test.js": `
+            import { jest, mock } from "bun:test";
+            import { expect, test, vi } from "vitest";
+            import cjs from "cjs-pkg";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+            import data from "./data.json";
+            import { hold, load } from "./hold.js";
+            import * as own from "./own.js";
+
+            const required = require("cjs-only");
+            const loads = [...globalThis.loads];
+            const loadsOf = name => globalThis.loads.filter(loaded => loaded === name).length;
+
+            test.each([
+              ["esm", "esm-pkg", () => ({ token: "mock" }), exports => exports.token === esm.token],
+              ["cjs", "cjs-pkg", () => ({ default: { token: "mock" } }), exports => exports.default === cjs],
+              ["own", "./own.js", () => ({ token: "mock" }), exports => exports.token === own.token],
+            ])("vi.doUnmock(): %s", async (name, specifier, mocked, isLoaded) => {
+              const factory = vi.fn(mocked);
+              vi.doMock(specifier, factory);
+              const inFlight = await load(name);
+              vi.doUnmock(specifier);
+              expect(isLoaded(await inFlight.open())).toBe(true);
+              expect(isLoaded(await import(specifier))).toBe(true);
+              expect(factory).not.toHaveBeenCalled();
+            });
+
+            test("vi.doUnmock(): json", async () => {
+              vi.doMock("./data.json", () => ({ default: { token: "mock" } }));
+              const inFlight = await load("json");
+              vi.doUnmock("./data.json");
+              expect((await inFlight.open()).default).toBe(data);
+              expect((await import("./data.json")).default).toBe(data);
+            });
+
+            test("the handle of vi.doMock() is disposed", async () => {
+              let inFlight;
+              {
+                using _ = vi.doMock("esm-pkg", () => ({ token: "mock" }));
+                inFlight = await load("disposed");
+              }
+              expect((await inFlight.open()).token).toBe(esm.token);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("vi.doUnmock() while the factory runs", async () => {
+              const called = Promise.withResolvers();
+              const result = Promise.withResolvers();
+              vi.doMock("esm-pkg", async () => (called.resolve(), await result.promise));
+              const inFlight = await load("running");
+              const exports = inFlight.open();
+              await called.promise;
+              vi.doUnmock("esm-pkg");
+              result.resolve({ token: "mock" });
+              await exports;
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("vi.doUnmock() while two modules of the load import the module", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("two");
+              vi.doUnmock("esm-pkg");
+              expect([(await inFlight.open()).token, globalThis.tokenOfOther]).toEqual([esm.token, esm.token]);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("vi.doUnmock() of a CommonJS package that only require() has loaded", async () => {
+              vi.doMock("cjs-only", () => ({ default: { token: "mock" } }));
+              const inFlight = await load("required");
+              vi.doUnmock("cjs-only");
+              expect((await inFlight.open()).default).toBe(required);
+              expect(require("cjs-only")).toBe(required);
+              expect((await import("cjs-only")).default).toBe(required);
+            });
+
+            test("vi.doUnmock(), and the load fails", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("fails");
+              vi.doUnmock("esm-pkg");
+              expect(await inFlight.fail(new Error("held"))).toMatchObject({ message: "held" });
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("vi.doUnmock() after the factory threw for a require()", async () => {
+              const factory = vi.fn(() => {
+                throw new Error("the factory threw");
+              });
+              vi.doMock("esm-pkg", factory);
+              expect(() => require("esm-pkg")).toThrow("the factory threw");
+              const inFlight = await load("threw");
+              vi.doUnmock("esm-pkg");
+              expect((await inFlight.open()).token).toBe(esm.token);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect(factory).toHaveBeenCalledTimes(1);
+            });
+
+            test.each([
+              ["mock.module()", "a", factory => mock.module("esm-pkg", factory)],
+              ["jest.doMock()", "b", factory => jest.doMock("esm-pkg", factory)],
+            ])("vi.doUnmock(), then %s of the module, which ends after the load", async (_, name, mockAgain) => {
+              vi.doMock("esm-pkg", () => ({ token: "first" }));
+              const inFlight = await load("later" + name);
+              vi.doUnmock("esm-pkg");
+              mockAgain(() => ({ token: "later" }));
+              expect((await inFlight.open()).token).toBe("later");
+              expect((await import("later-lib-" + name)).token).toBe("later");
+              vi.doUnmock("esm-pkg");
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect((await import("later-lib-" + name)).token).toBe(esm.token);
+            });
+
+            test.each([
+              ["mock.module()", "a", factory => mock.module("esm-pkg", factory)],
+              ["jest.doMock()", "b", factory => jest.doMock("esm-pkg", factory)],
+            ])("vi.doUnmock(), then %s of the module, which ends before the load goes on", async (_, name, mockAgain) => {
+              vi.doMock("esm-pkg", () => ({ token: "first" }));
+              const inFlight = await load("earlier" + name);
+              vi.doUnmock("esm-pkg");
+              mockAgain(() => ({ token: "later" }));
+              vi.doUnmock("esm-pkg");
+              expect((await inFlight.open()).token).toBe(esm.token);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test.each([
+              ["mock.module()", "a", () => mock.module("esm-pkg", () => ({ token: "last" }))],
+              ["jest.doMock()", "b", () => jest.doMock("esm-pkg", () => ({ token: "last" }))],
+            ])("vi.doUnmock(), then mock.module() of the module, then %s of it", async (_, name, mockAgain) => {
+              vi.doMock("esm-pkg", () => ({ token: "first" }));
+              const inFlight = await load("twice" + name);
+              vi.doUnmock("esm-pkg");
+              mock.module("esm-pkg", () => ({ token: "later" }));
+              mockAgain();
+              expect((await inFlight.open()).token).toBe("last");
+              vi.doUnmock("esm-pkg");
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test.each([
+              ["a factory that takes importOriginal", "a", () => vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) }))],
+              ["no factory", "b", () => vi.doMock("esm-pkg")],
+            ])("vi.doUnmock() of a mock with %s", async (_, name, mockIt) => {
+              mockIt();
+              const inFlight = await load("original" + name);
+              vi.doUnmock("esm-pkg");
+              expect((await inFlight.open()).token).toBe(esm.token);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("vi.doUnmock() of two packages that one load imports", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              vi.doMock("cjs-pkg", () => ({ default: { token: "mock" } }));
+              const { asked, gate } = hold("both");
+              const importer = import("./importer-both.js");
+              await asked.promise;
+              vi.doUnmock("esm-pkg");
+              vi.doUnmock("cjs-pkg");
+              gate.resolve();
+              const both = await importer;
+              expect([both.esm.token, both.cjs]).toEqual([esm.token, cjs]);
+              expect([(await import("esm-pkg")).token, (await import("cjs-pkg")).default]).toEqual([esm.token, cjs]);
+            });
+
+            test("vi.doUnmock(), then mock.module() of the module: a module that threw is not evaluated again under that mock", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "first" }));
+              const inFlight = await load("kept");
+              vi.doUnmock("esm-pkg");
+              mock.module("esm-pkg", () => ({ token: "later" }));
+              await inFlight.open();
+              await expect(import("./throws.js")).rejects.toThrow("run 1");
+              require("./required.js");
+              await expect(import("./throws.js")).rejects.toThrow("run 1");
+              vi.doUnmock("esm-pkg");
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("vi.doUnmock() before the mock is asked for its factory, then vi.doMock() of the module some jobs later", async () => {
+              for (let jobs = 0; jobs < 8; jobs++) {
+                vi.doMock("esm-pkg", () => ({ token: "first" }));
+                const { asked, gate } = hold("again" + jobs);
+                const importer = import("./importer-again" + jobs + ".js");
+                await asked.promise;
+                vi.doUnmock("esm-pkg");
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doMock("esm-pkg", () => ({ token: "second" }));
+                gate.resolve();
+                await importer;
+                expect((await import("esm-pkg")).token).toBe("second");
+                vi.doUnmock("esm-pkg");
+                expect((await import("esm-pkg")).token).toBe(esm.token);
+              }
+            });
+
+            // These mocks patch the loaded module in place. Nothing of it leaves when the load settles.
+            test.each([
+              ["mock.module()", "a", factory => mock.module("esm-pkg", factory)],
+              ["jest.doMock()", "b", factory => jest.doMock("esm-pkg", factory)],
+              ["jest.mock()", "c", factory => jest.mock("esm-pkg", factory)],
+            ])("vi.doUnmock() before the mock is asked for its factory, then %s of the module some jobs later, which ends at once", async (_, name, mockAgain) => {
+              for (let jobs = 0; jobs < 8; jobs++) {
+                vi.doMock("esm-pkg", () => ({ token: "first" }));
+                const { asked, gate } = hold("patched" + name + jobs);
+                const importer = import("./importer-patched" + name + jobs + ".js");
+                await asked.promise;
+                vi.doUnmock("esm-pkg");
+                for (let job = 0; job < jobs; job++) await null;
+                mockAgain(() => ({ token: "later" }));
+                vi.doUnmock("esm-pkg");
+                gate.resolve();
+                expect((await importer).exports.token).toBe(esm.token);
+                expect((await import("esm-pkg")).token).toBe(esm.token);
+              }
+            });
+
+            test("vi.doUnmock() before the mock is asked for its factory, then vi.doMock() of the JSON module some jobs later", async () => {
+              for (let jobs = 0; jobs < 8; jobs++) {
+                vi.doMock("./data.json", () => ({ default: "first" }));
+                const { asked, gate } = hold("againjson" + jobs);
+                const importer = import("./importer-againjson" + jobs + ".js");
+                await asked.promise;
+                vi.doUnmock("./data.json");
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doMock("./data.json", () => ({ default: "second" }));
+                gate.resolve();
+                await importer;
+                expect((await import("./data.json")).default).toBe("second");
+                vi.doUnmock("./data.json");
+                expect((await import("./data.json")).default).toBe(data);
+              }
+            });
+
+            test("vi.doUnmock() of a module whose file name is actual", async () => {
+              const { token } = await import("./sub/actual");
+              vi.doMock("./sub/actual", async importOriginal => ({ ...(await importOriginal()) }));
+              const inFlight = await load("name");
+              vi.doUnmock("./sub/actual");
+              expect([(await inFlight.open()).token, (await import("./sub/actual")).token]).toEqual([token, token]);
+            });
+
+            // The key of the second module is the key of the first one and "=actual". It is not where the first one is set aside.
+            test("vi.doUnmock(), then mock.module() of the module, and a mock of a module whose key ends as the key of an original ends", async () => {
+              const { token } = await import("./suffix.js?v");
+              vi.doMock("./suffix.js?v", () => ({ token: "first" }));
+              const inFlight = await load("query");
+              vi.doUnmock("./suffix.js?v");
+              mock.module("./suffix.js?v", () => ({ token: "later" }));
+              vi.doMock("./suffix.js?v=actual", () => ({ token: "other" }));
+              expect((await import("./suffix.js?v=actual")).token).toBe("other");
+              vi.doUnmock("./suffix.js?v=actual");
+              expect((await inFlight.open()).token).toBe("later");
+              vi.doUnmock("./suffix.js?v");
+              expect((await import("./suffix.js?v")).token).toBe(token);
+            });
+
+            test("vi.doUnmock(), then vi.doMock() two jobs later, of a package that is at its top-level await", async () => {
+              globalThis.tlaGate = Promise.withResolvers();
+              const first = import("tla-pkg");
+              while (!globalThis.loads.includes("tla-pkg")) await new Promise(resolve => setImmediate(resolve));
+              vi.doMock("tla-pkg", () => ({ token: "first" }));
+              const { asked, gate } = hold("tla");
+              const importer = import("./importer-tla.js");
+              await asked.promise;
+              vi.doUnmock("tla-pkg");
+              await null;
+              await null;
+              vi.doMock("tla-pkg", () => ({ token: "second" }));
+              globalThis.tlaGate.resolve();
+              gate.resolve();
+              const { token } = await first;
+              await importer;
+              expect((await import("tla-pkg")).token).toBe("second");
+              vi.doUnmock("tla-pkg");
+              expect([(await import("tla-pkg")).token, loadsOf("tla-pkg")]).toEqual([token, 1]);
+            });
+
+            test("vi.doUnmock() of a package that only a library has loaded, while it was mocked", async () => {
+              vi.doMock("fresh-dep", () => ({ token: "mock" }));
+              const { token } = await import("fresh-lib");
+              const inFlight = await load("freshdep");
+              vi.doUnmock("fresh-dep");
+              expect([typeof token, (await inFlight.open()).token, (await import("fresh-dep")).token]).toEqual(["symbol", token, token]);
+              expect(loadsOf("fresh-dep")).toBe(1);
+            });
+
+            test("nothing that was loaded was evaluated again", () => {
+              expect(globalThis.loads.filter(name => loads.includes(name))).toEqual(loads);
+              expect(tokens).toEqual([esm.token, cjs.token]);
+            });
+          `,
+        },
+        30,
+        ["./1.test.js", ...args],
+      );
+    });
+
+    test("the mock of a test file over the mock of a preload", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("preloaded", "esm-pkg"),
+          "preload.js": `
+            import { vi } from "vitest";
+            vi.mock("esm-pkg", () => ({ token: "preload" }));
+          `,
+          "1.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import "lib";
+            import { load } from "./hold.js";
+
+            const loads = [...globalThis.loads];
+
+            test("vi.doUnmock()", async () => {
+              const factory = vi.fn(() => ({ token: "mock" }));
+              vi.doMock("esm-pkg", factory);
+              const inFlight = await load("preloaded");
+              vi.doUnmock("esm-pkg");
+              expect([esm.token, (await inFlight.open()).token, (await import("esm-pkg")).token]).toEqual(["preload", "preload", "preload"]);
+              expect(factory).not.toHaveBeenCalled();
+              expect(globalThis.loads).toEqual(loads);
+            });
+          `,
+          "2.test.js": `
+            import { expect, test } from "vitest";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("the next test file has the mock of the preload, and its library the real package", () => {
+              expect([esm.token, typeof tokens[0]]).toEqual(["preload", "symbol"]);
+            });
+          `,
+        },
+        2,
+        ["--preload", "./preload.js", "./1.test.js", "./2.test.js"],
+      );
+    });
+
+    test("vi.resetModules() while the move back is owed, and after it", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("reset", "esm-pkg"),
+          ...importer("own", "./own.js"),
+          ...importer("part", "./part.js"),
+          "part.js": counted("part", `export const token = Symbol("part");`),
+          "reset.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { load } from "./hold.js";
+            import "./own.js";
+
+            test("vi.doUnmock() and vi.resetModules(): the package stays", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("reset");
+              vi.doUnmock("esm-pkg");
+              vi.resetModules();
+              expect((await inFlight.open()).token).toBe(esm.token);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect(globalThis.loads).toEqual(["esm-pkg", "own"]);
+            });
+
+            // As for a module that nothing had loaded: the load reads the file, and what it evaluated leaves when the load settles.
+            test("vi.doUnmock() and vi.resetModules(): a module of your own is evicted", async () => {
+              vi.doMock("./own.js", () => ({ token: "mock" }));
+              const inFlight = await load("own");
+              vi.doUnmock("./own.js");
+              vi.resetModules();
+              const { token } = await inFlight.open();
+              expect([typeof token, (await import("./own.js")).token === token]).toEqual(["symbol", false]);
+            });
+
+            test("the end of a mock that was made after the reset moves nothing back", async () => {
+              const part = await import("./part.js");
+              vi.doMock("./part.js", () => ({ token: "mock" }));
+              const inFlight = await load("part");
+              vi.doUnmock("./part.js");
+              await inFlight.open();
+              expect(await import("./part.js")).toBe(part);
+              vi.resetModules();
+              vi.doMock("./part.js", () => ({ token: "mock" }));
+              const actual = await vi.importActual("./part.js");
+              vi.doUnmock("./part.js");
+              expect(await import("./part.js")).not.toBe(actual);
+            });
+          `,
+        },
+        3,
+      );
+    });
+
+    test("a load that imports the module as text gets the text", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("text", "esm-pkg", ` with { type: "text" }`),
+          "text.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { load } from "./hold.js";
+
+            test("vi.doUnmock()", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("text");
+              vi.doUnmock("esm-pkg");
+              expect((await inFlight.open()).default).toContain('Symbol("esm-pkg")');
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    // What the first file does, and what the second file sees of the evaluations. mock.module() patches a package that is
+    // loaded, and what imported it is evaluated again: a compiled run has the package loaded in those orders, so there the
+    // library runs again. A spy evaluates the package for itself.
+    const nothingAgain = `expect(globalThis.loads).toEqual(["esm-pkg", "cjs-pkg", "lib"]);`;
+    const packageOnce = `expect(globalThis.loads.filter(name => name === "esm-pkg")).toEqual(["esm-pkg"]);`;
+    test.each([
+      [
+        "vi.doUnmock()",
+        `
+          vi.doMock("esm-pkg", () => ({ token: "mock" }));
+          const inFlight = await load("next");
+          vi.doUnmock("esm-pkg");
+          expect((await inFlight.open()).token).toBe(esm.token);
+        `,
+        nothingAgain,
+      ],
+      [
+        "vi.doUnmock() while the factory runs, then an import() of the module, which gives that wait up",
+        `
+          const called = Promise.withResolvers();
+          vi.doMock("esm-pkg", () => (called.resolve(), new Promise(() => {})));
+          const inFlight = await load("next");
+          const exports = inFlight.open();
+          await called.promise;
+          vi.doUnmock("esm-pkg");
+          expect((await import("esm-pkg")).token).toBe(esm.token);
+          expect((await exports).token).toBe(esm.token);
+        `,
+        nothingAgain,
+      ],
+      [
+        "vi.doUnmock(), and the file ends while the load waits",
+        `
+          vi.doMock("esm-pkg", () => ({ token: "mock" }));
+          await load("next");
+          vi.doUnmock("esm-pkg");
+        `,
+        nothingAgain,
+      ],
+      [
+        "vi.doUnmock() of two packages, and the file ends while the load waits",
+        `
+          vi.doMock("esm-pkg", () => ({ token: "mock" }));
+          vi.doMock("cjs-pkg", () => ({ default: { token: "mock" } }));
+          const { asked } = hold("both");
+          import("./importer-both.js");
+          await asked.promise;
+          vi.doUnmock("cjs-pkg");
+          vi.doUnmock("esm-pkg");
+        `,
+        nothingAgain,
+      ],
+      [
+        "vi.doUnmock() of a spy, with no plugin",
+        `
+          vi.doMock("esm-pkg", { spy: true });
+          import("esm-pkg").catch(() => {});
+          await null;
+          vi.doUnmock("esm-pkg");
+        `,
+        `expect(globalThis.loads.filter(name => name === "esm-pkg")).toEqual(["esm-pkg", "esm-pkg"]);`,
+      ],
+      [
+        "vi.doUnmock(), then mock.module() of the package twice, and the file ends",
+        `
+          vi.doMock("esm-pkg", () => ({ token: "mock" }));
+          const inFlight = await load("next");
+          vi.doUnmock("esm-pkg");
+          mock.module("esm-pkg", () => ({ token: "later" }));
+          mock.module("esm-pkg", () => ({ token: "last" }));
+          expect((await inFlight.open()).token).toBe("last");
+        `,
+        packageOnce,
+      ],
+      [
+        "vi.doUnmock(), then mock.module() of the package, then Bun.plugin.clearAll()",
+        `
+          vi.doMock("esm-pkg", () => ({ token: "mock" }));
+          const inFlight = await load("next");
+          vi.doUnmock("esm-pkg");
+          mock.module("esm-pkg", () => ({ token: "later" }));
+          expect([(await inFlight.open()).token, (await import("esm-pkg")).token, require("esm-pkg").token]).toEqual(Array(3).fill("later"));
+          Bun.plugin.clearAll();
+        `,
+        packageOnce,
+      ],
+    ])("the next test file gets the loaded package after %s", async (_, body, evaluated) => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("next", "esm-pkg"),
+          "importer-both.js": `import * as esm from "esm-pkg"; import cjs from "cjs-pkg"; import "./held-both.js"; export { esm, cjs };`,
+          "held-both.js": ``,
+          "1.test.js": `
+            import { mock } from "bun:test";
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import "lib";
+            import { hold, load } from "./hold.js";
+
+            test("a mock of a loaded package ends while a load waits", async () => {${body}});
+          `,
+          "2.test.js": `
+            import { expect, test } from "vitest";
+            import cjs from "cjs-pkg";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("the library has the packages of this file", () => {
+              expect([esm.token, cjs.token]).toEqual(tokens);
+              ${evaluated}
+            });
+          `,
+        },
+        2,
+        ["./1.test.js", "./2.test.js"],
+      );
+    });
+
+    test("the next test file gets the loaded package when a load reads its file after the file has ended", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("text", "esm-pkg", ` with { type: "text" }`),
+          "1.test.js": `
+            import { mock } from "bun:test";
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import "lib";
+            import { load } from "./hold.js";
+            import * as own from "./own.js";
+
+            // The load of the text reads the file of the package, and this plugin holds that.
+            const asked = Promise.withResolvers();
+            const gate = Promise.withResolvers();
+            let asks = 0;
+            Bun.plugin({
+              name: "holds the package",
+              setup(build) {
+                build.onLoad({ filter: /esm-pkg[\\\\/]index\\.js$/ }, async () => {
+                  if (asks++) return;
+                  asked.resolve();
+                  await gate.promise;
+                });
+              },
+            });
+
+            test("vi.doUnmock()", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("text");
+              vi.doUnmock("esm-pkg");
+              // A compiled run has the text already, and does not ask the plugin.
+              await Promise.race([asked.promise, inFlight.open().catch(() => {})]);
+              // The end of the test file undoes this patch. The runner waits for the load by then.
+              mock.module("./own.js", () => ({ token: "patched" }));
+              expect(own.token).toBe("patched");
+              (async () => {
+                for (let turn = 0; turn < 1000 && own.token === "patched"; turn++) await new Promise(resolve => setImmediate(resolve));
+                gate.resolve();
+              })();
+            });
+          `,
+          "2.test.js": `
+            import { expect, test } from "vitest";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("the library has the package of this file, and nothing is evaluated again", () => {
+              expect(esm.token).toBe(tokens[0]);
+              expect(globalThis.loads).toEqual(["esm-pkg", "cjs-pkg", "lib", "own"]);
+            });
+          `,
+        },
+        2,
+        ["./1.test.js", "./2.test.js"],
+      );
+    });
+
+    test("another mock takes its place, and the end of that one brings the loaded module back", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("again", "./own.js"),
+          "again.test.js": `
+            import { expect, test, vi } from "vitest";
+            import { load } from "./hold.js";
+            import * as own from "./own.js";
+
+            test("vi.doMock(), then vi.doUnmock()", async () => {
+              const first = vi.fn(() => ({ token: "first" }));
+              vi.doMock("./own.js", first);
+              const inFlight = await load("again");
+              vi.doMock("./own.js", () => ({ token: "second" }));
+              expect((await inFlight.open()).token).toBe("second");
+              vi.doUnmock("./own.js");
+              expect((await import("./own.js")).token).toBe(own.token);
+              expect([first.mock.calls.length, globalThis.loads]).toEqual([0, ["own"]]);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test.each([
+      [[], 12],
+      [["--rerun-each=3"], 36],
+    ])("an import() of the module itself is the load %j", async (args, pass) => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          "direct.test.js": `
+            import { mock } from "bun:test";
+            import { expect, test, vi } from "vitest";
+            import cjs from "cjs-pkg";
+            import * as esm from "esm-pkg";
+
+            const loads = [...globalThis.loads];
+
+            // The test awaits the promise of the loader itself, and the mock ends before, while or after the load has its module.
+            test.each([
+              ["a factory", () => vi.doMock("esm-pkg", () => ({ token: "mock" })), () => import("esm-pkg")],
+              ["a factory that takes importOriginal", () => vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) })), () => import("esm-pkg")],
+              ["no factory", () => vi.doMock("esm-pkg"), () => import("esm-pkg")],
+              ["a factory, and vi.importMock() is the load", () => vi.doMock("esm-pkg", () => ({ token: "mock" })), () => vi.importMock("esm-pkg")],
+              ["a factory that takes importOriginal, and vi.importMock() is the load", () => vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) })), () => vi.importMock("esm-pkg")],
+              ["no factory, and vi.importMock() is the load", () => vi.doMock("esm-pkg"), () => vi.importMock("esm-pkg")],
+            ])("vi.doMock() with %s, then vi.doUnmock() some jobs later", async (_, mockIt, importIt) => {
+              for (let jobs = 0; jobs < 12; jobs++) {
+                mockIt();
+                const inFlight = importIt();
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doUnmock("esm-pkg");
+                expect([esm.token, "mock"]).toContain((await inFlight).token);
+                expect((await import("esm-pkg")).token).toBe(esm.token);
+              }
+              expect(globalThis.loads).toEqual(loads);
+            });
+
+            test.each([
+              ["a factory that takes importOriginal", () => vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) }))],
+              ["no factory", () => vi.doMock("esm-pkg")],
+            ])("vi.doMock() with %s, vi.doUnmock(), then mock.module() of the package, which ends some jobs later", async (_, mockIt) => {
+              for (let jobs = 0; jobs < 10; jobs++) {
+                mockIt();
+                const inFlight = import("esm-pkg");
+                await null;
+                await null;
+                vi.doUnmock("esm-pkg");
+                mock.module("esm-pkg", () => ({ token: "later" }));
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doUnmock("esm-pkg");
+                await inFlight;
+                expect((await import("esm-pkg")).token).toBe(esm.token);
+              }
+              expect(globalThis.loads).toEqual(loads);
+            });
+
+            // The pass of each of these can come between the settle of the load and the pass that this settle asks for.
+            test.each([
+              ["vi.resetModules()", () => {}, () => vi.resetModules()],
+              ["the end of a mock of another package", () => vi.doMock("cjs-pkg", () => ({ default: { token: "mock" } })), () => vi.doUnmock("cjs-pkg")],
+            ])("vi.doUnmock(), then %s some jobs later", async (_, before, after) => {
+              for (let jobs = 0; jobs < 17; jobs++) {
+                before();
+                vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) }));
+                const inFlight = import("esm-pkg");
+                await null;
+                await null;
+                vi.doUnmock("esm-pkg");
+                for (let job = 0; job < jobs; job++) await null;
+                after();
+                await inFlight;
+                expect((await import("esm-pkg")).token).toBe(esm.token);
+              }
+              expect(globalThis.loads).toEqual(loads);
+            });
+
+            test("vi.doUnmock() at once, then vi.doMock() of the package some jobs later", async () => {
+              for (let jobs = 0; jobs < 8; jobs++) {
+                vi.doMock("cjs-pkg", () => ({ default: { token: "first" } }));
+                const inFlight = import("cjs-pkg");
+                vi.doUnmock("cjs-pkg");
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doMock("cjs-pkg", () => ({ default: { token: "second" } }));
+                await inFlight;
+                vi.doUnmock("cjs-pkg");
+                expect((await import("cjs-pkg")).default).toBe(cjs);
+              }
+              expect(globalThis.loads).toEqual(loads);
+            });
+
+            test("vi.doUnmock() some jobs after the import(), then vi.doMock() of the package at once", async () => {
+              for (let jobs = 0; jobs < 10; jobs++) {
+                vi.doMock("esm-pkg", () => ({ token: "first" }));
+                const inFlight = import("esm-pkg");
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doUnmock("esm-pkg");
+                vi.doMock("esm-pkg", () => ({ token: "second" }));
+                await inFlight;
+                vi.doUnmock("esm-pkg");
+                expect((await import("esm-pkg")).token).toBe(esm.token);
+              }
+              expect(globalThis.loads).toEqual(loads);
+            });
+          `,
+        },
+        pass,
+        ["./direct.test.js", ...args],
+      );
+    });
+
+    test("require() of the package while the load waits", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("required", "cjs-pkg"),
+          ...importer("factory", "esm-pkg"),
+          ...importer("original", "esm-pkg"),
+          "requires.cjs": `module.exports = require("cjs-pkg");`,
+          "imports-factory.mjs": `export { token } from "esm-pkg";`,
+          "imports-original.mjs": `export { token } from "esm-pkg";`,
+          "require.test.js": `
+            import { expect, test, vi } from "vitest";
+            import cjs from "cjs-pkg";
+            import { load } from "./hold.js";
+
+            test("vi.doUnmock(), then require()", async () => {
+              vi.doMock("cjs-pkg", () => ({ default: { token: "mock" } }));
+              const inFlight = await load("required");
+              vi.doUnmock("cjs-pkg");
+              expect([require("./requires.cjs"), require("cjs-pkg"), (await inFlight.open()).default]).toEqual([cjs, cjs, cjs]);
+              expect([require("cjs-pkg"), require("./requires.cjs")]).toEqual([cjs, cjs]);
+              expect(globalThis.loads.filter(name => name === "cjs-pkg")).toEqual(["cjs-pkg"]);
+            });
+
+            test("vi.doUnmock(), then require() some jobs later", async () => {
+              const esm = require("esm-pkg");
+              for (let jobs = 0; jobs < 12; jobs++) {
+                vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) }));
+                const inFlight = import("esm-pkg");
+                await null;
+                await null;
+                vi.doUnmock("esm-pkg");
+                for (let job = 0; job < jobs; job++) await null;
+                // The import() has the module of the mock by now, or its fetch still waits.
+                expect(require("esm-pkg").token).toBe(esm.token);
+                await inFlight;
+                expect([require("esm-pkg").token, (await import("esm-pkg")).token]).toEqual([esm.token, esm.token]);
+              }
+              expect(globalThis.loads.filter(name => name === "esm-pkg")).toEqual(["esm-pkg"]);
+            });
+
+            test.each([
+              ["factory", () => ({ token: "mock" })],
+              ["original", async importOriginal => ({ ...(await importOriginal()) })],
+            ])("vi.doUnmock(), then require() of an ES module that imports the package: %s", async (name, factory) => {
+              const { token } = require("esm-pkg");
+              vi.doMock("esm-pkg", factory);
+              const inFlight = await load(name);
+              vi.doUnmock("esm-pkg");
+              expect(require("./imports-" + name + ".mjs").token).toBe(token);
+              expect([(await inFlight.open()).token, (await import("esm-pkg")).token]).toEqual([token, token]);
+              expect(globalThis.loads.filter(name => name === "esm-pkg")).toEqual(["esm-pkg"]);
+            });
+          `,
+        },
+        4,
+      );
+    });
+
+    test("the load does not read the file again", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("read", "./own.js"),
+          "reads.js": `
+            Bun.plugin({
+              name: "reads",
+              setup(build) {
+                build.onLoad({ filter: /own\\.js$/ }, () => {
+                  (globalThis.reads ??= []).push("own");
+                });
+              },
+            });
+          `,
+          "read.test.js": `
+            import { expect, test, vi } from "vitest";
+            import "./reads.js";
+            import { load } from "./hold.js";
+            import * as own from "./own.js";
+
+            test("vi.doUnmock()", async () => {
+              vi.doMock("./own.js", () => ({ token: "mock" }));
+              const inFlight = await load("read");
+              vi.doUnmock("./own.js");
+              expect((await inFlight.open()).token).toBe(own.token);
+              expect(globalThis.reads).toEqual(["own"]);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("a load of a Bun.ModuleGraph reads the file for its own graph", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("graph", "esm-pkg"),
+          "graph.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { hold } from "./hold.js";
+
+            test("vi.doUnmock()", async () => {
+              const graph = new Bun.ModuleGraph();
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const { asked, gate } = hold("graph");
+              const inFlight = graph.import(import.meta.dir + "/importer-graph.js");
+              await asked.promise;
+              vi.doUnmock("esm-pkg");
+              gate.resolve();
+              const { token } = (await inFlight).exports;
+              expect([typeof token, token === esm.token]).toEqual(["symbol", false]);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              graph.dispose();
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("Bun.plugin.clearAll() after the mock has ended", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("cleared", "esm-pkg"),
+          "cleared.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { load } from "./hold.js";
+
+            test("vi.doUnmock(), then Bun.plugin.clearAll()", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("cleared");
+              vi.doUnmock("esm-pkg");
+              Bun.plugin.clearAll();
+              expect((await inFlight.open()).token).toBe(esm.token);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect(globalThis.loads).toEqual(["esm-pkg"]);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    // Bun.plugin.clearAll() also removes the plugin of hold.js, so one load is all that file can hold.
+    test.each([
+      ["", "", 3],
+      [" and Bun.plugin.clearAll()", "Bun.plugin.clearAll();", 1],
+    ])("an import() of the module after vi.doUnmock()%s joins the load", async (_, clearAll, rows) => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("joineda", "esm-pkg"),
+          ...importer("joinedb", "esm-pkg"),
+          ...importer("joinedc", "esm-pkg"),
+          "joined.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { load } from "./hold.js";
+
+            test.each([
+              ["a factory that takes importOriginal", "a", () => vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()) }))],
+              ["no factory", "b", () => vi.doMock("esm-pkg")],
+              ["a factory", "c", () => vi.doMock("esm-pkg", () => ({ token: "mock" }))],
+            ].slice(0, ${rows}))("vi.doUnmock() of a mock with %s", async (_, name, mockIt) => {
+              mockIt();
+              const inFlight = await load("joined" + name);
+              vi.doUnmock("esm-pkg");
+              ${clearAll}
+              const joined = import("esm-pkg");
+              expect([(await inFlight.open()).token, (await joined).token]).toEqual([esm.token, esm.token]);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect(globalThis.loads).toEqual(["esm-pkg"]);
+            });
+          `,
+        },
+        rows,
+      );
+    });
+
+    test("an import() that started before the mock was made", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          "before.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import * as esm from "esm-pkg";
+            import { tokens } from "lib";
+
+            test("a mock of the package starts and ends", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              expect((await import("esm-pkg")).token).toBe("mock");
+              vi.doUnmock("esm-pkg");
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+            });
+
+            test("import(), then vi.doMock() with no factory, which ends one job later", async () => {
+              const inFlight = import("esm-pkg");
+              vi.doMock("esm-pkg");
+              await null;
+              vi.doUnmock("esm-pkg");
+              expect([(await inFlight).token, (await import("esm-pkg")).token]).toEqual([esm.token, esm.token]);
+              expect(globalThis.loads).toEqual(["cjs-pkg", "esm-pkg", "lib"]);
+            });
+
+            test("the next test gets the loaded package", async () => {
+              expect((await import("esm-pkg")).token).toBe(tokens[0]);
+            });
+          `,
+        },
+        3,
+      );
+    });
+
+    test("vi.importActual() of a module in an import cycle that still evaluates is the load", async () => {
+      const cycle = (jobs: number) => ({
+        [`tla${jobs}.js`]: `import "./mid${jobs}.js"; await globalThis.gate.promise; export const token = Symbol("tla");`,
+        [`mid${jobs}.js`]: `import "./tla${jobs}.js"; globalThis.midRan.resolve();`,
+      });
+      await expectFixturesToPass(
+        {
+          ...Object.assign({}, ...Array.from({ length: 12 }, (_, jobs) => cycle(jobs))),
+          "cycle.test.js": `
+            import { expect, test, vi } from "vitest";
+
+            test("vi.doUnmock() some jobs after vi.importActual()", async () => {
+              for (let jobs = 0; jobs < 12; jobs++) {
+                const gate = (globalThis.gate = Promise.withResolvers());
+                const midRan = (globalThis.midRan = Promise.withResolvers());
+                const specifier = "./tla" + jobs + ".js";
+                const loaded = import(specifier);
+                await midRan.promise;
+                vi.doMock(specifier, async importOriginal => ({ ...(await importOriginal()) }));
+                const actual = vi.importActual(specifier);
+                for (let job = 0; job < jobs; job++) await null;
+                vi.doUnmock(specifier);
+                gate.resolve();
+                const { token } = await loaded;
+                await actual;
+                expect((await import(specifier)).token).toBe(token);
+              }
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("the factory rejects after vi.doUnmock()", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...importer("rejects", "esm-pkg"),
+          ...importer("failed", "esm-pkg"),
+          ...importer("virtual", "esm-pkg"),
+          ...esmPackage("swept-pkg", `export const token = Symbol("swept-pkg");`),
+          ...Object.assign({}, ...Array.from({ length: 8 }, (_, jobs) => importer("served" + jobs, "swept-pkg"))),
+          "rejects.test.js": `
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { hold, load } from "./hold.js";
+
+            // These importers ask for their imports a fixed number of jobs after the import() call, with no file read between.
+            Bun.plugin({
+              name: "serve",
+              setup(build) {
+                build.onLoad({ filter: /importer-served\\d\\.js$/ }, ({ path }) => ({
+                  contents: 'import "swept-pkg"; import "./held-' + path.slice(path.lastIndexOf("importer-") + 9) + '";',
+                  loader: "js",
+                }));
+              },
+            });
+
+            // A compiled run gives the load the loaded module, so it does not reject there.
+            test("vi.doUnmock() while the factory runs", async () => {
+              const called = Promise.withResolvers();
+              const result = Promise.withResolvers();
+              vi.doMock("esm-pkg", async () => (called.resolve(), await result.promise));
+              const inFlight = await load("rejects");
+              const exports = inFlight.open();
+              await called.promise;
+              vi.doUnmock("esm-pkg");
+              result.reject(new Error("the factory failed"));
+              expect(await exports.then(exports => exports.token, error => error.message)).toBeOneOf([esm.token, "the factory failed"]);
+              expect((await import("esm-pkg")).token).toBe(esm.token);
+              expect(globalThis.loads).toEqual(["esm-pkg"]);
+            });
+
+            // The import() of the package itself is rejected before the load has read its file and asks for the package.
+            test("the factory rejects before vi.doUnmock(), with an import() of the package itself in flight", async () => {
+              const called = Promise.withResolvers();
+              const result = Promise.withResolvers();
+              vi.doMock("esm-pkg", () => (called.resolve(), result.promise));
+              const direct = import("esm-pkg").then(() => "fulfilled", error => error.message);
+              await called.promise;
+              const loading = load("failed");
+              result.reject(new Error("the factory failed"));
+              const inFlight = await loading;
+              vi.doUnmock("esm-pkg");
+              await inFlight.open().catch(() => {});
+              expect(await direct).toBe("the factory failed");
+              expect([(await import("esm-pkg")).token, require("esm-pkg").token]).toEqual([esm.token, esm.token]);
+            });
+
+            // In some of these jobs the import() of the package itself leaves its error in the entry that the load fetches.
+            // The module that is set aside does not move into such an entry. Which instance an import gets depends on the job.
+            test("the factory rejects some jobs after a load starts, with an import() of the package itself in flight", async () => {
+              await import("swept-pkg");
+              for (let jobs = 0; jobs < 8; jobs++) {
+                const called = Promise.withResolvers();
+                const result = Promise.withResolvers();
+                vi.doMock("swept-pkg", () => (called.resolve(), result.promise));
+                const direct = import("swept-pkg").then(() => "fulfilled", error => error.message);
+                await called.promise;
+                const { asked, gate } = hold("served" + jobs);
+                const importer = import("./importer-served" + jobs + ".js");
+                for (let job = 0; job < jobs; job++) await null;
+                result.reject(new Error("the factory failed"));
+                await asked.promise;
+                vi.doUnmock("swept-pkg");
+                gate.resolve();
+                await importer;
+                expect([await direct, typeof (await import("swept-pkg")).token]).toEqual(["the factory failed", "symbol"]);
+              }
+            });
+
+            // This module has the key for the rest of the run. A compiled run refuses it for a file that it has compiled.
+            test("vi.doUnmock(), then build.module() of the path of the package", async () => {
+              vi.doMock("esm-pkg", () => ({ token: "mock" }));
+              const inFlight = await load("virtual");
+              vi.doUnmock("esm-pkg");
+              let token = "virtual";
+              Bun.plugin({
+                name: "virtual",
+                setup(build) {
+                  try {
+                    build.module(require.resolve("esm-pkg"), () => ({ exports: { token }, loader: "object" }));
+                  } catch {
+                    token = esm.token;
+                  }
+                },
+              });
+              expect([(await inFlight.open()).token, (await import("esm-pkg")).token, require("esm-pkg").token]).toEqual(Array(3).fill(token));
+            });
+          `,
+        },
+        4,
+      );
+    });
+
+    // mock.module() sets nothing aside, so its end moves nothing back: not what vi.importActual() has loaded meanwhile.
+    test("the end of a later mock.module() moves back only what vi.doMock() had set aside", async () => {
+      await expectFixturesToPass(
+        {
+          ...loaded,
+          ...esmPackage("fresh-pkg", `export const token = Symbol("fresh-pkg");`),
+          ...importer("fresh", "fresh-pkg"),
+          ...importer("reset", "esm-pkg"),
+          ...importer("deleted", "esm-pkg"),
+          ...importer("owed", "./own.js"),
+          ...importer("part", "./part.js"),
+          "part.js": counted("part", `export const token = Symbol("part");`),
+          "later.test.js": `
+            import { jest, mock } from "bun:test";
+            import { expect, test, vi } from "vitest";
+            import * as esm from "esm-pkg";
+            import { load } from "./hold.js";
+
+            const deleteFromRequireCache = () => {
+              for (const key of Object.keys(require.cache)) if (key.includes("esm-pkg")) delete require.cache[key];
+            };
+
+            test.each([
+              ["a package that nothing had loaded", "fresh", "fresh-pkg", () => {}],
+              ["a package that jest.resetModules() has evicted", "reset", "esm-pkg", () => jest.resetModules()],
+              ["a package that a delete from require.cache has evicted", "deleted", "esm-pkg", deleteFromRequireCache],
+            ])("%s", async (_, name, specifier, reset) => {
+              vi.doMock(specifier, () => ({ token: "first" }));
+              const inFlight = await load(name);
+              vi.doUnmock(specifier);
+              mock.module(specifier, () => ({ token: "later" }));
+              reset();
+              const actual = await vi.importActual(specifier);
+              await inFlight.open();
+              vi.doUnmock(specifier);
+              const { token } = await import(specifier);
+              expect([typeof token, token === actual.token, token === esm.token]).toEqual(["symbol", false, false]);
+            });
+
+            test("a delete of the module from require.cache while its move back is owed", async () => {
+              const own = await import("./own.js");
+              vi.doMock("./own.js", () => ({ token: "mock" }));
+              const inFlight = await load("owed");
+              vi.doUnmock("./own.js");
+              delete require.cache[require.resolve("./own.js")];
+              await inFlight.open();
+              const { token } = await import("./own.js");
+              expect([typeof token, token === own.token]).toEqual(["symbol", false]);
+            });
+
+            // The last test of the file: Bun.plugin.clearAll() also removes the plugin of hold.js.
+            test("vi.doUnmock(), then mock.module() of the module, then Bun.plugin.clearAll()", async () => {
+              await import("./part.js");
+              vi.doMock("./part.js", () => ({ token: "first" }));
+              const inFlight = await load("part");
+              vi.doUnmock("./part.js");
+              mock.module("./part.js", () => ({ token: "later" }));
+              await inFlight.open();
+              Bun.plugin.clearAll();
+            });
+          `,
+          "next.test.js": `
+            import { expect, test, vi } from "vitest";
+
+            test("the end of a mock in the next test file moves nothing that the file before left", async () => {
+              vi.doMock("./part.js", () => ({ token: "mock" }));
+              const actual = await vi.importActual("./part.js");
+              vi.doUnmock("./part.js");
+              expect(await import("./part.js")).not.toBe(actual);
+            });
+          `,
+        },
+        6,
+        ["./later.test.js", "./next.test.js"],
+      );
+    });
+  });
+
   test("is dropped once its own load settles, even while other loads are pending", async () => {
     await expectFixturesToPass(
       {

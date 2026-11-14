@@ -288,7 +288,11 @@ impl TSConfigJSON {
         }
 
         if self.jsx_flags.contains(JsxField::ImportSource) {
+            // "jsxImportSource" is one setting stored in three fields, as `Pragma::from_api` writes it.
             out.import_source = self.jsx.import_source.clone();
+            out.package_name.clone_from(&self.jsx.package_name);
+            out.classic_import_source
+                .clone_from(&self.jsx.classic_import_source);
         }
 
         if self.jsx_flags.contains(JsxField::Runtime) {
@@ -546,11 +550,14 @@ impl TSConfigJSON {
                 }
             }
 
-            // Parse "jsxImportSource"
+            // "jsxImportSource": "" keeps the react defaults but still overrides an extended config's value.
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
-                    result.jsx.package_name = str.to_vec().into();
-                    result.jsx.set_import_source();
+                    if !str.is_empty() {
+                        result.jsx.package_name = str.to_vec().into();
+                        result.jsx.set_import_source();
+                        result.jsx.classic_import_source = result.jsx.package_name.clone();
+                    }
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
             }

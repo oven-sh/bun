@@ -1366,15 +1366,9 @@ pub mod bv2_impl {
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
-                    use crate::Graph::InputFileColumns as _;
-                    // The module of a `with { type }` import is asked for by its type.
-                    let key_loader = match parse.source_index.is_valid() {
-                        true => bv2.graph.input_files.items_key_loader()
-                            [parse.source_index.get() as usize],
-                        false => None,
-                    };
-                    let default_loader = key_loader
-                        .or_else(|| parse.path.loader(&bv2.transpiler.options.loaders))
+                    let default_loader = parse
+                        .path
+                        .loader(&bv2.transpiler.options.loaders)
                         .unwrap_or(Loader::Js);
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),

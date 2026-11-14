@@ -2928,36 +2928,6 @@ describe("bundler", () => {
 
   // An import of another entry point can make the module before the plugins answer for the
   // entry point. The file is still an entry point, with the output that it has without the plugin.
-  test.concurrent("plugin/onLoad gets the type of the import as its loader", async () => {
-    using dir = tempDir("plugin-onload-type", {
-      "entry.ts": `import data from "./d.json"; import text from "./d.json" with { type: "text" }; export { data, text };`,
-      "d.json": `{"a":1}`,
-    });
-    for (const passesLoader of [false, true]) {
-      const loaders: string[] = [];
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "entry.ts")],
-        outdir: join(String(dir), "out" + passesLoader),
-        plugins: [
-          {
-            name: "text",
-            setup(build) {
-              build.onLoad({ filter: /d\.json$/ }, async args => {
-                loaders.push(args.loader);
-                const contents = await Bun.file(args.path).text();
-                return passesLoader ? { contents, loader: args.loader } : { contents };
-              });
-            },
-          },
-        ],
-      });
-      expect(result.success).toBe(true);
-      expect(loaders.sort()).toEqual(["json", "text"]);
-      const { data, text } = await import(result.outputs[0].path);
-      expect({ data, text }).toEqual({ data: { a: 1 }, text: `{"a":1}` });
-    }
-  });
-
   // Such a module has no path.
   test.concurrent("plugin/require.resolve of a module in a plugin namespace keeps the specifier", async () => {
     using dir = tempDir("plugin-require-resolve-namespace", {

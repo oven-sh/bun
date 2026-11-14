@@ -222,8 +222,8 @@ rewriter.on("div", {
     el.removeAttribute("class");
 
     // Content manipulation
-    el.setInnerContent("New content"); // Escapes HTML by default
-    el.setInnerContent("<p>HTML content</p>", { html: true }); // Parses HTML
+    el.setInnerContent("New content"); // Text by default: Bun escapes <, > and & (see "Text vs. HTML content")
+    el.setInnerContent("<p>HTML content</p>", { html: true }); // Written as HTML
     el.setInnerContent(""); // Clear content
 
     // Position manipulation
@@ -336,6 +336,58 @@ rewriter.onDocument({
   },
 });
 ```
+
+### Text vs. HTML content
+
+Every method that inserts content takes a string and an optional `{ html: true }`. The methods are `before`, `after`, `prepend`, `append`, `replace`, `setInnerContent`, and `end.append`.
+
+- Without `{ html: true }`, the string is text. Bun writes `<`, `>` and `&` as `&lt;`, `&gt;` and `&amp;`, so the string holds no markup.
+- With `{ html: true }`, Bun writes the string as is.
+
+Bun does not change the page text around the string. If the page text ends in a bare `<` right before the string, a browser can read that `<` and the string as one tag. For example, `el.append("img src=x onerror=run() ")` on `<a><</a>` produces `<a><img src=x onerror=run() </a>`, and the browser creates an `<img>` element. A page that writes `<` in its text as `&lt;` does not have this case. For a page that you do not control, start the string with a space, because a `<` before a space is text.
+
+Bun escapes text the same way in every element, and so does Cloudflare Workers. A browser does not decode entities inside these HTML elements: `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` and `<plaintext>`. Text that you insert there keeps the entities. For example, `el.append("if (a < b) run()")` on a `<script>` produces `if (a &lt; b) run()`, which is a syntax error.
+
+To insert script or style source, pass `{ html: true }` and make sure that the string cannot end the element early:
+
+```ts
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+
+// JSON state: "<" only occurs inside JSON strings, where "\u003c" means the same
+// thing. The replacement is lossless and leaves no "<", so nothing can end the element.
+rewriter.on('script[type="application/json"]', {
+  element(el) {
+    const json = JSON.stringify(state).replaceAll("<", "\\u003c");
+    // The selector also matches a <script> inside <svg> or <math>. The parser decodes
+    // entities there, so the default escaping is the right one for those.
+    el.setInnerContent(json, { html: el.namespaceURI === HTML_NS });
+  },
+});
+
+// CSS or JavaScript source has no lossless escape. Refuse input that could end the element.
+rewriter.on("style", {
+  element(el) {
+    // A tag selector also matches <svg><style> and <math><style>. To the HTML parser
+    // their contents are ordinary markup, so the default escaping is the right one there.
+    if (el.namespaceURI !== HTML_NS) {
+      el.setInnerContent(css);
+      return;
+    }
+    if (/<\/style/i.test(css)) throw new Error("CSS must not contain </style");
+    el.setInnerContent(css, { html: true });
+  },
+});
+```
+
+Keep the `namespaceURI` check in both recipes. Inside `<svg>` or `<math>`, the parser reads the contents of `<style>` and `<script>` as markup and decodes entities. A string that you write there with `{ html: true }` can add elements even when it contains no end tag. The JSON string has no `<`, so it cannot add an element there. The parser still decodes character references such as `&amp;` in it, which changes the value. The default escaping keeps CSS and JSON exact there.
+
+For JavaScript source in an HTML `<script>`, refuse `</script`, `<script` and `<!--` in the same way, whatever the letter case. After `<!--` and `<script`, the parser does not treat the next `</script>` as the end of the element, so the markup after it becomes script text. The HTML standard describes these [restrictions for contents of script elements](https://html.spec.whatwg.org/multipage/scripting.html#restrictions-for-contents-of-script-elements).
+
+`setInnerContent` replaces the element's text, so the string stands alone and the check is complete. Every other `{ html: true }` insertion inside the element can land next to text that is already there: `append`, `prepend`, `before` on the end tag, and `before`, `after` or `replace` on a text chunk. One of these sequences can also form where your string meets that text. For example, existing text that ends in `</sty` and a string that starts with `le>` end the element together. Use those insertions with `{ html: true }` only on text that you control.
+
+To insert more than one string into the same element, join the strings first, check the result, and insert it with one call. Separate calls do not always land in call order: `prepend` and `after` put a later call first.
+
+A browser decodes entities in `<textarea>` and `<title>` as it does in ordinary elements, so the default escaping is correct there.
 
 ### Response Handling
 

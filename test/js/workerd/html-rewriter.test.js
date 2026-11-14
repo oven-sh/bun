@@ -1762,6 +1762,130 @@ describe("HTMLRewriter", () => {
     expect(await res.text()).toBe("test");
   });
 
+  // Pins docs/runtime/html-rewriter.mdx "Text vs. HTML content" and the ContentOptions.html JSDoc.
+  it("escapes text content inside <script> and <style> too; { html: true } is the documented route", () => {
+    const insert = (selector, input, fn) =>
+      new HTMLRewriter()
+        .on(selector, {
+          element(el) {
+            fn(el);
+          },
+        })
+        .transform(input);
+
+    expect({
+      script: insert("script", "<script>var a=1;</script>", el => el.append("if(a<2&&a>0)a&=1;")),
+      style: insert("style", "<style>b{}</style>", el => el.prepend("ul>li{color:red} ")),
+      endTag: insert("script", "<script>var a=1;</script>", el => el.onEndTag(end => end.before("a<2;"))),
+      // RCDATA: a browser decodes these, so escaping is what textContent= would serialize to.
+      textarea: insert("textarea", "<textarea>x</textarea>", el => el.setInnerContent("a<b && c>d")),
+    }).toEqual({
+      script: "<script>var a=1;if(a&lt;2&amp;&amp;a&gt;0)a&amp;=1;</script>",
+      style: "<style>ul&gt;li{color:red} b{}</style>",
+      endTag: "<script>var a=1;a&lt;2;</script>",
+      textarea: "<textarea>a&lt;b &amp;&amp; c&gt;d</textarea>",
+    });
+
+    expect(insert("style", "<style>b{}</style>", el => el.prepend("ul>li{color:red} ", { html: true }))).toBe(
+      "<style>ul>li{color:red} b{}</style>",
+    );
+
+    // A browser reads a bare "<" of the page and the text written right after it as one tag.
+    const attrs = "img src=x onerror=run() ";
+    expect({
+      bareLt: insert("a", "<a><</a>", el => el.append(attrs)),
+      entity: insert("a", "<a>&lt;</a>", el => el.append(attrs)),
+      spaceFirst: insert("a", "<a><</a>", el => el.append(" " + attrs)),
+      beforeElement: insert("b", "<p>a<<b>x</b></p>", el => el.before(attrs)),
+    }).toEqual({
+      bareLt: "<a><img src=x onerror=run() </a>",
+      entity: "<a>&lt;img src=x onerror=run() </a>",
+      spaceFirst: "<a>< img src=x onerror=run() </a>",
+      beforeElement: "<p>a<img src=x onerror=run() <b>x</b></p>",
+    });
+
+    const HTML_NS = "http://www.w3.org/1999/xhtml";
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const seen = [];
+
+    // The JSON recipe of the docs, on an HTML <script> and on one inside <svg>.
+    const config = { html: "</script><script>alert(1)</script><!--", amp: "&lt;&amp;", n: 1 };
+    const inHtml = String.raw`{"html":"\u003c/script>\u003cscript>alert(1)\u003c/script>\u003c!--","amp":"&lt;&amp;","n":1}`;
+    const inSvg = String.raw`{"html":"\u003c/script&gt;\u003cscript&gt;alert(1)\u003c/script&gt;\u003c!--","amp":"&amp;lt;&amp;amp;","n":1}`;
+    const jsonOut = insert(
+      'script[type="application/json"]',
+      '<script type="application/json"></script><svg><script type="application/json"></script></svg><p>n</p>',
+      el => {
+        seen.push(el.namespaceURI);
+        const json = JSON.stringify(config).replaceAll("<", "\\u003c");
+        el.setInnerContent(json, { html: el.namespaceURI === HTML_NS });
+      },
+    );
+    expect(jsonOut).toBe(
+      `<script type="application/json">${inHtml}</script>` +
+        `<svg><script type="application/json">${inSvg}</script></svg><p>n</p>`,
+    );
+    // bun:test has no HTML parser: decode() stands in for what a browser does to the text inside <svg>.
+    const decode = text => text.replace(/&(lt|gt|amp);/g, (_, name) => ({ lt: "<", gt: ">", amp: "&" })[name]);
+    const [htmlText, svgText] = Array.from(
+      jsonOut.matchAll(/<script type="application\/json">(.*?)<\/script>/g),
+      match => match[1],
+    );
+    expect([JSON.parse(htmlText), JSON.parse(decode(svgText))]).toEqual([config, config]);
+
+    // The CSS recipe of the docs. "style" also matches <svg><style>, whose contents are markup to the parser.
+    const styleRecipe = css => el => {
+      seen.push(el.namespaceURI);
+      if (el.namespaceURI !== HTML_NS) {
+        el.setInnerContent(css);
+        return;
+      }
+      if (/<\/style/i.test(css)) throw new Error("CSS must not contain </style");
+      el.setInnerContent(css, { html: true });
+    };
+    const page = "<svg><style>a{}</style></svg><style>b{}</style>";
+    expect(insert("style", page, styleRecipe("i>b{} <img src=x onerror=alert(1)>"))).toBe(
+      "<svg><style>i&gt;b{} &lt;img src=x onerror=alert(1)&gt;</style></svg>" +
+        "<style>i>b{} <img src=x onerror=alert(1)></style>",
+    );
+    expect(() => insert("style", page, styleRecipe("a{}</STYLE ><img src=x>"))).toThrow("CSS must not contain </style");
+    expect(seen).toEqual([HTML_NS, SVG_NS, SVG_NS, HTML_NS, SVG_NS, HTML_NS]);
+
+    // With { html: true }, "</style" can form where a string meets existing text or another inserted string.
+    const [head, tail] = ["b{}</sty", "le><p>"];
+    const existing = "<style>a{}</sty</style>";
+    expect({
+      twoAppends: insert("style", "<style>a{}</style>", el => {
+        el.append(head, { html: true });
+        el.append(tail, { html: true });
+      }),
+      // prepend puts a later call first: the join in call order, "le><p>b{}</sty", has no "</style".
+      twoPrepends: insert("style", "<style>a{}</style>", el => {
+        el.prepend(tail, { html: true });
+        el.prepend(head, { html: true });
+      }),
+      append: insert("style", existing, el => el.append(tail, { html: true })),
+      prepend: insert("style", "<style>le><p></style>", el => el.prepend(head, { html: true })),
+      endTagBefore: insert("style", existing, el => el.onEndTag(end => end.before(tail, { html: true }))),
+      textChunkBefore: new HTMLRewriter()
+        .on("style", {
+          text(chunk) {
+            if (chunk.lastInTextNode) chunk.before(tail, { html: true });
+          },
+        })
+        .transform(existing),
+      setInnerContent: insert("style", existing, el => el.setInnerContent(tail, { html: true })),
+    }).toEqual({
+      twoAppends: "<style>a{}b{}</style><p></style>",
+      twoPrepends: "<style>b{}</style><p>a{}</style>",
+      append: "<style>a{}</style><p></style>",
+      prepend: "<style>b{}</style><p></style>",
+      endTagBefore: "<style>a{}</style><p></style>",
+      textChunkBefore: "<style>a{}</style><p></style>",
+      setInnerContent: "<style>le><p></style>",
+    });
+  });
+
   it("handles element class properties", async () => {
     class Handler {
       constructor(content) {

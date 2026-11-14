@@ -916,6 +916,44 @@ it("caps the number of parsed query string parameters instead of crashing", asyn
   expect(exitCode).toBe(0);
 });
 
+it(".query does not split a key that repeats more than 256 times into groups of 256", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const numbered = (count: number) => Array.from({ length: count }, (_, i) => "v" + i);
+  const search = (values: string[]) => values.map(value => "tag=" + value).join("&");
+
+  // The router parses 2048 pairs and not more. On the dynamic route, `id` is one of them.
+  for (const [pathname, params, counts] of [
+    ["/posts", {}, [255, 256, 257, 300, 512, 513, 2048]],
+    ["/posts/123", { id: "123" }, [255, 256, 257, 300, 512, 513, 2047]],
+  ] as const) {
+    for (const count of counts) {
+      const tag = numbered(count);
+      const url = pathname + "?" + search(tag);
+      const expected = { count, query: { ...params, tag } };
+      expect({ count, query: router.match(url)!.query }).toEqual(expected);
+      expect({ count, query: router.match(new Request("http://localhost" + url))!.query }).toEqual(expected);
+    }
+  }
+});
+
+it(".query lists a key at its first position, with its values in the order of the URL", () => {
+  const { dir } = make(["posts.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const first = Array.from({ length: 256 }, (_, i) => "v" + i);
+  const url = "/posts?a=1&" + first.map(value => "id=" + value).join("&") + "&x=9&id=w0&id=w1&a=2";
+  expect(Object.entries(router.match(url)!.query)).toEqual([
+    ["a", ["1", "2"]],
+    ["id", [...first, "w0", "w1"]],
+    ["x", "9"],
+  ]);
+
+  const distinct = Array.from({ length: 300 }, (_, i) => ["k" + i, "v" + i]);
+  expect(Object.entries(router.match("/posts?" + new URLSearchParams(distinct))!.query)).toEqual(distinct);
+});
+
 it("does not match a dynamic route whose static segment merely collides on length and 32-bit hash", () => {
   const low32 = (input: string) => Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(input))));
   const seen = new Map<number, string>();

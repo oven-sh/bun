@@ -983,10 +983,16 @@ static NEVER_INLINE std::optional<bool> nodeArrayOtherKeysEqual(JSC::JSGlobalObj
     }
     // `keys2.length === 0 && (val2.length === 0 || val2.size === 0)` (#L523-L528): with no other key, a second array that answers 0 for `size` is equal.
     if (!hasOtherKeys && array2->length()) {
-        JSValue size2 = array2->get(globalObject, vm.propertyNames->size);
+        PropertySlot sizeSlot(array2, PropertySlot::InternalMethodType::Get);
+        bool hasSize = array2->getPropertySlot(globalObject, vm.propertyNames->size, sizeSlot);
         RETURN_IF_EXCEPTION(scope, false);
-        if (size2.isNumber() && !size2.asNumber()) {
-            return true;
+        // The caller skips this function for two plain arrays, so a `size` that the realm's Array.prototype or Object.prototype holds is read for no array.
+        if (hasSize && sizeSlot.slotBase() != JSValue(globalObject->arrayPrototype()) && sizeSlot.slotBase() != JSValue(globalObject->objectPrototype())) {
+            JSValue size2 = sizeSlot.getValue(globalObject, vm.propertyNames->size);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (size2.isNumber() && !size2.asNumber()) {
+                return true;
+            }
         }
     }
     return std::nullopt;
@@ -1257,7 +1263,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         if constexpr (checkPrototypes) {
-            // Other keys and `size` take an own property or another prototype than the realm's Array.prototype. A `size` put on that prototype is not read.
+            // Other keys and `size` take an own property or another prototype than the realm's Array.prototype. A `size` put on that prototype or on Object.prototype is read for no array.
             if (Bun::NodeObjEquiv::hasNamedProperties(array1->structure()) || Bun::NodeObjEquiv::hasNamedProperties(array2->structure())
                 || array2->getPrototypeDirect() != JSValue(globalObject->arrayPrototype())) [[unlikely]] {
                 std::optional<bool> areEqual = nodeArrayOtherKeysEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, array1, array2);

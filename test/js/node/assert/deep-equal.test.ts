@@ -2462,6 +2462,18 @@ const orderedPairs: OrderedPair[] = [
     strict: [true, true],
     loose: [true, true],
   },
+  // Known difference: a key that an Error has from its prototype is in the list that Bun takes for its keys. So an
+  // own key of that name and value on the other Error finds it there.
+  {
+    first: "an Error whose prototype has p and q",
+    second: "an Error of that class with a p of its own",
+    a: () => new ErrorWithInheritedKeys("m"),
+    b: () => Object.assign(new ErrorWithInheritedKeys("m"), { p: 1 }),
+    strict: [false, false],
+    loose: [false, false],
+    strictBug: ["reports equal", "reports equal"],
+    looseBug: ["reports equal", "reports equal"],
+  },
   // Each Error lists one key, and each has the key of the other: `message` hidden in the one, `name` from the
   // prototype of the other.
   {
@@ -4592,6 +4604,34 @@ describe("util.isDeepStrictEqual", () => {
         name: "RangeError",
         message: "from the getter",
       });
+    });
+
+    // Known difference: Node reads the `size` of the second array from wherever it is, so a 0 on Array.prototype or
+    // on Object.prototype makes every two arrays of one length equal. Bun reads a `size` from neither of the two.
+    test("no size that Array.prototype or Object.prototype holds, for a plain array as for any other", () => {
+      class Subclass extends Array<number> {}
+      const pairs = (): [number[], number[]][] => [
+        [[1], [2]],
+        [withHiddenProperty([1], "x", 1), [2]],
+        [[1], withHiddenProperty([2], "x", 1)],
+        [Subclass.of(1), Subclass.of(2)],
+      ];
+      const answers: boolean[] = [];
+      let reads = 0;
+      for (const prototype of [Array.prototype, Object.prototype]) {
+        Object.defineProperty(prototype, "size", { configurable: true, get: () => (reads++, 0) });
+        try {
+          for (const [first, second] of pairs()) answers.push(util.isDeepStrictEqual(first, second));
+        } finally {
+          delete (prototype as { size?: number }).size;
+        }
+      }
+      same(answers, new Array(8).fill(!isBun));
+      assert.strictEqual(reads > 0, !isBun);
+      // A `size` of its own is read, and so is one on a prototype between the array and Array.prototype.
+      assert.strictEqual(util.isDeepStrictEqual([1], withHiddenProperty([2], "size", 0)), true);
+      Object.defineProperty(Subclass.prototype, "size", { value: 0 });
+      assert.strictEqual(util.isDeepStrictEqual(Subclass.of(1), Subclass.of(2)), true);
     });
 
     test("the own keys of a Map before its entries", () => {

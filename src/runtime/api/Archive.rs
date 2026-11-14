@@ -263,6 +263,15 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let data_slice = get_entry_data(global, value, &mut array_buffer)?;
         let data = data_slice.slice();
 
+        // Readers take it for a directory, and its contents for more entries.
+        let last = bun_core::slice_to_nul(key_slice.slice()).last();
+        if !data.is_empty() && last.is_some_and(|&c| bun_paths::is_sep_native(c)) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Failed to create tarball: {} is a directory and cannot have contents",
+                bun_core::fmt::quote(key_slice.slice())
+            )));
+        }
+
         writer
             .header(&tar::writer::File {
                 path: key_slice.slice(),

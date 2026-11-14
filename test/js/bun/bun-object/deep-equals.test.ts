@@ -245,6 +245,310 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+// `message` and `name` are properties: either can come from any prototype or from a getter.
+describe("Bun.deepEquals on two Errors", () => {
+  // The fourth argument is not in the public types.
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const withHiddenName = (error: Error, name: unknown) =>
+    Object.defineProperty(error, "name", { value: name, writable: true, configurable: true });
+
+  it.each([
+    ["TypeError", TypeError],
+    ["RangeError", RangeError],
+    ["SyntaxError", SyntaxError],
+    ["EvalError", EvalError],
+    ["URIError", URIError],
+    ["ReferenceError", ReferenceError],
+  ])("an instance of a class that extends %s equals an instance of its base", (_name, Base: ErrorConstructor) => {
+    class Sub extends Base {}
+    class SubOfSub extends Sub {}
+    const pairs = [
+      [new Sub("m"), new Base("m")],
+      [new Base("m"), new Sub("m")],
+      [new SubOfSub("m"), new Base("m")],
+      [new SubOfSub("m"), new Sub("m")],
+    ];
+    expect(pairs.map(([a, b]) => [deepEquals(a, b), deepEquals(a, b, true, true)])).toEqual(
+      pairs.map(() => [true, true]),
+    );
+    expect(deepEquals(new Sub("m"), new Base("other"))).toBe(false);
+    expect(deepEquals(new Sub("m"), new Error("m"))).toBe(false);
+  });
+
+  it("an instance of a class that extends AggregateError equals an AggregateError", () => {
+    class Sub extends AggregateError {}
+    expect(deepEquals(new Sub([1], "m"), new AggregateError([1], "m"))).toBe(true);
+    expect(deepEquals(new AggregateError([1], "m"), new Sub([1], "m"), true, true)).toBe(true);
+  });
+
+  it("instances of two classes that one getter on their base names are unequal", () => {
+    class AppError extends Error {
+      get name() {
+        return this.constructor.name;
+      }
+    }
+    class NotFound extends AppError {}
+    class Forbidden extends AppError {}
+    expect({
+      loose: deepEquals(new NotFound("m"), new Forbidden("m")),
+      strict: deepEquals(new NotFound("m"), new Forbidden("m"), true),
+      skipPrototype: deepEquals(new NotFound("m"), new Forbidden("m"), true, true),
+      sameClass: deepEquals(new NotFound("m"), new NotFound("m"), true),
+      againstError: deepEquals(new NotFound("m"), new Error("m")),
+    }).toEqual({ loose: false, strict: false, skipPrototype: false, sameClass: true, againstError: false });
+  });
+
+  it("a name two prototypes up is read", () => {
+    class Named extends Error {}
+    class Other extends Error {}
+    Object.defineProperty(Named.prototype, "name", { value: "Named", writable: true, configurable: true });
+    Object.defineProperty(Other.prototype, "name", { value: "Other", writable: true, configurable: true });
+    class SubOfNamed extends Named {}
+    class SubOfOther extends Other {}
+    expect({
+      subAndBase: deepEquals(new SubOfNamed("m"), new Named("m")),
+      baseAndSub: deepEquals(new Named("m"), new SubOfNamed("m")),
+      twoNames: deepEquals(new SubOfNamed("m"), new SubOfOther("m")),
+      twoNamesStrict: deepEquals(new SubOfNamed("m"), new SubOfOther("m"), true),
+    }).toEqual({ subAndBase: true, baseAndSub: true, twoNames: false, twoNamesStrict: false });
+  });
+
+  it("a message is read through a getter and from a prototype", () => {
+    class MessageA extends Error {
+      get message() {
+        return "A";
+      }
+    }
+    class MessageB extends Error {
+      get message() {
+        return "B";
+      }
+    }
+    class Inherited extends Error {}
+    Object.defineProperty(Inherited.prototype, "message", { value: "A", writable: true, configurable: true });
+    expect({
+      twoGetters: deepEquals(new MessageA(), new MessageB()),
+      twoGettersStrict: deepEquals(new MessageA(), new MessageB(), true),
+      getterAndOwn: deepEquals(new MessageA(), new Error("A")),
+      ownAndGetter: deepEquals(new Error("A"), new MessageA()),
+      inheritedAndOwn: deepEquals(new Inherited(), new Error("A")),
+      inheritedAndOther: deepEquals(new Inherited(), new Error("B")),
+    }).toEqual({
+      twoGetters: false,
+      twoGettersStrict: false,
+      getterAndOwn: true,
+      ownAndGetter: true,
+      inheritedAndOwn: true,
+      inheritedAndOther: false,
+    });
+  });
+
+  it("an Error with no message equals an Error with an empty message", () => {
+    expect({
+      loose: deepEquals(new Error(), new Error("")),
+      strict: deepEquals(new Error(""), new Error(), true),
+      skipPrototype: deepEquals(new Error(), new Error(""), true, true),
+      otherMessage: deepEquals(new Error(), new Error("m")),
+    }).toEqual({ loose: true, strict: true, skipPrototype: true, otherMessage: false });
+  });
+
+  it("a name that is not a string is compared as a value", () => {
+    const named = (name: unknown) => withHiddenName(new Error("m"), name);
+    expect({
+      equalObjects: deepEquals(named({ a: 1 }), named({ a: 1 })),
+      otherObjects: deepEquals(named({ a: 1 }), named({ a: 2 })),
+      undefinedAndDefault: deepEquals(named(undefined), new Error("m")),
+      numberAndString: deepEquals(named(1), named("1")),
+    }).toEqual({ equalObjects: true, otherObjects: false, undefinedAndDefault: false, numberAndString: false });
+  });
+
+  it("a message that is not a string is compared as a value", () => {
+    // The assignment makes an enumerable message in the first class, and sets the hidden one in the second.
+    class EnumerableMessage extends Error {
+      constructor(payload: object) {
+        super();
+        this.message = payload as unknown as string;
+      }
+    }
+    class HiddenMessage extends Error {
+      constructor(payload: object) {
+        super("placeholder");
+        this.message = payload as unknown as string;
+      }
+    }
+    for (const WithPayload of [EnumerableMessage, HiddenMessage]) {
+      expect({
+        equalObjects: deepEquals(new WithPayload({ status: 404 }), new WithPayload({ status: 404 })),
+        otherObjects: deepEquals(new WithPayload({ status: 404 }), new WithPayload({ status: 500 })),
+      }).toEqual({ equalObjects: true, otherObjects: false });
+    }
+  });
+
+  const modes: [strict: boolean, skipPrototype: boolean][] = [
+    [false, false],
+    [true, false],
+    [true, true],
+  ];
+
+  it("reads the message, then the name, once from each Error", () => {
+    const log: string[] = [];
+    class Logged extends Error {
+      #id: string;
+      constructor(id: string) {
+        super();
+        this.#id = id;
+      }
+      get message() {
+        log.push(`${this.#id}.message`);
+        return "m";
+      }
+      get name() {
+        log.push(`${this.#id}.name`);
+        return "n";
+      }
+    }
+    for (const [strict, skipPrototype] of modes) {
+      log.length = 0;
+      expect(deepEquals(new Logged("a"), new Logged("b"), strict, skipPrototype)).toBe(true);
+      expect(log).toEqual(["a.message", "b.message", "a.name", "b.name"]);
+    }
+  });
+
+  // An own enumerable property is compared with the other enumerable properties, and not a second time before them.
+  it("reads an own enumerable name or message once from each Error", () => {
+    const reads: Record<string, number> = {};
+    const counted = (id: string, value: string): PropertyDescriptor => ({
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads[id] = (reads[id] ?? 0) + 1;
+        return value;
+      },
+    });
+    const make = (id: string) =>
+      Object.defineProperties(new Error("m"), {
+        message: counted(`${id}.message`, "m"),
+        name: counted(`${id}.name`, "n"),
+      });
+    for (const [strict, skipPrototype] of modes) {
+      for (const id in reads) delete reads[id];
+      expect(deepEquals(make("a"), make("b"), strict, skipPrototype)).toBe(true);
+      expect(reads).toEqual({ "a.message": 1, "b.message": 1, "a.name": 1, "b.name": 1 });
+    }
+  });
+
+  it.each(["message", "name"] as const)("compares Errors nested through an enumerable %s once for each level", key => {
+    let leafReads = 0;
+    class Nested extends Error {
+      constructor(inner: Error) {
+        super();
+        (this as Record<string, unknown>)[key] = inner;
+      }
+    }
+    const leaf = () =>
+      Object.defineProperty(new Error("leaf"), "counted", {
+        enumerable: true,
+        get() {
+          leafReads++;
+          return 1;
+        },
+      });
+    const chain = () => {
+      let error: Error = leaf();
+      for (let depth = 0; depth < 12; depth++) error = new Nested(error);
+      return error;
+    };
+    for (const [strict, skipPrototype] of modes) {
+      leafReads = 0;
+      expect(deepEquals(chain(), chain(), strict, skipPrototype)).toBe(true);
+      expect(leafReads).toBe(2);
+    }
+  });
+
+  it("throws what a name or message getter throws", () => {
+    class ThrowsOnName extends Error {
+      get name(): string {
+        throw new RangeError("from the name getter");
+      }
+    }
+    class ThrowsOnMessage extends Error {
+      get message(): string {
+        throw new RangeError("from the message getter");
+      }
+    }
+    expect(() => deepEquals(new ThrowsOnName("m"), new ThrowsOnName("m"))).toThrow(
+      new RangeError("from the name getter"),
+    );
+    expect(() => deepEquals(new ThrowsOnName("m"), new ThrowsOnName("m"), true)).toThrow(
+      new RangeError("from the name getter"),
+    );
+    expect(() => deepEquals(new ThrowsOnMessage(), new ThrowsOnMessage())).toThrow(
+      new RangeError("from the message getter"),
+    );
+  });
+
+  it("compares two Errors the same way wherever they sit", () => {
+    class BadInput extends TypeError {}
+    const sub = () => new BadInput("m");
+    const base = () => new TypeError("m");
+    expect({
+      property: deepEquals({ error: sub() }, { error: base() }),
+      element: deepEquals([sub()], [base()]),
+      mapValue: deepEquals(new Map([["k", sub()]]), new Map([["k", base()]])),
+      setMember: deepEquals(new Set([sub()]), new Set([base()])),
+      cause: deepEquals(new Error("outer", { cause: sub() }), new Error("outer", { cause: base() })),
+    }).toEqual({ property: true, element: true, mapValue: true, setMember: true, cause: true });
+  });
+
+  it("a TypeError that the engine throws equals an instance of a subclass with its message", () => {
+    class BadInput extends TypeError {}
+    const holder: { missing?: { property: unknown } } = {};
+    let thrown: TypeError | undefined;
+    try {
+      holder.missing!.property;
+    } catch (error) {
+      thrown = error as TypeError;
+    }
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect(deepEquals(thrown, new BadInput(thrown!.message))).toBe(true);
+    expect(deepEquals(new BadInput(thrown!.message), thrown, true, true)).toBe(true);
+  });
+
+  // Jest and Vitest tell each of these pairs apart in toStrictEqual, by the two classes. Strict mode
+  // has no class rule for two Errors (#47837 adds one), so it takes them for equal.
+  describe("strict mode", () => {
+    class BadInput extends TypeError {}
+    class Named extends Error {}
+    Object.defineProperty(Named.prototype, "name", { value: "Named", writable: true, configurable: true });
+    class SubOfNamed extends Named {}
+    class NamedByAssignment extends Error {}
+    NamedByAssignment.prototype.name = "NamedByAssignment";
+    class SubOfNamedByAssignment extends NamedByAssignment {}
+    class MessageGetter extends Error {
+      get message() {
+        return "A";
+      }
+    }
+    class InheritedMessage extends Error {}
+    Object.defineProperty(InheritedMessage.prototype, "message", { value: "A", writable: true, configurable: true });
+
+    it.failing.each([
+      ["an instance of a subclass of TypeError and a TypeError", () => new BadInput("m"), () => new TypeError("m")],
+      ["a TypeError and an instance of a subclass of TypeError", () => new TypeError("m"), () => new BadInput("m")],
+      ["a name two prototypes up and the class that holds it", () => new SubOfNamed("m"), () => new Named("m")],
+      [
+        "an assigned name two prototypes up and the class that holds it",
+        () => new SubOfNamedByAssignment("m"),
+        () => new NamedByAssignment("m"),
+      ],
+      ["a message getter and an Error with that message", () => new MessageGetter(), () => new Error("A")],
+      ["a message on the prototype and an Error with that message", () => new InheritedMessage(), () => new Error("A")],
+    ])("tells %s apart", (_label, a, b) => {
+      expect(deepEquals(a(), b(), true)).toBe(false);
+    });
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being

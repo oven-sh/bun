@@ -1,0 +1,72 @@
+# <refused | loads | missed> TAB <the extension of the file> TAB <the program>
+# A program holds the regular expression literal /a**/, which the engine refuses, in or beside code that never runs.
+# refused: `bun run` prints the literal all the same, so the engine throws a SyntaxError where the file is loaded. A build reports TS100307 for the file.
+# loads: `bun run` prints nothing of the literal, and the file loads. A build reports nothing for it.
+# missed: `bun run` prints the literal and the file does not load, but a build reports nothing for it yet. Write refused for the row once a build reports the file.
+# never-run-code.test.ts holds plain Bun and `bun check --aot` to the answers.
+# the test of an `if` whose branch never runs: it is printed where a declaration of the branch stays in place
+refused	cjs	if (/a**/) {} else { async function f() {} }
+refused	cjs	if (/a**/) {} else { function* f() {} }
+loads	cjs	if (/a**/) {} else { function f() {} }
+loads	cjs	if (/a**/) {} else function f() {}
+loads	mjs	if (/a**/) {} else { function f() {} }
+refused	mjs	if (/a**/) {} else { async function f() {} } export {};
+loads	cjs	"use strict"; if (/a**/) {} else { function f() {} }
+refused	cjs	"use strict"; if (/a**/) {} else { async function f() {} }
+loads	cjs	let f; if (/a**/) {} else { function f() {} }
+loads	cjs	if (/a**/) {} else { function arguments() {} }
+refused	cjs	if (/a**/) {} else { function f() {} eval(""); }
+refused	cjs	(function () { "use strict"; if (/a**/) {} else { function f() {} eval(""); } })();
+refused	cjs	(function () { "use strict"; if (/a**/) {} else { function f() { eval("(function () {})"); } } })();
+loads	cjs	(function () { "use strict"; if (/a**/) {} else { { function f() {} } eval(""); } })();
+loads	cjs	if (/a**/) {} else { let v = 1; }
+loads	cjs	if (/a**/) {} else { class K {} }
+loads	cjs	if (/a**/) {} else { var v = 1; }
+refused	cjs	if (/a**/) {} else var v = 1;
+refused	cjs	if (/a**/) {} else { var v = 1; async function f() {} }
+loads	cjs	if (/a**/) {} else { for (var i = 0; i < 1; i++) {} }
+refused	cjs	if (/a**/) {} else { for (var i;;) {} }
+refused	cjs	if (/a**/) {} else for (var i, j;;) {}
+loads	cjs	if (/a**/) {} else for (var i, j = 0;;) {}
+loads	cjs	if (/a**/) {} else { try {} catch { var v; } }
+loads	mjs	if (/a**/) {} else { var v = 1; }
+loads	cjs	var x = function () {}; if (/a**/) { x(); } else { var v = 1; }
+refused	cjs	(function () { if (/a**/) {} else { var v = 1; } })();
+loads	cjs	(function () { if (/a**/) {} else { var [] = []; } })();
+loads	cjs	(function () { if (/a**/) {} else { let v = 1; } })();
+refused	cjs	if (/a**/) {} else { switch (0) {} }
+refused	cjs	if (/a**/) {} else { with ({}) {} }
+refused	cjs	(function () { if (/a**/) {} else { switch (0) {} } })();
+loads	cjs	if (!/a**/) { async function f() {} }
+loads	cjs	if (!/a**/) { var v = 1; }
+loads	cjs	(function () { if (!/a**/) { var v = 1; } })();
+refused	cjs	(function (x) { if (x(), /a**/) {} else { async function f() {} } })(function () {});
+loads	cjs	(function (x) { if (/a**/ && x()) {} else { async function f() {} } })(function () {});
+refused	cjs	(function (x) { if (x.y === /a**/) {} else { async function f() {} } })({});
+refused	cjs	if ([/a**/]) {} else { async function f() {} }
+refused	cjs	if ({ a: /a**/ }) {} else { async function f() {} }
+refused	cjs	if (/a**/ || 0) {} else { async function f() {} }
+refused	cjs	if (0 || /a**/) {} else { async function f() {} }
+refused	cjs	if (1 && /a**/) {} else { async function f() {} }
+loads	cjs	if (/a**/ ? 1 : 0) {} else { async function f() {} }
+refused	cjs	if (/a**/) {} else if (/a**/) { async function f() {} }
+refused	cjs	if (/a**/) {} else if (/a**/) {} else { async function f() {} }
+refused	cjs	if (/a**/) {} else { if (/a**/) {} else { async function f() {} } }
+# a literal in the code that never runs, or behind a return: a build takes none of them for printed
+loads	cjs	(function () { if (true) {} else if (/a**/) { var v; } })();
+missed	cjs	(function () { if (true) {} else { if (/a**/) {} else { var v; } } })();
+missed	cjs	if (false) { async function f(a = /a**/) {} }
+loads	cjs	if (false) { async function f() { return /a**/; } }
+missed	cjs	(function () { "use strict"; if (false) { var v; function f(a = /a**/) {} } })();
+missed	cjs	(function (x) { if (false) { switch (/a**/) { default: } } })();
+missed	cjs	(function (x) { if (false) { with (x(/a**/)) {} } })();
+missed	cjs	(function (x) { if (false) { for (x(/a**/); ; ) { var v; } } })();
+missed	cjs	(function (x) { if (false) { if (x(/a**/)) { var v; } } })();
+loads	cjs	(function (x) { if (false) { var v; x(/a**/); } })();
+loads	cjs	(function (x) { if (false) { var v = /a**/; } })();
+missed	cjs	(function () { return 1; { async function f() { return /a**/; } } })();
+missed	cjs	(function (x) { return 1; if (x) { var v; x(/a**/); } })();
+loads	cjs	(function (x) { return 1; x(/a**/); })();
+missed	cjs	(function (x) { while (false) { x(/a**/); } })();
+missed	cjs	(function (x) { switch (0) { case 1: x(/a**/); } })();
+missed	cjs	(function (x) { if (x) return 1; else return 2; x(/a**/); })();

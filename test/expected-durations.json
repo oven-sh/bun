@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/fold/never-run-code.test.ts": {
+    "default": 10000,
+    "asan": 40000
+  },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,
     "asan": 240000

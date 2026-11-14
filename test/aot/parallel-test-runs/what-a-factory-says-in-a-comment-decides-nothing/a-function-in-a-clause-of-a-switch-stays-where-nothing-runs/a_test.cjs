@@ -1,0 +1,8 @@
+const { test, vi } = require("bun:test");
+test("whether the mocked file runs", async () => {
+  vi.doMock("./own", async () => {
+    if (false) { switch (1) { case 1: function importOriginal() {} } } return { value: "mock" };
+  });
+  const user = await import("./user");
+  console.log("SAID", user.look(), String(globalThis.ran));
+});

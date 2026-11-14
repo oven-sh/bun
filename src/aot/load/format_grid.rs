@@ -1,12 +1,15 @@
 use std::borrow::Cow;
 
 use bun_alloc::Arena as AstArena;
-use bun_ast::{ASTMemoryAllocator, ExportsKind, Loader, Log, Source};
+use bun_ast::{
+    ASTMemoryAllocator, Ast, ExportsKind, ExprData, Loader, Log, Source, Stmt, StmtData,
+};
 use bun_js_parser::{Define, Parser, ParserOptions};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, RuntimeBindOptions};
-use bun_sema::file_analysis::{FileInputs, analyze_file};
-use bun_sema::fold::{FoldInputs, FoldOptions};
+use bun_sema::bind::{BindOptions, Bound, RuntimeBindOptions};
+use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
+use bun_sema::fold::{FoldInputs, FoldOptions, NeverRun};
+use bun_sema::hir::{File, StmtId, StmtKind};
 use bun_sema::import_sites::JsxMode;
 use bun_sema::module_format::{DeclaredModuleType, ModuleFormat};
 use bun_sema::session::{Arena, Session};
@@ -17,7 +20,7 @@ use crate::builtins::Platforms;
 
 const PATH: &[u8] = b"/project/a.ts";
 
-fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
+fn ask_bun_run<T>(text: &str, define: &Define, ask: impl FnOnce(&Ast<'_>) -> T) -> Option<T> {
     let arena = AstArena::new();
     let mut store = ASTMemoryAllocator::borrowing(&arena);
     let _scope = store.enter();
@@ -36,19 +39,79 @@ fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
     let mut log = Log::init();
     let parser = Parser::init(options, &mut log, &source, define, &arena).ok()?;
     match parser.parse().ok()? {
-        bun_js_parser::Result::Ast(ast) if !log.has_errors() => {
-            Some(ast.exports_kind == ExportsKind::Cjs)
-        }
+        bun_js_parser::Result::Ast(ast) if !log.has_errors() => Some(ask(&ast)),
         _ => None,
     }
 }
 
-fn is_commonjs_to_build<'s>(
+fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
+    ask_bun_run(text, define, |ast| ast.exports_kind == ExportsKind::Cjs)
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+struct Printed {
+    ifs: usize,
+    function_statements: usize,
+}
+
+/// Also in the function that the parser writes around a CommonJS file.
+fn count_printed(statements: &[Stmt], printed: &mut Printed) {
+    for statement in statements {
+        match statement.data {
+            StmtData::SIf(written) => {
+                printed.ifs += 1;
+                count_printed(std::slice::from_ref(&written.yes), printed);
+                count_printed(written.no.as_slice(), printed);
+            }
+            StmtData::SBlock(block) => count_printed(block.stmts.slice(), printed),
+            StmtData::SLabel(label) => count_printed(std::slice::from_ref(&label.stmt), printed),
+            StmtData::SWhile(looped) => count_printed(std::slice::from_ref(&looped.body), printed),
+            StmtData::SDoWhile(looped) => {
+                count_printed(std::slice::from_ref(&looped.body), printed)
+            }
+            StmtData::SFor(looped) => count_printed(std::slice::from_ref(&looped.body), printed),
+            StmtData::SForIn(looped) => count_printed(std::slice::from_ref(&looped.body), printed),
+            StmtData::SForOf(looped) => count_printed(std::slice::from_ref(&looped.body), printed),
+            StmtData::STry(tried) => {
+                count_printed(tried.body.slice(), printed);
+                if let Some(catch) = &tried.catch {
+                    count_printed(catch.body.slice(), printed);
+                }
+                if let Some(finally) = &tried.finally {
+                    count_printed(finally.stmts.slice(), printed);
+                }
+            }
+            StmtData::SFunction(function) => {
+                printed.function_statements += 1;
+                count_printed(function.func.body.stmts.slice(), printed);
+            }
+            StmtData::SExpr(written) => {
+                if let ExprData::EFunction(wrapper) = written.value.data {
+                    count_printed(wrapper.func.body.stmts.slice(), printed);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn count_printed_by_bun_run(text: &str, define: &Define) -> Option<Printed> {
+    ask_bun_run(text, define, |ast| {
+        let mut printed = Printed::default();
+        for part in ast.parts.iter() {
+            count_printed(part.stmts.slice(), &mut printed);
+        }
+        printed
+    })
+}
+
+fn ask_build<'s, T>(
     text: &str,
     fold: &FoldInputs<'s>,
     atoms: &Interner<'s>,
     arena: &'s Arena,
-) -> bool {
+    ask: impl FnOnce(&File<'s>, &Bound<'s>, &FileAnalysis<'s>) -> T,
+) -> T {
     let parse_options = CompileParseOptions {
         path: PATH,
         script_kind: None,
@@ -71,8 +134,61 @@ fn is_commonjs_to_build<'s>(
         jsx: JsxMode::Classic,
         own_name: b"",
     };
-    let analysis = analyze_file(&mut hir, bind_options, fold, file, atoms, arena).1;
-    analysis.module_format == ModuleFormat::CommonJs
+    let (bound, analysis) = analyze_file(&mut hir, bind_options, fold, file, atoms, arena);
+    ask(&hir, &bound, &analysis)
+}
+
+fn is_commonjs_to_build<'s>(
+    text: &str,
+    fold: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> bool {
+    let is_commonjs = |_: &File<'s>, _: &Bound<'s>, analysis: &FileAnalysis<'s>| {
+        analysis.module_format == ModuleFormat::CommonJs
+    };
+    ask_build(text, fold, atoms, arena, is_commonjs)
+}
+
+/// `None` where the build knows of no branch that never runs under `bun run`.
+fn keeps_an_if_to_build<'s>(
+    text: &str,
+    fold: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Option<bool> {
+    ask_build(text, fold, atoms, arena, |hir, bound, analysis| {
+        let branches = hir
+            .stmts
+            .iter()
+            .filter_map(|statement| match statement.kind {
+                StmtKind::If { yes, no, .. } => Some([yes, no]),
+                _ => None,
+            });
+        let in_bun_run = analysis.decisions.as_folded_by_bun_run();
+        let is_decided = |branch: &StmtId| branch.is_some() && in_bun_run.is_dead_stmt(*branch);
+        let mut decided = branches.flatten().filter(is_decided).peekable();
+        decided.peek()?;
+        let never_run = NeverRun::new(hir, bound);
+        Some(decided.any(|branch| never_run.keeps_its_if(branch)))
+    })
+}
+
+/// How many of the function statements of a text `bun run` leaves as they are, to the build.
+fn count_function_statements_to_build<'s>(
+    text: &str,
+    fold: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> usize {
+    ask_build(text, fold, atoms, arena, |hir, bound, _| {
+        let never_run = NeverRun::new(hir, bound);
+        let statements = (0..hir.stmts.len()).map(|index| StmtId(index as u32));
+        let stays = |statement: &StmtId| {
+            matches!(hir[*statement].kind, StmtKind::Fn(_)) && !never_run.becomes_let(*statement)
+        };
+        statements.filter(stays).count()
+    })
 }
 
 const OPERANDS: &[(&str, &str)] = &[
@@ -301,8 +417,61 @@ const STATEMENTS: &[&str] = &[
     "const Set = unknown; new Set(), module;", "class Array {} new Array(1, 2), module;", "let Math = unknown; Math.PI, module;",
 ];
 
+/// What stands in front of an `if` whose test names a variable of CommonJS and whose branch never runs.
+#[rustfmt::skip]
+const IN_FRONT_OF_NEVER_RUN: &[&str] = &[
+    "", "\"use strict\"; ", "let f; ", "var f; ", "export {}; ", "eval(\"\"); ", "enum f { A } ", "namespace f { export const a = 1; } ", "declare const f: number; ",
+];
+
+/// Each holds one function statement that stands in no list of a function or of the file.
+#[rustfmt::skip]
+const FUNCTIONS_OF_BLOCKS: &[&str] = &[
+    "{ function f() {} }", "{ function f() {} f(); }", "{ async function f() {} }", "{ function* f() {} }", "if (unknown) function f() {}",
+    "label: function f() {}", "{ label: function f() {} }", "{ function f() {} eval(\"\"); }", "{ function f() { eval(\"\"); } }",
+    "{ function f(a = eval(\"\")) {} }", "{ function f() {} { eval(\"\"); } }", "{ function f() {} (() => eval(\"\")); }", "{ function f() {} eval?.(\"\"); }",
+    "{ function f() {} (0, eval)(\"\"); }", "{ { function f() {} } eval(\"\"); }", "label: function f() {} eval(\"\");", "if (eval(\"\")) function f() {}",
+    "{ function arguments() {} }", "while (unknown) { function f() {} }", "try { function f() {} } catch {}", "for (const a of []) { function f() {} eval(\"\"); }",
+    "while (unknown) { function f() {} eval(\"\"); }", "try { function f() {} eval(\"\"); } catch {}", "try {} catch { function f() {} eval(\"\"); }", "try {} finally { async function f() {} }",
+];
+
+#[rustfmt::skip]
+const NEVER_RUN: &[(&str, &str)] = &[
+    ("if (typeof require === \"undefined\") ", ""), ("if (typeof require === \"function\") {} else ", ""), ("if (void module) ", " else {}"),
+];
+
+/// `bun run` prints the `if` and its test for what stays of the branch.
+#[rustfmt::skip]
+const NEVER_RUN_BRANCHES: &[&str] = &[
+    "{ function f() {} }", "function f() {}", "{ function f() {} class A {} }", "{ async function f() {} }", "{ function* f() {} }", "{ label: function f() {} }",
+    "{ function f() { \"use strict\"; } }", "{ function f() {} eval(\"\"); }", "{ function f() { eval(\"\"); } }", "{ function arguments() {} }",
+    "{ { function f() {} } }", "{ if (unknown) { function f() {} } }", "{ function f() {} function f() {} }", "{ const f = 1; { function f() {} } }",
+    "{ function f(): void; }", "{ declare function f(): void; }", "{ var v = 1; }", "var v = 1;", "{ var [] = []; }", "{ for (var i = 0; i < 1; i++) {} }",
+    "{ try {} catch { var v; } }", "{ var v = 1; function f() {} }", "while (unknown) var v = 1;", "label: var v = 1;", "{ let v = 1; const w = 2; class C {} }",
+    "{ enum E { A } }", "{ switch (0) {} }", "{ with ({}) {} }", "{ unknown(); }", "{ for (const a of []) {} while (unknown) {} }", "{}", ";",
+    "{ declare var v: number; }", "{ declare global {} }", "{ var [] = []; let v = 1; }", "{ function f() {} (() => eval(\"\")); }", "{ { function f() {} } eval(\"\"); }",
+    "{ switch (0) { case 0: function f() {} } }", "{ try { unknown(); } finally { function* f() {} } }", "{ async function f(): Promise<void>; async function f() {} }",
+    "for (var i;;) {}", "{ for (var i, j;;) {} }", "for (var i, j = 0;;) {}", "label: for (var i;;) { let v = 1; }",
+];
+
+/// Each cell holds one `if` that is no part of a branch that never runs: at the level of the file, or in a function.
+fn write_never_run_cells() -> Vec<String> {
+    let mut cells = Vec::new();
+    for in_front in IN_FRONT_OF_NEVER_RUN {
+        for (before, behind) in NEVER_RUN {
+            for branch in NEVER_RUN_BRANCHES {
+                cells.push(format!("{in_front}{before}{branch}{behind}"));
+                cells.push(format!(
+                    "{in_front}function g() {{ {before}{branch}{behind} }}"
+                ));
+            }
+        }
+    }
+    cells
+}
+
 fn write_cells() -> Vec<String> {
     let mut cells: Vec<String> = STATEMENTS.iter().map(|&it| it.to_owned()).collect();
+    cells.extend(write_never_run_cells());
     for constructor in CONSTRUCTORS {
         let unused = |arguments: &&str| format!("new {constructor}({arguments}), module;");
         cells.extend(ARGUMENTS.iter().map(unused));
@@ -344,25 +513,31 @@ fn write_cells() -> Vec<String> {
     cells
 }
 
-fn find_partings(cells: &[String]) -> (usize, Vec<String>) {
-    let session = Session::new();
-    let (arena, atoms) = (session.arena(), Interner::new_in(&session));
-    let define = Define::with_pure_globals(false, true);
+fn create_builds<'s>(
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+) -> [(&'static str, FoldInputs<'s>); 3] {
     let builds = [
         ("in place", true, false),
         ("executable", false, false),
         ("--minify-syntax", false, true),
     ];
-    let builds = builds.map(|(name, runs_in_place, minifies_syntax)| {
+    builds.map(|(name, runs_in_place, minifies_syntax)| {
         let provided = FoldOptions {
             minifies_syntax,
             ..FoldOptions::default()
         };
         let platform = Platforms::LINUX;
-        let fold =
-            create_application_fold_inputs(&provided, arena, &atoms, platform, runs_in_place);
+        let fold = create_application_fold_inputs(&provided, arena, atoms, platform, runs_in_place);
         (name, fold)
-    });
+    })
+}
+
+fn find_partings(cells: &[String]) -> (usize, Vec<String>) {
+    let session = Session::new();
+    let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+    let define = Define::with_pure_globals(false, true);
+    let builds = create_builds(arena, &atoms);
     let (mut refused, mut partings) = (0, Vec::new());
     for text in cells {
         let Some(is_commonjs) = is_commonjs_to_bun_run(text, &define) else {
@@ -411,6 +586,85 @@ fn format_is_what_bun_run_takes_the_file_for() {
         "{} of {} cells:\n{}",
         partings.len(),
         cells.len(),
+        partings.join("\n")
+    );
+}
+
+#[test]
+fn an_if_stays_where_bun_run_prints_it() {
+    let cells = write_never_run_cells();
+    let session = Session::new();
+    let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+    let define = Define::with_pure_globals(false, true);
+    let builds = create_builds(arena, &atoms);
+    let (mut printed, mut dropped, mut partings) = (0, 0, Vec::new());
+    for text in &cells {
+        let Some(prints) = count_printed_by_bun_run(text, &define).map(|it| it.ifs > 0) else {
+            continue;
+        };
+        match prints {
+            true => printed += 1,
+            false => dropped += 1,
+        }
+        for (name, fold) in &builds {
+            let parting = match keeps_an_if_to_build(text, fold, &atoms, arena) {
+                Some(keeps) if keeps == prints => continue,
+                Some(_) if prints => "bun run prints the `if`, the build takes it for gone",
+                Some(_) => "bun run prints no `if`, the build takes it for printed",
+                None => "the build knows of no branch that never runs under bun run",
+            };
+            partings.push(format!("{parting} ({name}): {text}"));
+        }
+    }
+    assert!(
+        printed > 200 && dropped > 200,
+        "bun run prints the `if` of {printed} cells and drops that of {dropped}"
+    );
+    assert!(
+        partings.is_empty(),
+        "{} partings in {} cells:\n{}",
+        partings.len(),
+        cells.len(),
+        partings.join("\n")
+    );
+}
+
+#[test]
+fn a_function_of_a_block_is_a_let_where_bun_run_writes_one() {
+    let session = Session::new();
+    let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+    let define = Define::with_pure_globals(false, true);
+    let (_, fold) = &create_builds(arena, &atoms)[0];
+    let (mut left, mut written_as_lets, mut partings) = (0, 0, Vec::new());
+    for in_front in IN_FRONT_OF_NEVER_RUN {
+        for function in FUNCTIONS_OF_BLOCKS {
+            for (before, behind, around) in [("", "", 0), ("function g() { ", " }", 1)] {
+                let text = format!("{in_front}{before}{function}{behind}");
+                let Some(printed) = count_printed_by_bun_run(&text, &define) else {
+                    continue;
+                };
+                match printed.function_statements > around {
+                    true => left += 1,
+                    false => written_as_lets += 1,
+                }
+                let to_build = count_function_statements_to_build(&text, fold, &atoms, arena);
+                if to_build != printed.function_statements {
+                    partings.push(format!(
+                        "bun run prints {} function statements, {to_build} to the build: {text}",
+                        printed.function_statements
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        left > 50 && written_as_lets > 50,
+        "bun run leaves the function of {left} cells and writes a `let` in {written_as_lets}"
+    );
+    assert!(
+        partings.is_empty(),
+        "{} partings:\n{}",
+        partings.len(),
         partings.join("\n")
     );
 }

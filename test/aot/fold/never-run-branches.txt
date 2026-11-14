@@ -1,0 +1,139 @@
+# <kept | dropped | missed> TAB <the extension of the file> TAB <the program>
+# A program holds `if (typeof late) {} else <branch>` and declares `late` with `let` behind it. `bun run` knows that the branch never runs.
+# kept: it prints the `if` all the same, so the test reads `late` in its dead zone and the program throws a ReferenceError.
+# dropped: it prints nothing of the `if`, or only what it moves out of it, and the program ends.
+# missed: `bun run` prints the `if` and the program throws, but the model of the compiler takes the `if` for gone. Write kept for the row once the model follows.
+# never-run-code.test.ts holds plain Bun to the answers, the source test `analysis_fold` holds the model of the compiler to them.
+# what the branch holds, in a function
+kept	cjs	(function () { if (typeof late) {} else { async function f() {} } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { function* f() {} } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { var v = 1; } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else var v = 1; let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { var [a, { b }] = []; } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { var [] = [], {} = {}; } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { let v = 1; const w = 2; class C {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { v(); debugger; return; } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { "a"; "use strict"; `b`; } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { switch (0) {} } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { with ({}) {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { try { v(); } catch (e) { v(); } finally { v(); } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { try {} catch (e) { var v; } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { for (var i = 0; i < 1; i++) {} } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { for (var k in {}) {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { for (let k of []) {} while (late) {} do {} while (late); } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { l: { break l; } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { while (late) { try { async function f() {} } finally {} } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { if (late) { async function f() {} } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { if (false) { async function f() {} } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { try { v(); } catch { function* g() {} } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { switch (0) { case 0: function f() {} } } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { if (false) { let v; } else { v(); } } let late = 1; })();
+# a plain function of a block is a `let` to bun run, and goes with the branch
+dropped	cjs	(function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else function f() {} let late = 1; })();
+dropped	cjs	(() => { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { l: function f() {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { while (late) { try { function f() {} } finally {} } } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { if (late) { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { if (false) { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(() => { "use strict"; if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { "use strict"; return (function () { if (typeof late) {} else { function f() {} } let late = 1; })() })();
+dropped	cjs	(function () { if (typeof late) {} else { function f() { "use strict"; } } let late = 1; })();
+dropped	cjs	(function () { "use\x20strict"; if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { ("use strict"); if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	new (class { m() { if (typeof late) {} else { function f() {} } let late = 1; } })().m();
+dropped	cjs	class C { static { if (typeof late) {} else { function f() {} } let late = 1; } }
+dropped	cjs	class C { m = (() => { if (typeof late) {} else { function f() {} } let late = 1; })(); } new C();
+dropped	cjs	(function () { let f; if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { function f() {} } let late = 1; const f = 0; })();
+dropped	cjs	(function () { class f {} if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { { const f = 0; if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { for (let f of [0]) { if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { { function f() {} if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { { async function f() {} if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { try { throw 0; } catch ({ f }) { if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { switch (0) { case 1: let f; case 0: if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { let f; if (typeof late) {} else function f() {} let late = 1; })();
+dropped	cjs	(function () { try { throw 0; } catch (f) { if (typeof late) {} else { function f() {} } } let late = 1; })();
+dropped	cjs	(function () { var f; if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function (f) { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { function f() {} if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { { let f; } if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { function f() { a; } function f() { b; } } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { function arguments() {} } let late = 1; })();
+dropped	cjs	(() => { if (typeof late) {} else { function arguments() {} } let late = 1; })();
+# but a direct eval in the scope of its block leaves it a declaration, which stays
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} eval(""); } let late = 1; })();
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f() { eval(""); } } let late = 1; })();
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f() { eval("(function () {})"); } } let late = 1; })();
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} { (eval)(""); } } let late = 1; })();
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f(a = eval("")) {} } let late = 1; })();
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} eval("(function () {})"); } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { l: function f() { eval(""); } } let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else function f() { eval(""); } let late = 1; })();
+kept	cjs	(function (eval) { if (typeof late) {} else { function f() {} eval(""); } let late = 1; })();
+kept	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} (() => eval("")); } let late = 1; })();
+dropped	cjs	(function () { "use strict"; if (0) eval(""); if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} eval?.(""); } let late = 1; })();
+dropped	cjs	(function () { "use strict"; if (typeof late) {} else { { function f() {} } eval(""); } let late = 1; })();
+dropped	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} (0, eval)(""); } let late = 1; })();
+dropped	cjs	(function () { "use strict"; if (typeof late) {} else { function f() {} new eval(""); } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else { l: function f() {} eval(""); } let late = 1; })();
+dropped	cjs	(function () { if (typeof late) {} else if (eval("")) function f() {} let late = 1; })();
+kept	cjs	(function () { if (typeof late) {} else { function f() {} { eval(""); } } let late = 1; })();
+# the file: its directive, and what makes it a module to the parser
+dropped	cjs	if (typeof late) {} else { function f() {} } let late = 1;
+dropped	cjs	"use strict"; if (typeof late) {} else { function f() {} } let late = 1;
+dropped	cjs	"use strict"; (function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	cjs	let f; if (typeof late) {} else { function f() {} } let late = 1;
+dropped	js	(function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	mjs	(function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	mjs	if (typeof late) {} else { function f() {} } let late = 1;
+dropped	mjs	import "./empty.mjs"; (function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	mjs	(function () { if (typeof late) {} else { function f() {} } let late = 1; })(); export {};
+dropped	mjs	if (typeof late) {} else { function f() {} } let late = 1; export {};
+dropped	mjs	await 0; (function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	mjs	(function () { import.meta; if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	mjs	import("./empty.mjs"); (function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	ts	import type { Empty } from "./empty.mjs"; (function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+dropped	ts	(function () { if (typeof late) {} else { function f() {} } let late = 1; })();
+# what TypeScript alone writes
+dropped	ts	(function () { if (typeof late) {} else { enum E { A } interface I {} type T = 1; } let late = 1; })();
+dropped	ts	(function () { if (typeof late) {} else { function f(): void; declare function g(): void; declare var v: number; } let late = 1; })();
+dropped	ts	(function () { enum f { A } if (typeof late) {} else { function f() {} } let late = 1; })();
+kept	ts	(function () { if (typeof late) {} else { async function f(): Promise<void>; async function f() {} } let late = 1; })();
+dropped	ts	(function () { if (typeof late) {} else { declare const c: number; abstract class K {} } let late = 1; })();
+dropped	ts	(function () { if (typeof late) {} else { declare global { } } let late = 1; })();
+kept	ts	namespace N { if (typeof late) {} else { var v = 1; } let late = 1; }
+kept	ts	namespace N { if (typeof late) {} else { async function f() {} } let late = 1; }
+dropped	ts	namespace N { if (typeof late) {} else { function f() {} } let late = 1; }
+dropped	ts	if (typeof late) {} else { declare var v: number; } let late = 1;
+# a var at the level of the file is declared at the end of the file and leaves nothing in its place, unless only an `if`, a `while` or a `do` without braces stands between. In the head of a `for (;;)` a var that assigns no value stays as well
+dropped	cjs	if (typeof late) {} else { var v = 1; } let late = 1;
+kept	cjs	if (typeof late) {} else var v = 1; let late = 1;
+kept	cjs	if (typeof late) {} else if (late) var v = 1; let late = 1;
+kept	cjs	if (typeof late) {} else while (late) var v = 1; let late = 1;
+dropped	cjs	if (typeof late) {} else l: var v = 1; let late = 1;
+dropped	cjs	if (typeof late) {} else for (var i = 0; i < 1; i++) {} let late = 1;
+dropped	cjs	if (typeof late) {} else for (var k in {}) {} let late = 1;
+kept	cjs	if (typeof late) {} else for (var i;;) {} let late = 1;
+kept	cjs	if (typeof late) {} else { l: for (var i, j;;) {} } let late = 1;
+kept	mjs	if (typeof late) {} else for (var i;;) {} let late = 1;
+dropped	cjs	if (typeof late) {} else for (var i, j = 0;;) {} let late = 1;
+dropped	cjs	if (typeof late) {} else for (var i = 0, j;;) {} let late = 1;
+dropped	cjs	if (typeof late) {} else try { var v = 1; } catch {} let late = 1;
+dropped	cjs	if (typeof late) {} else { var v = 1; function f() {} } let late = 1;
+kept	cjs	class C { static { if (typeof late) {} else { var v = 1; } let late = 1; } }
+dropped	mjs	if (typeof late) {} else { var v = 1; } let late = 1;
+kept	mjs	if (typeof late) {} else var v = 1; let late = 1;
+kept	cjs	if (typeof late) {} else { var v = 1; async function f() {} } let late = 1;
+kept	cjs	if (typeof late) {} else { async function f() {} } let late = 1;
+kept	cjs	if (typeof late) {} else { switch (0) {} } let late = 1;
+kept	cjs	if (typeof late) {} else { function f() {} eval(""); } let late = 1;
+# what a build does not follow yet: to the parser a comment that begins with /*! is a statement, and stays
+missed	cjs	(function () { if (typeof late) {} else { /*! mark */ } let late = 1; })();
+missed	cjs	(function () { if (typeof late) {} else { v(/*! mark */ 1); } let late = 1; })();
+# nor this: a class with a decorator or an `accessor` field leaves a `var` of its own, which stays
+missed	cjs	(function () { function dec() {} if (typeof late) {} else { @dec class K {} } let late = 1; })();
+missed	cjs	(function () { if (typeof late) {} else { class K { accessor a = 1; } } let late = 1; })();

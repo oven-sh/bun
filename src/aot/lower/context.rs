@@ -18,7 +18,7 @@ use bun_sema::check::aot::{
     QueryInputs,
 };
 use bun_sema::erasure::{ReplacedText, TypeRanges};
-use bun_sema::fold::{Constant, Decisions};
+use bun_sema::fold::{Constant, Decisions, NeverRun};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ResolvedForm;
@@ -457,7 +457,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             self.builtins,
             self.inputs.options.removable,
         )
-        .find_regexp_literals_left_out();
+        .find_regexp_literals_left_out(self.keeps_never_run_code());
         for (literal, sentence) in invalid {
             if left_out.binary_search(&literal).is_ok() {
                 Arc::make_mut(&mut self.invalid_regexp_literals_left_out).push(literal);
@@ -536,6 +536,17 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
         let compiled = self.compiled;
         &compiled.analysis.decisions
+    }
+
+    #[inline]
+    pub(in crate::lower) fn never_run(&self) -> NeverRun<'p, 's> {
+        NeverRun::new(self.hir, self.bound)
+    }
+
+    /// Under `bun test --coverage` the main thread removes no never-run code, from a file that the report leaves out either.
+    #[inline]
+    pub(in crate::lower) fn keeps_never_run_code(&self) -> bool {
+        self.inputs.options.counts_executions
     }
 
     pub(crate) fn is_in_dependency(&self) -> bool {

@@ -138,52 +138,56 @@ pub(super) struct OriginalsAskedFor {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn is_dropped_whole(&self, dead: StmtId) -> bool {
+    /// `bun run` makes a `let` of a function of a block behind its filter, so a function that is reached is printed.
+    fn is_dropped_whole(&self, dead: StmtId, is_branch_of_decided_if: bool) -> bool {
         let hir = self.hir;
-        let mut stack = vec![dead];
-        while let Some(statement) = stack.pop() {
-            if statement.is_none() {
-                continue;
-            }
-            match hir[statement].kind {
-                StmtKind::Empty
-                | StmtKind::Expr(_)
-                | StmtKind::Throw(_)
-                | StmtKind::Return(_)
-                | StmtKind::Break(_)
-                | StmtKind::Continue(_)
-                | StmtKind::Class(_)
-                | StmtKind::Debugger
-                | StmtKind::Interface(_)
-                | StmtKind::TypeAlias(_) => {}
-                StmtKind::Fn(_) if statement != dead => {}
-                StmtKind::Var(declarations) => {
-                    if declarations.iter().any(|it| hir[it].kind == VarKind::Var) {
-                        return false;
-                    }
-                }
-                StmtKind::Block(statements) => stack.extend(hir.ids(statements)),
-                StmtKind::Try {
-                    block,
-                    handler,
-                    finalizer,
-                    ..
-                } => stack.extend([block, handler, finalizer]),
-                StmtKind::If { yes, no, .. } => stack.extend([yes, no]),
-                StmtKind::While { body, .. }
-                | StmtKind::DoWhile { body, .. }
-                | StmtKind::Labeled { body, .. } => stack.push(body),
-                StmtKind::For { init, body, .. } => stack.extend([init, body]),
-                StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
-                    stack.extend([left, body]);
-                }
-                _ => return false,
-            }
+        let is_reached_function =
+            matches!(hir[dead].kind, StmtKind::Fn(_)) && !is_branch_of_decided_if;
+        let is_printed = self.keeps_never_run_code() || is_reached_function;
+        if is_printed || !self.never_run().prints_nothing(dead) {
+            return false;
         }
         let (start, end) = (hir[dead].loc.pos, hir[dead].loc.end);
         let first = hir.comments.partition_point(|it| it.pos < start);
         let inside = hir.comments[first..].iter().take_while(|it| it.pos < end);
         !{ inside }.any(|it| self.has_mark(it.pos))
+    }
+
+    /// Of a `var` that never runs `bun run` prints the names alone: no key and no default.
+    fn leave_names_alone(&self, pattern: PatId, not_printed: &mut Vec<(u32, u32)>) {
+        let hir = self.hir;
+        let mut leave_out = |start: u32, end: u32| {
+            if start < end {
+                not_printed.push((start, end));
+            }
+        };
+        let mut patterns = vec![pattern];
+        while let Some(pattern) = patterns.pop() {
+            match hir[pattern].kind {
+                PatKind::Missing | PatKind::Ident(_) => {}
+                PatKind::Object(properties) => {
+                    for property in properties.iter().map(|it| hir[it]) {
+                        if property.value.is_some() {
+                            leave_out(property.pos, hir[property.value].pos);
+                            patterns.push(property.value);
+                        }
+                        if property.default.is_some() {
+                            leave_out(hir[property.default].pos, hir[property.default].end);
+                        }
+                    }
+                }
+                PatKind::Array(elements) => {
+                    for element in elements.iter().map(|it| hir[it]) {
+                        if element.pat.is_some() {
+                            patterns.push(element.pat);
+                        }
+                        if element.default.is_some() {
+                            leave_out(hir[element.default].pos, hir[element.default].end);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn has_mark(&self, comment: u32) -> bool {
@@ -255,8 +259,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let prefix = consts.prefixes.len() as u32;
         let number_known = consts.consts.len();
         let hir = self.hir;
-        let is_plain_function = |statement: StmtId| matches!(hir[statement].kind, StmtKind::Fn(it) if matches!(hir[it].body, FnBody::Block(_)) && !hir[it].flags.intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT));
-        let mut are_declarations_dropped = !is_block || !hir.ids(list).any(is_plain_function);
+        let never_run = self.never_run();
+        let mut are_declarations_dropped =
+            !is_block || !hir.ids(list).any(|it| never_run.becomes_let(it));
         for statement in hir.ids(list) {
             let declarations = match hir[statement].kind {
                 StmtKind::Var(declarations) => declarations,
@@ -551,9 +556,16 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut has_direct_eval = false;
         let mut printed_as_written: FxHashSet<ExprId> = FxHashSet::default();
         let mut in_dead_flow: FxHashSet<StmtId> = FxHashSet::default();
+        let never_run = self.never_run();
+        let mut never_run_branches: FxHashSet<StmtId> = FxHashSet::default();
+        let mut floor_of_never_run_branch: Option<usize> = None;
+        let mut bodies_left_out: FxHashSet<ExprId> = FxHashSet::default();
         not_printed.push((text.start, self.parameters_position(function)));
         let mut stack = vec![TreeNode::Function(function)];
         while let Some(node) = stack.pop() {
+            if floor_of_never_run_branch.is_some_and(|floor| stack.len() < floor) {
+                floor_of_never_run_branch = None;
+            }
             match node {
                 TreeNode::Stmt(statement) => {
                     let whole = (hir[statement].start, hir[statement].loc.end);
@@ -561,18 +573,29 @@ impl FileLowering<'_, '_, '_, '_> {
                         StmtKind::Block(_) => lists_of_statements.push(whole),
                         _ => statements.push(whole),
                     }
+                    let is_directive = matches!(hir[statement].kind, StmtKind::Directive { .. });
+                    if is_directive && !self.keeps_never_run_code() {
+                        not_printed.push((hir[statement].loc.pos, hir[statement].loc.end));
+                        continue;
+                    }
                     if in_dead_flow.contains(&statement) {
-                        if self.is_dropped_whole(statement) {
+                        let is_branch = never_run_branches.contains(&statement);
+                        if self.is_dropped_whole(statement, is_branch) {
                             not_printed.push((hir[statement].loc.pos, hir[statement].loc.end));
                             continue;
                         }
-                        if let StmtKind::Var(declarations) = hir[statement].kind {
+                        if is_branch {
+                            floor_of_never_run_branch = Some(stack.len());
+                        }
+                        if let StmtKind::Var(declarations) = hir[statement].kind
+                            && !self.keeps_never_run_code()
+                        {
                             for declaration in declarations.iter().map(|it| hir[it]) {
                                 let value = declaration.init;
                                 if value.is_some() {
                                     not_printed.push((hir[value].pos, hir[value].end));
                                 }
-                                stack.push(TreeNode::Pattern(declaration.pat));
+                                self.leave_names_alone(declaration.pat, &mut not_printed);
                             }
                             continue;
                         }
@@ -621,9 +644,13 @@ impl FileLowering<'_, '_, '_, '_> {
                         && let Some(is_true) = self.find_side_that_printer_keeps(test, consts)
                     {
                         let (live, dead) = if is_true { (yes, no) } else { (no, yes) };
-                        not_printed.push((hir[test].pos, hir[test].end));
+                        match self.keeps_never_run_code() || never_run.keeps_its_if(dead) {
+                            true => stack.push(TreeNode::Expr(test)),
+                            false => not_printed.push((hir[test].pos, hir[test].end)),
+                        }
                         if dead.is_some() {
                             in_dead_flow.insert(dead);
+                            never_run_branches.insert(dead);
                             stack.push(TreeNode::Stmt(dead));
                         }
                         if live.is_some() {
@@ -633,6 +660,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                 }
                 TreeNode::Expr(expr) => {
+                    if bodies_left_out.contains(&expr) {
+                        continue;
+                    }
                     let is_read_by_its_value = !printed_as_written.contains(&expr);
                     if !matches!(hir[expr].kind, ExprKind::String(_))
                         && is_read_by_its_value
@@ -776,13 +806,26 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                 }
                 TreeNode::Function(inner) => {
-                    if let FnBody::Block(list) = hir[inner].body {
-                        let whole = self.compute_text_range(inner);
-                        lists_of_statements.push((whole.start, whole.end));
-                        self.note_statements_behind_a_jump(list, &mut in_dead_flow);
-                        if inner != function {
-                            self.note_consts_in_front_of_all_else(list, false, consts);
+                    let never_runs =
+                        floor_of_never_run_branch.is_some() && !self.keeps_never_run_code();
+                    match hir[inner].body {
+                        FnBody::Block(list) => {
+                            let whole = self.compute_text_range(inner);
+                            lists_of_statements.push((whole.start, whole.end));
+                            if never_runs {
+                                in_dead_flow.extend(hir.ids(list));
+                            } else {
+                                self.note_statements_behind_a_jump(list, &mut in_dead_flow);
+                                if inner != function {
+                                    self.note_consts_in_front_of_all_else(list, false, consts);
+                                }
+                            }
                         }
+                        FnBody::Expr(value) if never_runs => {
+                            not_printed.push((hir[value].pos, hir[value].end));
+                            bodies_left_out.insert(value);
+                        }
+                        FnBody::Expr(_) | FnBody::None => {}
                     }
                 }
                 TreeNode::Class(class) => {

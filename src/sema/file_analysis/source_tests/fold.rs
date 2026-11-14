@@ -7,6 +7,11 @@ const TABLE: &str = include_str!(concat!(
 ));
 const MIN_TABLE_ROWS: usize = 300;
 const DEEP_TREE_SIZE: usize = 100_000;
+const NEVER_RUN_BRANCHES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../test/aot/fold/never-run-branches.txt"
+));
+const MIN_NEVER_RUN_BRANCHES: usize = 100;
 
 const MACRO: &str = "import { m } from \"./m\" with { type: \"macro\" };\n";
 const FEATURE_IMPORT: &str = "import { feature } from \"bun:bundle\";\n";
@@ -2126,4 +2131,60 @@ fn deep_trees() {
     });
     let blocks = ["{".repeat(DEEP_TREE_SIZE), "}".repeat(DEEP_TREE_SIZE)].concat();
     analyzed("a.mjs", &blocks, |_| {});
+}
+
+/// The branch that never runs of the one `if (typeof late) ..` of a program.
+#[track_caller]
+fn branch_behind_late(s: &Analyzed<'_>) -> StmtId {
+    let late = s.workspace.atom("late");
+    let branches = s
+        .hir
+        .stmts
+        .iter()
+        .filter_map(|statement| match statement.kind {
+            StmtKind::If { test, no, .. } => match s.hir[test].kind {
+                ExprKind::Unary {
+                    op: UnOp::Typeof,
+                    operand,
+                } if matches!(s.hir[operand].kind, ExprKind::Ident(name) if name == late) => {
+                    Some(no)
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+    let branches: Vec<StmtId> = branches.collect();
+    let [branch] = branches[..] else {
+        panic!("{} statements test `typeof late`", branches.len());
+    };
+    branch
+}
+
+#[test]
+fn branches_that_never_run_are_kept_as_the_table_says() {
+    let mut rows = 0;
+    for (index, line) in bun_core::strings::split(NEVER_RUN_BRANCHES.as_bytes(), b"\n").enumerate()
+    {
+        if line.is_empty() || line.starts_with(b"#") {
+            continue;
+        }
+        let mut columns = bun_core::strings::split(line, b"\t").map(table_text);
+        let (Some(answer), Some(extension), Some(program), None) = (
+            columns.next(),
+            columns.next(),
+            columns.next(),
+            columns.next(),
+        ) else {
+            panic!("line {} does not have three columns", index + 1);
+        };
+        let is_answer = matches!(answer, "kept" | "dropped" | "missed");
+        assert!(is_answer, "line {}: {answer}", index + 1);
+        analyzed(&format!("row.{extension}"), program, |s| {
+            let never_run = NeverRun::new(&s.hir, &s.bound);
+            let is_kept = never_run.keeps_its_if(branch_behind_late(s));
+            assert_eq!(is_kept, answer == "kept", "line {}: {program}", index + 1);
+        });
+        rows += 1;
+    }
+    assert!(rows >= MIN_NEVER_RUN_BRANCHES, "{rows} rows");
 }

@@ -241,6 +241,21 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ),
     (
         "a.js",
+        r#"if (typeof require === "undefined") { function f() {} eval(""); }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { function f() { eval(""); } }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"eval(""); if (typeof require === "undefined") { function f() {} }"#,
+        Esm,
+    ),
+    (
+        "a.js",
         r#"if (typeof require === "undefined") { async function f() {} }"#,
         CommonJs,
     ),

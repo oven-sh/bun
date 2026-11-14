@@ -1256,6 +1256,33 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
+  test.concurrent("a file keeps its parse warnings when one of its imports does not resolve", async () => {
+    using dir = tempDir("build-warnings-with-resolve-error", {
+      "warn.js": `import "./does-not-exist.js";\nclass A { #m() {} f() { this.#m = 1; } }\nexport default A;\n`,
+      "warn.css": `@import "./does-not-exist.css";\n.b { @nest .c & { color: blue } }\n`,
+    });
+    const report = async (entry: string) => {
+      const entrypoints = [join(String(dir), entry)];
+      const shape = (logs: (BuildMessage | ResolveMessage)[]) => logs.map(log => [log.level, log.name, log.message]);
+      const returned = await Bun.build({ entrypoints, throw: false });
+      const thrown: AggregateError = await Bun.build({ entrypoints }).catch(e => e);
+      return { success: returned.success, logs: shape(returned.logs), thrown: shape(thrown.errors) };
+    };
+
+    const js = [
+      ["error", "ResolveMessage", 'Could not resolve: "./does-not-exist.js"'],
+      ["warn", "BuildMessage", 'Writing to read-only method "#m" will throw'],
+    ];
+    const css = [
+      ["error", "ResolveMessage", 'Could not resolve: "./does-not-exist.css"'],
+      ["warn", "BuildMessage", "The @nest rule is deprecated, use standard CSS nesting instead"],
+    ];
+    expect({ js: await report("warn.js"), css: await report("warn.css") }).toEqual({
+      js: { success: false, logs: js, thrown: js },
+      css: { success: false, logs: css, thrown: css },
+    });
+  });
+
   test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({

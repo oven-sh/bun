@@ -1,9 +1,9 @@
 //! The bodies of node_path.bind.ts.
 
 use crate::generated_bindgen::node_path::ParsedPath;
+use crate::jsc::JSString;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::jsc::JSString;
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;

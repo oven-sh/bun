@@ -28,7 +28,7 @@ use bun_ptr::{RefCount, RefPtr};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnEnv,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
     SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
@@ -861,15 +861,14 @@ impl<'a> SecurityScanSubprocess<'a> {
             env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
         }
         let envp = env.map.create_null_delimited_env_map()?;
-        let envp: Vec<&CStr> = envp.iter().collect();
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&argv, &envp, ipc_output_fds)?;
+            self.spawn_windows(&argv, envp.as_list(), ipc_output_fds)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&argv, &envp, ipc_output_fds)?;
+            self.spawn_posix(&argv, envp.as_list(), ipc_output_fds)?;
         }
 
         Ok(())
@@ -883,7 +882,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_posix(
         &mut self,
         argv: &[&CStr],
-        envp: &[&CStr],
+        envp: bun_core::CStrList<'_>,
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -900,7 +899,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -926,7 +925,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_windows(
         &mut self,
         argv: &[&CStr],
-        envp: &[&CStr],
+        envp: bun_core::CStrList<'_>,
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -1005,7 +1004,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 

@@ -2032,7 +2032,7 @@ fn find_workspace_root_above<'a>(
                 #[cfg(not(windows))]
                 let maybe_workspace_path = child_path;
 
-                if strings::eql_long(maybe_workspace_path, path_, true) {
+                if strings::eql_long(maybe_workspace_path, path_) {
                     let name_hash = Semver::string::Builder::string_hash(&entry.name);
                     return Ok(Some((parent, json_file, name_hash)));
                 }
@@ -2337,8 +2337,7 @@ pub fn init(
 
         debug_assert!(strings::eql_long(
             &original_package_json_path_buf[..this_cwd.len()],
-            this_cwd,
-            true,
+            this_cwd
         ));
         original_package_json_path_buf.truncate(this_cwd.len());
         push_package_json(&mut original_package_json_path_buf);

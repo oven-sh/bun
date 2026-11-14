@@ -317,7 +317,7 @@ impl MimeType {
 
             match category_.len() {
                 len if len == b"application".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"application") {
+                    if category_ == b"application" {
                         if str == b"json" || str == b"geo+json" {
                             return JSON;
                         }
@@ -337,14 +337,14 @@ impl MimeType {
                     };
                 }
                 len if len == b"font".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"font") {
+                    if category_ == b"font" {
                         return MimeType {
                             value: Cow::Owned(str_.to_vec()),
                             category: Category::Font,
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"text") {
+                    if category_ == b"text" {
                         if str == b"css" {
                             return CSS;
                         }
@@ -368,21 +368,21 @@ impl MimeType {
                     }
                 }
                 len if len == b"image".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"image") {
+                    if category_ == b"image" {
                         return MimeType {
                             value: Cow::Owned(str_.to_vec()),
                             category: Category::Image,
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"audio") {
+                    if category_ == b"audio" {
                         return MimeType {
                             value: Cow::Owned(str_.to_vec()),
                             category: Category::Audio,
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"video") {
+                    if category_ == b"video" {
                         return MimeType {
                             value: Cow::Owned(str_.to_vec()),
                             category: Category::Video,

@@ -218,8 +218,6 @@ pub enum Error {
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
-    PackageManifest(#[from] crate::PackageManifestError),
-    #[error(transparent)]
     Dotenv(#[from] bun_dotenv::Error),
     #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
@@ -371,7 +369,6 @@ impl Error {
             Self::Resolver(e) => e.name(),
             Self::Spawn(e) => e.name(),
             Self::Http(e) => e.name(),
-            Self::PackageManifest(e) => <&'static str>::from(e),
             Self::Dotenv(e) => e.name(),
             Self::Parsers(e) => e.name(),
             Self::JsPrinter(e) => e.name(),

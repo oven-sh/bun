@@ -1552,7 +1552,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
 /// without querying the filesystem
-/// This is the equivalent of path.resolve
+/// Unlike `path.resolve`, the result keeps the platform's separator at the end of the last part.
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 // result borrows the thread-local buffer ('static) OR returns `cwd`
@@ -1596,7 +1596,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
 /// without querying the filesystem
-/// This is the equivalent of path.resolve
+/// Unlike `path.resolve`, the result keeps the platform's separator at the end of the last part.
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {

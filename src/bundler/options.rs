@@ -169,7 +169,14 @@ pub(crate) fn init_external_modules(
             let normalized = validate_path(log, cwd, external, b"external path");
 
             if !normalized.is_empty() {
-                result.abs_paths.insert(&normalized).expect("unreachable");
+                // The resolver's key for an import keeps the separator that the import ends in,
+                // so a path that ends in one is stored with and without it.
+                let trimmed =
+                    bun_paths::string_paths::without_trailing_slash_windows_path(&normalized);
+                result.abs_paths.insert(trimmed).expect("unreachable");
+                if trimmed.len() != normalized.len() {
+                    result.abs_paths.insert(&normalized).expect("unreachable");
+                }
             }
         }
     }

@@ -4024,7 +4024,7 @@
   },
   "lowering": {
    "exit": 1,
-   "files": 2,
+   "files": 3,
    "diagnostics": {
     "defaults.tsx": [
      {

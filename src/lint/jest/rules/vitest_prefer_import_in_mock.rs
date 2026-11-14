@@ -1,6 +1,7 @@
 use crate::jest::{self, PossibleJestNode};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::bun_test;
 use bun_lint_oxlint::ast_util::callee_name;
 
 /// This rule enforces using a dynamic `import()` in `vi.mock()` or `vi.doMock()`, which improves type information and
@@ -60,7 +61,13 @@ impl PreferImportInMock {
                 )
                 .data("path", value);
             if self.fixable {
-                report.fix(|fixer| {
+                // `bun test` reads the path from the `import()` for a `vi` that it knows, and otherwise the `import()` runs: see [`bun_test`].
+                let object = possible_jest_node.node.callee().and_then(Expr::object);
+                let is_known = || {
+                    let name = object.and_then(Expr::as_ident);
+                    name.is_some_and(|it| bun_test::is_known(it.bytes(), object.and_then(Expr::symbol)))
+                };
+                report.fix_where_safe(is_known, |fixer| {
                     fixer.replace(
                         import_value,
                         [b"import('".as_slice(), value.bytes(), b"')".as_slice()].concat(),

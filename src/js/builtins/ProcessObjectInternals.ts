@@ -140,8 +140,7 @@ export function getStdinStream(
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
-    // Node's stdin gets each read in a callback of its own. Here no pull reads a descriptor that the poll drives inside
-    // the call: that chunk would be pushed ahead of the nextTicks of the chunk before (`PosixFlags::POLL_ONLY`).
+    // Node's stdin gets each read in a callback of its own: no pull reads a descriptor that the poll drives inside the call (`PosixFlags::POLL_ONLY`).
     source?.setPollOnly?.(true);
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d7be319165200f195a22eae630bd3dacad465cfaba2c273d21953af965e086b5.
+// Written against that file with the SHA-256 f946f635d53fb196046c864e51ec7d469dec17fef75d1eb2d67140d7c82d8e64.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -159,8 +159,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
-    // Node's stdin gets each read in a callback of its own. Here no pull reads a descriptor that the poll drives inside
-    // the call: that chunk would be pushed ahead of the nextTicks of the chunk before (`PosixFlags::POLL_ONLY`).
+    // Node's stdin gets each read in a callback of its own: no pull reads a descriptor that the poll drives inside the call (`PosixFlags::POLL_ONLY`).
     source?.setPollOnly?.(true);
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;

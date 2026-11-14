@@ -1585,6 +1585,28 @@ devTest("server: text that JavaScriptCore refuses does not abort the dev server"
   },
 });
 
+devTest("server: the error of every file that JavaScriptCore refuses is printed", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `import "../a"; import "../b"; export default () => new Response("v1");`,
+    "a.ts": `export {};`,
+    "b.ts": `export {};`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("a.ts", `export const a = /(/;`);
+      await dev.write("b.ts", `export const b = /+/;`);
+    }
+    await Promise.all([
+      dev.output.waitForLine(/Invalid regular expression: missing \)/),
+      dev.output.waitForLine(/Invalid regular expression: nothing to repeat/),
+    ]);
+    await dev.fetch("/").equals("v1");
+  },
+});
+
 for (const name of ["eval", "arguments"]) {
   // The import is named after the file.
   devTest(`server: a strict file that re-exports a file with the name ${name}`, {

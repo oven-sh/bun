@@ -2368,7 +2368,7 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
             };
             let protected =
                 reachable::packages_from(lockfile, resolutions, &unselected, false, full);
-            wanted.unmanaged.set_union(&protected.unmanaged);
+            wanted.set_union(&protected);
         }
     }
     wanted

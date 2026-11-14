@@ -140,6 +140,7 @@ struct Wildcard {
 
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
+/// All of `glob` is pattern: for a glob under a directory use [`crate::Prepared::match_under`], not a join.
 ///
 /// The supported pattern syntax for `glob` is:
 ///

@@ -1184,8 +1184,10 @@ pub(crate) fn migrate_yarn_berry_lockfile(
             let yarn_range = original_specs.by_dependency.get(&dep_id);
             let catalog = match yarn_range.and_then(|range| range.strip_prefix(b"catalog:")) {
                 Some(group) => Some(sbuf!(this).append(group)?),
-                None if yarn_range.is_none() && dep.version.tag == VersionTag::Catalog => {
-                    Some(*dep.version.catalog())
+                None if yarn_range.is_none()
+                    && let dependency::Value::Catalog(catalog) = dep.version.value =>
+                {
+                    Some(catalog)
                 }
                 None => None,
             };
@@ -1238,7 +1240,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                 // 2. how yarn normalizes a bare range / tag
                 if found.is_none() && !has_protocol(literal) {
                     key.truncate(name.len() + 1);
-                    if dep.version.tag == VersionTag::Github && !literal.starts_with(b"github:") {
+                    if dep.version.tag() == VersionTag::Github && !literal.starts_with(b"github:") {
                         key.extend_from_slice(b"github:");
                         key.extend_from_slice(literal);
                     } else {
@@ -1258,7 +1260,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                 }
                 // 4. workspaces by name (root -> workspace edges, any `workspace:` range)
                 if found.is_none()
-                    && (dep.behavior.is_workspace() || dep.version.tag == VersionTag::Workspace)
+                    && (dep.behavior.is_workspace() || dep.version.tag() == VersionTag::Workspace)
                 {
                     if let Some(ws_path) = this.workspace_paths.get(&dep.name_hash) {
                         let ws_path = ws_path.slice(string_bytes!(this));
@@ -1270,11 +1272,10 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                 }
                 // 5. a range without a key that a workspace's version satisfies, as yarn without asking the registry
                 if found.is_none()
-                    && dep.version.tag == VersionTag::Npm
+                    && let dependency::Value::Npm(npm) = &dep.version.value
                     && !dep.behavior.is_peer()
                     && yarnrc.transparent_workspaces != Some(false)
                 {
-                    let npm = dep.version.npm();
                     let linked = lockfile::linked_workspace_path(
                         manager.options.link_workspace_packages,
                         &this.workspace_paths,
@@ -1335,25 +1336,23 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     }
                     if original_specs.in_several_groups.contains(&dep_id) {
                         // this edge's own range, which bun reads (of its catalog), has to accept what yarn locked
-                        let own = match dep.version.tag {
-                            VersionTag::Catalog => this
+                        let own = match &dep.version.value {
+                            dependency::Value::Catalog(catalog) => this
                                 .catalogs
-                                .get(this, *dep.version.catalog(), dep.name)
+                                .get(this, *catalog, dep.name)
                                 .map(|d| d.version),
                             _ => Some(dep.version.clone()),
                         };
-                        let accepted = match (own.as_ref().map(|v| v.tag), bound.tag) {
-                            (Some(VersionTag::Npm), ResolutionTag::Npm) => {
-                                own.as_ref().is_some_and(|v| {
-                                    v.npm().version.satisfies(
-                                        bound.npm().version,
-                                        string_bytes!(this),
-                                        string_bytes!(this),
-                                    )
-                                })
+                        let accepted = match (own.as_ref().map(|v| &v.value), bound.tag) {
+                            (Some(dependency::Value::Npm(range)), ResolutionTag::Npm) => {
+                                range.version.satisfies(
+                                    bound.npm().version,
+                                    string_bytes!(this),
+                                    string_bytes!(this),
+                                )
                             }
-                            (Some(VersionTag::Workspace), ResolutionTag::Workspace)
-                            | (Some(VersionTag::DistTag), ResolutionTag::Npm) => true,
+                            (Some(dependency::Value::Workspace(_)), ResolutionTag::Workspace)
+                            | (Some(dependency::Value::DistTag(_)), ResolutionTag::Npm) => true,
                             _ => false,
                         };
                         if !accepted {

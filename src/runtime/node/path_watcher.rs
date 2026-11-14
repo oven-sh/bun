@@ -943,13 +943,12 @@ impl Linux {
         let fd = manager.inotify_fd();
         let running: &AtomicBool = &manager.running;
         // Large enough for a burst of events; inotify guarantees whole events per read.
-        // `u32` elements give the 4-byte alignment that the `&InotifyEvent` cast needs.
-        let mut buf: Box<[u32; 16 * 1024]> = bun_core::boxed_zeroed();
+        let mut buf: Box<[u8; 64 * 1024]> = bun_core::boxed_zeroed();
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
-            let rc = sys::linux::read(fd.native(), bun_core::bytes_of_mut(&mut *buf));
+            let rc = sys::linux::read(fd.native(), &mut *buf);
             match sys::get_errno(rc) {
                 E::SUCCESS => {}
                 E::EAGAIN | E::EINTR => continue,
@@ -981,18 +980,7 @@ impl Linux {
             // Track which PathWatchers got at least one event so we flush() each once.
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
 
-            let mut i: usize = 0;
-            while i < n {
-                // SAFETY: inotify guarantees whole events and pads `name` so each
-                // header stays 4-byte aligned; `buf` is 4-byte aligned via
-                // its `u32`s, so byte offset `i` always lands on an aligned
-                // event header within the `n` bytes the kernel just wrote.
-                let ev: &InotifyEvent = unsafe {
-                    &*core::ptr::from_ref(&*buf)
-                        .cast::<InotifyEvent>()
-                        .byte_add(i)
-                };
-                i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
+            for ev in InotifyEvents(&buf[..n]) {
                 let wd = ev.watch_descriptor;
 
                 // Queue hit fs.inotify.max_queued_events and the kernel dropped
@@ -1047,14 +1035,7 @@ impl Linux {
                     continue;
                 }
 
-                let name: &[u8] = if ev.name_len > 0 {
-                    // SAFETY: i was just advanced past this event's name_len bytes; offset is within buf[0..n].
-                    let name_ptr = unsafe { buf.as_ptr().byte_add(i - ev.name_len as usize) };
-                    // SAFETY: kernel NUL-pads name within name_len bytes.
-                    unsafe { bun_core::ffi::cstr(name_ptr.cast()).to_bytes() }
-                } else {
-                    b""
-                };
+                let name: &[u8] = ev.name().unwrap_or_default();
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
                 let event_type: WatchEventKind = if ev.mask
@@ -1223,10 +1204,8 @@ impl Linux {
     }
 }
 
-/// The kernel `struct inotify_event` header. Shared with the bundler watcher;
-/// field naming there is `watch_descriptor` / `name_len`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_watcher::inotify_watcher::Event as InotifyEvent;
+use bun_watcher::inotify_watcher::Events as InotifyEvents;
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin

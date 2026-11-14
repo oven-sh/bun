@@ -103,6 +103,20 @@ describe("css", () => {
     },
   });
 
+  // A class name is a named export of the module whether or not it is an
+  // identifier, and it is the same string as the property of the default export.
+  itBundled("css-module/ClassNamesAreNamedExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles, { plain, "foo-bar" as fooBar } from './styles.module.css';
+        console.log(JSON.stringify([plain === styles.plain, fooBar === styles["foo-bar"], typeof fooBar]));
+      `,
+      "/styles.module.css": `.plain { color: red } .foo-bar { color: blue }`,
+    },
+    outdir: "/out",
+    run: { stdout: '[true,true,"string"]' },
+  });
+
   // https://github.com/oven-sh/bun/issues/18921
   // The `animation` shorthand and `animation-name` longhand must scope their
   // referenced `@keyframes` name to the SAME hashed name the keyframes rule

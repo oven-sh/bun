@@ -455,7 +455,7 @@ bun_dispatch::link_interface! {
         CronRemove,
         FilterRunHandle,
         MultiRunPipeReader,
-        TestParallelWorkerPipe,
+        TestParallelWorker,
         LifecycleScript,
         InstallGit,
         SecurityScan,

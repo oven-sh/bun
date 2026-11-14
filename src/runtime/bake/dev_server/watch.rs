@@ -18,7 +18,7 @@ impl bun_watcher::WatcherContext for DevServer {
     fn on_file_update(
         &mut self,
         events: &mut [bun_watcher::WatchEvent],
-        changed_files: &[bun_watcher::ChangedFilePath],
+        changed_files: &[&[u8]],
         watchlist: &bun_watcher::WatchList,
     ) {
         DevServer::on_file_update(self, events, changed_files, watchlist);
@@ -40,7 +40,7 @@ impl DevServer {
     pub(crate) fn on_file_update(
         &mut self,
         events: &[bun_watcher::Event],
-        changed_files: &[bun_watcher::ChangedFilePath],
+        changed_files: &[&[u8]],
         watchlist: &bun_watcher::WatchList,
     ) {
         debug_assert!(self.magic == Magic::Valid);
@@ -108,10 +108,9 @@ impl DevServer {
                         // INotifyWatcher stores sub paths into `changed_files`
                         let names = event.names(changed_files);
                         if !names.is_empty() {
-                            for maybe_sub_path in names {
+                            for &sub_path in names {
                                 // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                                unsafe { &mut *ev_ptr }
-                                    .append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
+                                unsafe { &mut *ev_ptr }.append_dir(file_path, Some(sub_path));
                             }
                         } else {
                             // SAFETY: see `ev_ptr` above; call-scoped borrow.

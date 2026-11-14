@@ -2,7 +2,6 @@
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_void};
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::ffi::CString;
@@ -26,13 +25,13 @@ use bun_threading::thread_pool as ThreadPool;
 
 use crate::cache_publish::StagedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
-use crate::package_manager_task::{self as Task, Tag};
+use crate::package_manager_task::{self as Task, Job};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::{Error, PackageManager};
 
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
-    pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task<'static>>) {
+    pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task>) {
         debug_assert!(
             !self.options.runtime_auto_install,
             "a git child exits through this thread's event loop"
@@ -110,68 +109,51 @@ pub(crate) enum Finalize {
 
 impl Finalize {
     /// Completes `task` from its `git_finalize`. Thread-pool side.
-    pub(crate) fn run(task: &mut Task::Task<'_>) {
+    pub(crate) fn run(task: &mut Task::Task) {
         let finalize = task
             .git_finalize
             .take()
             .expect("a clone or checkout task carries its finalize step");
-        let result = match finalize {
-            Finalize::Repo(fd) => Ok(Task::Data {
-                git_clone: ManuallyDrop::new(fd),
-            }),
-            Finalize::PublishRepo(staging, url, replaces) => {
-                finish_clone(task, staging, &url, replaces).map(|dir| Task::Data {
-                    git_clone: ManuallyDrop::new(dir.into_raw()),
-                })
+        let log = &mut task.log;
+        let result = match (finalize, &mut task.job) {
+            (Finalize::Repo(fd), Job::GitClone { repo, .. }) => {
+                *repo = fd;
+                Ok(())
             }
-            Finalize::CachedCheckout(dir, json) => {
-                read_package_json(task, &dir, json).map(|data| Task::Data {
-                    git_checkout: ManuallyDrop::new(data),
-                })
+            (Finalize::PublishRepo(staging, url, replaces), Job::GitClone { request, repo }) => {
+                finish_clone(task.id, request, log, staging, &url, replaces)
+                    .map(|dir| *repo = dir.into_raw())
             }
-            Finalize::PublishCheckout(staging, tree) => {
-                finish_checkout(task, staging, &tree).map(|data| Task::Data {
-                    git_checkout: ManuallyDrop::new(data),
-                })
+            (Finalize::CachedCheckout(dir, json), Job::GitCheckout { request, data }) => {
+                read_package_json(request, log, &dir, json).map(|read| *data = Some(read))
             }
-            Finalize::Failed { staging, err } => {
+            (Finalize::PublishCheckout(staging, tree), Job::GitCheckout { request, data }) => {
+                finish_checkout(request, log, staging, &tree).map(|read| *data = Some(read))
+            }
+            (Finalize::Failed { staging, err }, _) => {
                 if let Some(staging) = staging {
                     staging.discard();
                 }
                 Err(err)
             }
+            _ => unreachable!("the finalize step is for another kind of task"),
         };
-        match result {
-            Ok(data) => {
-                task.status = Task::Status::Success;
-                task.err = None;
-                task.data = data;
-            }
-            Err(err) => {
-                task.status = Task::Status::Fail;
-                task.err = Some(err);
-                // `deinit_payload` drops the active `data` arm, so a failure writes one too.
-                task.data = match task.tag {
-                    Tag::GitClone => Task::Data {
-                        git_clone: ManuallyDrop::new(Fd::invalid()),
-                    },
-                    _ => Task::Data {
-                        git_checkout: ManuallyDrop::new(ExtractData::default()),
-                    },
-                };
-            }
-        }
+        task.status = match result {
+            Ok(()) => Task::Status::Success,
+            Err(_) => Task::Status::Fail,
+        };
+        task.err = result.err();
     }
 }
 
 /// Strips the fresh checkout in `staging`, moves it into the cache, and reads its `package.json`.
 fn finish_checkout(
-    task: &mut Task::Task<'_>,
+    req: &Task::GitCheckoutRequest,
+    log: &mut bun_ast::Log,
     staging: CacheStaging,
     tree: &[u8],
 ) -> Result<ExtractData, Error> {
-    let req = task.request_git_checkout();
-    let (name, resolved) = (req.name.slice().to_vec(), req.resolved.slice().to_vec());
+    let (name, resolved) = (req.name.slice(), req.resolved.slice());
 
     let dir = match bun_sys::Dir::borrow(&staging.cache_dir).open_at(&staging.tmp_name) {
         Ok(dir) => dir,
@@ -200,30 +182,30 @@ fn finish_checkout(
                     },
                 0o664,
             )
-            .and_then(|f| f.write_all(&resolved))
+            .and_then(|f| f.write_all(resolved))
             .map_err(|err| ("writing \".bun-tag\"", err))
         });
     // Windows cannot rename a directory with an open handle inside it.
     drop(dir);
     if let Err((what, err)) = prepared {
         staging.discard();
-        task.log.add_error_fmt(
+        log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
                 "{} for \"{}\" failed: {}",
                 what,
-                for_terminal(BStr::new(&name)),
+                for_terminal(BStr::new(name)),
                 BStr::new(err.name())
             ),
         );
         return Err(Error::InstallFailed);
     }
 
-    let folder_name = checkout_folder_name(&resolved);
-    let package_dir = staging.publish(&mut task.log, &name, &folder_name, &is_usable_checkout)?;
+    let folder_name = checkout_folder_name(resolved);
+    let package_dir = staging.publish(log, name, &folder_name, &is_usable_checkout)?;
     let json = read_package_json_in(&package_dir);
-    read_package_json(task, &package_dir, json)
+    read_package_json(req, log, &package_dir, json)
 }
 
 /// git was told to check out each symlink as a plain file. This replaces it with a copy of its
@@ -445,12 +427,12 @@ pub(crate) fn read_package_json_in(package_dir: &bun_sys::Dir) -> bun_sys::Maybe
 
 /// `json` is the result of `read_package_json_in(package_dir)`.
 fn read_package_json(
-    task: &mut Task::Task<'_>,
+    req: &Task::GitCheckoutRequest,
+    log: &mut bun_ast::Log,
     package_dir: &bun_sys::Dir,
     json: bun_sys::Maybe<Vec<u8>>,
 ) -> Result<ExtractData, Error> {
-    let req = task.request_git_checkout();
-    let name = req.name.slice().to_vec();
+    let name = req.name.slice();
     let (url, resolved): (Box<[u8]>, Box<[u8]>) =
         (req.url.slice().into(), req.resolved.slice().into());
 
@@ -465,12 +447,12 @@ fn read_package_json(
                     ..Default::default()
                 });
             }
-            task.log.add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "\"package.json\" for \"{}\" failed to open: {}",
-                    for_terminal(BStr::new(&name)),
+                    for_terminal(BStr::new(name)),
                     BStr::new(err.name())
                 ),
             );
@@ -485,12 +467,12 @@ fn read_package_json(
             &[b"package.json"],
         ),
         Err(err) => {
-            task.log.add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "\"package.json\" for \"{}\" failed to resolve: {}",
-                    for_terminal(BStr::new(&name)),
+                    for_terminal(BStr::new(name)),
                     BStr::new(err.name())
                 ),
             );
@@ -756,25 +738,24 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
 /// Moves the clone of `url` from `staging` into the cache. A usable clone that is already in the
 /// cache is kept instead, unless `replaces` is set.
 fn finish_clone(
-    task: &mut Task::Task<'_>,
+    id: Task::Id,
+    req: &Task::GitCloneRequest,
+    log: &mut bun_ast::Log,
     staging: CacheStaging,
     url: &[u8],
     replaces: bool,
 ) -> Result<bun_sys::Dir, Error> {
-    let name = task.request_git_clone().name.slice().to_vec();
-    let repo = staging.publish(
-        &mut task.log,
-        &name,
-        &bare_repo_folder_name(task.id),
-        &|repo| !replaces && is_own_clone(repo),
-    )?;
+    let name = req.name.slice();
+    let repo = staging.publish(log, name, &bare_repo_folder_name(id), &|repo| {
+        !replaces && is_own_clone(repo)
+    })?;
     if let Err(err) = write_clone_config(&repo, url) {
-        task.log.add_error_fmt(
+        log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
                 "writing \"config\" for \"{}\" failed: {}",
-                for_terminal(BStr::new(&name)),
+                for_terminal(BStr::new(name)),
                 BStr::new(err.name())
             ),
         );
@@ -798,8 +779,7 @@ pub(crate) struct GitSubprocess {
     owner: Cell<Option<RefPtr<GitSubprocess>>>,
     manager: BackRef<PackageManager, bun_ptr::Mut>,
     /// Ours alone until `finish_on_pool` / `finish_commit` hands it on.
-    task: NonNull<Task::Task<'static>>,
-    tag: Tag,
+    task: NonNull<Task::Task>,
     name: Box<[u8]>,
     event_loop: EventLoopHandle,
     cache_dir: Fd,
@@ -821,27 +801,22 @@ pub(crate) struct GitSubprocess {
 }
 
 impl GitSubprocess {
-    fn start(manager: &mut PackageManager, task: NonNull<Task::Task<'static>>) {
+    fn start(manager: &mut PackageManager, task: NonNull<Task::Task>) {
         let cache_dir = manager.get_cache_directory();
         let event_loop = EventLoopHandle::from_any(&manager.event_loop);
         // SAFETY: a queued git task is live and idle until its runner hands it on.
-        let (tag, name) = unsafe {
-            let t = task.as_ref();
-            let name: Box<[u8]> = match t.tag {
-                Tag::GitClone => t.request_git_clone().name.slice().into(),
-                Tag::GitCommit => t.request_git_commit().name.slice().into(),
-                Tag::GitCheckout => t.request_git_checkout().name.slice().into(),
-                _ => unreachable!("not a git task"),
-            };
-            (t.tag, name)
+        let name = match unsafe { &task.as_ref().job } {
+            Job::GitClone { request, .. } => &request.name,
+            Job::GitCommit { request, .. } => &request.name,
+            Job::GitCheckout { request, .. } => &request.name,
+            _ => unreachable!("not a git task"),
         };
         let runner = RefPtr::new(GitSubprocess {
             ref_count: Cell::new(1),
             owner: Cell::new(None),
             manager: BackRef::new_mut(manager),
             task,
-            tag,
-            name,
+            name: name.slice().into(),
             event_loop,
             cache_dir,
             step: JsCell::new(Step::Config),
@@ -872,10 +847,11 @@ impl GitSubprocess {
 
     /// May free `this` on `Ok`.
     fn begin(this: ThisPtr<Self>) -> Result<(), Error> {
-        match this.tag {
-            Tag::GitClone => Self::begin_clone(this),
-            Tag::GitCommit => Self::begin_commit(this),
-            _ => Self::begin_checkout(this),
+        match this.task().job {
+            Job::GitClone { .. } => Self::begin_clone(this),
+            Job::GitCommit { .. } => Self::begin_commit(this),
+            Job::GitCheckout { .. } => Self::begin_checkout(this),
+            _ => unreachable!("not a git task"),
         }
     }
 
@@ -885,7 +861,7 @@ impl GitSubprocess {
 
     /// Call-scoped access to the task; see the field comment.
     #[allow(clippy::mut_from_ref)]
-    fn task(&self) -> &mut Task::Task<'static> {
+    fn task(&self) -> &mut Task::Task {
         // SAFETY: the task is owned by `preallocated_resolve_tasks` and touched by
         // nothing else while this runner holds it; every borrow here is call-scoped.
         unsafe { &mut *self.task.as_ptr() }
@@ -893,7 +869,9 @@ impl GitSubprocess {
 
     /// A clone or commit lookup that only optional dependencies wait for fails with warnings.
     fn is_required(&self) -> bool {
-        self.tag == Tag::GitCheckout || self.manager().is_network_task_required(self.task().id)
+        let task = self.task();
+        matches!(task.job, Job::GitCheckout { .. })
+            || self.manager().is_network_task_required(task.id)
     }
 
     fn log_failure(&self, args: core::fmt::Arguments<'_>) {
@@ -1554,7 +1532,7 @@ impl GitSubprocess {
 
     /// Fails the task with `err`. Frees `this`.
     fn fail(this: ThisPtr<Self>, err: Error) {
-        if this.tag == Tag::GitCommit {
+        if matches!(this.task().job, Job::GitCommit { .. }) {
             Self::finish_commit(this, Err(err));
         } else {
             let staging = this.staging.take();
@@ -1575,7 +1553,7 @@ impl GitSubprocess {
     /// Hands a clone or checkout task to the thread pool for `finalize`.
     /// `Task::callback` pushes the task onto `resolve_tasks`. Frees `this`.
     fn finish_on_pool(this: ThisPtr<Self>, finalize: Finalize) {
-        debug_assert!(this.tag != Tag::GitCommit);
+        debug_assert!(!matches!(this.task().job, Job::GitCommit { .. }));
         let manager = this.manager;
         let task = this.task;
         this.task().git_finalize = Some(finalize);
@@ -1587,21 +1565,23 @@ impl GitSubprocess {
 
     /// Hands the finished commit lookup to `resolve_tasks`. Frees `this`.
     fn finish_commit(this: ThisPtr<Self>, result: Result<Vec<u8>, Error>) {
-        debug_assert!(this.tag == Tag::GitCommit);
         let manager = this.manager;
         let task_ptr = this.task;
         {
             let task = this.task();
-            // `deinit_payload` drops the active `data` arm, so every path writes one.
-            let (status, err, sha) = match result {
-                Ok(sha) => (Task::Status::Success, None, sha),
-                Err(err) => (Task::Status::Fail, Some(err), Vec::new()),
+            let Job::GitCommit { sha, .. } = &mut task.job else {
+                unreachable!("not a commit task");
             };
-            task.status = status;
-            task.err = err;
-            task.data = Task::Data {
-                git_commit: ManuallyDrop::new(sha),
-            };
+            match result {
+                Ok(found) => {
+                    *sha = found;
+                    task.status = Task::Status::Success;
+                }
+                Err(err) => {
+                    task.status = Task::Status::Fail;
+                    task.err = Some(err);
+                }
+            }
         }
         Self::release(this);
         manager.resolve_tasks.push(task_ptr);

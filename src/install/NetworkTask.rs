@@ -78,10 +78,8 @@ pub struct NetworkTask {
     pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // `'static` matches `PreallocatedTaskStore =
-    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
-    // and returned to (`discard_unused_streaming_state`).
-    pub(crate) streaming_extract_task: *mut Task<'static>,
+    /// A slot of `PreallocatedTaskStore`, which `discard_unused_streaming_state` returns.
+    pub(crate) streaming_extract_task: *mut Task,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by
@@ -104,8 +102,7 @@ unsafe impl bun_threading::Linked for NetworkTask {
     }
 }
 
-/// The network-backed subset of `crate::package_manager_task::Tag` (git
-/// clone/checkout run as thread-pool tasks, never as network tasks).
+/// What the response is for. A git clone or checkout is never a network task.
 pub enum Callback {
     PackageManifest {
         loaded_manifest: Option<PackageManifest>,

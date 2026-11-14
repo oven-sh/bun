@@ -432,8 +432,8 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// `1>&2` is STDERR | DUPLICATE_OUT (stdout := stderr).
+            /// `2>&1` is STDOUT | DUPLICATE_OUT (stderr := stdout).
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -531,18 +531,6 @@ pub mod ast {
             }
         }
 
-        pub(crate) fn lt() -> RedirectFlags {
-            Self::STDIN
-        }
-        pub(crate) fn lt_lt() -> RedirectFlags {
-            Self::STDIN | Self::APPEND
-        }
-        pub(crate) fn gt() -> RedirectFlags {
-            Self::STDOUT
-        }
-        pub(crate) fn gt_gt() -> RedirectFlags {
-            Self::APPEND | Self::STDOUT
-        }
         pub(crate) fn amp_gt() -> RedirectFlags {
             Self::STDOUT | Self::STDERR
         }
@@ -1346,6 +1334,12 @@ impl<'bump> Parser<'bump> {
             name_and_args.push(arg);
         }
         let parsed_redirect = self.parse_redirect()?;
+        // `1>&2` takes no file, so the words after it are arguments: `echo >&2 msg`.
+        if parsed_redirect.redirect.is_none() && parsed_redirect.flags.duplicate_out() {
+            while let Some(arg) = self.parse_atom()? {
+                name_and_args.push(arg);
+            }
+        }
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),
@@ -1374,15 +1368,13 @@ impl<'bump> Parser<'bump> {
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
-                let file = match self.parse_atom()? {
-                    Some(f) => f,
-                    None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
-                        self.add_error(format_args!("Redirection with no file"))?;
-                        return Err(ParseError::Expected.into());
-                    }
+                if redirect.duplicate_out() {
+                    let _ = self.r#match(TokenTag::Delimit);
+                    break 'redirect_file None;
+                }
+                let Some(file) = self.parse_atom()? else {
+                    self.add_error(format_args!("Redirection with no file"))?;
+                    return Err(ParseError::Expected.into());
                 };
                 break 'redirect_file Some(ast::Redirect::Atom(file));
             }
@@ -2157,6 +2149,24 @@ pub(crate) enum RedirectDirection {
     In,
 }
 
+/// The fd before a redirect operator. The runtime has no other fds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StdFd {
+    Stdin = 0,
+    Stdout = 1,
+    Stderr = 2,
+}
+
+/// What `Lexer::eat_redirect_operator` found after a `>` or `<`.
+enum RedirectLex {
+    /// A redirect that takes a file, or a `1>&2` / `2>&1` duplication.
+    Redirect(ast::RedirectFlags),
+    /// `n>&n` or `n<&n`: a duplication onto itself. No token.
+    NoOp,
+    /// A form Bun Shell does not support. The error is already recorded.
+    Unsupported,
+}
+
 /// Whether `Lexer::break_word` follows the text it flushes with a `Token::Delimit`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AddDelimiter {
@@ -2716,17 +2726,70 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            if self.chars.state != CharState::Normal {
+                            // An fd number starts a word. A tab does not end one: `a<TAB>2>f`.
+                            let after_whitespace = self.chars.prev.is_some_and(|prev| {
+                                !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev)
+                            });
+                            if self.chars.state != CharState::Normal
+                                || (self.word_is_open() && !after_whitespace)
+                            {
                                 break 'escaped;
                             }
                             let snapshot = self.make_snapshot();
-                            if let Some(redirect) = self.eat_redirect(input) {
-                                self.break_word(AddDelimiter::AfterText)?;
-                                self.tokens.push(Token::Redirect(redirect));
-                                fell_through = true;
-                                break 'escaped;
+                            let fd = self.eat_digit_run(c - u32::from(b'0'));
+                            let dir = match self.peek() {
+                                Some(next) if !next.escaped && next.char == u32::from(b'>') => {
+                                    RedirectDirection::Out
+                                }
+                                Some(next) if !next.escaped && next.char == u32::from(b'<') => {
+                                    RedirectDirection::In
+                                }
+                                _ => {
+                                    self.backtrack(&snapshot);
+                                    break 'escaped;
+                                }
+                            };
+                            let _ = self.eat();
+                            let is_dup = self
+                                .peek()
+                                .is_some_and(|next| !next.escaped && next.char == u32::from(b'&'));
+                            let op = match dir {
+                                RedirectDirection::Out => '>',
+                                RedirectDirection::In => '<',
+                            };
+                            // A duplication (`0>&0`) has no direction.
+                            let src_fd = match (fd, dir, is_dup) {
+                                (0, RedirectDirection::In, _) | (0, _, true) => StdFd::Stdin,
+                                (1, RedirectDirection::Out, _) | (1, _, true) => StdFd::Stdout,
+                                (2, RedirectDirection::Out, _) | (2, _, true) => StdFd::Stderr,
+                                (0, _, false) => {
+                                    self.add_error_fmt(format_args!(
+                                        "`{fd}{op}`: file descriptor 0 is read, not written. Use `<` to read from a file."
+                                    ));
+                                    return Ok(());
+                                }
+                                (1 | 2, _, false) => {
+                                    self.add_error_fmt(format_args!(
+                                        "`{fd}{op}`: file descriptor {fd} is written, not read. Use `{fd}>` to write to a file."
+                                    ));
+                                    return Ok(());
+                                }
+                                _ => {
+                                    self.add_error_fmt(format_args!(
+                                        "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`)."
+                                    ));
+                                    return Ok(());
+                                }
+                            };
+                            self.break_word(AddDelimiter::AfterText)?;
+                            match self.eat_redirect_operator(Some(src_fd), dir) {
+                                RedirectLex::Redirect(flags) => {
+                                    self.tokens.push(Token::Redirect(flags))
+                                }
+                                RedirectLex::NoOp => {}
+                                RedirectLex::Unsupported => return Ok(()),
                             }
-                            self.backtrack(&snapshot);
+                            fell_through = true;
                             break 'escaped;
                         }
                         // Operators
@@ -2766,8 +2829,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
-                            let redirect = self.eat_simple_redirect(RedirectDirection::Out);
-                            self.tokens.push(Token::Redirect(redirect));
+                            match self.eat_redirect_operator(None, RedirectDirection::Out) {
+                                RedirectLex::Redirect(flags) => {
+                                    self.tokens.push(Token::Redirect(flags))
+                                }
+                                RedirectLex::NoOp => {}
+                                RedirectLex::Unsupported => return Ok(()),
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b'<') => {
@@ -2778,8 +2846,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
-                            let redirect = self.eat_simple_redirect(RedirectDirection::In);
-                            self.tokens.push(Token::Redirect(redirect));
+                            match self.eat_redirect_operator(None, RedirectDirection::In) {
+                                RedirectLex::Redirect(flags) => {
+                                    self.tokens.push(Token::Redirect(flags))
+                                }
+                                RedirectLex::NoOp => {}
+                                RedirectLex::Unsupported => return Ok(()),
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b'&') => {
@@ -2942,22 +3015,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
-    fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
-        let start: u32 = self.word_start;
-        let end: u32 = self.j;
-        if start != end || self.is_immediately_escaped_quote() {
-            let tok: Token = match self.chars.state {
-                CharState::Normal => Token::Text(TextRange { start, end }),
-                CharState::Single => Token::SingleQuotedText(TextRange { start, end }),
-                CharState::Double => Token::DoubleQuotedText(TextRange { start, end }),
-            };
-            self.tokens.push(tok);
-            if add_delimiter != AddDelimiter::No {
-                self.tokens.push(Token::Delimit);
-            }
-        } else if add_delimiter == AddDelimiter::AfterWord
-            && !self.tokens.is_empty()
-            && match self.tokens[self.tokens.len() - 1].tag() {
+    /// Whether a word is open: text is pending, or no `Delimit` follows the last part of a word.
+    fn word_is_open(&self) -> bool {
+        self.word_start != self.j
+            || self.tokens.last().is_some_and(|tok| match tok.tag() {
                 TokenTag::Var
                 | TokenTag::VarArgv
                 | TokenTag::Text
@@ -2986,8 +3047,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::DoubleBracketClose
                 | TokenTag::Delimit
                 | TokenTag::Eof => false,
+            })
+    }
+
+    fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
+        let start: u32 = self.word_start;
+        let end: u32 = self.j;
+        if start != end || self.is_immediately_escaped_quote() {
+            let tok: Token = match self.chars.state {
+                CharState::Normal => Token::Text(TextRange { start, end }),
+                CharState::Single => Token::SingleQuotedText(TextRange { start, end }),
+                CharState::Double => Token::DoubleQuotedText(TextRange { start, end }),
+            };
+            self.tokens.push(tok);
+            if add_delimiter != AddDelimiter::No {
+                self.tokens.push(Token::Delimit);
             }
-        {
+        } else if add_delimiter == AddDelimiter::AfterWord && self.word_is_open() {
             self.tokens.push(Token::Delimit);
             self.delimit_quote = false;
         }
@@ -2995,19 +3071,128 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn eat_simple_redirect(&mut self, dir: RedirectDirection) -> ast::RedirectFlags {
-        let is_double = self.eat_simple_redirect_operator(dir);
+    /// Eats the digits that follow `first`, a digit already eaten, and returns the number they form.
+    fn eat_digit_run(&mut self, first: u32) -> u32 {
+        let mut n = first;
+        while let Some(next) = self.peek() {
+            if next.escaped || !(u32::from(b'0')..=u32::from(b'9')).contains(&next.char) {
+                break;
+            }
+            let _ = self.eat();
+            n = n
+                .saturating_mul(10)
+                .saturating_add(next.char - u32::from(b'0'));
+        }
+        n
+    }
 
+    /// Lexes `[n]>[>][&m]` or `[n]<[<][&m]` after the caller ate the `>` or `<`.
+    /// `src_fd` is the `n` that came before it. It defaults to 1 for `>` and 0 for `<`.
+    fn eat_redirect_operator(
+        &mut self,
+        src_fd: Option<StdFd>,
+        dir: RedirectDirection,
+    ) -> RedirectLex {
+        let is_double = self.eat_simple_redirect_operator(dir);
+        // The operator as typed, for error messages: `1>`, `>>`, `0<`.
+        let shown_fd = match src_fd {
+            Some(StdFd::Stdin) => "0",
+            Some(StdFd::Stdout) => "1",
+            Some(StdFd::Stderr) => "2",
+            None => "",
+        };
+        let shown_op = match (dir, is_double) {
+            (RedirectDirection::Out, false) => ">",
+            (RedirectDirection::Out, true) => ">>",
+            (RedirectDirection::In, false) => "<",
+            (RedirectDirection::In, true) => "<<",
+        };
+        let src_fd = src_fd.unwrap_or(match dir {
+            RedirectDirection::Out => StdFd::Stdout,
+            RedirectDirection::In => StdFd::Stdin,
+        });
+
+        let mut flags = match src_fd {
+            StdFd::Stdin => ast::RedirectFlags::STDIN,
+            StdFd::Stdout => ast::RedirectFlags::STDOUT,
+            StdFd::Stderr => ast::RedirectFlags::STDERR,
+        };
         if is_double {
-            return match dir {
-                RedirectDirection::Out => ast::RedirectFlags::gt_gt(),
-                RedirectDirection::In => ast::RedirectFlags::lt_lt(),
-            };
+            flags |= ast::RedirectFlags::APPEND;
         }
 
-        match dir {
-            RedirectDirection::Out => ast::RedirectFlags::gt(),
-            RedirectDirection::In => ast::RedirectFlags::lt(),
+        match self.peek() {
+            Some(next) if !next.escaped && next.char == u32::from(b'&') => {
+                let _ = self.eat();
+            }
+            _ => return RedirectLex::Redirect(flags),
+        }
+
+        if is_double {
+            self.add_error_fmt(format_args!(
+                "`{shown_fd}{shown_op}&`: a file descriptor cannot be appended to. Use `{shown_fd}{shown_op} file`, or `1>&2` / `2>&1` to duplicate a file descriptor."
+            ));
+            return RedirectLex::Unsupported;
+        }
+
+        // POSIX allows blanks between `>&` and the fd number.
+        while let Some(next) = self.peek() {
+            if next.escaped || !(next.char == u32::from(b' ') || next.char == u32::from(b'\t')) {
+                break;
+            }
+            let _ = self.eat();
+        }
+
+        let target_fd = match self.peek() {
+            Some(next)
+                if !next.escaped && (u32::from(b'0')..=u32::from(b'9')).contains(&next.char) =>
+            {
+                let _ = self.eat();
+                self.eat_digit_run(next.char - u32::from(b'0'))
+            }
+            _ => {
+                self.add_error_fmt(format_args!(
+                    "`{shown_fd}{shown_op}&` must be followed by a file descriptor number: `>&2`, `1>&2` or `2>&1`. To send stdout and stderr to a file, use `&> file`."
+                ));
+                return RedirectLex::Unsupported;
+            }
+        };
+
+        // The number must end the word: whitespace, an operator, or a JS value (`2>&1${buf}`).
+        let at_word_end = match self.peek() {
+            None => true,
+            Some(next) if next.escaped => next.char == u32::from(b'\n'),
+            Some(next) => {
+                ShellCharIter::<ENCODING>::is_whitespace(next)
+                    || matches!(
+                        u8::try_from(next.char),
+                        Ok(b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>' | b'`' | SPECIAL_JS_CHAR)
+                    )
+            }
+        };
+        if !at_word_end {
+            self.add_error_fmt(format_args!(
+                "`{shown_fd}{shown_op}&{target_fd}`: the file descriptor number must end the word. Put a space after it."
+            ));
+            return RedirectLex::Unsupported;
+        }
+
+        if target_fd == src_fd as u32 {
+            return RedirectLex::NoOp;
+        }
+        match (dir, src_fd, target_fd) {
+            (RedirectDirection::Out, StdFd::Stdout, 2) => RedirectLex::Redirect(
+                ast::RedirectFlags::STDERR | ast::RedirectFlags::DUPLICATE_OUT,
+            ),
+            (RedirectDirection::Out, StdFd::Stderr, 1) => RedirectLex::Redirect(
+                ast::RedirectFlags::STDOUT | ast::RedirectFlags::DUPLICATE_OUT,
+            ),
+            _ => {
+                self.add_error_fmt(format_args!(
+                    "`{shown_fd}{shown_op}&{target_fd}`: Bun Shell only duplicates stdout and stderr onto each other: `1>&2` (or `>&2`) and `2>&1`."
+                ));
+                RedirectLex::Unsupported
+            }
         }
     }
 
@@ -3039,71 +3224,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         false
     }
 
-    // TODO Arbitrary file descriptor redirect
-    fn eat_redirect(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
-        let mut flags = ast::RedirectFlags::default();
-        match first.char {
-            c if c == u32::from(b'0') => flags |= ast::RedirectFlags::STDIN,
-            c if c == u32::from(b'1') => flags |= ast::RedirectFlags::STDOUT,
-            c if c == u32::from(b'2') => flags |= ast::RedirectFlags::STDERR,
-            // Just allow the std file descriptors for now
-            _ => return None,
-        }
-        if let Some(input) = self.peek() {
-            if input.escaped {
-                return None;
-            }
-            match input.char {
-                c if c == u32::from(b'>') => {
-                    let _ = self.eat();
-                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
-                    if is_double {
-                        flags |= ast::RedirectFlags::APPEND;
-                    }
-                    if let Some(peeked) = self.peek() {
-                        if !peeked.escaped && peeked.char == u32::from(b'&') {
-                            let _ = self.eat();
-                            if let Some(peeked2) = self.peek() {
-                                match peeked2.char {
-                                    c2 if c2 == u32::from(b'1') => {
-                                        let _ = self.eat();
-                                        if !flags.stdout() && flags.stderr() {
-                                            flags |= ast::RedirectFlags::DUPLICATE_OUT;
-                                            flags |= ast::RedirectFlags::STDOUT;
-                                            flags.remove(ast::RedirectFlags::STDERR);
-                                        } else {
-                                            return None;
-                                        }
-                                    }
-                                    c2 if c2 == u32::from(b'2') => {
-                                        let _ = self.eat();
-                                        if !flags.stderr() && flags.stdout() {
-                                            flags |= ast::RedirectFlags::DUPLICATE_OUT;
-                                            flags |= ast::RedirectFlags::STDERR;
-                                            flags.remove(ast::RedirectFlags::STDOUT);
-                                        } else {
-                                            return None;
-                                        }
-                                    }
-                                    _ => return None,
-                                }
-                            }
-                        }
-                    }
-                    Some(flags)
-                }
-                c if c == u32::from(b'<') => {
-                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
-                    if is_double {
-                        flags |= ast::RedirectFlags::APPEND;
-                    }
-                    Some(flags)
-                }
-                _ => None,
-            }
-        } else {
-            None
-        }
+    fn add_error_fmt(&mut self, args: fmt::Arguments<'_>) {
+        let mut buf = Vec::new();
+        write!(&mut buf, "{args}").expect("write to Vec");
+        self.add_error(&buf);
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {

@@ -77,28 +77,46 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
   expect(result.signalCode).toBe("SIGKILL");
 });
 
-// Share a single vite install across all of the parameterized SIGINT tests below.
-// Each test only spawns vite, waits for first stdout, sends SIGINT, and asserts on
-// exit state — none of them mutate the project directory, so reusing one install
-// avoids redundant `bun install` + tempdir setup work per iteration.
-let viteDir: string;
-let viteInstallExitCode: number | null;
+// The SIGINT tests below launch a long-lived bin three ways: by bin name, through
+// a package.json script, and as a file, each with and without --bun.
+// `long-running` stands in for a dev server such as vite: it prints a line when
+// it is up, then idles with no SIGINT handler, so the signal must terminate it.
+// It answers SIGUSR2 with one more line. It is a `file:` dependency: `bun install`
+// links it into node_modules/.bin like a registry package, without a request to
+// a registry.
+//
+// No test changes the project directory, so all of them share one install.
+let projectDir: string;
+let installExitCode: number | null;
 
 beforeAll(() => {
-  viteDir = tempDirWithFiles("ctrlc", {
+  projectDir = tempDirWithFiles("ctrlc", {
     "package.json": JSON.stringify({
       name: "ctrlc",
       scripts: {
-        "dev": "vite",
+        "dev": "long-running",
       },
       devDependencies: {
-        "vite": "^6.0.1",
+        // The folder is not named `long-running`: `bun long-running` looks for
+        // that path in cwd before it looks in node_modules/.bin.
+        "long-running": "file:./long-running-src",
       },
     }),
+    "long-running-src/package.json": JSON.stringify({
+      name: "long-running",
+      version: "1.0.0",
+      bin: { "long-running": "cli.js" },
+    }),
+    // The timer only limits how long a stray process outlives a failed test.
+    "long-running-src/cli.js": `#!/usr/bin/env node
+if (process.platform !== "win32") process.on("SIGUSR2", () => console.log("long-running got SIGUSR2"));
+console.log("long-running is ready");
+setTimeout(() => {}, 60_000);
+`,
   });
-  viteInstallExitCode = Bun.spawnSync({
+  installExitCode = Bun.spawnSync({
     cmd: [bunExe(), "install"],
-    cwd: viteDir,
+    cwd: projectDir,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -107,30 +125,56 @@ beforeAll(() => {
 });
 
 for (const mode of [
-  ["vite"],
+  ["long-running"],
   ["dev"],
-  ...(isWindows ? [] : [["./node_modules/.bin/vite"]]),
-  ["--bun", "vite"],
+  ...(isWindows ? [] : [["./node_modules/.bin/long-running"]]),
+  ["--bun", "long-running"],
   ["--bun", "dev"],
-  ...(isWindows ? [] : [["--bun", "./node_modules/.bin/vite"]]),
+  ...(isWindows ? [] : [["--bun", "./node_modules/.bin/long-running"]]),
 ]) {
   it("kills on SIGINT in: 'bun " + mode.join(" ") + "'", async () => {
-    expect(viteInstallExitCode).toBe(0);
-    const proc = Bun.spawn({
+    expect(installExitCode).toBe(0);
+    // A failed case must not leave bun running. SIGKILL, because a bun that
+    // ignores SIGINT can ignore SIGTERM too: the dispose waits for the exit, and
+    // the test would time out and hide the failed assertion.
+    await using proc = Bun.spawn({
       cmd: [bunExe(), ...mode],
-      cwd: viteDir,
+      cwd: projectDir,
       stdin: "inherit",
       stdout: "pipe",
       stderr: "inherit",
-      env: { ...bunEnv, PORT: "9876" },
+      env: bunEnv,
+      killSignal: "SIGKILL",
     });
 
-    // wait for vite to start
     const reader = proc.stdout.getReader();
-    await reader.read(); // wait for first bit of stdout
-    reader.releaseLock();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const waitForLine = async (line: string) => {
+      while (!stdout.includes(line)) {
+        const chunk = await Promise.race([reader.read(), proc.exited]);
+        if (typeof chunk === "number" || chunk.done) {
+          const state = { stdout, exitCode: proc.exitCode, signalCode: proc.signalCode };
+          throw new Error(`bun ended before ${JSON.stringify(line)}: ${JSON.stringify(state)}`);
+        }
+        stdout += decoder.decode(chunk.value, { stream: true });
+      }
+    };
+
+    // wait for the bin to start
+    await waitForLine("long-running is ready");
 
     expect(proc.killed).toBe(false);
+
+    if (!isWindows) {
+      // `bun run` has the pid of its child only when the spawn returns. A signal
+      // that comes before that goes a different way, and these cases are not
+      // about it. So first wait until a signal has gone through to the bin.
+      // The `dev` cases need a shell that execs the script, as bash does.
+      process.kill(proc.pid, "SIGUSR2");
+      await waitForLine("long-running got SIGUSR2");
+    }
+    reader.releaseLock();
 
     // send sigint
     process.kill(proc.pid, "SIGINT");

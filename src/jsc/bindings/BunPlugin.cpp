@@ -3366,6 +3366,8 @@ struct ModulesToEvict {
     // Packages that vi.mock() is about to mock.
     Vector<String> packagesToStash;
     bool onlyImportersFromEarlierTestFiles { false };
+    // The pass is for what the tests of an earlier run of the running test file left behind: a module of the file that failed to load or threw stays.
+    bool keepsFailuresOfTestFile { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -3569,6 +3571,13 @@ bool evictOriginalOfCommonJSFile(Zig::GlobalObject* globalObject, const String& 
 }
 #endif
 
+// Whether the running test file loaded the module, in this run or in the load of an earlier one. `testFile` is what testFileOfModule has for `key`.
+static bool isLoadedByRunningTestFile(Zig::GlobalObject* globalObject, const String& key, unsigned testFile)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    return testFile == plugins.testFile || (testFile && plugins.modulesOfTestFileLoad.contains(key));
+}
+
 __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, ModulesToEvict&& evict)
 {
     auto& plugins = globalObject->onLoadPlugins;
@@ -3629,7 +3638,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         // It may have failed because of a mock, and JSC forgets a failed module's requests, so it's never found as an importer.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
         bool isEvictedWithAll = evict.all && !(evict.exceptPackages && isExternalizedByVitest(globalObject, key));
-        if (isEvictedWithAll || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError()))
+        bool hasFailed = entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError());
+        if (isEvictedWithAll || (hasFailed && !(evict.keepsFailuresOfTestFile && isLoadedByRunningTestFile(globalObject, key, plugins.testFileOfModule.get(key)))))
             keys.append(key);
         if (!record || evict.all)
             continue;
@@ -3728,7 +3738,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
 
     // A patched-in-place module that imports an evicted one goes after all, and is walked again for the rest of its importers.
-    UncheckedKeyHashSet<String> evicted;
+    // So does an importer that stays because an earlier run of the running test file loaded it.
+    UncheckedKeyHashSet<String> evicted, keptFromEarlierRun;
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
     for (size_t i = 0; i < keys.size(); ++i) {
         String key = keys[i];
@@ -3751,10 +3762,21 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             // It imports the real package whether or not vi.mock() mocks it.
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
-            if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
+            if (!testFile || importer == key)
                 continue;
+            if (stays && evict.onlyImportersFromEarlierTestFiles && isLoadedByRunningTestFile(globalObject, importer, testFile)) {
+                // What an earlier run of the file loaded is walked all the same: a test of that run may have left an importer of it behind, which goes.
+                if (testFile != plugins.testFile && evicted.add(importer).isNewEntry) {
+                    staysInRegistry.add(importer);
+                    staysInRequireCache.add(importer);
+                    keptFromEarlierRun.add(importer);
+                    keys.append(importer);
+                }
+                continue;
+            }
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
+            keptFromEarlierRun.remove(importer);
             if (evicted.add(importer).isNewEntry || stayed)
                 keys.append(importer);
         }
@@ -3813,12 +3835,21 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     UncheckedKeyHashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
     for (auto& key : keys) {
+        // Not waited for either: the pass that a settled load starts would evict it.
+        if (keptFromEarlierRun.contains(key))
+            continue;
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
             stay.add(key);
             awaited.add(pendingLoad);
             continue;
         }
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
+        // What is fetched under the key next is another module than the load of the test file fetched. The end of a mock that set the module aside puts it back.
+        if (leavesRegistry && leavesRequireCache && !evict.packagesToRestore.contains(key)) {
+            plugins.modulesOfTestFileLoad.remove(key);
+            if (plugins.isLoadingRepeatedTestFile) [[unlikely]]
+                plugins.modulesEvictedDuringTestFileLoad.add(key);
+        }
         if (leavesRegistry && !clearsRegistry) {
             auto identifier = JSC::Identifier::fromString(vm, key);
             ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));
@@ -6040,6 +6071,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // and the preload's module is restored when the file ends. mock.module() and jest.mock() patch it in place.
     // Nor does it patch a package, which vi.resetModules() leaves loaded, or what vi.importActual() returned: the factory has to stay lazy.
     // Nor does vi.doMock() patch what a test file loaded. This file's importers keep it. What an earlier file left is loaded again: in Vitest a file starts with nothing loaded.
+    // So is what a test of an earlier run of this file left. What the file's own load brought in is the file's in every run: see isLoadedByRunningTestFile().
     bool isDoMock = function == ModuleMockFunction::ViDoMock;
     unsigned loadedByTestFile = globalObject->onLoadPlugins.testFileOfModule.get(specifier);
 #if ENABLE(AOT)
@@ -6074,7 +6106,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool ranBesidePrevious = previous && !previous->isFromPreload && loaded.compiledModule && JSC::AOT::hasIntactOriginal(globalObject, *loaded.compiledModule) && !restoresCompiledFile(globalObject, previous, specifier);
     bool coversImportedActual = wasLoadedByImportActual || ranBesidePrevious || (previous && previous->coversImportedActual);
 #endif
-    bool remainsOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile);
+    bool remainsOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && isLoadedByRunningTestFile(globalObject, specifier, loadedByTestFile));
     bool keepsLoadedModule = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!loadedByTestFile || remainsOriginal || isDoMock);
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
     if (keepsLoadedModule && loaded.esmNamespace && hasUnevaluatedImporter(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
@@ -6153,6 +6185,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (loadedByTestFile != globalObject->onLoadPlugins.testFile) {
             ModulesToEvict evict;
             evict.onlyImportersFromEarlierTestFiles = true;
+            evict.keepsFailuresOfTestFile = isLoadedByRunningTestFile(globalObject, specifier, loadedByTestFile);
             evict.patchedESModules.append(specifier);
             evict.patchedCommonJSModules.append(specifier);
             evict.packagesToStash.append(specifier);
@@ -7391,6 +7424,34 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #else
     UNUSED_PARAM(globalObject);
 #endif
+}
+
+// With --rerun-each, around the load of each run of a test file: see modulesOfTestFileLoad.
+// A compiled program has its own record of who loaded a module, which no later run takes over.
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__willLoadRepeatedTestFile(Zig::GlobalObject* globalObject)
+{
+    globalObject->onLoadPlugins.isLoadingRepeatedTestFile = !globalObject->vm().hasCompiledCode();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didLoadRepeatedTestFile(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (!std::exchange(plugins.isLoadingRepeatedTestFile, false))
+        return;
+    auto evictedDuringLoad = std::exchange(plugins.modulesEvictedDuringTestFileLoad, {});
+    for (auto& [key, testFile] : plugins.testFileOfModule) {
+        if (testFile == plugins.testFile && !evictedDuringLoad.contains(key))
+            plugins.modulesOfTestFileLoad.add(key);
+    }
+}
+
+// After the last run of the file. The next test file holds none of them.
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didEndRepeatedTestFile(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    plugins.isLoadingRepeatedTestFile = false;
+    plugins.modulesOfTestFileLoad.clear();
+    plugins.modulesEvictedDuringTestFileLoad.clear();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)

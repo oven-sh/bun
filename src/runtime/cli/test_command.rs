@@ -4028,6 +4028,8 @@ impl TestCommand {
         vm.is_running_vitest_entry.set(false);
         let mut environment =
             Environment::of_file(file_path, reporter.jest.test_options.environment);
+        // A later run is linked again to the modules that the load of an earlier run fetched.
+        let _repeated = (repeat_count > 1).then(|| RepeatedTestFile(vm.global()));
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -4084,6 +4086,9 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
+            if repeat_count > 1 {
+                bun_jsc::cpp::JSMock__willLoadRepeatedTestFile(global);
+            }
             let mut promise = environment.load_entry_point(vm, file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
@@ -4108,6 +4113,9 @@ impl TestCommand {
                 }
             }
 
+            if repeat_count > 1 {
+                bun_jsc::cpp::JSMock__didLoadRepeatedTestFile(global);
+            }
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
                 == jsc::js_promise::Status::Rejected;
@@ -4307,6 +4315,15 @@ struct RestoreOnlyAfterFile<'a> {
 impl Drop for RestoreOnlyAfterFile<'_> {
     fn drop(&mut self) {
         self.reporter.jest.only = self.only;
+    }
+}
+
+/// A test file that `--rerun-each` runs more than once, from before its first run until after its last.
+struct RepeatedTestFile<'a>(&'a jsc::JSGlobalObject);
+
+impl Drop for RepeatedTestFile<'_> {
+    fn drop(&mut self) {
+        bun_jsc::cpp::JSMock__didEndRepeatedTestFile(self.0);
     }
 }
 

@@ -2504,6 +2504,226 @@ test.concurrent.each(["bun:test", "vitest"])(
   },
 );
 
+// --rerun-each evaluates the test file again and nothing else. A later run is linked to the modules that the load of an earlier run fetched,
+// so they are as much the file's own as in the first run. What a test of an earlier run imported is only left over, and a mock still reaches it.
+describe.concurrent("vi.doMock() in a test file that --rerun-each runs again", () => {
+  const dep = `
+    globalThis.loads = (globalThis.loads ?? 0) + 1;
+    export const value = "real";
+    export function fn() { return "real-fn"; }
+  `;
+  // Reads the mocked module once, while it loads.
+  const user = `import { value } from "./dep"; export const atLoad = value;`;
+  const inEveryRun = (files: Record<string, string>, passInOneRun: number, args: string[] = []) =>
+    expectFixturesToPass(files, passInOneRun * 3, ["--rerun-each=3", ...args]);
+
+  const loaded = (from: string) => ({
+    "dep.ts": dep,
+    "reader.ts": `import { value, fn } from "./dep"; export const read = () => [value, fn()];`,
+    "loaded.test.ts": `
+      import { afterEach, expect, test, vi } from ${JSON.stringify(from)};
+      import * as dep from "./dep";
+      import { read } from "./reader";
+
+      afterEach(() => {
+        vi.doUnmock("./dep");
+        expect(globalThis.loads).toBe(1);
+      });
+
+      test("the next import() calls the factory, and a module that imports it stays", async () => {
+        vi.doMock("./dep", () => ({ value: "mocked", fn: () => "mocked-fn" }));
+        const mocked = await import("./dep");
+        expect([mocked.value, dep.value, read()]).toEqual(["mocked", "real", ["real", "real-fn"]]);
+        expect((await import("./reader")).read).toBe(read);
+      });
+
+      test("importOriginal, vi.importActual() and vi.doUnmock() give the loaded module", async () => {
+        let original;
+        vi.doMock("./dep", async importOriginal => ({ ...(original = await importOriginal()), value: "mocked" }));
+        expect((await import("./dep")).value).toBe("mocked");
+        expect([original.fn, (await vi.importActual("./dep")).fn]).toEqual([dep.fn, dep.fn]);
+        vi.doUnmock("./dep");
+        expect(await import("./dep")).toBe(dep);
+      });
+
+      test("disposed", async () => {
+        {
+          using _ = vi.doMock("./dep", () => ({ value: "mocked" }));
+          expect((await import("./dep")).value).toBe("mocked");
+        }
+        expect(await import("./dep")).toBe(dep);
+      });
+    `,
+  });
+
+  test.each(isolationFlags)("leaves a module that the file imports as it is %j", async args => {
+    await inEveryRun(loaded("bun:test"), 3, args);
+  });
+
+  // Its imports are lowered to import() calls, which leave no link from the test file in the registry.
+  test("leaves a module that a Vitest file imports as it is", async () => {
+    await inEveryRun(loaded("vitest"), 3);
+  });
+
+  test("leaves every other module that the file holds as it is", async () => {
+    await inEveryRun(
+      {
+        "dep.ts": dep,
+        "user.ts": user,
+        "dep.cjs": `
+          globalThis.loadsOfCommonJS = (globalThis.loadsOfCommonJS ?? 0) + 1;
+          module.exports = { fn() { return "real-fn"; } };
+        `,
+        "node_modules/lib/package.json": `{ "name": "lib", "type": "module", "main": "index.js" }`,
+        "node_modules/lib/index.js": `export const who = () => "real";`,
+        "uses-lib.js": `import { who } from "lib"; export const read = () => who();`,
+        "throws.ts": `throw new Error("from throws.ts");`,
+        "behind.ts": `
+          import { atLoad } from "./user";
+          globalThis.runsBehind = (globalThis.runsBehind ?? 0) + 1;
+          export { atLoad };
+        `,
+        "others.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import "./dep";
+          import commonJS from "./dep.cjs";
+          import * as usesLib from "./uses-lib.js";
+          import { atLoad } from "./user";
+
+          test("importOriginal, vi.importActual() and jest.requireActual() give the loaded CommonJS module", async () => {
+            let original;
+            vi.doMock("./dep.cjs", async importOriginal => ({ ...(original = await importOriginal()), extra: "mocked" }));
+            expect((await import("./dep.cjs")).extra).toBe("mocked");
+            const actual = await vi.importActual("./dep.cjs");
+            expect([original.fn, actual.fn, jest.requireActual("./dep.cjs").fn]).toEqual([commonJS.fn, commonJS.fn, commonJS.fn]);
+            vi.doUnmock("./dep.cjs");
+            expect([require("./dep.cjs"), globalThis.loadsOfCommonJS]).toEqual([commonJS, 1]);
+          });
+
+          // vi.mock() in a test is not hoisted.
+          test.each(["doMock", "mock"])("what imported a package keeps the real one under vi.%s()", async mock => {
+            vi[mock]("lib", () => ({ who: () => "mock" }));
+            expect([await import("./uses-lib.js"), usesLib.read()]).toEqual([usesLib, "real"]);
+            vi.doUnmock("lib");
+          });
+
+          test("a module that threw in this run is not run again", async () => {
+            const thrown = await import("./throws").catch(error => error);
+            vi.doMock("./dep", () => ({ value: "mocked" }));
+            expect(await import("./throws").catch(error => error)).toBe(thrown);
+            vi.doUnmock("./dep");
+          });
+
+          test("a module that a test imports behind an importer of the file runs, linked to that importer", async () => {
+            const runs = globalThis.runsBehind ?? 0;
+            vi.doMock("./dep", () => ({ value: "mocked" }));
+            const behind = await import("./behind");
+            expect([atLoad, behind.atLoad, globalThis.runsBehind - runs]).toEqual(["real", "real", 1]);
+            vi.doUnmock("./dep");
+          });
+        `,
+      },
+      5,
+    );
+  });
+
+  test.each(["vi.doMock", "mock.module"])(
+    "%s() reaches a module that a test of the run before imported",
+    async mock => {
+      await inEveryRun(
+        {
+          "dep.ts": dep,
+          "user.ts": user,
+          "left.test.ts": `
+          import { afterEach, expect, mock, test, vi } from "bun:test";
+          afterEach(() => void vi.doUnmock("./dep"));
+
+          test("mocked", async () => {
+            ${mock}("./dep", () => ({ value: "mocked" }));
+            expect((await import("./user")).atLoad).toBe("mocked");
+          });
+
+          test("real, and left loaded", async () => {
+            expect((await import("./user")).atLoad).toBe("real");
+          });
+        `,
+        },
+        2,
+      );
+    },
+  );
+
+  test("a hoisted vi.mock() reaches an importer that a test of the run before loaded again", async () => {
+    await inEveryRun(
+      {
+        "dep.ts": dep,
+        "user.ts": user,
+        "hoisted.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { atLoad } from "./user";
+          vi.mock("./dep", () => ({ value: "mocked" }));
+
+          test("mocked while the file loads", () => {
+            expect(atLoad).toBe("mocked");
+          });
+
+          test("real after vi.doUnmock()", async () => {
+            vi.doUnmock("./dep");
+            expect((await import("./user")).atLoad).toBe("real");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test.each([
+    ["a hoisted vi.mock()", `import { atLoad } from "./user"; vi.mock("./dep", () => ({ value: "mocked" }));`],
+    ["vi.doMock()", `vi.doMock("./dep", () => ({ value: "mocked" })); const { atLoad } = await import("./user");`],
+  ])("%s reaches an importer that the load of the run before evicted and imported again", async (_, mocked) => {
+    await inEveryRun(
+      {
+        "dep.ts": dep,
+        "user.ts": user,
+        "again.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          ${mocked}
+          vi.doUnmock("./dep");
+          const real = await import("./user");
+
+          test("mocked, then real", () => {
+            expect([atLoad, real.atLoad]).toEqual(["mocked", "real"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("the next test file holds none of them: its mock reaches what the file before imported", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": dep,
+        "user.ts": user,
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { atLoad } from "./user";
+          test("loads the modules", () => expect(atLoad).toBe("real"));
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("mocks one of them", async () => {
+            vi.doMock("./dep", () => ({ value: "mocked" }));
+            expect((await import("./user")).atLoad).toBe("mocked");
+          });
+        `,
+      },
+      4,
+      ["--rerun-each=2", "./a.test.ts", "./b.test.ts"],
+    );
+  });
+});
+
 describe.concurrent("resetModules", () => {
   test.each(isolationFlags)("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
     const counted = (name: string) => `globalThis.${name} = (globalThis.${name} ?? 0) + 1;`;

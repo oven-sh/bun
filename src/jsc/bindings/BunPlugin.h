@@ -157,6 +157,12 @@ public:
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        // With --rerun-each: the keys of the modules that the load of the running test file fetched, in this run or in an earlier one, and that nothing has evicted since.
+        // A later run of the file is linked to them again without a fetch, while testFileOfModule has them for the earlier run.
+        WTF::UncheckedKeyHashSet<String> modulesOfTestFileLoad = {};
+        // The keys that were evicted while that load was under way. What the load fetches under one of them after that is its second module for the key, which a later run doesn't begin with.
+        WTF::UncheckedKeyHashSet<String> modulesEvictedDuringTestFileLoad = {};
+        bool isLoadingRepeatedTestFile = false;
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};

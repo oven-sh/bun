@@ -18,6 +18,7 @@ use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -1988,10 +1989,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             bun_ast::Stmt::data_store_reset();
 
             let hash = bun_watcher::Watcher::get_hash(path.text);
-            let (main, main_hash) = (jsc_vm.main(), jsc_vm.main_hash.get());
-            let is_main = main.is_some_and(|main| {
-                main.len() == path.text.len() && main_hash == hash && main == path.text
-            });
+            let is_main = jsc_vm.main() == Some(path.text);
             let is_preload = jsc_vm.is_in_preload.get() && jsc_vm.preload_hash.get() == hash;
 
             // ── Arena take/give-back ────────────────────────────────────────
@@ -2187,15 +2185,14 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
-                // Keep the one-shot
-                // `set_break_point_on_first_line()` last so it is only
-                // consumed when the other conditions hold.
+                // One shot, so it is checked last.
+                static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
                 let set_breakpoint_on_first_line = is_main
                     && jsc_vm
                         .debugger
                         .get()
                         .is_some_and(|d| d.set_breakpoint_on_first_line)
-                    && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
+                    && SET_BREAK_POINT.swap(false, Ordering::SeqCst);
 
                 let options = &jsc_vm.transpiler.get().options;
                 let mut parse_options = ParseOptions {

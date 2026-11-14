@@ -1203,6 +1203,12 @@ it("ALPNCallback errors refuse the connection and surface as tlsClientError", as
       undefined,
       /alpn threw/,
     ],
+    [
+      "a result that the error message cannot show",
+      () => Symbol("not-offered") as unknown as string,
+      undefined,
+      /Cannot convert a symbol to a string/,
+    ],
   ];
   for (const [label, ALPNCallback, codeRe, msgRe] of cases) {
     const server: Server = createServer({ ...COMMON_CERT, ALPNCallback });

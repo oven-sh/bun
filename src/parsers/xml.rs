@@ -441,30 +441,6 @@ fn is_pubid_char(c: u8) -> bool {
         )
 }
 
-/// `text` with `S` trimmed from both ends.
-#[inline]
-fn trim_ws<U: Unit>(text: &[U]) -> &[U] {
-    trim_ws_end(trim_ws_start(text))
-}
-
-#[inline]
-fn trim_ws_start<U: Unit>(text: &[U]) -> &[U] {
-    let mut a = 0;
-    while a < text.len() && is_ws(text[a].low()) {
-        a += 1;
-    }
-    &text[a..]
-}
-
-#[inline]
-fn trim_ws_end<U: Unit>(text: &[U]) -> &[U] {
-    let mut b = text.len();
-    while b > 0 && is_ws(text[b - 1].low()) {
-        b -= 1;
-    }
-    &text[..b]
-}
-
 /// `a == b` for the short slices names are, without a `memcmp` call.
 #[inline]
 fn name_eq<T: Copy + Eq>(a: &[T], b: &[T]) -> bool {
@@ -4271,11 +4247,18 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
 }
 
 /// The extra normalization for attributes declared with a tokenized or
-/// enumerated type (§3.3.3): leading and trailing spaces removed, runs of
-/// spaces collapsed. All whitespace in `value` is already #x20.
+/// enumerated type (§3.3.3): leading and trailing #x20 removed, runs of
+/// #x20 collapsed.
 fn collapse_spaces<'a, U: Unit>(bump: &'a Bump, value: &'a [U]) -> &'a [U] {
-    // All whitespace in `value` is already #x20, so `trim_ws` trims spaces.
-    let trimmed = trim_ws(value);
+    let mut a = 0;
+    while a < value.len() && value[a].low() == b' ' {
+        a += 1;
+    }
+    let mut b = value.len();
+    while b > a && value[b - 1].low() == b' ' {
+        b -= 1;
+    }
+    let trimmed = &value[a..b];
     if find_ascii(trimmed, b"  ").is_none() {
         return trimmed;
     }

@@ -251,6 +251,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 body,
             );
             self.react_compiler_may_replace_body = is_taken;
+            self.react_compiler_must_keep_body = false;
             self.react_compiler = Some(rc);
         }
         ReactCompilerCandidate {

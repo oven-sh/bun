@@ -16,7 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, JSGlobalObject, JsCell, ZigException};
+use crate::{self as jsc, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -118,7 +118,7 @@ pub struct Debugger {
     pub from_environment_variable: &'static [u8],
     pub script_execution_context_id: Cell<u32>,
     pub next_debugger_id: Cell<u64>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     pub wait_for_connection: Cell<Wait>,
     // wait_for_connection: bool = false,
     pub set_breakpoint_on_first_line: bool,
@@ -139,7 +139,7 @@ impl Default for Debugger {
             from_environment_variable: b"",
             script_execution_context_id: Cell::new(0),
             next_debugger_id: Cell::new(1),
-            poll_ref: JsCell::default(),
+            poll_ref: KeepAlive::default(),
             wait_for_connection: Cell::new(Wait::Off),
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
@@ -263,8 +263,7 @@ impl Debugger {
 
                 extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
                     if let Some(d) = VirtualMachine::get().debugger.get() {
-                        d.poll_ref
-                            .with_mut(|p| p.unref(get_vm_ctx(AllocatorType::Js)));
+                        d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                     }
                     // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
                     // at offset 0); `deinit_timer` matches `uv_close_cb`.
@@ -329,8 +328,7 @@ impl Debugger {
                     let elapsed =
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        dbg.poll_ref
-                            .with_mut(|p| p.unref(get_vm_ctx(AllocatorType::Js)));
+                        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
                         break;
                     }
@@ -399,8 +397,7 @@ impl Debugger {
         this.event_loop().ensure_waker();
 
         if dbg.wait_for_connection.get() != Wait::Off {
-            dbg.poll_ref
-                .with_mut(|p| p.ref_(get_vm_ctx(AllocatorType::Js)));
+            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected.set(true);
         }
         Ok(())
@@ -581,8 +578,7 @@ pub fn wait_for_node_inspector_connection() {
         if dbg.wait_for_connection.get() == Wait::Off {
             // Mirror `create()`: the ref pairs with the unref in `did_connect`.
             dbg.wait_for_connection.set(Wait::Forever);
-            dbg.poll_ref
-                .with_mut(|p| p.ref_(get_vm_ctx(AllocatorType::Js)));
+            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         }
         dbg.must_block_until_connected.set(true);
     }
@@ -600,8 +596,7 @@ pub fn abandon_node_inspector_wait() {
     if dbg.wait_for_connection.get() != Wait::Off {
         dbg.wait_for_connection.set(Wait::Off);
         dbg.must_block_until_connected.set(false);
-        dbg.poll_ref
-            .with_mut(|p| p.unref(get_vm_ctx(AllocatorType::Js)));
+        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
     }
 }
 
@@ -613,8 +608,7 @@ pub fn did_connect() {
     };
     if dbg.wait_for_connection.get() != Wait::Off {
         dbg.wait_for_connection.set(Wait::Off);
-        dbg.poll_ref
-            .with_mut(|p| p.unref(get_vm_ctx(AllocatorType::Js)));
+        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop().wakeup();
     }
 }

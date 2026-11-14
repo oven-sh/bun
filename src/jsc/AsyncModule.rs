@@ -107,7 +107,7 @@ impl bun_event_loop::Taskable for AsyncModule {
     /// handle, arena and parse result go with the box).
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `done()` queued.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         let vm = VirtualMachine::get();
         this.poll_ref.unref(bun_io::js_vm_ctx());
         vm.modules.scheduled.update(|n| n - 1);
@@ -247,7 +247,7 @@ impl Queue {
     pub fn enqueue(&self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
         bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
-        let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
+        let module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));

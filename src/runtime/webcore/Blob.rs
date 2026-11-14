@@ -529,7 +529,7 @@ impl BlobExt for Blob {
                     }
                 }
             }
-            let mut t = Box::new(Task::<H> {
+            let t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
@@ -5295,7 +5295,7 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let mut this = Box::new(S3BlobDownloadTask {
+        let this = Box::new(S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),

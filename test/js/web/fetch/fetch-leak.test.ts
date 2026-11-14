@@ -540,16 +540,19 @@ test.concurrent(
       // and the lazy Blob body is never read, so no fs I/O happens.
       await fetch(prefix + i + pad);
     }
-    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
-    Bun.gc(true);
+    async function hits(from, to) {
+      for (let i = from; i < to; i++) {
+        try { await hit(i); } catch {}
+        if ((i & 1023) === 0) Bun.gc(true);
+      }
+      Bun.gc(true);
+    }
+    // The memory of the process grows by up to 25 MiB (ASAN) until it can hold what two collections have between them.
+    await hits(-10000, 0);
     const baseline = rss();
 
     const ITERS = 20000;
-    for (let i = 0; i < ITERS; i++) {
-      try { await hit(i); } catch {}
-      if ((i & 1023) === 0) Bun.gc(true);
-    }
-    Bun.gc(true);
+    await hits(0, ITERS);
     const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
@@ -559,8 +562,8 @@ test.concurrent(
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
     // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
-    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
-    if (deltaMB > 20) {
+    // when the extra ref is dropped on the floor; at most 4 MiB noise with the fix.
+    if (deltaMB > 10) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
   `;

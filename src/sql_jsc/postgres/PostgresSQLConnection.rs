@@ -91,7 +91,7 @@ pub struct PostgresSQLConnection {
     pub(crate) pending_requests: Cell<u32>,
     advancing: Cell<bool>,
 
-    pub(crate) poll_ref: JsCell<KeepAlive>,
+    pub(crate) poll_ref: KeepAlive,
     pub(crate) global_object: BackRef<JSGlobalObject>,
     vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<StatementCache>,
@@ -379,7 +379,7 @@ impl PostgresSQLConnection {
         self.reset_connection_timeout();
         if status == Status::Connected {
             self.update_flags(|f| f.insert(ConnectionFlags::ON_CONNECT_PENDING));
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.unref(self.vm_ctx());
         }
         self.update_has_pending_activity();
     }
@@ -422,9 +422,9 @@ impl PostgresSQLConnection {
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_query_running() && self.write_buffer.get().remaining().is_empty()));
         if idle {
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.unref(self.vm_ctx());
         } else {
-            self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+            self.poll_ref.r#ref(self.vm_ctx());
         }
     }
 
@@ -559,7 +559,7 @@ impl PostgresSQLConnection {
         self.unregister_auto_flusher();
         let event_loop = self.event_loop();
         event_loop.enter();
-        self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        self.poll_ref.unref(self.vm_ctx());
         fail(self);
         event_loop.exit();
     }
@@ -627,7 +627,7 @@ impl PostgresSQLConnection {
             };
         }
 
-        self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+        self.poll_ref.r#ref(self.vm_ctx());
         self.update_has_pending_activity();
 
         if matches!(
@@ -1068,7 +1068,7 @@ fn open(
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
             advancing: Cell::new(false),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             global_object: BackRef::new(global_object),
             vm: BackRef::new(VirtualMachine::get()),
             statements: JsCell::new(StatementCache::default()),
@@ -1151,7 +1151,7 @@ fn open(
 
     // only call toJS if connectUnixAnon does not fail immediately
     this.reset_connection_timeout();
-    this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
+    this.poll_ref.ref_(this.vm_ctx());
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
     this.js_value
@@ -1242,7 +1242,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 impl PostgresSQLConnection {
     pub fn r#ref(&self) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        self.poll_ref.with_mut(|p| p.ref_(self.vm_ctx()));
+        self.poll_ref.ref_(self.vm_ctx());
         self.update_has_pending_activity();
     }
 
@@ -1331,7 +1331,7 @@ impl PostgresSQLConnection {
         let socket = *self.socket.get();
         if !socket.is_closed() {
             // event loop need to be alive to close the socket
-            self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
+            self.poll_ref.ref_(self.vm_ctx());
             // will unref on socket close
             socket.close_now();
         }

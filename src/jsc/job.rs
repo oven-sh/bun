@@ -340,7 +340,7 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let mut keep_alive = KeepAlive::default();
+        let keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
@@ -407,7 +407,7 @@ impl<C: JobContext> Job<C> {
             vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
         }
         let Job {
-            mut keep_alive,
+            keep_alive,
             off,
             js,
             ..

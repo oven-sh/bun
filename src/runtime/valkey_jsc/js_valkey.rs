@@ -294,7 +294,7 @@ pub(crate) struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
     pub this_value: JsCell<JsRef>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
 
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
     /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
@@ -389,7 +389,7 @@ impl Drop for JSValkeyClient {
         debug_assert!(self.timer.held_ref.get().is_none());
         debug_assert!(self.reconnect_timer.held_ref.get().is_none());
         self.client_mut().shutdown(None);
-        self.poll_ref.with_mut(|r| r.disable());
+        self.poll_ref.disable();
         self.stop_timers();
         self.ref_count.assert_no_refs();
     }
@@ -709,7 +709,7 @@ impl JSValkeyClient {
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -801,7 +801,7 @@ impl JSValkeyClient {
             }),
             global_object: GlobalRef::from(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
@@ -906,7 +906,7 @@ impl JSValkeyClient {
         let _update = scopeguard::guard(self, |p| p.update_poll_ref());
 
         if self.client.get().status == valkey::Status::NeverConnected {
-            self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
+            self.poll_ref.ref_(vm_event_loop_ctx());
 
             if let Err(err) = self.connect() {
                 debug!(
@@ -1129,11 +1129,7 @@ impl JSValkeyClient {
         let _guard = self.ref_guard();
 
         // Ref the poll to keep event loop alive during connection
-        self.poll_ref.with_mut(|r| {
-            r.disable();
-            *r = KeepAlive::default();
-            r.ref_(vm_event_loop_ctx());
-        });
+        self.poll_ref.ref_(vm_event_loop_ctx());
 
         if let Err(err) = self.connect() {
             debug!(
@@ -1564,10 +1560,10 @@ impl JSValkeyClient {
         if has_activity || status == valkey::Status::Connecting {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
-            self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
+            self.poll_ref.ref_(vm_event_loop_ctx());
         } else {
             // There is no pending activity so it is safe to remove the event loop.
-            self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
+            self.poll_ref.unref(vm_event_loop_ctx());
         }
 
         if self.this_value.get().is_empty() {
@@ -2010,7 +2006,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // The VM is going away: `on_close()` would run `onclose`, so only
             // give back what `close_without_socket_next_tick` took.
             DeferredClose::WithoutSocket => {
-                task.ctx.poll_ref.with_mut(|r| r.disable());
+                task.ctx.poll_ref.disable();
             }
         }
     }

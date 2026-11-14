@@ -443,7 +443,7 @@ impl IPCInstance {
         event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
-        vm.channel_ref.with_mut(|r| r.disable());
+        vm.channel_ref.disable();
     }
 }
 

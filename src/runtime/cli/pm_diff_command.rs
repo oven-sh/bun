@@ -539,7 +539,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
         Global::exit(1);
     };
-    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::Npm)
         .map_err(|err| fail(err, "failed to read tarball"))?;
     while let Some(entry) = reader
         .next_entry()
@@ -551,13 +551,15 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
         let path = bun_archive::display_path(entry)?;
-        let path: &[u8] = &path;
-        // npm tarballs root everything under one folder (usually `package/`).
-        let rel = match strings::index_of_char(path, b'/') {
-            Some(i) => &path[i as usize + 1..],
-            None => path,
+        // npm tarballs root everything under one folder (usually `package/`). What is beside it is not installed.
+        let Some((_, rel)) = strings::split_once_char(&path, b'/') else {
+            continue;
         };
-        if rel.is_empty() {
+        let rel = strings::trim_leading_char(rel, b'/');
+        let mut normalized = vec![0; rel.len() + 1];
+        let rel = bun_archive::normalize_npm_entry_path(rel, &mut normalized);
+        bun_paths::resolve_path::platform_to_posix_in_place(rel);
+        if matches!(&*rel, b"" | b".") {
             continue;
         }
         let rel = rel.to_vec();

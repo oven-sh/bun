@@ -338,7 +338,7 @@ impl<'a> Writable<'a> {
                 JSValue::UNDEFINED
             }
             Writable::Pipe(pipe_ref) => {
-                if subprocess.has_exited()
+                if let Some(status) = subprocess.process().status()
                     && !subprocess
                         .flags
                         .get()
@@ -356,12 +356,7 @@ impl<'a> Writable<'a> {
                     // The call re-enters via the writer backref, so no `&mut
                     // FileSink` is materialized across it.
                     // SAFETY: `pipe_ref` keeps the sink live.
-                    unsafe {
-                        FileSink::on_attached_process_exit(
-                            pipe_ref.as_ptr(),
-                            &subprocess.process().status,
-                        )
-                    };
+                    unsafe { FileSink::on_attached_process_exit(pipe_ref.as_ptr(), status) };
                     // The wrapper takes `pipe_ref`'s ref.
                     FileSink::to_js(pipe_ref, global_this)
                 } else {

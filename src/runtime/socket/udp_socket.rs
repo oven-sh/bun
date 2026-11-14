@@ -85,7 +85,7 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
     this.abort_handle.leave();
-    this.poll_ref.with_mut(|p| p.disable());
+    this.poll_ref.disable();
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
     // The descriptor dies with the socket: prune the registry entry so a
@@ -520,7 +520,7 @@ pub(crate) struct UDPSocket {
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
     connect_info: Cell<Option<ConnectInfo>>,
@@ -580,7 +580,7 @@ impl UDPSocket {
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
@@ -782,7 +782,7 @@ impl UDPSocket {
         // Disarm the error-path guard.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             cx.global(),
             js_value,
@@ -1507,12 +1507,12 @@ impl UDPSocket {
 
     pub(crate) fn r#ref(&self) {
         if !self.closed.get() {
-            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         }
     }
 
     pub(crate) fn unref(&self) {
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
     pub(crate) fn close(&self) {
@@ -1677,7 +1677,7 @@ impl Drop for UDPSocket {
             }
             uws::udp::Socket::opaque_mut(socket).close();
         }
-        this.poll_ref.with_mut(|p| p.disable());
+        this.poll_ref.disable();
     }
 }
 

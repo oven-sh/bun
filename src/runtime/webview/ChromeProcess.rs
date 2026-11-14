@@ -175,20 +175,19 @@ unsafe extern "C" fn Bun__Chrome__ensure(
 
 bun_spawn::link_impl_ProcessExit! {
     ChromeProcess for ChromeProcess => |this| {
-        on_process_exit(process, status, _rusage) => ChromeProcess::on_exit(this, process, &status),
+        on_process_exit(status, _rusage) => ChromeProcess::on_exit(this, &status),
     }
 }
 
 impl ChromeProcess {
-    /// Safety: `this` is the pointer published in INSTANCE (freed here); `process` is the exit callback's own argument, which carries the `&mut Process` already live in its frame (as in `SyncWindowsProcess::on_process_exit`).
-    unsafe fn on_exit(this: *mut ChromeProcess, process: *mut Process, status: &Status) {
+    /// Safety: `this` is the pointer published in INSTANCE (freed here).
+    unsafe fn on_exit(this: *mut ChromeProcess, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
         // A retired Chrome was already unpublished by `Bun__Chrome__retire`.
         let _ =
             INSTANCE.compare_exchange(this, ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
         // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
         let mut chrome = unsafe { bun_core::heap::take(this) };
-        debug_assert_eq!(process, chrome.process.as_ptr());
         chrome.close_transport();
         if chrome.retired {
             return;
@@ -663,12 +662,13 @@ impl Endpoints {
         // and outlives it.
         let process = unsafe {
             let process = &(*self_ptr).process;
-            process
-                .process_mut()
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
+            Process::set_exit_handler(
+                process,
+                ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr),
+            );
             process
         };
-        if let Err(e) = process.process_mut().watch() {
+        if let Err(e) = process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
             // SAFETY: reclaim the Box (drops our process ref).
             drop(unsafe { bun_core::heap::take(self_ptr) });
@@ -677,7 +677,7 @@ impl Endpoints {
         // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
-        process.process_mut().disable_keeping_event_loop_alive();
+        process.disable_keeping_event_loop_alive();
         INSTANCE.store(self_ptr, Ordering::Relaxed);
 
         debug_assert!(self.child.is_none());
@@ -795,17 +795,17 @@ impl Endpoints {
             generation,
         }));
         // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`.
-        let process: *mut Process = unsafe { (*self_ptr).process.as_ptr() };
+        let process = unsafe { &(*self_ptr).process };
 
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
-        // SAFETY: `reply` and `process` are owned by `*self_ptr`, which
+        // SAFETY: `reply` is owned by `*self_ptr`, which
         // outlives the reads (`WindowsPipes::close` stops them first).
         let started = unsafe {
             (*reply)
                 .read_start_ctx::<ChromeProcess>(self_ptr)
                 .to_result(bun_sys::Tag::listen)
-                .and_then(|()| (*process).watch())
+                .and_then(|()| process.watch())
         };
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
@@ -820,11 +820,9 @@ impl Endpoints {
         }
 
         // SAFETY: `self_ptr` is live until `on_exit`.
-        unsafe {
-            let p = process;
-            (*p).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
-            (*p).disable_keeping_event_loop_alive();
-        }
+        let handler = unsafe { ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr) };
+        Process::set_exit_handler(process, handler);
+        process.disable_keeping_event_loop_alive();
         INSTANCE.store(self_ptr, Ordering::Relaxed);
         GENERATION.store(generation, Ordering::Relaxed);
         Ok(0)

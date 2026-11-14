@@ -704,7 +704,7 @@ impl Extraction {
         }
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute_windows_wtf16(path) {
+            if bun_archive::has_windows_root(path) {
                 return Ok(());
             }
             if self.npm_mode {
@@ -1089,11 +1089,7 @@ fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
     // Same transformation as Archiver.extractToDir: encode characters
     // Windows rejects in filenames into the 0xf000 private-use range so
     // the extraction round-trips with node-tar.
-    let mut remain: &mut [OSPathChar] = path;
-    if strings::starts_with_windows_drive_letter_t(&*remain) {
-        remain = &mut remain[2..];
-    }
-    for ch in remain.iter_mut() {
+    for ch in path.iter_mut() {
         match *ch {
             c if c == ('|' as OSPathChar)
                 || c == ('<' as OSPathChar)

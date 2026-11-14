@@ -188,23 +188,21 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
-        // The exit handler re-borrows `handle.process`, so go through the
-        // `Process` allocation itself rather than a borrow of the slot.
-        // SAFETY: just spawned; the slot's handle keeps it live.
-        let process = unsafe { &mut *handle.process.as_ref().unwrap().process.as_ptr() };
+        // Not a borrow of the slot, which the exit handler borrows again.
+        let process = handle.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match process.watch_or_reap() {
+        match spawn::Process::watch_or_reap(process) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
                 }
             }
         }
@@ -270,7 +268,7 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());

@@ -114,7 +114,7 @@ pub struct WebWorker {
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
     /// `.ref()`/`.unref()`, released when the parent releases the thread.
-    parent_poll_ref: JsCell<KeepAlive>,
+    parent_poll_ref: KeepAlive,
     /// Taken by the parent to join the OS thread.
     join_handle: JsCell<Option<JoinHandle<()>>>,
     /// What the thread is handed, until one has started; then null.
@@ -306,16 +306,6 @@ impl WebWorker {
     #[inline]
     fn vm_ptr(&self) -> *mut VirtualMachine {
         self.vm.get()
-    }
-
-    /// Closure-scoped `&mut KeepAlive` accessor for `parent_poll_ref`. The cell
-    /// is touched only on the parent thread (`set_ref`,
-    /// `release_parent_poll_ref`, `create`) so no lock is required; `JsCell`
-    /// provides the interior mutability because `WebWorker` is shared `&self`
-    /// across threads.
-    #[inline]
-    fn with_parent_poll_ref<R>(&self, f: impl FnOnce(&mut KeepAlive) -> R) -> R {
-        self.parent_poll_ref.with_mut(f)
     }
 
     /// Whether this worker was started in eval mode (entry source is a
@@ -546,7 +536,7 @@ impl WebWorker {
             is_returning: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
             vm: Cell::new(core::ptr::null_mut()),
-            parent_poll_ref: JsCell::new(KeepAlive::init()),
+            parent_poll_ref: KeepAlive::init(),
             join_handle: JsCell::new(None),
             thread_start: Cell::new(core::ptr::null_mut()),
             room_timer: EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom),
@@ -562,7 +552,7 @@ impl WebWorker {
         // thread, unless the user opted out with `{ ref: false }`.
         if !default_unref {
             // `bun_io::js_vm_ctx()` is this (the parent) thread's loop.
-            worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
+            worker_ref.parent_poll_ref.ref_(bun_io::js_vm_ctx());
         }
 
         // The thread's own ref, taken before it exists so it can never observe zero.
@@ -594,7 +584,7 @@ impl WebWorker {
             StartOutcome::NoRoom | StartOutcome::Failed => {
                 // The thread's ref goes down with this; ours drops on return.
                 worker_ref.drop_thread_start();
-                worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+                worker_ref.parent_poll_ref.unref(bun_io::js_vm_ctx());
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 return core::ptr::null_mut();
             }
@@ -823,13 +813,11 @@ impl WebWorker {
     /// and gates out calls once the keep-alive has been released.
     #[unsafe(export_name = "WebWorker__setRef")]
     pub(crate) extern "C" fn set_ref(this: &WebWorker, value: bool) {
-        this.with_parent_poll_ref(|poll| {
-            if value {
-                poll.ref_(bun_io::js_vm_ctx());
-            } else {
-                poll.unref(bun_io::js_vm_ctx());
-            }
-        });
+        if value {
+            this.parent_poll_ref.ref_(bun_io::js_vm_ctx());
+        } else {
+            this.parent_poll_ref.unref(bun_io::js_vm_ctx());
+        }
     }
 
     /// Ask the thread to stop: set `requested_terminate`, raise a
@@ -866,7 +854,7 @@ impl WebWorker {
     /// loop and forget it as a child. Parent thread.
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
     pub(crate) extern "C" fn release_parent_poll_ref(this: &WebWorker) {
-        this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+        this.parent_poll_ref.unref(bun_io::js_vm_ctx());
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
         let children = unsafe { (*this.parent).child_workers.get_mut() };
         if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {

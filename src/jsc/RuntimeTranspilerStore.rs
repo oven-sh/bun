@@ -490,7 +490,7 @@ impl TranspilerJob {
     /// `ResolvedSource`, `Log`, `StrongOptional` — are torn down
     /// *there*, not here. This function handles only the teardown that field
     /// drop glue does **not** cover: `poll_ref.disable()`.
-    fn reset_for_pool(&mut self) {
+    fn reset_for_pool(&self) {
         self.poll_ref.disable();
         // Fields with Drop glue are handled by `store.put()` →
         // `drop_in_place`; do NOT `take()` them here (would drop the empty
@@ -515,7 +515,7 @@ impl TranspilerJob {
         let promise = self.promise.swap();
         let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
-        // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
+        // before `put` needs `&mut *self` below; deref at the
         // `fulfill` call site instead.
         let global_this = self.global_this;
         // Note: the KeepAlive takes an `EventLoopCtx`

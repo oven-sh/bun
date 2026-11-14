@@ -21,9 +21,10 @@ function atTheEnd() {
   }
 }
 
+let goesOn = false;
 function creeps(): void {
   atTheEnd();
-  creeps();
+  if (goesOn) creeps();
 }
 
 function down(level: number): number {
@@ -42,6 +43,9 @@ function down(level: number): number {
 }
 
 console.log(compares());
+// Plain Bun compiles a function at its first call, and at the end of the stack there may be no room for that: each is called once here.
+creeps();
+goesOn = true;
 for (let round = 0; round < 3; round++) {
   levelsClimbed = 0;
   console.log(down(0));

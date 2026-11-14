@@ -712,7 +712,7 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let mut waits_for_command = bun_io::KeepAlive::init();
+            let waits_for_command = bun_io::KeepAlive::init();
             waits_for_command.ref_(bun_io::js_vm_ctx());
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
                 vm.event_loop().tick();

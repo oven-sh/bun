@@ -400,7 +400,7 @@ pub struct VirtualMachine {
     /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one.
     pub has_pending_test_step: core::cell::Cell<bool>,
 
-    pub channel_ref: JsCell<Async::KeepAlive>,
+    pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: Cell<bool>,
     pub channel_ref_should_ignore_one_disconnect_event_listener: Cell<bool>,
 
@@ -3246,7 +3246,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).macro_event_loop).write(EventLoop::new(NonNull::new_unchecked(vm)));
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
             addr_of_mut!((*vm).gc_controller).write(Default::default());
-            addr_of_mut!((*vm).channel_ref).write(JsCell::default());
+            addr_of_mut!((*vm).channel_ref).write(Default::default());
             addr_of_mut!((*vm).rare_data).write(OnceCell::new());
             addr_of_mut!((*vm).module_loader).write(Default::default());
             addr_of_mut!((*vm).test_isolation_state).write(Default::default());
@@ -4265,12 +4265,12 @@ impl VirtualMachine {
     }
 
     /// Registers a spawned subprocess with the auto-killer.
-    pub fn on_subprocess_spawn(&self, process: core::ptr::NonNull<bun_spawn::Process>) {
+    pub fn on_subprocess_spawn(&self, process: &bun_ptr::RefPtr<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_spawn(process);
     }
 
     /// Unregisters an exited subprocess from the auto-killer.
-    pub fn on_subprocess_exit(&self, process: core::ptr::NonNull<bun_spawn::Process>) {
+    pub fn on_subprocess_exit(&self, process: &bun_ptr::RefPtr<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_exit(process);
     }
 
@@ -4655,6 +4655,7 @@ impl VirtualMachine {
         bun_removable_features::removable_body!(HotReload, Abort, {
             bun_core::reload_process(should_clear_terminal, may_return);
         });
+        crate::posix_signal_handle::did_not_restart();
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.

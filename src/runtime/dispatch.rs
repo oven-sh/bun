@@ -1000,11 +1000,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
         poll_tag::PROCESS => {
-            // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
-            // by the trailing `deref`, so keep raw provenance end-to-end.
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr.cast::<Process>()) {
-                // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
-                unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
+                // SAFETY: adopts the ref taken when the poll was registered.
+                let process = unsafe { bun_ptr::RefPtr::from_raw(proc) };
+                Process::wait(process.this_ptr(), false);
             })
         }
         poll_tag::MEMORY_PRESSURE => {

@@ -34,7 +34,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
   [kStdinOf]?: unknown;
-  [kHasExitedBeforeFirstPoll]?: (subprocess: unknown) => boolean;
+  [kHasExitedBeforeFirstPoll]?: (subprocess: any) => boolean;
 };
 type FD = number;
 
@@ -892,11 +892,7 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
 }
 
 // `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program and must not name a binding of Bun.spawn.
-function writableFromFileSink(
-  fileSink: any,
-  stdinOf: unknown,
-  hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean,
-) {
+function writableFromFileSink(fileSink: any, stdinOf: unknown, hasExitedBeforeFirstPoll: (subprocess: any) => boolean) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");

@@ -685,10 +685,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
-const hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean = $bindgen(
-  "subprocess.bind.ts",
-  "hasExitedBeforeFirstPoll",
-);
+const hasExitedBeforeFirstPoll = $bindgen("subprocess.bind.ts", "hasExitedBeforeFirstPoll");
 
 /**
  * Spawns a file as a shell synchronously.

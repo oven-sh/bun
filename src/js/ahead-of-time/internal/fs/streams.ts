@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 052373d2634161cbaf51bfc67c3ef87d065f81cd9286b6eed601f3b1f23adaf2.
+// Written against that file with the SHA-256 ba8c53a1b4e5c2924642955b29156ac2df5684b75013cf79bed7d544d0b4338d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -98,7 +98,7 @@ declare global {
       destroySoon: Writable["end"];
       [kWriteMonkeyPatchDefense]?: boolean;
       [kStdinOf]?: unknown;
-      [kHasExitedBeforeFirstPoll]?: (subprocess: unknown) => boolean;
+      [kHasExitedBeforeFirstPoll]?: (subprocess: any) => boolean;
     }
   }
 }
@@ -1065,7 +1065,7 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
 function writableFromFileSink(
   fileSink: FileSink,
   stdinOf: unknown,
-  hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean,
+  hasExitedBeforeFirstPoll: (subprocess: any) => boolean,
 ) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");

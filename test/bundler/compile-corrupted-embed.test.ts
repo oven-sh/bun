@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  readElf64ProgramHeaders,
+  tempDir,
+} from "harness";
 import {
   closeSync,
   copyFileSync,
@@ -37,9 +47,12 @@ function writeU64At(fd: number, position: number, value: bigint): void {
   writeSync(fd, buf, 0, 8, position);
 }
 
-/// In bun itself, the ".bun" section is the BUN_COMPILED header. `bun build --compile` points the section header at
-/// the embedded payload instead, so sh_addr and sh_offset locate `[u64 LE length][payload]`.
-function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
+type ElfSection = { name: string; type: number; flags: bigint; vaddr: bigint; fileOffset: number; size: number };
+
+const SHT_PROGBITS = 1;
+const SHF_ALLOC = 2n;
+
+function elfSections(fd: number): ElfSection[] {
   const ehdr = readAt(fd, 0, 64);
   if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not an ELF file");
   const e_shoff = Number(ehdr.readBigUInt64LE(0x28));
@@ -48,19 +61,30 @@ function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
   const e_shstrndx = ehdr.readUInt16LE(0x3e);
 
   const shstrtab = readAt(fd, e_shoff + e_shstrndx * e_shentsize, e_shentsize);
-  const shstrOff = Number(shstrtab.readBigUInt64LE(0x18));
+  const names = readAt(fd, Number(shstrtab.readBigUInt64LE(0x18)), Number(shstrtab.readBigUInt64LE(0x20)));
 
+  const sections: ElfSection[] = [];
   for (let i = 0; i < e_shnum; i++) {
     const sh = readAt(fd, e_shoff + i * e_shentsize, e_shentsize);
-    const name = readAt(fd, shstrOff + sh.readUInt32LE(0), 5);
-    if (name.toString("latin1") === ".bun\0") {
-      return {
-        fileOffset: Number(sh.readBigUInt64LE(0x18)),
-        vaddr: sh.readBigUInt64LE(0x10),
-      };
-    }
+    const nameStart = sh.readUInt32LE(0);
+    sections.push({
+      name: names.toString("latin1", nameStart, names.indexOf(0, nameStart)),
+      type: sh.readUInt32LE(4),
+      flags: sh.readBigUInt64LE(8),
+      vaddr: sh.readBigUInt64LE(0x10),
+      fileOffset: Number(sh.readBigUInt64LE(0x18)),
+      size: Number(sh.readBigUInt64LE(0x20)),
+    });
   }
-  throw new Error("no .bun section");
+  return sections;
+}
+
+/// In bun itself, the ".bun" section is the BUN_COMPILED header. `bun build --compile` points the section header at
+/// the embedded payload instead, so sh_addr and sh_offset locate `[u64 LE length][payload]`.
+function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
+  const section = elfSections(fd).find(section => section.name === ".bun");
+  if (!section) throw new Error("no .bun section");
+  return { fileOffset: section.fileOffset, vaddr: section.vaddr };
 }
 
 /// Overwrites the payload's u64 length prefix.
@@ -114,16 +138,18 @@ function peStompLength(path: string): void {
   }
 }
 
-async function compileApp(dir: string): Promise<string> {
+async function compileApp(dir: string, flags: string[] = []): Promise<string> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "app"],
+    cmd: [bunExe(), "build", "--compile", ...flags, "./app.js", "--outfile", "app"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  // `--aot` reports on stderr what it compiled.
+  expect(stderr.split("\n").filter(line => /^(warn|error)\b/.test(line))).toEqual([]);
+  if (flags.length === 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return join(dir, isWindows ? "app.exe" : "app");
 }
@@ -315,6 +341,121 @@ test.if(reportsTruncation)(
       });
     }
     rmSync(cut);
+  },
+  TIMEOUT,
+);
+
+/// The address of the word that holds the payload's address: the ".bun" section of bun itself, or ".bun.pointer" of a bun that is a
+/// compiled executable already. The address stays through a compile. The file offset does not: `--trim` cuts bytes in front of it.
+function elfFindPointerWordAddress(fd: number): bigint {
+  const sections = elfSections(fd);
+  return (sections.find(section => section.name === ".bun.pointer") ?? elfFindBunSection(fd)).vaddr;
+}
+
+// GNU strip and objcopy write a new file from the section headers. Bytes that no section covers are lost. The word
+// that holds the payload's address stays where bun itself has its ".bun" section, which the compile points at the payload.
+test.skipIf(!isLinux)(
+  "a section header covers the word that holds the payload's address",
+  async () => {
+    using dir = tempDir("compile-pointer-section", {
+      "app.js": `console.log("hello from standalone");`,
+    });
+    const exe = await compileApp(String(dir));
+
+    const bun = openSync(bunExe(), "r");
+    const fd = openSync(exe, "r");
+    try {
+      const word = elfFindPointerWordAddress(bun);
+      const payload = elfFindBunSection(fd);
+
+      const coveringSections = elfSections(fd).filter(
+        section =>
+          (section.flags & SHF_ALLOC) !== 0n &&
+          section.type === SHT_PROGBITS &&
+          section.vaddr <= word &&
+          word + 8n <= section.vaddr + BigInt(section.size),
+      );
+      expect(coveringSections).toEqual([
+        {
+          name: ".bun.pointer",
+          type: SHT_PROGBITS,
+          flags: expect.any(BigInt),
+          vaddr: word,
+          fileOffset: expect.any(Number),
+          size: 8,
+        },
+      ]);
+      expect(readAt(fd, coveringSections[0].fileOffset, 8).readBigUInt64LE()).toBe(payload.vaddr);
+    } finally {
+      closeSync(fd);
+      closeSync(bun);
+    }
+  },
+  TIMEOUT,
+);
+
+const gnuStrip = isLinux && Bun.which("strip");
+const hasGnuStrip =
+  !!gnuStrip &&
+  Bun.spawnSync({ cmd: [gnuStrip, "--version"], stdout: "pipe" })
+    .stdout.toString()
+    .includes("GNU");
+
+/// An executable whose payload has segments of its own (`--aot`, `--trim`, or a bun that is such an executable) has its program header table
+/// inside a note. GNU strip refuses that layout: it exits with an error and leaves the file as it was.
+function hasOwnSegments(exe: string): boolean {
+  const PT_BUN_RESERVED = 0x6fb00001;
+  const PT_BUN_PAYLOAD = 0x6fb00002;
+  return readElf64ProgramHeaders(exe).some(ph => ph.type === PT_BUN_RESERVED || ph.type === PT_BUN_PAYLOAD);
+}
+
+test.if(hasGnuStrip)(
+  "runs its program after GNU strip",
+  async () => {
+    using dir = tempDir("compile-stripped", {
+      "app.js": `console.log("hello from standalone");`,
+    });
+    const exe = await compileApp(String(dir));
+    const stripAccepts = !hasOwnSegments(exe);
+    const stripped = corruptedCopy(exe, "stripped", path => {
+      const { stderr, exitCode } = Bun.spawnSync({ cmd: [gnuStrip!, path], stderr: "pipe" });
+      if (stripAccepts) {
+        expect(stderr.toString()).toBe("");
+        expect(exitCode).toBe(0);
+      }
+    });
+    expect(await run(stripped)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
+    rmSync(stripped);
+  },
+  TIMEOUT,
+);
+
+// Not every build of Bun includes the compiler. One without it says so before it looks for the entry point.
+const hasAot =
+  hasGnuStrip &&
+  !/^error: --aot /m.test(
+    Bun.spawnSync({
+      cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    }).stderr.toString(),
+  );
+
+// Whatever a version of binutils does with the layout of an `--aot` executable, the program stays.
+// An `--aot` build takes a minute with a sanitizer, and the layout is the same there.
+test.if(hasAot && !isASAN)(
+  "GNU strip never turns an --aot executable into the Bun CLI",
+  async () => {
+    using dir = tempDir("compile-aot-stripped", {
+      "app.js": `console.log("hello from standalone");`,
+    });
+    const exe = await compileApp(String(dir), ["--aot"]);
+    const stripped = corruptedCopy(exe, "stripped", path => {
+      Bun.spawnSync({ cmd: [gnuStrip!, path], stderr: "pipe" });
+    });
+    expect(await run(stripped)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
+    rmSync(stripped);
   },
   TIMEOUT,
 );

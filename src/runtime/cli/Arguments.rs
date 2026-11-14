@@ -3005,14 +3005,26 @@ fn parse_build_command_options(
         ctx.bundler_options.windows.copyright = Some(copyright.into());
     }
 
-    if let Some(outdir) = args.option(b"--outdir") {
-        if !outdir.is_empty() {
-            ctx.bundler_options.outdir = outdir.into();
+    let outdir = args.option(b"--outdir").filter(|path| !path.is_empty());
+    let outfile = args.option(b"--outfile").filter(|path| !path.is_empty());
+    match (outdir, outfile) {
+        (Some(_), Some(_)) => {
+            Output::err_generic("cannot use both --outdir and --outfile", ());
+            // No note for --app: it reads neither flag.
+            if !ctx.bundler_options.bake {
+                if compiles {
+                    bun_core::note!("remove --outdir and put the folder in --outfile");
+                } else {
+                    bun_core::note!(
+                        "remove --outfile, or replace it with --entry-naming to name the entry file inside --outdir"
+                    );
+                }
+            }
+            Global::exit(1);
         }
-    } else if let Some(outfile) = args.option(b"--outfile") {
-        if !outfile.is_empty() {
-            ctx.bundler_options.outfile = outfile.into();
-        }
+        (Some(outdir), None) => ctx.bundler_options.outdir = outdir.into(),
+        (None, Some(outfile)) => ctx.bundler_options.outfile = outfile.into(),
+        (None, None) => {}
     }
 
     if let Some(metafile) = args.option(b"--metafile") {

@@ -208,6 +208,15 @@ describe("path.resolve", () => {
     assert.ok(result.endsWith(expectedEnding));
   });
 
+  test("does not wrap the argument count at 65536", () => {
+    const relative = new Array(65536).fill("rel");
+    // resolve() reads its arguments from the last one.
+    assert.strictEqual(path.posix.resolve(...relative.slice(1), "/abs"), "/abs", "65536 arguments");
+    assert.strictEqual(path.posix.resolve(...relative, "/abs"), "/abs", "65537 arguments");
+    assert.throws(() => path.win32.resolve(...relative.slice(1), 123), { code: "ERR_INVALID_ARG_TYPE" });
+    assert.strictEqual(path.win32.resolve(...relative, "C:\\abs"), "C:\\abs", "65537 arguments");
+  });
+
   test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {
     using dir = tempDir("resolve-backslash-cwd", { "e\\/z": "" });
 

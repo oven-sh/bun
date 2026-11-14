@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import assert from "node:assert";
 import path from "node:path";
 
@@ -113,6 +113,119 @@ console.log(results.join("\\n"));`,
       for (let r = 0; r < 3; r++) expected.push(`${ns}.${name}[${r}]=OK`);
   expect({ lines: stdout.trim().split("\n"), stderr }).toEqual({ lines: expected, stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+describe("functions with a fixed number of operands, called with 65536 or more arguments", () => {
+  const surplus = new Array(65535).fill("");
+  const expected = {
+    posix: {
+      basename: "b.txt",
+      dirname: "/a",
+      extname: ".txt",
+      isAbsolute: true,
+      normalize: "/b",
+      parse: { root: "/", dir: "/a", base: "b.txt", ext: ".txt", name: "b" },
+      format: "/a/b.txt",
+      toNamespacedPath: "C:\\a\\b",
+      basenameWithExt: "b",
+      relative: "../c",
+    },
+    win32: {
+      basename: "b.txt",
+      dirname: "/a",
+      extname: ".txt",
+      isAbsolute: true,
+      normalize: "\\b",
+      parse: { root: "/", dir: "/a", base: "b.txt", ext: ".txt", name: "b" },
+      format: "/a\\b.txt",
+      toNamespacedPath: "\\\\?\\C:\\a\\b",
+      basenameWithExt: "b",
+      relative: "..\\c",
+    },
+  };
+  for (const ns of ["posix", "win32"]) {
+    test(ns, () => {
+      const p = path[ns];
+      expect({
+        // 65536 arguments
+        basename: p.basename("/a/b.txt", ...surplus),
+        dirname: p.dirname("/a/b", ...surplus),
+        extname: p.extname("/a/b.txt", ...surplus),
+        isAbsolute: p.isAbsolute("/a", ...surplus),
+        normalize: p.normalize("/a/../b", ...surplus),
+        parse: p.parse("/a/b.txt", ...surplus),
+        format: p.format({ dir: "/a", base: "b.txt" }, ...surplus),
+        toNamespacedPath: p.toNamespacedPath("C:\\a\\b", ...surplus),
+        // 65537 arguments
+        basenameWithExt: p.basename("/a/b.txt", ".txt", ...surplus),
+        relative: p.relative("/a/b", "/a/c", ...surplus),
+      }).toEqual(expected[ns]);
+    });
+  }
+});
+
+// join() and resolve() copy their arguments when one is a String object. `BUN_JSC_maxSingleAllocationSize` makes a WTF
+// allocation above the cap fail. It exists in debug builds only.
+test.skipIf(!isDebug)("a call throws when the copy of its arguments cannot be allocated", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = require("node:path");
+const rest = new Array(40000).fill("b");
+const underTheCap = rest.slice(0, 20000);
+const outcome = fn => {
+  try {
+    return fn();
+  } catch (e) {
+    return e.name + ": " + e.message;
+  }
+};
+const length = string => "returned a string of length " + string.length;
+const results = {};
+for (const ns of ["posix", "win32"]) {
+  for (const fn of ["join", "resolve"]) {
+    results[ns + "." + fn] = outcome(() => length(path[ns][fn](new String("a"), ...rest)));
+  }
+  // Under the cap, so the copy is made. The expected path comes from a Buffer,
+  // so that it needs no allocation of its own that the cap can fail.
+  const joined = "a" + Buffer.alloc(2 * underTheCap.length, path[ns].sep + "b").toString();
+  results[ns + ".join, 20001 arguments, is the joined path"] = outcome(
+    () => path[ns].join(new String("a"), ...underTheCap) === joined,
+  );
+}
+// The copy fails before the last argument, so that argument is not converted.
+let conversions = 0;
+const last = Object.assign(new String("c"), {
+  [Symbol.toPrimitive]() {
+    conversions++;
+    return "c";
+  },
+});
+results["join, a String object last"] = outcome(() => length(path.posix.join(new String("a"), ...rest, last)));
+results.conversions = conversions;
+console.log(JSON.stringify(results));`,
+    ],
+    env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: "400000" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const outOfMemory = "RangeError: Out of memory";
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      "posix.join": outOfMemory,
+      "posix.resolve": outOfMemory,
+      "posix.join, 20001 arguments, is the joined path": true,
+      "win32.join": outOfMemory,
+      "win32.resolve": outOfMemory,
+      "win32.join, 20001 arguments, is the joined path": true,
+      "join, a String object last": outOfMemory,
+      conversions: 0,
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.if(isWindows)("Bun.which skips PATH segments longer than the Windows wide-path buffer", async () => {

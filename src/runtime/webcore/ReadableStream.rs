@@ -94,9 +94,13 @@ impl Strong {
         self.value().and_then(ReadableStream::from_js_direct)
     }
 
-    pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
+    pub(crate) fn tee(
+        &mut self,
+        global: &JSGlobalObject,
+        clone_for_branch2: bool,
+    ) -> JsResult<Option<ReadableStream>> {
         if let Some(stream) = self.get() {
-            let Some((first, second)) = stream.tee(global)? else {
+            let Some((first, second)) = stream.tee(global, clone_for_branch2)? else {
                 return Ok(None);
             };
             match self {
@@ -120,6 +124,7 @@ unsafe extern "C" {
     safe fn ReadableStream__tee(
         stream: JSValue,
         global_this: &JSGlobalObject,
+        clone_for_branch2: bool,
         out1: &mut JSValue,
         out2: &mut JSValue,
     ) -> bool;
@@ -171,11 +176,18 @@ impl ReadableStream {
     pub fn tee(
         &self,
         global_this: &JSGlobalObject,
+        clone_for_branch2: bool,
     ) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
         let mut out1 = JSValue::ZERO;
         let mut out2 = JSValue::ZERO;
         let ok = bun_jsc::from_js_host_call_generic(global_this, || {
-            ReadableStream__tee(self.value, global_this, &mut out1, &mut out2)
+            ReadableStream__tee(
+                self.value,
+                global_this,
+                clone_for_branch2,
+                &mut out1,
+                &mut out2,
+            )
         })?;
         if !ok {
             return Ok(None);

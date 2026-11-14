@@ -2009,6 +2009,44 @@ it("cloned response headers are independent after accessing", () => {
   expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
 });
 
+it("cloned response and request bodies do not share stream chunks", async () => {
+  const makeBody = () =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+
+  const response = new Response(makeBody());
+  const responseClone = response.clone();
+  const [responseChunk, responseCloneChunk] = await Promise.all([
+    response.body!.getReader().read(),
+    responseClone.body!.getReader().read(),
+  ]);
+  expect(responseChunk.value!.buffer).not.toBe(responseCloneChunk.value!.buffer);
+  responseChunk.value![0] = 99;
+  expect(responseCloneChunk.value![0]).toBe(1);
+
+  const request = new Request("http://localhost", {
+    method: "POST",
+    body: makeBody(),
+    duplex: "half",
+  } as RequestInit);
+  const requestClone = request.clone();
+  const [requestChunk, requestCloneChunk] = await Promise.all([
+    request.body!.getReader().read(),
+    requestClone.body!.getReader().read(),
+  ]);
+  expect(requestChunk.value!.buffer).not.toBe(requestCloneChunk.value!.buffer);
+  requestChunk.value![0] = 99;
+  expect(requestCloneChunk.value![0]).toBe(1);
+
+  const [branch1, branch2] = makeBody().tee();
+  const [chunk1, chunk2] = await Promise.all([branch1.getReader().read(), branch2.getReader().read()]);
+  expect(chunk1.value!.buffer).toBe(chunk2.value!.buffer);
+});
+
 it("should work with http 100 continue", async () => {
   let server: net.Server | undefined;
   try {

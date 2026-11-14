@@ -109,7 +109,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     return 0;
 }
 
-extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
+extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, bool cloneForBranch2, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -117,10 +117,8 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Body clone tees with cloneForBranch2 = false (share chunk refs) like Node/Chrome/Firefox;
-    // the spec's per-chunk StructuredClone makes an N-deep clone chain retain N copies of the body
-    // (whatwg/streams#1156).
-    auto branches = readableStreamTee(globalObject, stream);
+    // Public ReadableStream.tee() passes false; Fetch Body cloning passes true for its second branch.
+    auto branches = readableStreamTee(globalObject, stream, cloneForBranch2);
     RETURN_IF_EXCEPTION(scope, false);
 
     *possibleReadableStream1 = JSValue::encode(branches.first);

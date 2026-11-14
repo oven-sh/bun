@@ -423,12 +423,6 @@ var access = function access(path, mode, callback?) {
     else fs.symlink(target, path, type).then(callback, callback);
   },
   truncate = function truncate(path, len, callback?) {
-    if (typeof path === "number") {
-      // Apparently, node supports this
-      ftruncate(path, len, callback);
-      return;
-    }
-
     if ($isCallable(len)) {
       callback = len;
       len = 0;

@@ -1606,6 +1606,7 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
 pub(crate) use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 impl PathOrFdExt for PathOrFileDescriptor<'_> {
+    #[inline]
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -1614,7 +1615,15 @@ impl PathOrFdExt for PathOrFileDescriptor<'_> {
             return Ok(None);
         };
 
-        if let Some(fd) = Fd::from_js_validated(first, ctx)? {
+        // Node's `isFd` is `isInt32`, a test on the value: -0 and an integer stored as a
+        // double are file descriptors. Any other number is an invalid path.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L196
+        let is_fd = first.is_int32()
+            || (first.is_double() && {
+                let number = first.as_double();
+                number == f64::from(number as i32)
+            });
+        if is_fd && let Some(fd) = Fd::from_js_validated(first, ctx)? {
             arguments.eat();
             return Ok(Some(PathOrFileDescriptor::Fd(fd)));
         }

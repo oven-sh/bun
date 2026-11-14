@@ -35,6 +35,14 @@ describe("Bun.write()", () => {
     expect(() => Bun.write(-1, "foo")).toThrow(RangeError);
   });
 
+  // Only an int32 is a file descriptor. Any other number is not a path or blob-y thing.
+  it.each([5.5, -0.5, NaN, Infinity, 2 ** 31, 2 ** 32, 1e100])(
+    "Throws when `destination` is a number that is not an int32 (%p)",
+    (destination: any) => {
+      expect(() => Bun.write(destination, "foo")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    },
+  );
+
   it.each(["foo", ""])("Cannot write to readonly Blobs", async input => {
     var blob = new Blob([new Uint8Array([0, 0, 0, 0])]);
     await expect(() => Bun.write(blob as Bun.BunFile, input)).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");

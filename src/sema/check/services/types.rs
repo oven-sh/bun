@@ -1,6 +1,8 @@
 //! Queries about a type.
 
-use super::super::print;
+use super::super::enclosing_declaration::{Enclosing, or_file_scope};
+use super::super::errors_declaration_emit::Meaning;
+use super::super::print::{self, SymbolTracker};
 use super::*;
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
@@ -471,5 +473,133 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Some((at, self.expr_of(node).unwrap_or(ExprId::NONE)))
         });
         print::to_valid_utf8(print::type_to_string_with(self.c, ty, enclosing, flags))
+    }
+
+    /// `ensureType` for a class member or a parameter with no annotation, a private one too. `None`: it has no type.
+    pub fn stated_type(&mut self, node: NodeRef) -> Option<StatedType> {
+        let (hir, at) = self.valid(node)?;
+        let file = node.file;
+        let (mut class, mut member) = (at, None);
+        while class.is_some()
+            && !matches!(
+                hir.kind(class),
+                Kind::ClassDeclaration | Kind::ClassExpression
+            )
+        {
+            if let NodeData::Member(found) = hir.data(class) {
+                member = Some(found);
+            }
+            class = hir.parent(class);
+        }
+        // A parameter property is a member of the class. In its constructor, a default would add `undefined` to it.
+        let scope = match (hir.data(at), member) {
+            (NodeData::Param(_), Some(constructor)) => {
+                or_file_scope(self.c.bound(file).member_scope[constructor.idx()])
+            }
+            _ => self.scope_at(node)?,
+        };
+        let enclosing = Enclosing::at_scope(file, scope);
+        let mut tracker = NamedWhereStated::default();
+        let value = self.c.literal_const_type(file, at).and_then(|literal| {
+            Some(match *self.c.data(literal) {
+                TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } => {
+                    tracker.track_symbol(self.c, member, Some(enclosing), SymFlags::VALUE);
+                    self.c.symbol_to_expression(member, enclosing)
+                }
+                // `Infinity` is the name of a value, and no literal.
+                TypeData::NumberLit { bits, .. } if !f64::from_bits(bits).is_finite() => {
+                    return None;
+                }
+                _ => self.c.literal_const_value(literal, enclosing),
+            })
+        });
+        let is_value = value.is_some();
+        let text = match value {
+            Some(text) => Some(text),
+            None => {
+                let ty = self.c.iso_type_of_declared(file, at)?;
+                if self.c.is_error_type(ty) {
+                    return None;
+                }
+                // `getNonMissingTypeOfSymbol`: the `?` of a member says that it can be absent.
+                let is_optional = hir.flags(at).contains(Flags::OPTIONAL);
+                let ty = self.c.remove_missing_type(ty, is_optional);
+                // `Infinity` is the name of a value: no type is written for a literal that is not finite.
+                let ty = self.c.map_type(ty, |c, part| match *c.data(part) {
+                    TypeData::NumberLit { bits, .. } if !f64::from_bits(bits).is_finite() => {
+                        TypeId::NUMBER
+                    }
+                    _ => part,
+                });
+                let mut flags =
+                    print::DECLARATION_EMIT_NODE_BUILDER_FLAGS & !print::MULTILINE_OBJECT_LITERALS;
+                if class.is_some() && hir.kind(class) == Kind::ClassExpression {
+                    flags &= !print::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL;
+                }
+                (self.c)
+                    .stated_type_text(file, at, ty, enclosing, flags, &mut tracker)
+                    .map(print::to_valid_utf8)
+            }
+        };
+        let mut names: Vec<SymbolRef> = Vec::with_capacity(tracker.named.len());
+        for symbol in tracker.named {
+            let symbol = self.symbol(symbol);
+            if !names.contains(&symbol) {
+                names.push(symbol);
+            }
+        }
+        let imports = tracker.imports.into_iter();
+        let imports = imports.map(|(specifier, module)| (specifier, self.symbol(module)));
+        Some(StatedType {
+            is_refused: tracker.is_refused || text.is_none(),
+            text: text.unwrap_or_default(),
+            is_value,
+            names,
+            imports: imports.collect(),
+        })
+    }
+}
+
+/// Refuses a text that names a symbol where that symbol has no name.
+#[derive(Default)]
+struct NamedWhereStated {
+    is_refused: bool,
+    named: Vec<Sym>,
+    imports: Vec<(Vec<u8>, Sym)>,
+}
+
+impl<'p> SymbolTracker<'p> for NamedWhereStated {
+    fn track_symbol(
+        &mut self,
+        c: &mut Checker<'p, '_>,
+        symbol: Sym,
+        enclosing_declaration: Option<Enclosing>,
+        meaning: SymFlags,
+    ) -> bool {
+        let is_named = match enclosing_declaration {
+            Some(_) if c.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) => true,
+            Some(at) => c.is_symbol_named_at(symbol, at, Meaning::from_flags(meaning, false)),
+            None => false,
+        };
+        self.is_refused |= !is_named;
+        self.named.push(symbol);
+        !is_named
+    }
+
+    fn report(&mut self, _: &mut Checker<'p, '_>, _: print::Report) {
+        self.is_refused = true;
+    }
+
+    fn report_inference_fallback(&mut self, _: &mut Checker<'p, '_>, _: FileId, _: Node) {}
+
+    fn report_truncation_error(&mut self, _: &mut Checker<'p, '_>) {
+        self.is_refused = true;
+    }
+
+    fn track_import_type(&mut self, _: &mut Checker<'p, '_>, module: Sym, specifier: &[u8]) {
+        let is_known = |known: &(Vec<u8>, Sym)| known.1 == module && known.0 == specifier;
+        if !self.imports.iter().any(is_known) {
+            self.imports.push((specifier.to_vec(), module));
+        }
     }
 }

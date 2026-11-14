@@ -38,6 +38,8 @@ pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
 pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+/// Not a flag of the node builder: the print of `Checker::stated_type_text`, which is cut where a part is left out.
+pub(super) const STATED: u32 = 1 << 17;
 /// The flags that `typeToString` passes to `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -408,6 +410,33 @@ impl<'p, 's> Checker<'p, 's> {
                     None => printer.type_to_node(ty),
                 }
                 .text
+            },
+        )
+    }
+
+    /// `serialize_type_for_declaration` under `STATED`. `None`: the printer left a part of the type out.
+    pub(super) fn stated_type_text(
+        &mut self,
+        file: FileId,
+        declaration: hir::Node,
+        ty: TypeId,
+        enclosing_declaration: Enclosing,
+        flags: u32,
+        tracker: &mut dyn SymbolTracker<'p>,
+    ) -> Option<Vec<u8>> {
+        with_printer(
+            self,
+            Some(enclosing_declaration),
+            Some(tracker),
+            flags | STATED,
+            |printer| {
+                let ty = printer.c.widen_literal(ty);
+                let options = node_reuse::SerializeTypeOptions {
+                    try_reuse: true,
+                    is_optional_reverse_mapped: false,
+                };
+                let node = printer.serialize_type_for_declaration(file, declaration, ty, options);
+                (!printer.truncating).then_some(node.text)
             },
         )
     }
@@ -1095,6 +1124,8 @@ pub(super) trait SymbolTracker<'p> {
     fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: hir::Node);
     /// `ReportTruncationError`
     fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>);
+    /// Not a method of `nodebuilder.SymbolTracker`: the printer writes `import("specifier")` for `module`.
+    fn track_import_type(&mut self, _: &mut Checker<'p, '_>, _module: Sym, _specifier: &[u8]) {}
 }
 
 /// `TrackedSymbolArgs`
@@ -1439,6 +1470,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         });
     }
 
+    /// `SymbolTracker::track_import_type`, also for a part that the printer does not keep.
+    pub(super) fn track_import_type(&mut self, module: Sym, specifier: &[u8]) {
+        if let Some(tracker) = self.tracker.as_deref_mut() {
+            tracker.track_import_type(self.c, module, specifier);
+        }
+    }
+
     /// `wrappingTracker.TrackSymbol`, `SymbolTrackerImpl.TrackSymbol`
     fn track(&mut self, tracked: TrackedSymbolArgs) {
         let Some(tracker) = self.tracker.as_deref_mut() else {
@@ -1614,6 +1652,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `createElidedInformationPlaceholder`
     fn elided_information_placeholder(&mut self) -> Node {
         self.approximate_length += 3;
+        // A stated type with a part left out is no type: nothing more of it is printed.
+        self.truncating |= self.flags & STATED != 0;
         self.elision()
     }
 
@@ -2531,6 +2571,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             let non_root_parts =
                 (last > 0).then(|| self.create_access_from_symbol_chain(chain, last, 1));
             let (specifier, attributes) = self.import_type_specifier(chain[0]);
+            self.track_import_type(chain[0], &specifier);
             if self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS == 0
                 && attributes.is_empty()
                 && bun_core::strings::contains(&specifier, b"/node_modules/")
@@ -4074,7 +4115,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let is_reverse_mapped = matches!(self.c.data(ty), TypeData::ReverseMapped { .. });
         for info in index {
             // The placeholder is created whether or not it is used.
+            let was_truncating = self.truncating;
             let placeholder = self.elided_information_placeholder();
+            self.truncating = was_truncating || (is_reverse_mapped && self.truncating);
             let type_node = is_reverse_mapped.then_some(&placeholder);
             if let Some(names) = self.index_info_to_object_computed_names(info, type_node) {
                 elements.extend(names);

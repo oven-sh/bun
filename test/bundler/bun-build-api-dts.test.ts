@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
@@ -152,6 +152,80 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  test.each([
+    ["to outdir", true],
+    ["to outputs", false],
+  ])("a class member whose stores the build removes keeps the type of the sources, written %s", async (_, toOutdir) => {
+    using dir = tempDir("build-api-dts-members", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `declare const __DEV__: boolean;
+export class Settings {
+  mode;
+  static count;
+  static {
+    if (__DEV__) this.count = 1;
+  }
+  constructor() {
+    if (__DEV__) this.mode = "dev";
+  }
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: toOutdir ? join(root, "out") : undefined,
+      tsconfig: join(root, "tsconfig.json"),
+      define: { __DEV__: "false" },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = await built.outputs.find(output => output.path.endsWith("index.aot.ts"))?.text();
+    expect(typed).toContain("class Settings {\n  mode: string | undefined;\n  static count: number | undefined;\n");
+    expect(existsSync(join(root, "out/index.aot.ts"))).toBe(toOutdir);
+  });
+
+  // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.
+  test("a constant that only a type names is declared with a type that names nothing", async () => {
+    using dir = tempDir("build-api-dts-constants", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/flag.ts": `type Flag = true | false;
+declare const stored: Flag;
+export const on = stored;
+`,
+      "src/index.ts": `import { on } from "./flag";
+type Flag = "yes" | "no";
+const big = 1e999;
+const small = -1e999;
+const word = "a";
+export type On = typeof on;
+export type Sizes = [typeof big, typeof small, typeof word];
+export function pick(flag: Flag): On {
+  return flag === "yes";
+}
+export function sizes(): Sizes {
+  return [1e999, -1e999, "a"];
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
+    // `Flag` of the other file is `boolean`, and no type is `Infinity`.
+    expect(typed.match(/^declare const .*$/gm)?.sort()).toEqual([
+      "declare const big: number;",
+      "declare const on: boolean;",
+      "declare const small: number;",
+      `declare const word: "a";`,
+    ]);
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),
@@ -171,6 +245,121 @@ export { join };
     expect(filesIn(join(root, "a/out"))).toEqual(WRITTEN);
     expect(filesIn(join(root, "b/out"))).toEqual(WRITTEN.filter(path => path !== "join.d.ts"));
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
+  });
+
+  test.each([
+    ["written to outdir", true],
+    ["in outputs", false],
+  ])(
+    "a class field that useDefineForClassFields: false moves into the constructor is declared with its type, %s",
+    async (_, hasOutdir) => {
+      using dir = tempDir("build-api-dts-assigned-field", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            useDefineForClassFields: false,
+            module: "esnext",
+            moduleResolution: "bundler",
+            target: "esnext",
+            types: [],
+          },
+        }),
+        "package.json": JSON.stringify({
+          name: "box",
+          version: "1.0.0",
+          compilerOptions: { strict: true, useDefineForClassFields: false },
+        }),
+        "src/index.ts": `export class Box {
+  n = 1;
+  readonly kind = "box";
+  label(): string {
+    return this.kind + this.n;
+  }
+}
+`,
+      });
+      const root = String(dir);
+      const built = await Bun.build({
+        entrypoints: [join(root, "src/index.ts")],
+        outdir: hasOutdir ? join(root, "out") : undefined,
+        tsconfig: join(root, "tsconfig.json"),
+        dts: true,
+      });
+      // Without an outdir, the build finds no package.json that states the options of the sources.
+      expect(built.logs.map(log => log.message)).toEqual(
+        hasOutdir
+          ? []
+          : [
+              `package.json needs "compilerOptions": {"strict":true,"useDefineForClassFields":false}: --aot type checks a package's .aot.ts files under them, and as strict without them`,
+            ],
+      );
+      const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"));
+      expect(await typed?.text()).toContain(`
+class Box {
+  constructor() {
+    this.n = 1;
+    this.kind = "box";
+  }
+  declare n: number;
+  declare readonly kind = "box";
+  label(): string {
+    return this.kind + this.n;
+  }
+}
+export {
+  Box
+};
+`);
+      expect(existsSync(join(root, "out/index.aot.ts"))).toBe(hasOutdir);
+    },
+  );
+
+  // The check reads such a file from the disk, and the bundle has what the plugin returned for it.
+  test("a class field that the build assigns is declared with its type in a file that an onLoad plugin loads", async () => {
+    using dir = tempDir("build-api-dts-assigned-field-plugin", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          useDefineForClassFields: false,
+          module: "esnext",
+          moduleResolution: "bundler",
+          target: "esnext",
+          types: [],
+        },
+      }),
+      "package.json": JSON.stringify({
+        name: "box",
+        version: "1.0.0",
+        compilerOptions: { strict: true, useDefineForClassFields: false },
+      }),
+      "src/index.ts": `export class Box {
+  n = 1;
+  label(): string {
+    return String(this.n);
+  }
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+      plugins: [
+        {
+          name: "as written",
+          setup(build) {
+            build.onLoad({ filter: /index\.ts$/ }, async ({ path }) => ({
+              contents: await Bun.file(path).text(),
+              loader: "ts",
+            }));
+          },
+        },
+      ],
+    });
+    expect(built.logs).toEqual([]);
+    expect(readFileSync(join(root, "out/index.aot.ts"), "utf8")).toContain("  declare n: number;\n");
   });
 
   test("cannot be used with compile", () => {

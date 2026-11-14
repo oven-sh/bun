@@ -16,5 +16,6 @@ mod load_task;
 mod queue;
 mod relation_budget;
 mod roles;
+mod stated_members;
 mod type_imports;
 mod what_tsc_accepts;

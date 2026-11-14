@@ -737,6 +737,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let exported = files.symbol(sym).export_symbol.some()?;
                 Some(self.symbol(files.sym(sym.file, exported)))
             }
+            (SymbolOp::Parent, Key::Symbol(sym)) => {
+                let parent = files.parent_of_symbol(sym)?;
+                Some(self.symbol(parent))
+            }
             _ => None,
         }
     }

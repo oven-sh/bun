@@ -1211,6 +1211,8 @@ pub mod O {
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
+#[cfg(unix)]
+pub mod close_on_fork;
 pub mod file;
 pub mod private_copy;
 pub use file::{File, ReadToEndResult};

@@ -1776,9 +1776,10 @@ impl H2FrameParser {
         if !self.auto_flusher.get().registered.get() {
             return;
         }
-        // A write that drains the buffer must not cancel the deferred tick a pending session
-        // error is waiting on; on_auto_flush releases the registration once it has reported it.
-        if self.pending_header_compression_error.get() {
+        // A write that drains the buffer must not cancel the deferred tick that a pending session
+        // error or the close of a rejected transport is waiting on; on_auto_flush releases the
+        // registration.
+        if self.pending_header_compression_error.get() || self.transport_write_fatal.get() {
             return;
         }
         debug_assert!(self.auto_flusher.get().registered.get());
@@ -1872,6 +1873,13 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         // Flushing can call JS (a JS transport's write, write callbacks, the socket's 'close').
         self.global_this.bun_vm().deferred_task_called_js.set(true);
+        // An empty write buffer here means a later write in the same flush()
+        // cycle already drained the bytes the failing send left behind (racy
+        // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered, and
+        // the tick goes on to what else waits for it.
+        if self.transport_write_fatal.get() && !self.has_backpressure() {
+            self.transport_write_fatal.set(false);
+        }
         if self.transport_write_fatal.get() {
             // The close cancels open streams, so deliver the rest of this frame (its END_STREAM) first.
             if !self.deferred.get().is_empty() {
@@ -1880,15 +1888,8 @@ impl H2FrameParser {
             // Returning `false` makes DeferredTaskQueue::run remove the entry, so only the registration's flag and ref are released here.
             self.auto_flusher.get().registered.set(false);
             self.deref();
-            // An empty write buffer here means a later write in the same flush()
-            // cycle already drained the bytes the failing send left behind (racy
-            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                // `registered` is already clear, so the detach() this re-enters leaves run()'s map entry alone.
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
-            }
+            // `registered` is already clear, so the detach() this re-enters leaves run()'s map entry alone.
+            self.close_transport_after_fatal_write();
             return false;
         }
         if self.pending_header_compression_error.get() {
@@ -1914,6 +1915,9 @@ impl H2FrameParser {
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
+        if Self::corked() != Some(self.as_ctx_ptr()) {
+            self.unregister_auto_flush();
+        }
         true
     }
 
@@ -4413,8 +4417,9 @@ impl H2FrameParser {
     /// this function can be called multiple times, it will erase stream info
     pub(crate) fn detach(&self, keep_output: bool) {
         self.uncork();
-        self.unregister_auto_flush();
         let draining = keep_output && self.owes_output();
+        self.transport_write_fatal.set(false);
+        self.unregister_auto_flush();
         if !draining {
             self.draining.set(Draining::No);
             self.detach_native_socket();
@@ -4446,6 +4451,8 @@ impl H2FrameParser {
             Self::set_corked(None);
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.transport_write_fatal.set(false);
+        self.pending_header_compression_error.set(false);
         self.unregister_auto_flush();
         let stranded = self.native_keepalives.replace(0);
         for _ in 0..stranded {

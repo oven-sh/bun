@@ -7171,6 +7171,50 @@ describe.concurrent("tls socket that is paused when its graceful close starts", 
     expect(sent).toBeGreaterThan(chunk.length);
     expect(received).toBe(sent);
   });
+
+  // The peer's data comes behind the end(). A writable event in the middle of it must not close the socket over the rest.
+  it("pause(), write() and end() in the handshake: both sides get every byte", async () => {
+    const upload = Buffer.alloc(1024 * 1024, "u");
+    const reply = Buffer.alloc(70_000, "r");
+    const received = { server: 0, client: 0 };
+    const closed = [Promise.withResolvers<string>(), Promise.withResolvers<string>()];
+    const outcome = (error?: Error) => (error ? String((error as NodeJS.ErrnoException).code) : "closed");
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      // Before TLS 1.3 the reply comes with the end of the handshake.
+      tls: { ...tls, maxVersion: 0x0303 } as any,
+      socket: {
+        handshake(socket) {
+          socket.write(reply);
+          socket.shutdown();
+        },
+        data: (_socket, data) => void (received.server += data.length),
+        close: (_socket, error) => closed[0].resolve(outcome(error)),
+      },
+    });
+    let reported = 0;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket) {
+          socket.pause();
+          reported = socket.write(upload);
+          socket.end();
+        },
+        drain() {},
+        data: (_socket, data) => void (received.client += data.length),
+        close: (_socket, error) => closed[1].resolve(outcome(error)),
+      },
+    });
+    const outcomes = await Promise.all(closed.map(({ promise }) => promise));
+    expect({ outcomes, received }).toEqual({
+      outcomes: ["closed", "closed"],
+      received: { server: reported, client: reply.length },
+    });
+  });
 });
 
 // A close that the event loop initiated passes the read error to close(). usockets

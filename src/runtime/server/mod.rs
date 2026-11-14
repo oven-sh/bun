@@ -2166,17 +2166,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
                 // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may
                 // already be held by an unrelated process. When the user asked
-                // for "any port" (0), close TCP:N and retry the whole TCP+UDP
-                // bind so the kernel picks a fresh N. Never retry a
+                // for "any port" (0), keep TCP:N and repeat the whole TCP+UDP
+                // bind, so that the kernel picks another N each time, also
+                // where a whole range of UDP ports is taken. Never retry a
                 // user-specified non-zero port.
-                let max_attempts: u8 = if Self::HAS_H3 && tcp && port == 0 {
-                    3
-                } else {
-                    1
-                };
-                let mut attempt: u8 = 0;
+                const MAX_REFUSED_PORTS: usize = 256;
+                let mut refused_ports: Vec<*mut uws_sys::app::ListenSocket<SSL>> = Vec::new();
                 loop {
-                    attempt += 1;
                     if tcp {
                         // SAFETY: app is a live uws handle owned by this server.
                         let listened = unsafe {
@@ -2213,14 +2209,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 },
                             );
                             if this_ref.h3_listener.get().is_none() {
-                                if attempt < max_attempts {
-                                    // UDP:N is taken — release TCP:N so the next
-                                    // attempt gets a fresh kernel-chosen port.
-                                    // Only retry if TCP actually succeeded.
-                                    if let Some(ls) = this_ref.listener.take() {
-                                        bun_opaque::opaque_deref_mut(ls).close();
-                                        continue;
-                                    }
+                                // Only retry if TCP actually succeeded.
+                                if tcp
+                                    && port == 0
+                                    && refused_ports.len() < MAX_REFUSED_PORTS
+                                    && let Some(ls) = this_ref.listener.take()
+                                {
+                                    refused_ports.push(ls);
+                                    continue;
                                 }
                                 if !global.has_exception() {
                                     let _ = global.throw(format_args!(
@@ -2238,6 +2234,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     }
                     break;
+                }
+                for ls in refused_ports {
+                    bun_opaque::opaque_deref_mut(ls).close();
                 }
             }
             Addr::Unix(path) => {

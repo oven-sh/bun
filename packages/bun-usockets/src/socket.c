@@ -24,6 +24,7 @@
 #include <errno.h>
 #ifndef WIN32
 #include <fcntl.h>
+#include <poll.h>
 #endif
 
 int us_socket_local_port(struct us_socket_t *s) {
@@ -98,7 +99,8 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
-    if (UNLIKELY(s->lingering)) return;
+    /* A close that waits has a deadline of its own, which its owner does not put off. */
+    if (UNLIKELY(s->lingering || s->ssl_close_after_spill)) return;
     s->timeout = us_internal_timeout_tick(s->group->loop, seconds);
     s->low_prio_ticks = 0;
 }
@@ -355,6 +357,22 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     us_socket_close(s, s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
+
+#ifndef WIN32
+void us_socket_read_now(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return;
+    }
+    struct pollfd pollfd = { .fd = us_poll_fd(&s->p), .events = POLLIN };
+    int hangup = poll(&pollfd, 1, 0) == 1 && (pollfd.revents & POLLHUP);
+
+    /* A callback can tick the loop, which must not free the socket that this dispatch still reads. */
+    struct us_loop_t *loop = s->group->loop;
+    loop->data.tick_depth++;
+    us_internal_dispatch_ready_poll(&s->p, 0, hangup ? LIBUS_POLL_HANGUP : 0, LIBUS_SOCKET_READABLE);
+    loop->data.tick_depth--;
+}
+#endif
 
 void us_socket_set_owner_holds_tail(struct us_socket_t *s) {
     s->owner_holds_tail = 1;

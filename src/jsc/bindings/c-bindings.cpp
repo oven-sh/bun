@@ -411,6 +411,8 @@ extern "C" void bun_remember_inherited_file_descriptors()
 }
 #endif
 
+extern "C" void Bun__willRestartProcess();
+
 extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
@@ -469,6 +471,8 @@ extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheri
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+
+    Bun__willRestartProcess();
 }
 
 #if OS(LINUX)

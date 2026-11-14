@@ -382,11 +382,10 @@ enum CheckResult {
     Rebuild,
 }
 
-fn check_route_failures(
+pub(super) fn trace_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
-    resp: AnyResponse,
-) -> crate::Result<CheckResult> {
+) -> crate::Result<GraphTraceState> {
     let mut gts = dev.init_graph_trace_state(0)?;
     let _lock_guard = dev.graph_safety_lock.guard();
     match &dev.route_bundles[route_bundle_index.get() as usize].data {
@@ -399,6 +398,16 @@ fn check_route_failures(
             TraceImportGoal::FindErrors,
         )?,
     }
+    Ok(gts)
+}
+
+fn check_route_failures(
+    dev: &mut DevServer,
+    route_bundle_index: route_bundle::Index,
+    resp: AnyResponse,
+) -> crate::Result<CheckResult> {
+    let gts = trace_route_failures(dev, route_bundle_index)?;
+    let _lock_guard = dev.graph_safety_lock.guard();
     if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {

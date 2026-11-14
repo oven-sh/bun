@@ -17,7 +17,6 @@ import { closeSync, existsSync, openSync, readFileSync, truncateSync } from "nod
 import { open } from "node:fs/promises";
 import net from "node:net";
 import { createServer as createTlsServer } from "node:tls";
-import { tmpdir } from "os";
 import { join } from "path";
 
 test("uploads roundtrip", async () => {
@@ -146,12 +145,12 @@ test("formData uploads roundtrip, without a call to .body", async () => {
 test.todoIf(isBroken && isWindows)(
   "uploads roundtrip with sendfile()",
   async () => {
-    const hugeTxt = Buffer.allocUnsafe(1024 * 1024 * 32 * "huge".length);
-    hugeTxt.fill("huge");
+    // More than the buffers of the two sockets hold, so sendfile() stops and goes on several times.
+    const hugeTxt = Buffer.alloc(16 * 1024 * 1024, "huge");
     const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
 
-    const path = join(tmpdir(), "huge.txt");
-    require("fs").writeFileSync(path, hugeTxt);
+    using dir = tempDir("fetch-file-upload-sendfile", { "huge.txt": hugeTxt });
+    const path = join(String(dir), "huge.txt");
     using server = Bun.serve({
       port: 0,
       development: false,

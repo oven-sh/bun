@@ -782,6 +782,9 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+#ifndef WIN32
+void us_socket_read_now(us_socket_r s);
+#endif
 
 #ifdef __cplusplus
 }

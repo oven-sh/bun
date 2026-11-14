@@ -296,6 +296,7 @@ int us_internal_ssl_sealed_close_notify(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 struct us_socket_t *us_internal_ssl_close_after_rejected_send(us_socket_r s, int unread);
+int us_internal_ssl_defer_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_shut_down(us_socket_r s);

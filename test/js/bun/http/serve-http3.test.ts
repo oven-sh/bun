@@ -3,7 +3,7 @@ import { socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -216,6 +216,33 @@ function serveFixture(dir: string, { http1 = true } = {}) {
     },
   });
 }
+
+// The test needs a machine where nearly all UDP ports are taken: a network namespace with a hundred ports.
+const canUnshare = isLinux && Bun.spawnSync(["sh", "-c", "unshare -Urn true"], { stderr: "ignore" }).success;
+test.skipIf(!canUnshare)("port 0 finds the port that is free for TCP and UDP", async () => {
+  using dir = tempDir("serve-http3-free-port", {
+    "server.mjs": `
+      import { writeFileSync } from "node:fs";
+      writeFileSync("/proc/sys/net/ipv4/ip_local_port_range", "40000 40099");
+      const taken = [];
+      for (let port = 40000; port < 40100; port++) {
+        if (port !== 40042) taken.push(await Bun.udpSocket({ port, hostname: "::" }));
+      }
+      const server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response() });
+      console.log(server.port);
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: ["unshare", "-Urn", bunExe(), "server.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "40042\n", exitCode: 0 });
+});
 
 // The request/response tests share one server for the whole file.
 let fixtureDir: ReturnType<typeof tempDir> | undefined;

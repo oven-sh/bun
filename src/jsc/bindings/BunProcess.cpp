@@ -5968,6 +5968,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
 
 #if !OS(WINDOWS)
 extern "C" bool CrashHandler__isCrashSignal(int signalNumber);
+extern "C" void Bun__willSendSignalToSelf(int signalNumber);
 
 // kill(-1) never reaches the caller, not even when the caller's process group is 1, hence pid < -1.
 static bool killReachesThisProcess(int pid, int ownPid)
@@ -6045,6 +6046,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 
 #if !OS(WINDOWS)
     bypassCrashHandlerForSelfSentSignal(pid, ownPid, signal);
+    if (killReachesThisProcess(pid, ownPid))
+        Bun__willSendSignalToSelf(signal);
     int result = kill(pid, signal);
     if (result < 0)
         result = errno;

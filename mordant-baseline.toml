@@ -158,6 +158,7 @@
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 29
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
+"field_valid_only_when:src/runtime/node/node_fs.rs" = 1
 "field_valid_only_when:src/runtime/node/zlib/NativeZlib.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "field_valid_only_when:src/runtime/socket/udp_socket.rs" = 1

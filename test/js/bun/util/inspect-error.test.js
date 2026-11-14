@@ -359,6 +359,107 @@ describe("source map remapping of the printed stack", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The same artifact when `sourcesContent` is left out. There is still nothing
+  // to show and the frames are still remapped. The second decode of the map,
+  // for the code frame, reports nothing either.
+  test.concurrent("external map that has no sourcesContent", async () => {
+    const main = [
+      "// @bun",
+      'function thrower() { throw new Error("NOCONTENT"); }',
+      "const out = {};",
+      "try { thrower(); } catch (e) { out.inspect = Bun.inspect(e); }",
+      "try { thrower(); } catch (e) { out.stack = e.stack; }",
+      "console.log(JSON.stringify(out));",
+      "thrower();",
+    ];
+    // The mappings of the test above.
+    const map = { version: 3, sources: ["orig.ts"], names: [], mappings: ";AAUI;;AAUA;AAUA;;AAUA" };
+    const { dir, out, stderr, exitCode } = await run({
+      "main.js": main.join("\n") + "\n//# sourceMappingURL=main.js.map\n",
+      "main.js.map": JSON.stringify(map),
+    });
+
+    const files = ["orig.ts", "main.js"];
+    expect({
+      stack: frames(out.stack, dir, files),
+      inspect: frames(out.inspect, dir, files),
+      uncaught: frames(stderr, dir, files),
+      warnings: stderr.split("\n").filter(line => line.startsWith("warn:")),
+    }).toEqual({
+      stack: ["at thrower (orig.ts:11:5)", "at orig.ts:31:5"],
+      inspect: ["at thrower (orig.ts:11:5)", "at orig.ts:21:5"],
+      uncaught: ["at thrower (orig.ts:11:5)", "at orig.ts:41:5"],
+      warnings: [],
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // With no `sourcesContent` the code frame is read from the source on disk.
+  test.concurrent("code frame of an external map that has no sourcesContent", async () => {
+    const { dir, out, stderr, exitCode } = await run({
+      "main.js": [
+        "// @bun",
+        'try { throw new Error("FRAME"); } catch (e) { console.log(JSON.stringify(Bun.inspect(e))); }',
+        "//# sourceMappingURL=main.js.map",
+      ].join("\n"),
+      // Line 2 -> orig.ts:1:5.
+      "main.js.map": JSON.stringify({ version: 3, sources: ["orig.ts"], names: [], mappings: ";AAAI" }),
+      "orig.ts": "const fromDisk = 1;\n",
+    });
+    expect({
+      firstLine: out.split("\n")[0],
+      frames: frames(out, dir, ["orig.ts", "main.js"]),
+      stderr,
+    }).toEqual({ firstLine: "1 | const fromDisk = 1;", frames: ["at orig.ts:1:5"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A source with no name is not a file to read. A module imported from a `blob:` URL has no directory either.
+  test.concurrent.each([
+    ["absent", {}],
+    ["[null]", { sourcesContent: [null] }],
+  ])("inline map with an empty source name in a blob module: sourcesContent %s", async (_, content) => {
+    const map = { version: 3, sources: [""], ...content, names: [], mappings: ";;AACI" };
+    const { out, stderr, exitCode } = await run({
+      "module.txt": [
+        "// @bun",
+        "export function thrower() {",
+        '  throw new Error("BLOB");',
+        "}",
+        "//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
+      ].join("\n"),
+      "main.js": [
+        'const code = await Bun.file(import.meta.dir + "/module.txt").text();',
+        'const { thrower } = await import(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));',
+        "try { thrower(); } catch (e) { console.log(JSON.stringify(Bun.inspect(e))); }",
+      ].join("\n"),
+    });
+    expect({ error: out.split("\n").filter(line => line.startsWith("error:")), stderr, exitCode }).toEqual({
+      error: ["error: BLOB"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Error.prepareStackTrace reads the same map through the call sites.
+  test.concurrent("call sites of an external map that has no sourcesContent", async () => {
+    const { dir, out, stderr, exitCode } = await run({
+      "main.js": [
+        "// @bun",
+        "Error.prepareStackTrace = (_, sites) => sites.map(s => [s.getFileName(), s.getLineNumber(), s.getColumnNumber()]);",
+        'console.log(JSON.stringify(new Error("SITES").stack[0]));',
+        "//# sourceMappingURL=main.js.map",
+      ].join("\n"),
+      // Line 2 -> orig.ts:11:5.
+      "main.js.map": JSON.stringify({ version: 3, sources: ["orig.ts"], names: [], mappings: ";;AAUI" }),
+    });
+    expect({ site: [out[0].replaceAll("\\", "/"), out[1], out[2]], stderr }).toEqual({
+      site: [dir.replaceAll("\\", "/") + "/orig.ts", 11, 5],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // Modules bun transpiled itself. `present.ts` stays on disk; `deleted.ts` is
   // removed after it was loaded, so the code frame can no longer be read back.
   // Reading error.stack first makes the printer start from the already

@@ -140,4 +140,109 @@ export function join(first: string, second: string): string {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
   });
+
+  // The chunk of `src/sub/index.ts` is in a directory of the outdir. `src` also holds the sources.
+  test.each(["out", "src"])(
+    "a chunk in a directory has the types of its own modules and of a module above it: --outdir %s",
+    async outdir => {
+      using dir = tempDir("build-dts-nested", {
+        "tsconfig.json": project["tsconfig.json"],
+        "package.json": project["package.json"],
+        "src/index.ts": `export { clamp } from "./limits";\n`,
+        "src/limits.ts": `export interface Limits {
+  most: number;
+}
+export function clamp(n: number, limits: Limits): number {
+  return Math.min(n, limits.most);
+}
+`,
+        "src/sub/index.ts": `import { clamp } from "../limits";
+import { clamp as clampText } from "./limits";
+export function both(n: number, limits: { most: number }): string {
+  return clampText(String(clamp(n, limits)), { most: "z" });
+}
+`,
+        "src/sub/limits.ts": `export interface TextLimits {
+  most: string;
+}
+export function clamp(text: string, limits: TextLimits): string {
+  return text < limits.most ? text : limits.most;
+}
+`,
+      });
+      const built = await bun(
+        String(dir),
+        "build",
+        "./src/index.ts",
+        "./src/sub/index.ts",
+        "--outdir",
+        outdir,
+        "--dts",
+      );
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(readFileSync(join(String(dir), outdir, "sub/index.aot.ts"), "utf8")).toBe(`// src/limits.ts
+interface Limits {
+  most: number;
+}
+function clamp(n: number, limits: Limits): number {
+  return Math.min(n, limits.most);
+}
+
+// src/sub/limits.ts
+interface TextLimits {
+  most: string;
+}
+function clamp2(text: string, limits: TextLimits): string {
+  return text < limits.most ? text : limits.most;
+}
+
+// src/sub/index.ts
+function both(n: number, limits: { most: number }): string {
+  return clamp2(String(clamp(n, limits)), { most: "z" });
+}
+export {
+  both
+};
+`);
+    },
+  );
+
+  // `src/util.ts` is only `require()`d, so the type checker has no module for it. `util.ts` above it has its name.
+  test("a source without a module of the type checker has the types that it is written with", async () => {
+    using dir = tempDir("build-dts-required", {
+      "tsconfig.json": project["tsconfig.json"],
+      "package.json": project["package.json"],
+      "util.ts": `export interface Options {
+  n: number;
+}
+export function util(options: Options): string {
+  return String(options.n);
+}
+`,
+      "src/util.ts": `export interface Flagged {
+  n: string;
+}
+export function util(options: Flagged): string {
+  return options.n;
+}
+`,
+      "index.ts": `import { util } from "./util";
+declare const require: (name: string) => any;
+const other = require("./src/util");
+export function run(n: number): string {
+  return util({ n }) + other.util({ n: "x" });
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./index.ts", "--outdir", "src", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "src/index.aot.ts"), "utf8");
+    expect(typed.match(/^(?:interface|function) .*$/gm)).toEqual([
+      "interface Flagged {",
+      "function util2(options: Flagged): string {",
+      "interface Options {",
+      "function util(options: Options): string {",
+      "function run(n: number): string {",
+    ]);
+  });
 });

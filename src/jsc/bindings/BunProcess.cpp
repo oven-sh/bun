@@ -4038,18 +4038,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
         return constructNodeWorkerStdioStream(globalObject, processObject, ports, fd);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     if (vm.hasCompiledCode() && JSC::AOT::isUnreachableLibraryFunction(getStdioWriteStream)) {
         JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
-        auto* exception = scope.exception();
-        if (!exception)
-            return stream;
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        return jsUndefined();
+        RETURN_IF_EXCEPTION(scope, {});
+        return stream;
     }
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
@@ -4061,14 +4056,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) {
-        if (JSC::AOT::isFunctionDisallowed(getStdioWriteStream))
-            return {};
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
 
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = uncheckedDowncast<JSC::JSArray>(result);
@@ -4193,7 +4181,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
         return constructNodeWorkerStdioStream(globalObject, processObject, ports, 0);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     if (vm.hasCompiledCode() && JSC::AOT::isUnreachableLibraryFunction(getStdinStream)) {
@@ -4214,14 +4202,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
-    if (auto* exception = scope.exception()) {
-        if (JSC::AOT::isFunctionDisallowed(getStdinStream))
-            return {};
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 

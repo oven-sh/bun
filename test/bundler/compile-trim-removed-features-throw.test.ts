@@ -198,6 +198,10 @@ for (const kind of ["plain", "aot"] as const) {
 
       afterAll(() => dir[Symbol.dispose]());
 
+      test("dynamic standard-stream construction errors remain catchable", async () => {
+        expect(await findExits(executable, cwd, ["process.stdin", "process.stdout", "process.stderr"])).toEqual([]);
+      });
+
       test.concurrent.each(Object.keys(snippets))(
         "%s does not exit the process",
         async name => expect(await findExits(executable, cwd, snippets[name]!)).toEqual([]),

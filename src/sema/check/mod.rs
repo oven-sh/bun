@@ -3339,8 +3339,9 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .position(|q| members.contains(q))
             .unwrap_or(from);
-        let named = self.stack[..=entry].iter().rev();
-        let Some(&entry) = named.into_iter().find(|q| q.file_that_names_it().is_some()) else {
+        // A question of Lower asks with nothing on the stack, and then there's no query to enter again.
+        let mut named = self.stack.iter().take(entry + 1).rev();
+        let Some(&entry) = named.find(|q| q.file_that_names_it().is_some()) else {
             return;
         };
         let mut entered = self.cycles_entered.borrow_mut();

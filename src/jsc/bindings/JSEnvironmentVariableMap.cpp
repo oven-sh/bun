@@ -413,6 +413,9 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Shared entries can change without a Structure transition, invalidating cached delete misses.
+    slot.disableCaching();
+
     if (sharedEnvStoreFor(asObject(cell)))
         RELEASE_AND_RETURN(scope, JSSharedEnvMap::deleteProperty(cell, globalObject, propertyName, slot));
 

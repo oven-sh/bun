@@ -1838,6 +1838,75 @@ test("env: process.env reads in a worker module are evaluated at runtime against
 });
 
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
+  test.concurrent.each(["delete", "reflect"])("hot %s removes shared environment entries", async mode => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        const { once } = require("node:events");
+        const { Worker, SHARE_ENV } = require("node:worker_threads");
+
+        async function check() {
+          const cached = process.env;
+          const cachedBun = globalThis.Bun?.env;
+          const worker = new Worker(
+            \`const { parentPort } = require("node:worker_threads");
+             parentPort.on("message", () => parentPort.postMessage({
+               first: process.env.BUN_SHARE_DELETE_A,
+               second: process.env.BUN_SHARE_DELETE_B,
+             }));
+             parentPort.postMessage("ready");\`,
+            { eval: true, env: SHARE_ENV },
+          );
+          try {
+            assert.deepEqual(await once(worker, "message"), ["ready"]);
+            assert.equal(process.env, cached);
+            if (cachedBun) assert.equal(cachedBun, cached);
+            const read = env => ({ first: env.BUN_SHARE_DELETE_A, second: env.BUN_SHARE_DELETE_B });
+            const remove =
+              ${JSON.stringify(mode)} === "reflect" ? key => Reflect.deleteProperty(cached, key) : key => delete cached[key];
+            // Warm absent-key deletion before shared writes, so a cached no-op cannot pass.
+            for (let i = 0; i < 20000; i++) {
+              read(cached);
+              remove("BUN_SHARE_DELETE_A");
+              remove("BUN_SHARE_DELETE_B");
+            }
+            for (let i = 0; i < 3; i++) {
+              cached.BUN_SHARE_DELETE_A = "first";
+              cached.BUN_SHARE_DELETE_B = "second";
+              for (const key of ["BUN_SHARE_DELETE_A", "BUN_SHARE_DELETE_B"]) assert.equal(remove(key), true);
+              const message = once(worker, "message");
+              worker.postMessage("read");
+              assert.deepEqual(await message, [{ first: undefined, second: undefined }]);
+              assert.deepEqual(read(cached), { first: undefined, second: undefined });
+              assert.equal(Object.hasOwn(cached, "BUN_SHARE_DELETE_A"), false);
+              assert.equal(Object.keys(cached).includes("BUN_SHARE_DELETE_B"), false);
+            }
+          } finally {
+            await worker.terminate();
+          }
+        }
+
+        check().then(
+          () => console.log("ok"),
+          error => {
+            console.error(error);
+            process.exitCode = 1;
+          },
+        );
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it.each(["main", "nested", "coercion", "coercion-define", "coercion-descriptor"])(
     "preserves cached env references when %s founds a shared store",
     async mode => {

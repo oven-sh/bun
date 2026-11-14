@@ -5736,7 +5736,6 @@ impl VirtualMachine {
             }
             drop_source_code_printer();
 
-            // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
             drop(core::mem::take(&mut (*this).source_mappings));
 
             if let Some(hooks) = runtime_hooks() {
@@ -7847,15 +7846,7 @@ impl VirtualMachine {
         // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
-        // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
-        // ref into the table (reclaimed by `put_value`'s replace path /
-        // `SavedSourceMap` teardown).
-        self.source_mappings.put_value(
-            path,
-            crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
-                &map,
-            ))),
-        );
+        (self.source_mappings).put_parsed(path, std::sync::Arc::clone(&map));
 
         let mapping = map.find_mapping(line, column)?;
 

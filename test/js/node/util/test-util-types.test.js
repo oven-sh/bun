@@ -1,5 +1,7 @@
 import assert from "assert";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isAndroid, isFreeBSD, nodeExeAtLeast } from "harness";
+import { join } from "node:path";
 import def, * as ns from "util/types";
 import vm from "vm";
 const req = require("util/types");
@@ -383,7 +385,110 @@ test("util/types functions aren't constructors", () => {
   for (const [name, fn] of Object.entries(types)) {
     if (typeof fn !== "function") continue;
     expect(() => Reflect.construct(fn, [new Date()])).toThrow(TypeError);
-    expect(Bun.inspect(fn)).toBe(`[Function: ${name}]`);
+    // isArrayBufferView is ArrayBuffer.isView itself, as in Node.
+    expect(Bun.inspect(fn)).toBe(`[Function: ${name === "isArrayBufferView" ? "isView" : name}]`);
   }
   expect(Array.of.call(types.isDate, 1, 2, 3)).toEqual([1, 2, 3]);
+});
+
+// As in Node, isArrayBufferView is ArrayBuffer.isView itself:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/types.js#L67
+describe.concurrent("isArrayBufferView", () => {
+  async function run(cmd, env = {}) {
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const everyWayToLoadIt = `
+    (async () => {
+      const esm = await import("node:util/types");
+      const loaded = {
+        "require('node:util/types')": require("node:util/types").isArrayBufferView,
+        "require('util/types')": require("util/types").isArrayBufferView,
+        "require('node:util').types": require("node:util").types.isArrayBufferView,
+        "import named": esm.isArrayBufferView,
+        "import default": esm.default.isArrayBufferView,
+        "process.getBuiltinModule": process.getBuiltinModule("node:util/types").isArrayBufferView,
+        "process.binding('util')": process.binding("util").isArrayBufferView,
+        "require('node:stream')._isArrayBufferView": require("node:stream")._isArrayBufferView,
+      };
+      const result = { name: esm.isArrayBufferView.name };
+      for (const [loader, fn] of Object.entries(loaded)) result[loader] = fn === ArrayBuffer.isView;
+      console.log(JSON.stringify(result));
+    })();
+  `;
+  const isArrayBufferIsView = {
+    name: "isView",
+    "require('node:util/types')": true,
+    "require('util/types')": true,
+    "require('node:util').types": true,
+    "import named": true,
+    "import default": true,
+    "process.getBuiltinModule": true,
+    "process.binding('util')": true,
+    "require('node:stream')._isArrayBufferView": true,
+  };
+
+  // With the JIT off, JSC records no intrinsic on ArrayBuffer.isView. The export is still that function.
+  test.each([
+    ["on", {}],
+    ["off", { BUN_JSC_useJIT: "0" }],
+  ])("is ArrayBuffer.isView through every way to load it, JIT %s", async (_, env) => {
+    const { stdout, stderr, exitCode } = await run([bunExe(), "-e", everyWayToLoadIt], env);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(isArrayBufferIsView);
+    expect(exitCode).toBe(0);
+  });
+
+  // process.getBuiltinModule is in Node.js from v22.3.0.
+  const node = nodeExeAtLeast("22.3.0");
+  test.skipIf(!node)("is ArrayBuffer.isView through every way to load it, in Node.js", async () => {
+    const { stdout, stderr, exitCode } = await run([node, "-e", everyWayToLoadIt]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(isArrayBufferIsView);
+    expect(exitCode).toBe(0);
+  });
+
+  // The module is generated the first time anything in the realm loads it, and a script can
+  // replace ArrayBuffer.isView before that. The export is never the replacement and never calls it.
+  // isOriginal is false where the property did not hold the engine's function at that time: Node
+  // exports the original it saved at startup, Bun a function of its own. If such a row turns true,
+  // either Bun saves the original now, or the module loads before the row's code runs and the row
+  // no longer reaches Bun's own function.
+  test("is never what a script put in place of ArrayBuffer.isView", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), join(import.meta.dir, "test-util-types-isArrayBufferView-fixture.js")],
+      // The DFG compiles on the main thread, so the function is compiled when the row counts its compiles.
+      { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_useFTLJIT: "0" },
+    );
+    const row = isOriginal => ({
+      name: "isView",
+      views: ["Uint8Array", "Buffer", "Float64Array", "DataView"],
+      replacementCalls: 0,
+      isReplacement: false,
+      isOriginal,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "untouched": row(true),
+      // The DFG compiles a call of Bun's own function to a type check, as it does for
+      // ArrayBuffer.isView. The optimized calls give the results of the first calls.
+      "a JS function, before the first load": { ...row(false), mismatches: 0, optimized: true },
+      "deleted, before the first load": row(false),
+      "an accessor, before the first load": row(false),
+      "Array.isArray, before the first load": row(false),
+      "the ArrayBuffer.isView of another realm, before the first load": row(false),
+      "a replaced globalThis.ArrayBuffer, before the first load": row(true),
+      "a JS function, after the first load": row(true),
+      // bun:ffi needs TinyCC, which these two targets do not have.
+      ...(!isFreeBSD && !isAndroid && { "a bun:ffi function named isView, before the first load": row(false) }),
+    });
+    expect(exitCode).toBe(0);
+  });
 });

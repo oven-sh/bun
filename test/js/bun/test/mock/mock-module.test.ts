@@ -1913,8 +1913,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     `(globalThis.loaded ??= []).push("${name} esm"); export const which = "real esm"; export const fn = () => "real esm"; export default { which, fn };`;
   const cjs = (name: string) =>
     `(globalThis.loaded ??= []).push("${name} cjs"); module.exports = { which: "real cjs", fn: () => "real cjs" };`;
-  // An import of each of `names` loads the ES module, and require() of it the CommonJS file.
-  const names = ["dual", "dual/sub", "#dep", "./lib", "./folder"];
+  // An import of each of `names` loads the ES module, and require() of it the CommonJS file. With a query the two
+  // files of "./lib" are two more modules: they run again for that name, and the two names have a mock each.
+  const names = ["dual", "dual/sub", "#dep", "./lib", "./lib?v=1", "./folder"];
+  const withoutQuery = (name: string) => name.replace(/\?.*/, "");
   const files = {
     "package.json": JSON.stringify({
       name: "project",
@@ -1975,7 +1977,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               )
               .join("")}
             test("the files of them that ran", () => {
-              expect(globalThis.loaded ?? []).toEqual(${JSON.stringify(ofRequire === "mock" ? [] : names.map(name => `${name} cjs`))});
+              expect(globalThis.loaded ?? []).toEqual(${JSON.stringify(ofRequire === "mock" ? [] : names.map(name => `${withoutQuery(name)} cjs`))});
             });
           `,
           ]),

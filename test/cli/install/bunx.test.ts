@@ -860,6 +860,35 @@ it.concurrent.each(isWindows ? ["bunx.EXE", "BUNX.EXE"] : ["BUNX", "bunX"])(
   },
 );
 
+// Only the whole file name selects bunx mode. A compiled executable named
+// `MyBunx` run with `BUN_BE_BUN=1` (or any name that merely ends in "bunx")
+// is plain `bun`.
+it.concurrent.each(isWindows ? ["mybunx.exe", "MyBunx.EXE"] : ["mybunx", "MyBunx"])(
+  "stays in bun mode when invoked as %s",
+  async name => {
+    const { x_dir, env } = setup();
+    if (isWindows) {
+      copyFileSync(bunExe(), join(x_dir, name));
+    } else {
+      symlinkSync(bunExe(), join(x_dir, name));
+    }
+
+    await using proc = spawn({
+      cmd: [join(x_dir, name), "--help"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain("Usage: bun <command>");
+    expect(err).toBe("");
+    expect(exited).toBe(0);
+  },
+);
+
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
   const { x_dir, env } = setup();
   // Copies rather than symlinks: bun re-runs its own executable path for the

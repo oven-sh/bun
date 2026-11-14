@@ -164,4 +164,32 @@ describe("fake node cli", () => {
       expect(exitCode).not.toBe(0);
     },
   );
+
+  // Only the whole file name selects node mode. A compiled executable named
+  // `MyNode` run with `BUN_BE_BUN=1` (or any name that merely ends in "node")
+  // is plain `bun`, so `--version` prints Bun's version.
+  test.concurrent.each(isWindows ? ["mynode.exe", "MyNode.EXE"] : ["mynode", "MyNode"])(
+    "stays in bun mode when invoked as %s",
+    async name => {
+      using temp = tempDir("fake-node-suffix", {});
+      const dir = String(temp);
+      if (isWindows) {
+        copyFileSync(bunExe(), join(dir, name));
+      } else {
+        symlinkSync(bunExe(), join(dir, name));
+      }
+      await using proc = Bun.spawn({
+        cmd: [join(dir, name), "--version"],
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: Buffer.alloc(0),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(Bun.version);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

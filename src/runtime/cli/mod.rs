@@ -647,13 +647,15 @@ pub(crate) mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    /// Case-insensitive argv[0] suffix match; Windows also drops a trailing `.exe` (#36826).
+    /// True when the file name of argv[0] is `name`, ignoring ASCII case (#36826).
+    /// Windows also drops a trailing `.exe`. The whole file name must match:
+    /// a compiled executable named `MyNode` run with `BUN_BE_BUN=1` is plain bun.
     fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
-        let mut argv0 = argv0;
-        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(argv0, b".exe") {
-            argv0 = &argv0[..argv0.len() - b".exe".len()];
+        let mut file_name = strings::basename(argv0);
+        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(file_name, b".exe") {
+            file_name = &file_name[..file_name.len() - b".exe".len()];
         }
-        strings::ends_with_case_insensitive_ascii(argv0, name)
+        file_name.eq_ignore_ascii_case(name)
     }
 
     fn is_bun_x(argv0: &[u8]) -> bool {

@@ -3651,6 +3651,325 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(exitCode).toBe(0);
 });
 
+// The errors that node:vm itself throws for a context. Node makes each of them in the context that is entered where
+// it throws, so the realm depends on the entry point. The fixtures run unbounded loops, so each runs in a child.
+// Each prints the same under `node --experimental-vm-modules` v26.3.0.
+describe("realm of the errors that node:vm throws for a context", () => {
+  const prelude = `
+    const vm = require("node:vm");
+    const thrownBy = fn => { try { fn(); } catch (e) { return e; } throw new Error("did not throw"); };
+    const rejectionOf = promise => promise.then(() => { throw new Error("did not reject"); }, e => e);
+    // The realm that made the error: "host", or the name of the context that receives a global variable of that realm.
+    const realmOf = (error, contexts = {}) => {
+      const RealmFunction = error.constructor.constructor;
+      if (RealmFunction === Function) return "host";
+      const marker = {};
+      RealmFunction("marker", "globalThis.realmMarker = marker")(marker);
+      for (const name in contexts) if (contexts[name].realmMarker === marker) return name;
+      return "another realm";
+    };
+  `;
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("a Script run that `timeout` cuts short throws an error of the realm it ran in", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const spin = "for (;;) {}";
+      const timeout = 5;
+      const rows = {};
+      {
+        const ctx = vm.createContext({});
+        const e = thrownBy(() => vm.runInContext(spin, ctx, { timeout }));
+        const instanceOf = [e instanceof Error, e instanceof vm.runInContext("Error", ctx)];
+        rows["vm.runInContext"] = [e.code, e.message, realmOf(e, { ctx }), instanceOf];
+      }
+      {
+        const ctx = vm.createContext({});
+        const e = thrownBy(() => new vm.Script(spin).runInContext(ctx, { timeout }));
+        rows["script.runInContext"] = [e.code, realmOf(e, { ctx })];
+      }
+      {
+        const sandbox = {};
+        const e = thrownBy(() => vm.runInNewContext(spin, sandbox, { timeout }));
+        rows["vm.runInNewContext(sandbox)"] = [e.code, realmOf(e, { sandbox })];
+      }
+      {
+        const sandbox = {};
+        const e = thrownBy(() => new vm.Script(spin).runInNewContext(sandbox, { timeout }));
+        rows["script.runInNewContext(sandbox)"] = [e.code, realmOf(e, { sandbox })];
+      }
+      {
+        const e = thrownBy(() => vm.runInNewContext(spin, undefined, { timeout }));
+        rows["vm.runInNewContext()"] = [e.code, realmOf(e)];
+      }
+      {
+        const e = thrownBy(() => vm.runInNewContext(spin, vm.constants.DONT_CONTEXTIFY, { timeout }));
+        rows["vm.runInNewContext(DONT_CONTEXTIFY)"] = [e.code, realmOf(e)];
+      }
+      {
+        const ctx = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+        const e = thrownBy(() => vm.runInContext(spin, ctx, { timeout }));
+        rows["createContext(DONT_CONTEXTIFY)"] = [e.code, realmOf(e, { ctx })];
+      }
+      {
+        // The microtask checkpoint that follows the script is cut short.
+        const ctx = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+        const e = thrownBy(() => vm.runInContext("Promise.resolve().then(() => { for (;;) {} });", ctx, { timeout }));
+        rows["afterEvaluate checkpoint"] = [e.code, realmOf(e, { ctx })];
+      }
+      {
+        // The inner run is cut short. The script of the outer run catches the error and returns it.
+        const inner = vm.createContext({});
+        const outer = vm.createContext({ vm, inner });
+        const script = 'try { vm.runInContext("for (;;) {}", inner, { timeout: 5 }) } catch (e) { e }';
+        const e = vm.runInContext(script, outer);
+        rows["nested, the inner deadline"] = [e.code, realmOf(e, { inner, outer })];
+      }
+      {
+        // The inner run is in the context of the script that starts it: the Error of that script accepts the error.
+        const ctx = vm.createContext({ run: code => vm.runInContext(code, ctx, { timeout }) });
+        const script = 'try { run("for (;;) {}") } catch (e) { [e.code, e instanceof Error] }';
+        rows["nested in one context"] = vm.runInContext(script, ctx);
+      }
+      {
+        // The deadline of the outer run passes while the inner run is on the stack.
+        const inner = vm.createContext({});
+        const outer = vm.createContext({ vm, inner });
+        const script = 'vm.runInContext("for (;;) {}", inner, { timeout: 600_000 })';
+        const e = thrownBy(() => vm.runInContext(script, outer, { timeout: 50 }));
+        rows["nested, the outer deadline"] = [e.code, e.message, realmOf(e, { inner, outer })];
+      }
+      {
+        // One Script, run in two contexts and in the main context.
+        const script = new vm.Script(spin);
+        const a = vm.createContext({}), b = vm.createContext({});
+        const runs = [() => script.runInContext(a, { timeout }), () => script.runInContext(b, { timeout }),
+                      () => script.runInThisContext({ timeout }), () => script.runInContext(a, { timeout })];
+        rows["one Script in a, b, this, a"] = runs.map(run => realmOf(thrownBy(run), { a, b }));
+      }
+      {
+        // The errors of one context have one prototype, also after a collection.
+        const ctx = vm.createContext({});
+        const first = thrownBy(() => vm.runInContext(spin, ctx, { timeout }));
+        globalThis.Bun?.gc(true);
+        const second = thrownBy(() => vm.runInContext(spin, ctx, { timeout }));
+        const haveOnePrototype = Object.getPrototypeOf(first) === Object.getPrototypeOf(second);
+        rows["two errors of one context"] = [first !== second, haveOnePrototype, realmOf(second, { ctx })];
+      }
+      console.log(JSON.stringify(rows, null, 2));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "vm.runInContext": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "Script execution timed out after 5ms", "ctx", [false, true]],
+      "script.runInContext": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "ctx"],
+      "vm.runInNewContext(sandbox)": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "sandbox"],
+      "script.runInNewContext(sandbox)": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "sandbox"],
+      "vm.runInNewContext()": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "another realm"],
+      "vm.runInNewContext(DONT_CONTEXTIFY)": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "another realm"],
+      "createContext(DONT_CONTEXTIFY)": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "ctx"],
+      "afterEvaluate checkpoint": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "ctx"],
+      "nested, the inner deadline": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "inner"],
+      "nested in one context": ["ERR_SCRIPT_EXECUTION_TIMEOUT", true],
+      "nested, the outer deadline": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "Script execution timed out after 50ms", "outer"],
+      "one Script in a, b, this, a": ["a", "b", "host", "a"],
+      "two errors of one context": [true, true, "ctx"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("runInThisContext, modules and invalid options throw errors of the main realm", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const timeout = 5;
+      const rows = {};
+      (async () => {
+        {
+          const e = thrownBy(() => vm.runInThisContext("for (;;) {}", { timeout }));
+          rows["vm.runInThisContext"] = [e.code, realmOf(e)];
+        }
+        {
+          // runInThisContext runs in the main context, also for a caller in another context.
+          const ctx = vm.createContext({ script: new vm.Script("for (;;) {}") });
+          const e = vm.runInContext("try { script.runInThisContext({ timeout: 5 }) } catch (e) { e }", ctx);
+          rows["script.runInThisContext, called in a context"] = [e.code, realmOf(e, { ctx })];
+        }
+        {
+          const ctx = vm.createContext({});
+          const module = new vm.SourceTextModule("for (;;) {}", { context: ctx });
+          await module.link(() => {});
+          const e = await rejectionOf(module.evaluate({ timeout }));
+          rows["SourceTextModule in a context"] = [e.code, realmOf(e, { ctx })];
+        }
+        {
+          const module = new vm.SourceTextModule("for (;;) {}");
+          await module.link(() => {});
+          const e = await rejectionOf(module.evaluate({ timeout }));
+          rows["SourceTextModule in the main context"] = [e.code, realmOf(e)];
+        }
+        {
+          // A second evaluate() of an evaluated module only runs the microtask checkpoint of its context.
+          const ctx = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+          const source = "globalThis.spinLater = () => Promise.resolve().then(() => { for (;;) {} });";
+          const module = new vm.SourceTextModule(source, { context: ctx });
+          await module.link(() => {});
+          await module.evaluate();
+          ctx.spinLater();
+          const e = await rejectionOf(module.evaluate({ timeout }));
+          rows["checkpoint of an evaluated module"] = [e.code, realmOf(e, { ctx })];
+        }
+        {
+          const ctx = vm.createContext({});
+          const module = new vm.SyntheticModule([], () => { for (;;) {} }, { context: ctx });
+          await module.link(() => {});
+          const e = await rejectionOf(module.evaluate({ timeout }));
+          rows["SyntheticModule in a context"] = [e.code, realmOf(e, { ctx })];
+        }
+        {
+          const ctx = vm.createContext({});
+          const invalid = { "timeout: -1": { timeout: -1 }, "breakOnSigint: 1": { breakOnSigint: 1 } };
+          for (const name in invalid) {
+            const e = thrownBy(() => new vm.Script("1").runInContext(ctx, invalid[name]));
+            rows[name] = [e.code, e.name, realmOf(e, { ctx })];
+          }
+          const e = await rejectionOf(vm.runInContext("import('x')", ctx));
+          rows["import() without a callback"] = [e.code, e.name, realmOf(e, { ctx })];
+        }
+        console.log(JSON.stringify(rows, null, 2));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "vm.runInThisContext": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "host"],
+      "script.runInThisContext, called in a context": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "host"],
+      "SourceTextModule in a context": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "host"],
+      "SourceTextModule in the main context": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "host"],
+      "checkpoint of an evaluated module": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "host"],
+      "SyntheticModule in a context": ["ERR_SCRIPT_EXECUTION_TIMEOUT", "host"],
+      "timeout: -1": ["ERR_OUT_OF_RANGE", "RangeError", "host"],
+      "breakOnSigint: 1": ["ERR_INVALID_ARG_TYPE", "TypeError", "host"],
+      "import() without a callback": ["ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING", "TypeError", "host"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // POSIX-only: a real SIGINT, sent from a worker while the main thread is in a breakOnSigint run.
+  test.skipIf(isWindows)("a Script run that a SIGINT cuts short throws an error of the realm it ran in", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { Worker } = require("node:worker_threads");
+      // Each run calls ready() and then spins. The worker sends one SIGINT for each call, so a SIGINT only arrives
+      // during a run.
+      const worker = new Worker(
+        'require("node:worker_threads").parentPort.on("message", () => process.kill(process.pid, "SIGINT"))',
+        { eval: true },
+      );
+      globalThis.ready = () => worker.postMessage(null);
+      const wait = "ready(); for (;;) {}";
+      const options = { breakOnSigint: true };
+      const rows = {};
+      (async () => {
+        {
+          const ctx = vm.createContext({ ready });
+          const e = thrownBy(() => vm.runInContext(wait, ctx, options));
+          rows["vm.runInContext"] = [e.code, e.message, realmOf(e, { ctx })];
+        }
+        {
+          const sandbox = { ready };
+          const e = thrownBy(() => new vm.Script(wait).runInNewContext(sandbox, options));
+          rows["script.runInNewContext(sandbox)"] = [e.code, realmOf(e, { sandbox })];
+        }
+        {
+          const e = thrownBy(() => vm.runInThisContext(wait, options));
+          rows["vm.runInThisContext"] = [e.code, realmOf(e)];
+        }
+        {
+          const ctx = vm.createContext({ ready });
+          const module = new vm.SourceTextModule(wait, { context: ctx });
+          await module.link(() => {});
+          const e = await rejectionOf(module.evaluate(options));
+          rows["SourceTextModule in a context"] = [e.code, realmOf(e, { ctx })];
+        }
+        console.log(JSON.stringify(rows, null, 2));
+        process.exit(0);
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "vm.runInContext": ["ERR_SCRIPT_EXECUTION_INTERRUPTED", "Script execution was interrupted by `SIGINT`", "ctx"],
+      "script.runInNewContext(sandbox)": ["ERR_SCRIPT_EXECUTION_INTERRUPTED", "sandbox"],
+      "vm.runInThisContext": ["ERR_SCRIPT_EXECUTION_INTERRUPTED", "host"],
+      "SourceTextModule in a context": ["ERR_SCRIPT_EXECUTION_INTERRUPTED", "host"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the Error.prepareStackTrace of a context formats the error of a cut-short run", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const rows = {};
+      const ctx = vm.createContext({});
+      const cutShortError = () => thrownBy(() => vm.runInContext("for (;;) {}", ctx, { timeout: 5 }));
+      vm.runInContext("Error.prepareStackTrace = () => 'formatted by the context'", ctx);
+      rows["formatter of the context"] = cutShortError().stack;
+      // It comes before a formatter of the main context.
+      Error.prepareStackTrace = () => "formatted by the main context";
+      rows["both formatters"] = cutShortError().stack;
+      console.log(JSON.stringify(rows, null, 2));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "formatter of the context": "formatted by the context",
+      "both formatters": "formatted by the context",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Node asks the Error of the main context when the Error of the context has no formatter, and calls the formatter as
+  // a method of the main Error. Bun asks only the Error of the context: both stacks keep the default format and the
+  // list of receivers stays empty. https://github.com/oven-sh/bun/pull/45570 adds the lookup.
+  test.todo("the main Error.prepareStackTrace formats errors of a context without a formatter", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const ctx = vm.createContext({});
+      const receivers = [];
+      Error.prepareStackTrace = function () {
+        receivers.push(this === Error);
+        return "formatted by the main context";
+      };
+      const cutShortError = thrownBy(() => vm.runInContext("for (;;) {}", ctx, { timeout: 5 }));
+      const errorOfContext = vm.runInContext("new Error('made in the context')", ctx);
+      console.log(JSON.stringify([cutShortError.stack, errorOfContext.stack, receivers]));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "formatted by the main context",
+      "formatted by the main context",
+      [true, true],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Node runs the script in the context that the sandbox already has. Bun makes a new global object for each call
+  // (scriptRunInNewContext), so the error is an instance of an Error that no later run reaches. This prints
+  // [false,false].
+  test.todo("runInNewContext() with a sandbox that has a context throws an error of that context", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const sandbox = {};
+      const first = thrownBy(() => vm.runInNewContext("for (;;) {}", sandbox, { timeout: 5 }));
+      const second = thrownBy(() => vm.runInNewContext("for (;;) {}", sandbox, { timeout: 5 }));
+      const ContextError = vm.runInContext("Error", sandbox);
+      console.log(JSON.stringify([first instanceof ContextError, first.constructor === second.constructor]));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([true, true]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
   const options = { lineOffset: 5, columnOffset: 10 };
   const position = (error: unknown) =>

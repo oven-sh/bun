@@ -13,10 +13,11 @@ using namespace JSC;
 
 static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
 
-NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
+NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, ErrorRealm errorRealm, std::optional<Seconds> timeout, bool breakOnSigint)
     : m_vm(realm->vm())
     , m_realm(realm)
     , m_timeout(timeout)
+    , m_errorRealm(errorRealm)
     , m_enclosing(std::exchange(s_innermostRunOnThisThread, this))
 {
     if (breakOnSigint) {
@@ -72,10 +73,7 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
             top.clearException();
     }
 
-    if (timedOut())
-        throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s));
-    else
-        throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    scope.throwException(m_realm, createCutShortError(*this));
 
     // A run this one is nested in may have been cut short as well by now (its own deadline); its request went
     // with ours, so make it again — after building the error above, which a pending trap would have cut short.
@@ -101,9 +99,21 @@ JSObject* NodeVMRunTermination::errorForEnclosingRunCutShort() const
     const auto* run = enclosingRunCutShort();
     if (!run)
         return nullptr;
-    if (run->timedOut())
-        return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, run->m_timeout->milliseconds(), "ms"_s));
-    return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    return run->createCutShortError(*this);
+}
+
+JSObject* NodeVMRunTermination::createCutShortError(const NodeVMRunTermination& forRun) const
+{
+    ASSERT(wasCutShort());
+    ErrorCode code = ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED;
+    String message = "Script execution was interrupted by `SIGINT`"_s;
+    if (timedOut()) {
+        code = ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT;
+        message = makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s);
+    }
+    if (forRun.m_errorRealm == ErrorRealm::OfRun)
+        return createErrorInRealm(uncheckedDowncast<GlobalScope>(forRun.m_realm), code, message);
+    return createError(forRun.m_realm, code, message);
 }
 
 } // namespace Bun

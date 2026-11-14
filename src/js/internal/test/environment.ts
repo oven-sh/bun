@@ -5,6 +5,7 @@ const types = require("node:util/types");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
+const moveReplacements: (on: boolean) => void = $bindgen("environment.bind.ts", "moveReplacements");
 // This module's copy in a global that outlives the test files.
 const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "TestEnvironment.cpp",
@@ -441,8 +442,6 @@ function open(
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
   if (last && !isClosed(last.window)) return last;
-  // Which names a new window gives globalThis depends on the names that are there.
-  beforeCreating();
 
   let options;
   try {
@@ -450,6 +449,8 @@ function open(
   } catch (error) {
     return `its options are not JSON: ${(error as Error).message}`;
   }
+  // Which names a new window gives globalThis depends on the names that are there.
+  beforeCreating();
   const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, found.load(), options ?? {});
   if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
@@ -474,7 +475,27 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
 // and defined again a few times. So the last file's names stay until a file needs another environment.
 let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
 
+// Without --isolate, a preload's vi.stubGlobal() stubs keep what they replaced, so they come off while a window's names move.
+let areReplacementsOff = false;
+// The stubs put a `document` on a globalThis that had none. That is no DOM that a preload set up.
+let isDocumentAStub = false;
+
+function takeOffReplacements() {
+  if (areReplacementsOff) return;
+  areReplacementsOff = true;
+  moveReplacements(false);
+}
+
+function putOnReplacements() {
+  if (!areReplacementsOff) return;
+  areReplacementsOff = false;
+  const hadDocument = "document" in globalThis;
+  moveReplacements(true);
+  isDocumentAStub = !hadDocument && "document" in globalThis;
+}
+
 function enter(name: string, environment: Environment, keep: boolean) {
+  if (keep) takeOffReplacements();
   const { properties, keys } = environment;
   const defined: string[] = [];
   const originals: (PropertyDescriptor | undefined)[] = [];
@@ -500,14 +521,24 @@ function enter(name: string, environment: Environment, keep: boolean) {
       environment.forgetLastFile?.();
       return isClosed(environment.window);
     }
+    if (!keep) return leave();
     // What can't be put back is this file's error, not the next one's.
-    if (!keep || !isExtensible(globalThis)) return leave();
-    for (let i = 0; i < defined.length; i++) if (ownProperty(defined[i])?.configurable === false) return leave();
+    if (!isExtensible(globalThis)) return leaveNow();
+    for (let i = 0; i < defined.length; i++) if (ownProperty(defined[i])?.configurable === false) return leaveNow();
     left = { environment, teardown, leave };
     return true;
   }
 
+  function leaveNow() {
+    try {
+      return leave();
+    } finally {
+      putOnReplacements();
+    }
+  }
+
   function leave() {
+    if (keep) takeOffReplacements();
     let stuck: string | undefined;
     for (let i = 0; i < defined.length; i++) {
       const key = defined[i];
@@ -636,34 +667,42 @@ function setup(
     last = undefined;
     leave();
   }
-  if (name === "node") return last && leaveLast();
-  if (!last && "document" in globalThis) return;
-
-  let result;
   try {
-    result = open(name, optionsText, file, keep, () => last && leaveLast());
-  } catch (error) {
-    if (last) leaveLast();
-    if (!isFromComment) throw error;
-    result = String((error as Error)?.message ?? error);
-  }
-  if (last) {
-    const { environment, teardown } = last;
-    if (result === environment) {
-      environment.forgetLastFile?.();
-      return teardown;
+    if (name === "node") return last && leaveLast();
+    if (!last && "document" in globalThis) {
+      if (!isDocumentAStub) return;
+      takeOffReplacements();
+      if ("document" in globalThis) return;
     }
-    leaveLast();
-    if ("document" in globalThis) return;
-  }
-  if (typeof result !== "string") result = enter(name, result, keep);
-  if (typeof result !== "string") return result;
 
-  const message = `Cannot set up the "${name}" test environment for "${file}": ${result}`;
-  if (isFromComment) return message;
-  const error = new Error(message);
-  captureStackTrace(error, setup);
-  throw error;
+    let result;
+    try {
+      result = open(name, optionsText, file, keep, () => (last ? leaveLast() : keep && takeOffReplacements()));
+    } catch (error) {
+      if (last) leaveLast();
+      if (!isFromComment) throw error;
+      result = String((error as Error)?.message ?? error);
+    }
+    if (last) {
+      const { environment, teardown } = last;
+      if (result === environment) {
+        environment.forgetLastFile?.();
+        return teardown;
+      }
+      leaveLast();
+      if ("document" in globalThis) return;
+    }
+    if (typeof result !== "string") result = enter(name, result, keep);
+    if (typeof result !== "string") return result;
+
+    const message = `Cannot set up the "${name}" test environment for "${file}": ${result}`;
+    if (isFromComment) return message;
+    const error = new Error(message);
+    captureStackTrace(error, setup);
+    throw error;
+  } finally {
+    putOnReplacements();
+  }
 }
 
 setup.find = find;

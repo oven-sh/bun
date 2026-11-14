@@ -1,9 +1,11 @@
 //! Picks each test file's environment. src/js/internal/test/environment.ts creates the window.
 
 use super::jest::Jest;
+use super::vi_utils;
 use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
@@ -212,6 +214,15 @@ impl Environment {
 
 pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload.get()
+}
+
+/// Takes the `vi.stubGlobal()` stubs off the global (`on` is false) while environment.ts moves a window's names.
+pub(crate) fn move_replacements(cx: &mut JsScope<'_>, on: bool) {
+    let global = cx.global();
+    // The end of each file reports a stub that can't be undone or made again. Here that would be one more error, for the next file.
+    if let Err(err) = vi_utils::move_stubs_of_preloads(global, on) {
+        let _ = global.take_exception(err);
+    }
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

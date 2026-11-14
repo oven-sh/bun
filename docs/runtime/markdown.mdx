@@ -93,6 +93,10 @@ Pass `true` to enable both heading IDs and autolink headings, or an object for g
 Bun.markdown.html("## Hello World", { headings: true });
 // '<h2 id="hello-world"><a href="#hello-world">Hello World</a></h2>\n'
 
+// A heading that has a link gets an ID and no autolink, so the autolink is around no other link
+Bun.markdown.html("## Read [the docs](https://bun.com/docs)", { headings: true });
+// '<h2 id="read-the-docs">Read <a href="https://bun.com/docs">the docs</a></h2>\n'
+
 // Enable only heading IDs (no autolink)
 Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
@@ -315,7 +319,7 @@ function Link({ href, title, children }) {
 function Heading({ id, children }) {
   return (
     <h2 id={id}>
-      <a href={`#${id}`}>{children}</a>
+      {children} <a href={`#${id}`}>#</a>
     </h2>
   );
 }

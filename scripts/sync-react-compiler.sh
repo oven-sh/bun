@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Bun does NOT vendor the React Compiler — every upstream crate that Bun uses
 # has been ported into src/react_compiler/ (HIR passes byte-for-byte; AST-
-# boundary files re-typed onto bun_ast). This script sparse-fetches the
+# boundary files re-typed onto bun_ast). This script fetches the
 # upstream sources into a temp dir and prints, for each ported file, the diff
 # between the SHA we last ported from (src/react_compiler/UPSTREAM_PORTED) and
 # upstream's current tip. Nothing is written to the repo; the output is the
@@ -47,13 +47,12 @@ fi
 
 ref="${1:-main}"
 
-echo "Fetching facebook/react @ {$old, $ref} (sparse: compiler/crates) ..." >&2
+echo "Fetching facebook/react @ {$old, $ref} ..." >&2
 git -C "$tmp" init -q
 git -C "$tmp" remote add origin https://github.com/facebook/react.git
-git -C "$tmp" sparse-checkout init --cone
-git -C "$tmp" sparse-checkout set compiler/crates
-git -C "$tmp" fetch -q --depth=1 origin "$old" "$ref"
-new=$(git -C "$tmp" rev-parse FETCH_HEAD)
+# $ref gets a ref of its own: FETCH_HEAD lists both commits and resolves to the first one, $old.
+git -C "$tmp" fetch -q --depth=1 origin "$old" "$ref:refs/sync/new"
+new=$(git -C "$tmp" rev-parse --verify 'refs/sync/new^{commit}')
 
 echo "UPSTREAM_PORTED: $old"
 echo "UPSTREAM_HEAD:   $new"
@@ -82,6 +81,7 @@ declare -a pristine=(
 # Upstream diffs here must be re-ported by hand using the type-mapping table
 # in src/react_compiler/DESIGN.md.
 declare -a boundary=(
+  react_compiler_lowering/src/lib.rs:lowering/mod.rs
   react_compiler_lowering/src/build_hir.rs:lowering/build_hir/
   react_compiler_lowering/src/hir_builder.rs:lowering/hir_builder.rs
   react_compiler_lowering/src/find_context_identifiers.rs:lowering/find_context_identifiers.rs
@@ -93,13 +93,41 @@ declare -a boundary=(
   "react_compiler/src/entrypoint/gating.rs:(folded into program.rs)"
   "react_compiler/src/entrypoint/suppression.rs:(detected in js_parser/lexer.rs, consumed in program.rs)"
   react_compiler/src/entrypoint/compile_result.rs:compile_result.rs
+  "react_compiler_hir/src/print.rs:(not ported; debug printer, no caller in Bun)"
+  "react_compiler_diagnostics/src/code_frame.rs:(not ported; no caller in Bun)"
+  "react_compiler_reactive_scopes/src/print_reactive_function.rs:(not ported; debug printer, no caller in Bun)"
+  "react_compiler/src/fixture_utils.rs:(not ported; upstream test/debug helper)"
+  "react_compiler/src/entrypoint/validate_source_locations.rs:(not ported; upstream test/debug helper)"
 )
 
+declare -a boundary_excludes=()
+for pair in "${boundary[@]}"; do
+  boundary_excludes+=(":(exclude)compiler/crates/${pair%%:*}")
+done
+
+# An upstream file that names react_compiler_ast in code and has no entry above
+# is a new boundary file: it needs a Bun port + an entry, and is printed until
+# it has one. The name is in code when no // is before it on its line.
+# git grep exits with 1 when no file matches. Any other failure stops the script.
+ast_in_code='^(([^/]|/[^/])*/?[^A-Za-z0-9_/])?react_compiler_ast($|[^A-Za-z0-9_])'
+new_consumers=$(git -C "$tmp" grep --no-color -lE -e "$ast_in_code" "$new" -- 'compiler/crates/*/src/*.rs' \
+  ':(exclude)compiler/crates/react_compiler_ast' "${boundary_excludes[@]}" | sed "s/^$new://") || [ $? -eq 1 ]
+
+# Not part of a whole-crate port: a file with an entry above, and a new consumer
+# that $old does not have. A new consumer that $old has keeps its diff.
+declare -a not_whole_crate=("${boundary_excludes[@]}")
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  git -C "$tmp" cat-file -e "$old:$file" 2> /dev/null || not_whole_crate+=(":(exclude)$file")
+done <<< "$new_consumers"
+
+# diff_one <upstream path> <port> [<pathspec>...]
 diff_one() {
   local upstream="compiler/crates/$1" port="$2"
+  shift 2
   case "$port" in '('*) ;; *) port="src/react_compiler/$port" ;; esac
   local out
-  out=$(git -C "$tmp" diff --stat=120 --patch "$old" "$new" -- "$upstream")
+  out=$(git -C "$tmp" diff --no-color --no-ext-diff --stat=120 --patch "$old" "$new" -- "$upstream" "$@")
   if [ -n "$out" ]; then
     echo "── $upstream"
     echo "   port: $port"
@@ -111,7 +139,7 @@ diff_one() {
 echo "### whole-crate ports (apply mechanically) ###"
 echo
 for pair in "${pristine[@]}"; do
-  diff_one "${pair%%:*}/src" "${pair##*:}"
+  diff_one "${pair%%:*}/src" "${pair##*:}" "${not_whole_crate[@]}"
 done
 
 echo "### AST-boundary ports (re-port via DESIGN.md type map) ###"
@@ -120,13 +148,14 @@ for pair in "${boundary[@]}"; do
   diff_one "${pair%%:*}" "${pair##*:}"
 done
 
-# Any new file that touches react_compiler_ast outside the known boundary set
-# is a new boundary file that needs a Bun port + an entry above.
 echo "### new react_compiler_ast consumers (need new Bun port) ###"
-git -C "$tmp" checkout -q "$new"
-git -C "$tmp" grep -l '\breact_compiler_ast\b' -- 'compiler/crates/*/src/*.rs' \
-  | grep -Ev 'react_compiler_ast/|react_compiler_lowering/|react_compiler/src/entrypoint/|reactive_scopes/src/codegen_reactive_function\.rs' \
-  || echo "(none)"
 echo
+[ -n "$new_consumers" ] || { echo "(none)"; echo; }
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  echo "── $file"
+  git -C "$tmp" cat-file blob "$new:$file"
+  echo
+done <<< "$new_consumers"
 
 echo "When porting is done: echo $new > $ported_file"

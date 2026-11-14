@@ -8,13 +8,13 @@ use bun_jsc::bindgen::{
 };
 use bun_jsc::{JSArray, JSGlobalObject, JSValue, JsClass as _};
 
-use super::device::{Device, HoldsMemory};
+use super::device::Device;
 use super::instance::Deferred;
 use super::{GPUBindGroupLayout, GPUPipelineError, Object, convert, idl};
 
 pub(crate) type GPUShaderModule = Object<dawn::ShaderModule, Rc<Device>>;
-pub(crate) type GPUComputePipeline = Object<dawn::ComputePipeline, HoldsMemory>;
-pub(crate) type GPURenderPipeline = Object<dawn::RenderPipeline, HoldsMemory>;
+pub(crate) type GPUComputePipeline = Object<dawn::ComputePipeline>;
+pub(crate) type GPURenderPipeline = Object<dawn::RenderPipeline>;
 
 impl GPUShaderModule {
     pub(crate) fn get_compilation_info<'a>(&self, cx: &mut JsScope<'a>) -> Result<'a, JSValue> {
@@ -107,7 +107,8 @@ macro_rules! impl_pipeline_base {
                 heap: &JsHeap<'a>,
                 index: u32,
             ) -> JsWrapper<'a, GPUBindGroupLayout> {
-                Object::new(self.handle.get_bind_group_layout(index), &String::EMPTY).into_js(heap)
+                let handle = self.handle.get_bind_group_layout(index);
+                Object::with_state(handle, &String::EMPTY, self.state.clone()).into_js(heap)
             }
         }
     )*};

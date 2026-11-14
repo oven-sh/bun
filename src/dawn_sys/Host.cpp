@@ -38,7 +38,14 @@ std::unique_ptr<dawn::platform::WorkerTaskPool> Host::CreateWorkerTaskPool()
     return std::make_unique<WorkerTaskPool>(this);
 }
 
-Wake QueueWatcher::arm(ExecutionSerial serial)
+QueueWatcher::QueueWatcher(DeviceBase* device)
+    : m_device(device)
+    , m_host(Host::from(device))
+    , m_lastEmptySubmit(device->GetQueue()->GetLastSubmittedCommandSerial())
+{
+}
+
+Wake QueueWatcher::arm(ExecutionSerial serial, bool isScriptDone)
 {
     QueueBase* queue = m_device->GetQueue();
     ExecutionSerial submitted = queue->GetLastSubmittedCommandSerial();
@@ -52,10 +59,16 @@ Wake QueueWatcher::arm(ExecutionSerial serial)
         return Wake::None;
 
     if (submitted <= completed) {
-        if (std::exchange(m_serialThatFreesMemory, kBeginningOfGPUTime) <= submitted)
-            return Wake::None;
+        if (std::exchange(m_serialThatFreesMemory, kBeginningOfGPUTime) <= submitted) {
+            // After a submit, Dawn releases its staging buffers and what only the commands held. The script may submit again.
+            if (submitted == m_lastEmptySubmit)
+                return Wake::None;
+            if (!isScriptDone)
+                return Wake::Missed;
+        }
         wgpuQueueSubmit(ToAPI(queue), 0, nullptr);
-        return arm(serial);
+        m_lastEmptySubmit = queue->GetLastSubmittedCommandSerial();
+        return arm(serial, isScriptDone);
     }
 
     serial = std::min(serial, submitted);
@@ -67,7 +80,7 @@ Wake QueueWatcher::arm(ExecutionSerial serial)
             return Wake::None;
         m_armedSerial = serial;
     }
-    return resume(serial);
+    return resume(serial) ? Wake::Follows : Wake::Missed;
 }
 
 void QueueWatcher::willReleaseMemory()
@@ -163,9 +176,9 @@ extern "C" QueueWatcher* BunDawn__createQueueWatcher(WGPUDevice device)
     return QueueWatcher::create(FromAPI(device)).release();
 }
 
-extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial)
+extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial, bool isScriptDone)
 {
-    return watcher->arm(ExecutionSerial(serial));
+    return watcher->arm(ExecutionSerial(serial), isScriptDone);
 }
 
 extern "C" void BunDawn__willReleaseMemory(QueueWatcher* watcher)

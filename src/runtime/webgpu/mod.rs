@@ -35,13 +35,13 @@ pub(crate) use pipeline::{
 pub(crate) use queue::GPUQueue;
 pub(crate) use texture::{GPUExternalTexture, GPUTexture};
 
-pub(crate) type GPUBindGroup = Object<dawn::BindGroup, device::HoldsMemory>;
+pub(crate) type GPUBindGroup = Object<dawn::BindGroup>;
 pub(crate) type GPUBindGroupLayout = Object<dawn::BindGroupLayout>;
 pub(crate) type GPUCommandBuffer = Object<dawn::CommandBuffer>;
 pub(crate) type GPUPipelineLayout = Object<dawn::PipelineLayout>;
 pub(crate) type GPURenderBundle = Object<dawn::RenderBundle>;
-pub(crate) type GPUSampler = Object<dawn::Sampler, device::HoldsMemory>;
-pub(crate) type GPUTextureView = Object<dawn::TextureView, device::HoldsMemory>;
+pub(crate) type GPUSampler = Object<dawn::Sampler>;
+pub(crate) type GPUTextureView = Object<dawn::TextureView>;
 
 // HOST_EXPORT(Bun__createNavigatorGPU)
 pub(crate) fn create_navigator_gpu(global: &JSGlobalObject) -> JSValue {
@@ -62,7 +62,7 @@ pub(crate) fn create_navigator_gpu(global: &JSGlobalObject) -> JSValue {
 }
 
 /// `GPUObjectBase`
-pub(crate) struct Object<T: ExternalSharedDescriptor, State = ()> {
+pub(crate) struct Object<T: ExternalSharedDescriptor, State = device::HoldsMemory> {
     handle: Ref<T>,
     label: JsCell<String>,
     state: State,
@@ -79,12 +79,6 @@ impl<T: ExternalSharedDescriptor, State> Object<T, State> {
 
     pub(crate) fn get_label(&self) -> String {
         self.label.get().clone()
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Object<T> {
-    fn new(handle: Ref<T>, label: &String) -> Self {
-        Self::with_state(handle, label, ())
     }
 }
 

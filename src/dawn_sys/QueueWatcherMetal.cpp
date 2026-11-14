@@ -22,11 +22,11 @@ private:
     }
 
     // That thread takes the tasks before it raises the serial. This waits until it has done both.
-    Wake resume(ExecutionSerial serial) override
+    bool resume(ExecutionSerial serial) override
     {
         QueueBase* queue = m_device->GetQueue();
         IgnoreErrors(queue->UpdateCompletedSerial(QueuePriority::UserVisible));
-        return serial > queue->GetCompletedCommandSerial() ? Wake::Follows : Wake::Missed;
+        return serial > queue->GetCompletedCommandSerial();
     }
 };
 

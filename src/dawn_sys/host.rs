@@ -109,7 +109,7 @@ pub enum Wake {
     /// The GPU is idle, the device is lost, or the system is out of resources.
     None,
     Follows,
-    /// What it was for has happened already.
+    /// It has to be asked again.
     Missed,
 }
 
@@ -131,7 +131,11 @@ unsafe extern "C" {
     safe fn BunDawn__bufferMemorySize(buffer: &Buffer) -> u64;
     safe fn BunDawn__textureMemorySize(texture: &Texture) -> u64;
     safe fn BunDawn__createQueueWatcher(device: &Device) -> NonNull<QueueWatcher>;
-    fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>, serial: Serial) -> Wake;
+    fn BunDawn__armQueueWatcher(
+        watcher: NonNull<QueueWatcher>,
+        serial: Serial,
+        is_script_done: bool,
+    ) -> Wake;
     fn BunDawn__willReleaseMemory(watcher: NonNull<QueueWatcher>);
     safe fn BunDawn__serialOfLastUse(buffer: &Buffer) -> Serial;
     safe fn BunDawn__serialOfScheduledWork(queue: &Queue) -> Serial;
@@ -357,11 +361,12 @@ impl OwnedDevice {
     }
 
     /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. Wakes that were asked for before need not come.
-    pub fn wake_after(&self, serial: Option<Serial>) -> Wake {
+    pub fn wake_after(&self, serial: Option<Serial>, is_script_done: bool) -> Wake {
         self.watcher.get().map_or(Wake::None, |watcher| {
             let _pool = AutoreleasePool::new();
+            let serial = serial.unwrap_or(Serial(u64::MAX));
             // SAFETY: only `destroy` frees it, which takes it out first.
-            unsafe { BunDawn__armQueueWatcher(watcher, serial.unwrap_or(Serial(u64::MAX))) }
+            unsafe { BunDawn__armQueueWatcher(watcher, serial, is_script_done) }
         })
     }
 

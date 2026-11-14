@@ -1,5 +1,6 @@
 #include "Host.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <pthread.h>
@@ -34,17 +35,14 @@ private:
 
         std::lock_guard lock(m_mutex);
         m_wanted = serial;
-        m_hasFailed = false;
         m_changed.notify_one();
         return true;
     }
 
-    Wake resume(ExecutionSerial serial) override
+    bool resume(ExecutionSerial serial) override
     {
         std::lock_guard lock(m_mutex);
-        if (m_hasFailed)
-            return Wake::None;
-        return serial > m_passed ? Wake::Follows : Wake::Missed;
+        return serial > m_passed;
     }
 
     void run()
@@ -56,7 +54,7 @@ private:
 
         std::unique_lock lock(m_mutex);
         while (true) {
-            m_changed.wait(lock, [&] { return m_stopping || (!m_hasFailed && m_wanted > m_passed); });
+            m_changed.wait(lock, [&] { return m_stopping || m_wanted > m_passed; });
             if (m_stopping)
                 return;
 
@@ -68,15 +66,16 @@ private:
                 result = device->fn.WaitForFences(device->GetVkDevice(), 1, &*fence, true, UINT64_MAX);
             lock.lock();
 
-            // If the device is lost, Dawn finds out when woken.
-            m_hasFailed = result != VK_SUCCESS;
-            if (!m_hasFailed)
+            if (result == VK_SUCCESS)
                 m_passed = serial;
-            if (m_hasFailed || m_wanted <= m_passed) {
+            if (result != VK_SUCCESS || m_wanted <= m_passed) {
                 lock.unlock();
                 m_host->wake();
                 lock.lock();
             }
+            // Until Dawn has found the fence signaled or the device lost.
+            if (result != VK_SUCCESS)
+                m_changed.wait_for(lock, std::chrono::milliseconds(1), [&] { return m_stopping; });
         }
     }
 
@@ -100,7 +99,6 @@ private:
     ExecutionSerial m_wanted { kBeginningOfGPUTime };
     // Only the thread writes it.
     ExecutionSerial m_passed { kBeginningOfGPUTime };
-    bool m_hasFailed { false };
     bool m_stopping { false };
 };
 

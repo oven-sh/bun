@@ -109,8 +109,9 @@ impl Instance {
             device.strong_count() > 0
         });
         let results = self.new_completions.borrow().len();
+        let has_results = results > 0 || !self.completions.borrow().is_empty();
         for device in devices {
-            device.watch_queue();
+            device.watch_queue(has_results);
             device.complete_events();
         }
         // A result can follow from an event: an error, or the loss of the device.

@@ -234,7 +234,10 @@ impl GPUCommandEncoder {
             occlusion_query_set: descriptor.occlusion_query_set.map(|set| &*set.handle),
             timestamp_writes: timestamp_writes.as_ref(),
         });
-        Ok(Object::new(handle, &descriptor.label).into_child_of(heap, this_value.to_js()))
+        Ok(
+            Object::with_state(handle, &descriptor.label, self.state.clone())
+                .into_child_of(heap, this_value.to_js()),
+        )
     }
 
     pub(crate) fn begin_compute_pass<'a>(
@@ -257,7 +260,8 @@ impl GPUCommandEncoder {
                 label: convert::label(&descriptor.label.to_utf8()),
                 timestamp_writes: timestamp_writes.as_ref(),
             }));
-        Object::new(handle, &descriptor.label).into_child_of(heap, this_value.to_js())
+        Object::with_state(handle, &descriptor.label, self.state.clone())
+            .into_child_of(heap, this_value.to_js())
     }
 
     pub(crate) fn copy_buffer_to_buffer_from_start(
@@ -368,7 +372,7 @@ impl GPUCommandEncoder {
             next_in_chain: Chain::END,
             label: convert::label(&descriptor.label.to_utf8()),
         }));
-        Object::new(handle, &descriptor.label).into_js(heap)
+        Object::with_state(handle, &descriptor.label, self.state.clone()).into_js(heap)
     }
 }
 
@@ -461,6 +465,6 @@ impl GPURenderBundleEncoder {
             next_in_chain: Chain::END,
             label: convert::label(&descriptor.label.to_utf8()),
         }));
-        Object::new(handle, &descriptor.label).into_js(heap)
+        Object::with_state(handle, &descriptor.label, self.state.clone()).into_js(heap)
     }
 }

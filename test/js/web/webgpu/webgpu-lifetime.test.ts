@@ -7,8 +7,9 @@ runWithDriverOfChrome(import.meta.path);
 
 // As in CI. With ASAN the process ends in exit(), which runs the destructors of a driver whose threads may be at work.
 const bunEnv = isASAN ? { ...defaultEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" } : defaultEnv;
-// It would wake an event loop that has missed something.
+// The timer and the finalizers would wake an event loop that has missed something.
 const withoutGCTimer = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
+const withoutGC = { ...withoutGCTimer, BUN_JSC_useGC: "0" };
 
 const helpers = `
   import { readdirSync, readFileSync } from "node:fs";
@@ -17,13 +18,6 @@ const helpers = `
     try { return readFileSync(\`/proc/self/task/\${thread}/comm\`, "utf8") === "GPUQueue\\n"; } catch {}
   }).length;
   export const requestDevice = async () => (await navigator.gpu.requestAdapter()).requestDevice();
-  /** The finalizer of a buffer would make the process look at the device by chance. */
-  export function keepBuffers(device) {
-    const createBuffer = device.createBuffer.bind(device);
-    device.buffers = [];
-    device.createBuffer = descriptor => device.buffers[device.buffers.push(createBuffer(descriptor)) - 1];
-    return (globalThis.device = device);
-  }
   export const slowModule = (device, seed, rounds = 10000) => device.createShaderModule({ code: \`
     @group(0) @binding(0) var<storage, read_write> out: array<u32, 64>;
     @compute @workgroup_size(64) fn main(@builtin(local_invocation_index) index: u32) {
@@ -65,7 +59,7 @@ const helpers = `
       navigator.gpu.requestAdapter(),
     ];
   }`;
-const imports = `import { compile, countWatchers, keepBuffers, keepBusy, prepare, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
+const imports = `import { compile, countWatchers, keepBusy, prepare, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
 
 async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
   using dir = tempDir("webgpu", {
@@ -123,7 +117,7 @@ describe.concurrent("with or without a driver", () => {
         console.log("done");
         process.exit(0);
       });`;
-    const { stdout, stderr, exitCode } = await run({ "index.js": script }, ["--hot", "index.js"], withoutGCTimer);
+    const { stdout, stderr, exitCode } = await run({ "index.js": script }, ["--hot", "index.js"], withoutGC);
     expect(stderr).toContain("error: unhandled");
     expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
   });
@@ -149,7 +143,7 @@ describe.concurrent("with or without a driver", () => {
       "index.js": `setImmediate(() => { globalThis.started = ${noAdapter}; ${load} });`,
       ...withMacro("inlined", `async () => String(await started)`),
     };
-    const { stdout, exitCode } = await run(files, undefined, withoutGCTimer);
+    const { stdout, exitCode } = await run(files, undefined, withoutGC);
     expect(withoutMacroLog(stdout)).toBe("null\n");
     expect(exitCode).toBe(0);
   });
@@ -175,7 +169,7 @@ describe.concurrent("with or without a driver", () => {
         `() => new Promise(resolve => setImmediate(() => ((globalThis.left = ${noAdapter}), resolve("macro"))))`,
       ),
     };
-    const { stdout, exitCode } = await run(files, undefined, withoutGCTimer);
+    const { stdout, exitCode } = await run(files, undefined, withoutGC);
     expect(withoutMacroLog(stdout)).toBe(Array(8).fill("macro\nnull\n").join(""));
     expect(exitCode).toBe(0);
   });
@@ -353,7 +347,7 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     ],
   ])("does not wait for what was submitted later: %s", async (_, start) => {
     const script = `
-      keepBuffers(await requestDevice());
+      const device = await requestDevice();
       await keepBusy(device, 1).mapAsync(GPUMapMode.READ);
       // More each time, as the GPU may finish all of it before this thread gets to run.
       for (let workgroups = 60; workgroups < 65536; workgroups *= 4) {
@@ -365,9 +359,22 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
         console.log(Bun.peek.status(last));
         if (Bun.peek.status(last) === "pending") break;
       }`;
-    const { stdout, stderr, exitCode } = await run({ "index.js": script });
+    const { stdout, stderr, exitCode } = await run({ "index.js": script }, undefined, withoutGC);
     expect(stdout).toEndWith("pending\n");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("sleeps once the GPU is done and the memory is freed", async () => {
+    const script = `
+      import { getEventLoopStats } from "bun:internal-for-testing";
+      const device = await requestDevice();
+      await Promise.all(startEverything(device));
+      keepBusy(device, 1).destroy();
+      Bun.gc(true);
+      const before = getEventLoopStats().iteration;
+      await Bun.sleep(100);
+      console.log(getEventLoopStats().iteration - before < 50);`;
+    expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
 
   test("does not miss what the GPU finishes just as it asks to be woken", async () => {
@@ -383,17 +390,17 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
         await device.queue.onSubmittedWorkDone();
       }
       console.log("done");`;
-    expect(await run({ "index.js": script }, undefined, withoutGCTimer)).toEqual(printed("done"));
+    expect(await run({ "index.js": script }, undefined, withoutGC)).toEqual(printed("done"));
   });
 
   test("sleeps through most of very many waits", async () => {
     const script = `
       import { getEventLoopStats } from "bun:internal-for-testing";
       const device = await requestDevice();
-      const pipeline = device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0, 1000) } });
+      const pipeline = device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0, 600) } });
       const resource = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE });
       const bindGroup = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource }] });
-      const waits = Array.from({ length: 2048 }, () => {
+      const waits = Array.from({ length: 1536 }, () => {
         const encoder = device.createCommandEncoder();
         const pass = encoder.beginComputePass();
         pass.setPipeline(pipeline), pass.setBindGroup(0, bindGroup), pass.dispatchWorkgroups(1), pass.end();
@@ -401,7 +408,7 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       }).map(commands => (device.queue.submit([commands]), device.queue.onSubmittedWorkDone()));
       const before = getEventLoopStats().iteration;
       await Promise.all(waits);
-      console.log(getEventLoopStats().iteration - before < 1200);`;
+      console.log(getEventLoopStats().iteration - before < 1000);`;
     expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
 
@@ -453,53 +460,108 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     },
   );
 
-  test.skipIf(!isLinux).each([
+  test.each(["device.destroy()", "buffer.destroy()", "buffer.unmap()", "texture.destroy()", "querySet.destroy()"])(
+    "sleeps under --hot though a listener of beforeExit calls %s",
+    async call => {
+      const script = `
+        const device = await requestDevice();
+        const buffer = device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ });
+        const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
+        const querySet = device.createQuerySet({ type: "occlusion", count: 1 });
+        let calls = 0;
+        process.on("beforeExit", () => (calls++, ${call}));
+        Bun.spawn([process.execPath, "-e", ""], { onExit: () => (console.log(calls < 20), process.exit(0)) }).unref();`;
+      expect(await run({ "index.js": script }, ["--hot", "index.js"])).toEqual(printed("true"));
+    },
+  );
+
+  test.each([
     ["buffers that it destroys", "buffer", "for (const it of all) it.destroy()"],
     ["textures that it destroys", "texture", "for (const it of all) it.destroy()"],
     ["buffers that are collected", "buffer", "(all.length = 0), Bun.gc(true)"],
     ["textures that are collected", "texture", "(all.length = 0), Bun.gc(true)"],
     ["buffers that bind groups hold to the last", "buffer", "await collectAfter(bindGroup)"],
     ["textures that views hold to the last", "texture", "await collectAfter(texture => texture.createView())"],
+    ["buffers that render bundles hold to the last", "buffer", "await collectAfter(bundle)"],
+    ["buffers that encoders hold to the last", "buffer", "await collectAfter(encode)"],
+    [
+      "buffers that the last submit holds to the last",
+      "buffer",
+      "await collectAfter(buffer => encode(buffer).finish(), all => device.queue.submit((globalThis.submitted = [...all])))",
+    ],
+    ["uploads", "upload", ""],
   ])("gets back the memory of %s, though it submits nothing more", async (_, kind, release) => {
     const script = `
       const device = await requestDevice();
       const rss = () => process.memoryUsage.rss() >> 20;
-      // 16 MB each
+      // 8 MB each
       const buffer = encoder => {
-        const buffer = device.createBuffer({ size: 16 << 20, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE });
+        const { COPY_DST, STORAGE, VERTEX } = GPUBufferUsage;
+        const buffer = device.createBuffer({ size: 8 << 20, usage: COPY_DST | STORAGE | VERTEX });
         encoder.clearBuffer(buffer);
         return buffer;
       };
       const texture = encoder => {
-        const view = device.createTexture({ size: [2048, 2048], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT });
+        const view = device.createTexture({ size: [2048, 1024], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT });
         encoder.beginRenderPass({ colorAttachments: [{ view, loadOp: "clear", storeOp: "store" }] }).end();
         return view;
       };
-      function create() {
-        const encoder = device.createCommandEncoder();
-        const all = Array.from({ length: 8 }, () => ${kind}(encoder));
-        device.queue.submit([encoder.finish()]);
-        return all;
-      }
+      const target = { texture: device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST }) };
+      const pixels = new Uint8Array(4 << 20);
+      const upload = () => {
+        for (let i = 0; i < 2; i++) device.queue.writeTexture(target, pixels, { bytesPerRow: 4096 }, [1024, 1024]);
+      };
+
       const layout = device.createBindGroupLayout({
         entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }],
       });
       const bindGroup = resource => device.createBindGroup({ layout, entries: [{ binding: 0, resource }] });
-      async function collectAfter(hold) {
+      function bundle(buffer) {
+        const encoder = device.createRenderBundleEncoder({ colorFormats: ["r8unorm"] });
+        encoder.setVertexBuffer(0, buffer);
+        return encoder.finish();
+      }
+      function encode(buffer) {
+        const encoder = device.createCommandEncoder();
+        encoder.clearBuffer(buffer);
+        return encoder;
+      }
+      async function collectAfter(hold, use) {
         const holders = all.splice(0).map(hold);
         Bun.gc(true);
-        for (let i = 0; i < 2; i++) await device.queue.onSubmittedWorkDone();
+        for (let i = 0; i < 3; i++) await device.queue.onSubmittedWorkDone();
+        use?.(holders);
         holders.length = 0;
         Bun.gc(true);
       }
+
+      function create() {
+        const encoder = device.createCommandEncoder();
+        const all = Array.from({ length: 8 }, () => ${kind}(encoder));
+        device.queue.submit([(globalThis.commands = [encoder, encoder.finish()])[1]]);
+        return all;
+      }
       const all = create();
+      let inUse = rss();
       await device.queue.onSubmittedWorkDone();
-      const inUse = rss();
+      inUse = Math.max(inUse, rss());
+      // What frees the memory of that submit would free the rest by chance.
+      for (let i = 0; i < 2; i++) await new Promise(setImmediate);
+      await device.queue.onSubmittedWorkDone();
       ${release};
-      while (device.adapterInfo.isFallbackAdapter && inUse - rss() < 64) await new Promise(setImmediate);
-      console.log("done");`;
-    const env = { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":") };
-    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("done"));
+      // Only a driver that runs on the CPU has it in the RSS.
+      const expected = device.adapterInfo.isFallbackAdapter ? 32 : -Infinity;
+      const end = performance.now() + 30_000;
+      do await Bun.sleep(1);
+      while (inUse - rss() < expected && performance.now() < end);
+      console.log(inUse - rss() < expected ? inUse - rss() + " MB" : "freed");`;
+    const env = {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      // Or glibc raises it, and keeps what is below.
+      MALLOC_MMAP_THRESHOLD_: "1048576",
+    };
+    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("freed"));
   });
 });
 
@@ -557,10 +619,10 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
       const device = await requestDevice();
       await device.queue.onSubmittedWorkDone();
       console.log(countWatchers());
-      while (countWatchers() === 0) {
+      for (const end = performance.now() + 30_000; countWatchers() === 0 && performance.now() < end; ) {
         await (() => ${create})();
         Bun.gc(true);
-        await device.queue.onSubmittedWorkDone();
+        await Bun.sleep(1);
       }
       console.log(countWatchers());`;
     expect(await run({ "index.js": script })).toEqual(printed("0\n1"));
@@ -790,12 +852,9 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
   test("a macro sleeps until the GPU is done", async () => {
     const files = {
       "index.js": `require("./inlined.js");`,
-      ...withMacro(
-        "inlined",
-        `async () => String(await keepBusy(keepBuffers(await requestDevice())).mapAsync(GPUMapMode.READ))`,
-      ),
+      ...withMacro("inlined", `async () => String(await keepBusy(await requestDevice()).mapAsync(GPUMapMode.READ))`),
     };
-    const { stdout, exitCode } = await run(files);
+    const { stdout, exitCode } = await run(files, undefined, withoutGC);
     expect(withoutMacroLog(stdout)).toBe("undefined\n");
     expect(exitCode).toBe(0);
   });
@@ -818,7 +877,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
       ),
       ...withMacro("second", `async () => (await requestDevice(), "second")`),
     };
-    const { stdout, exitCode } = await run(files);
+    const { stdout, exitCode } = await run(files, undefined, withoutGC);
     expect(withoutMacroLog(stdout)).toBe("first\nsecond\n");
     expect(exitCode).toBe(0);
   });
@@ -826,7 +885,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
   test("a macro waits for what another one left, which the GPU finished in between", async () => {
     const files = {
       "index.js": `
-        keepBusy(keepBuffers(await requestDevice()));
+        keepBusy((globalThis.device = await requestDevice()));
         const done = device.queue.onSubmittedWorkDone();
         require("./first.js");
         await done;
@@ -842,7 +901,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
       ),
       ...withMacro("second", `async () => (await left, "second")`),
     };
-    const { stdout, exitCode } = await run(files);
+    const { stdout, exitCode } = await run(files, undefined, withoutGC);
     expect(withoutMacroLog(stdout)).toBe("first\nsecond\n");
     expect(exitCode).toBe(0);
   });
@@ -960,15 +1019,13 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
         for (let i = 0; i < 2; i++) {
           const { outputs } = await Bun.build({ entrypoints: ["./inlined.js"], target: "bun" });
           console.log((await outputs[0].text()).includes("console.log(7)"));
-        }
-        while (process.platform === "linux" && countWatchers() > 0) await new Promise(setImmediate);`,
+        }`,
       ...withMacro(
         "inlined",
         `async () => {
           const device = await requestDevice();
           const { length } = await Promise.all(startEverything(device));
-          globalThis.range = undefined;
-          keepBusy(device);
+          device.destroy();
           return length;
         }`,
       ),

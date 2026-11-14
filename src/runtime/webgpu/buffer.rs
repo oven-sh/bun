@@ -92,7 +92,7 @@ pub(crate) struct Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.device.will_release_memory();
+        self.will_release_memory();
     }
 }
 
@@ -144,7 +144,16 @@ impl Buffer {
         }
     }
 
+    fn will_release_memory(&self) {
+        if self.memory_size.swap(0, Ordering::Relaxed) > 0 {
+            self.device.will_release_memory();
+        }
+    }
+
     fn unmap(&self, global: &JSGlobalObject, contents: Contents) -> JsResult<()> {
+        if !self.is_unmapped() {
+            self.device.instance.schedule();
+        }
         match self.map_state.take() {
             MapState::Unmapped => Ok(()),
             MapState::Pending { mut promise, .. } => {
@@ -421,7 +430,6 @@ impl GPUBuffer {
     pub(crate) fn unmap<'a>(&self, cx: &mut JsScope<'a>) -> Result<'a, ()> {
         let result = self.state.unmap(cx.global(), Contents::Keep);
         self.handle.unmap();
-        self.state.device.instance.schedule();
         Ok(result?)
     }
 
@@ -431,8 +439,7 @@ impl GPUBuffer {
         self.handle.destroy();
         buffer.idle_shadow.take();
         buffer.shadow_size.store(0, Ordering::Relaxed);
-        buffer.memory_size.store(0, Ordering::Relaxed);
-        buffer.device.will_release_memory();
+        buffer.will_release_memory();
         Ok(result?)
     }
 

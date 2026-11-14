@@ -26,9 +26,17 @@ pub(crate) struct Texture {
     memory_size: AtomicUsize,
 }
 
+impl Texture {
+    fn will_release_memory(&self) {
+        if self.memory_size.swap(0, Ordering::Relaxed) > 0 {
+            self.device.will_release_memory();
+        }
+    }
+}
+
 impl Drop for Texture {
     fn drop(&mut self) {
-        self.device.will_release_memory();
+        self.will_release_memory();
     }
 }
 
@@ -187,8 +195,7 @@ impl GPUTexture {
 
     pub(crate) fn destroy(&self) {
         self.handle.destroy();
-        self.state.memory_size.store(0, Ordering::Relaxed);
-        self.state.device.will_release_memory();
+        self.state.will_release_memory();
     }
 
     pub(crate) fn estimated_size(&self) -> usize {

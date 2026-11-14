@@ -142,24 +142,21 @@ impl Drop for Device {
     }
 }
 
-/// For what has memory of the driver, or can be the last to let go of a buffer or a texture.
+/// An object has memory of the driver, or can be the last to let go of one that has.
+#[derive(Clone)]
 pub(crate) struct HoldsMemory(Weak<Device>);
 
 impl HoldsMemory {
     pub(super) fn of(device: &Rc<Device>) -> Self {
         Self(Rc::downgrade(device))
     }
-
-    fn will_release(&self) {
-        if let Some(device) = self.0.upgrade() {
-            device.will_release_memory();
-        }
-    }
 }
 
 impl Drop for HoldsMemory {
     fn drop(&mut self) {
-        self.will_release();
+        if let Some(device) = self.0.upgrade() {
+            device.will_release_memory();
+        }
     }
 }
 
@@ -224,13 +221,16 @@ impl Device {
     }
 
     pub(super) fn will_release_memory(&self) {
-        self.dawn.will_release_memory();
-        self.instance.schedule();
+        if !self.dawn.is_destroyed() {
+            self.dawn.will_release_memory();
+            self.instance.schedule();
+        }
     }
 
-    pub(super) fn watch_queue(&self) {
+    pub(super) fn watch_queue(&self, has_results: bool) {
         let serial = self.serial_to_wake_after();
-        match self.dawn.wake_after(serial) {
+        let is_script_done = !has_results && serial.is_none();
+        match self.dawn.wake_after(serial, is_script_done) {
             Wake::Follows => {}
             Wake::None if serial.is_none() => {}
             Wake::None | Wake::Missed => self.instance.schedule(),
@@ -481,8 +481,10 @@ impl GPUDevice {
                 }
             }
         }
-        device.dawn.destroy();
-        device.instance.schedule();
+        if !device.dawn.is_destroyed() {
+            device.dawn.destroy();
+            device.instance.schedule();
+        }
         Ok(result?)
     }
 
@@ -570,7 +572,10 @@ impl GPUDevice {
             label: convert::label(&descriptor.label.to_utf8()),
             entries: (*entries).into(),
         });
-        Ok(Object::new(handle, &descriptor.label).into_js(heap))
+        Ok(
+            Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state))
+                .into_js(heap),
+        )
     }
 
     pub(crate) fn create_pipeline_layout<'a>(
@@ -587,7 +592,7 @@ impl GPUDevice {
             bind_group_layouts: (*bind_group_layouts).into(),
             immediate_size: descriptor.immediate_size,
         });
-        Object::new(handle, &descriptor.label).into_js(heap)
+        Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state)).into_js(heap)
     }
 
     pub(crate) fn create_bind_group<'a>(
@@ -693,7 +698,7 @@ impl GPUDevice {
         JSValue,
     )
     where
-        Object<T, HoldsMemory>: Child,
+        Object<T>: Child,
     {
         let (deferred, promise) = Deferred::new(&self.state.instance, cx);
         let device = Strong::create(this_value, cx.global());
@@ -753,7 +758,8 @@ impl GPUDevice {
             next_in_chain: Chain::END,
             label: convert::label(&descriptor.label.to_utf8()),
         }));
-        Object::new(handle, &descriptor.label).into_child_of(heap, this_value.to_js())
+        Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state))
+            .into_child_of(heap, this_value.to_js())
     }
 
     pub(crate) fn create_render_bundle_encoder<'a>(
@@ -778,7 +784,10 @@ impl GPUDevice {
                 depth_read_only: descriptor.depth_read_only.into(),
                 stencil_read_only: descriptor.stencil_read_only.into(),
             });
-        Ok(Object::new(handle, &descriptor.label).into_child_of(heap, this_value.to_js()))
+        Ok(
+            Object::with_state(handle, &descriptor.label, HoldsMemory::of(&self.state))
+                .into_child_of(heap, this_value.to_js()),
+        )
     }
 
     pub(crate) fn create_query_set<'a>(
@@ -801,7 +810,7 @@ impl GPUDevice {
         let state = QuerySet {
             r#type,
             count,
-            memory: HoldsMemory::of(&self.state),
+            memory: Cell::new(Some(HoldsMemory::of(&self.state))),
         };
         Ok(Object::with_state(handle, &descriptor.label, state).into_js(heap))
     }
@@ -839,13 +848,13 @@ pub(crate) type GPUQuerySet = Object<dawn::QuerySet, QuerySet>;
 pub(crate) struct QuerySet {
     r#type: idl::GPUQueryType,
     count: u32,
-    memory: HoldsMemory,
+    memory: Cell<Option<HoldsMemory>>,
 }
 
 impl GPUQuerySet {
     pub(crate) fn destroy(&self) {
         self.handle.destroy();
-        self.state.memory.will_release();
+        self.state.memory.take();
     }
 
     pub(crate) fn get_type(&self) -> idl::GPUQueryType {

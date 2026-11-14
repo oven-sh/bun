@@ -115,6 +115,7 @@ export const dawn: Dependency = {
     "patches/dawn/metal-no-string-literal.patch",
     "patches/dawn/no-iostream.patch",
     "patches/dawn/no-module-search-path.patch",
+    "patches/dawn/tick-after-last-serial.patch",
     "patches/dawn/vulkan-lend-fence.patch",
   ],
 

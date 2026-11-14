@@ -66,7 +66,9 @@ unsafe extern "C" {
 /// `BUN_BYTECODE_DIGEST_OUT=<path>`: decode everything every module's bytecode holds and write one sorted line per
 /// module, `<path the bytecode is keyed on> <digest> <code blocks>` (`- -` where the bytecode does not decode for the
 /// module). Two builds of the same sources have equal digests however their bytecode is laid out.
+#[inline(never)]
 fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    bun_removable_features::removable_definition!(Interpreter, write_digests);
     let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT.get_not_empty() else {
         return;
     };
@@ -77,7 +79,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         let ok = unsafe {
             Bun__BytecodeOrder__digestModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 &module.source,
                 &origin_path,
                 module.is_esm,
@@ -100,7 +102,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: as above.
         let ok = unsafe {
             Bun__BytecodeOrder__digestInternalModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 id,
                 bytecode.cast::<u8>(),
                 bytecode.len(),
@@ -139,7 +141,7 @@ pub(crate) fn init_vm(
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         unsafe {
             Bun__BytecodeOrder__setLinkedPayload(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 payload.cast::<u8>(),
                 payload.len(),
                 region_ends.as_ptr(),
@@ -155,7 +157,7 @@ fn enable_if_requested(vm: &VirtualMachine) {
         return;
     }
     // SAFETY: `jsc_vm` is this thread's live VM.
-    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm) };
+    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm.get()) };
 }
 
 /// Once: a process that outlives the signal it sent itself has written its order file when it really exits.
@@ -167,6 +169,9 @@ pub(crate) fn write_at_exit(
     let Some(graph) = graph else {
         return;
     };
+    if graph.compiled_program().is_some() {
+        return;
+    }
     if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {
         return;
     }
@@ -177,7 +182,9 @@ pub(crate) fn write_at_exit(
 
 /// What every VM of the process recorded, as an order file names it: JavaScriptCore knows the code it saw run by where
 /// it starts in which of the executable's bytecode, and the names come from parsing the text all of it was compiled from.
+#[inline(never)]
 fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    bun_removable_features::removable_definition!(Interpreter, write_order_file);
     let Some(path) = output_path() else {
         return;
     };
@@ -385,7 +392,6 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
     let tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
     // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
     let result = bun_sys::File::borrow(&tmpfile.fd)
         .write_all(text)

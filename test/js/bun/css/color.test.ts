@@ -411,14 +411,20 @@ describe("ansi output is a well-formed SGR sequence", () => {
     expect(color("white", "ansi-16")).toBe("\u001b[97m");
   });
 
+  // No expect() per color: with BUN_GARBAGE_COLLECTOR_LEVEL=1 every matcher call starts a collection, and
+  // 2197 of them ran past the 90 s per-test timeout of the macOS x64 parallel batch.
   test("ansi-16 never emits a 256-color escape", () => {
-    for (let r = 0; r < 256; r += r < 8 ? 1 : 51) {
-      for (let g = 0; g < 256; g += g < 8 ? 1 : 51) {
-        for (let b = 0; b < 256; b += b < 8 ? 1 : 51) {
-          expect(color({ r, g, b }, "ansi-16")).toMatch(/^\u001b\[(3[0-7]|9[0-7])m$/);
+    const sgr16 = /^\u001b\[(3[0-7]|9[0-7])m$/;
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += r < 8 ? 1 : 51) {
+        for (let g = 0; g < 256; g += g < 8 ? 1 : 51) {
+          for (let b = 0; b < 256; b += b < 8 ? 1 : 51) {
+            const escape = color({ r, g, b }, "ansi-16");
+            if (!sgr16.test(escape!)) throw new Error(`color(${r},${g},${b}, "ansi-16") = ${JSON.stringify(escape)}`);
+          }
         }
       }
-    }
+    });
   });
 
   test("ansi-256 and ansi-16m keep their documented shapes", () => {
@@ -767,5 +773,221 @@ describe("conversions between color spaces", () => {
       [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
       4,
     );
+  });
+});
+
+describe("numbers in a color", () => {
+  test.each([
+    ["lab(50% -0.00000005 0)", "lab(50% -5e-8 0)"],
+    ["color(display-p3 -0.9999999 0 0)", "color(display-p3 -1 0 0)"],
+    ["lab(50% rem(-40, 7) 30)", "lab(50% -5 30)"],
+    ["lab(50% mod(-40, 7) 30)", "lab(50% 2 30)"],
+  ])("%s is %s, which reads back as itself", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+    expect(color(expected, "css")).toBe(expected);
+  });
+});
+
+describe("output formats", () => {
+  const conversionFormats = [
+    "hex",
+    "HEX",
+    "rgb",
+    "rgba",
+    "number",
+    "{rgb}",
+    "{rgba}",
+    "[rgb]",
+    "[rgba]",
+    "ansi-16",
+    "ansi-256",
+    "ansi-16m",
+    "hsl",
+    "lab",
+  ] as const;
+
+  describe("color() inputs convert to every output format", () => {
+    test.each(conversionFormats)("color(srgb 1 0 0) formats as %s like #ff0000", format => {
+      expect(color("color(srgb 1 0 0)", format)).toEqual(color("#ff0000", format));
+    });
+
+    test.each([
+      ["color(srgb 0.2 0.4 0.6)", [51, 102, 153, 255]],
+      ["color(srgb 1 0 0 / 0.5)", [255, 0, 0, 128]],
+      ["color(srgb none 0 1)", [0, 0, 255, 255]],
+      ["color(display-p3 0.2 0.2 0.2)", [51, 51, 51, 255]],
+      ["color(from #336699 a98-rgb r g b)", [51, 102, 153, 255]],
+      ["color(from #336699 srgb-linear r g b)", [51, 102, 153, 255]],
+    ])("%s is %j", (input, expected) => {
+      expect(color(input, "[rgba]")).toEqual(expected);
+    });
+
+    test("the css format keeps the color space", () => {
+      expect(color("color(display-p3 1 0 0)", "css")).toBe("color(display-p3 1 0 0)");
+    });
+  });
+
+  describe("colors without channels", () => {
+    describe.each([
+      ["currentColor", "currentColor"],
+      ["Canvas", "canvas"],
+      ["light-dark(red, blue)", "light-dark(red, #00f)"],
+    ])("%s", (input, css) => {
+      test.each(conversionFormats)("is null as %s", format => {
+        expect(color(input, format)).toBeNull();
+      });
+
+      test("is itself as css", () => {
+        expect(color(input, "css")).toBe(css);
+      });
+    });
+  });
+});
+
+describe("color channels written as a number or a percentage", () => {
+  test.each([
+    ["lab(50 40 -50)", "lab(50% 40 -50)"],
+    ["lab(50% 50% 50%)", "lab(50% 62.5 62.5)"],
+    ["lch(50 40% 120)", "lch(50% 60 120)"],
+    ["oklab(0.5 25% -0.1)", "oklab(50% .1 -.1)"],
+    ["oklch(0.637 0.237 25.331)", "oklch(63.7% .237 25.331)"],
+    ["lab(50 none none)", "lab(50% none none)"],
+    ["hsl(120 50 40%)", "#393"],
+    ["hwb(120 20 30 / 0.5)", "#33b33380"],
+    ["oklch(from red 0.5 c h)", "oklch(50% .257683 29.2339)"],
+    ["lab(from red l 50% b)", "lab(54.2905% 62.5 69.891)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("converts to the other formats", () => {
+    expect(color("lab(50 40 -50)", "hex")).toBe("#965dcd");
+  });
+
+  test.each([
+    "lab(50, 40, -50)",
+    "lab(50deg 0 0)",
+    "lch(50 60 120%)",
+    "hsl(120, 50, 40)",
+    "hwb(120, 20%, 30%)",
+    "rgb(10%, 20, 30)",
+  ])("%s is invalid", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+});
+
+describe("relative colors and sRGB", () => {
+  // A browser keeps these unclamped, which rgb(), hsl() and hwb() cannot hold. A style sheet keeps them as written.
+  test.each([
+    ["rgb(from lab(100% 104.3 -50.9) r g b)", "#ff96ff"],
+    ["hsl(from color(display-p3 0 1 0) h s l)", "#0f0"],
+    ["hwb(from oklch(1 0.399 336.3) h w b)", "#ff5bff"],
+    ["rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)", "light-dark(red, #0f0)"],
+    ["rgb(from #336699 300 g b)", "#f69"],
+    ["color-mix(in hwb, oklch(100% 0.399 336.3), blue)", "#962eff"],
+  ])("%s is clipped to %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    ["lab(from oklch(100% 0.399 336.3) l a b)", "lab(94.0205% 119.644 -57.6823)"],
+    ["color(from lab(100% 104.3 -50.9) srgb r g b)", "color(srgb 1.5935 .587759 1.40555)"],
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))", "color(srgb -.511605 1.01827 -.310675)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // A color on the faces of the sRGB cube converts back from lab() a few 1e-7 outside of it.
+  test("boundary colors written as lab() resolve", () => {
+    withoutAggressiveGC(() => {
+      const steps = [0, 51, 102, 153, 204, 255];
+      for (const face of [0, 255]) {
+        for (let axis = 0; axis < 3; axis++) {
+          for (const x of steps) {
+            for (const y of steps) {
+              const rgb = [0, 0, 0];
+              rgb[axis] = face;
+              rgb[(axis + 1) % 3] = x;
+              rgb[(axis + 2) % 3] = y;
+              const hex = color({ r: rgb[0], g: rgb[1], b: rgb[2] }, "hex");
+              const lab = color(hex!, "lab");
+              for (const relative of [`rgb(from ${lab} r g b)`, `hsl(from ${lab} h s l)`, `hwb(from ${lab} h w b)`]) {
+                const resolved = color(relative, "hex");
+                if (resolved !== hex) {
+                  throw new Error(`${relative} resolved to ${resolved}, expected ${hex}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+
+  test("the alpha of the origin converts with the channels", () => {
+    expect(color("rgb(from rgb(1 2 3 / 50%) r g b)", "[rgba]")).toEqual([1, 2, 3, 128]);
+    expect(color("hsl(from rgb(1 2 3 / 50%) calc(h + 180) s l)", "[rgba]")).toEqual([3, 2, 1, 128]);
+    expect(color("rgb(from rgb(1 2 3 / 50%) r g b / 1)", "[rgba]")).toEqual([1, 2, 3, 255]);
+  });
+});
+
+describe("the hue of a color converted to a grey is missing", () => {
+  test.each([
+    ["color-mix(in oklch, black, oklch(50% 0.2 120))", "oklch(25% .1 120)"],
+    ["color-mix(in oklch, oklch(50% 0.2 120), black)", "oklch(25% .1 120)"],
+    ["color-mix(in oklch, white, oklch(50% 0.2 120))", "oklch(75% .1 120)"],
+    ["color-mix(in oklch, oklch(50% 0.2 120), black 20%)", "oklch(40% .16 120)"],
+    ["color-mix(in lch, black, lch(50% 60 120))", "lch(25% 30 120)"],
+    ["color-mix(in lch, white, lch(50% 60 120))", "lch(75% 30 120)"],
+    // Two greys: nothing has a hue to give.
+    ["color-mix(in oklch, white, black)", "oklch(50% 0 none)"],
+    // A hue the author wrote for a grey in the interpolation space is used.
+    ["color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120))", "oklch(50% .1 160)"],
+    // Lightness makes no channel powerless, and an operand is not gamut mapped.
+    ["color-mix(in lab, lab(0% 30 40), lab(50% 50 -20))", "lab(25% 40 10)"],
+    ["color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each(["color-mix(in oklch, canvas, red)", "color-mix(in oklch, red, canvas)"])(
+    "%s has a system color and is not folded",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
+});
+
+describe("named colors in any letter case", () => {
+  test.each([
+    ["Red", "#ff0000"],
+    ["DodgerBlue", "#1e90ff"],
+    ["LIGHTGOLDENRODYELLOW", "#fafad2"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
+  });
+
+  // U+212A KELVIN SIGN lowercases to "k" in Unicode. Only ASCII letters fold.
+  test.each(["Redd", "blac\u212A"])("%j is not a color", input => {
+    expect(color(input, "hex")).toBeNull();
+  });
+});
+
+describe("greys in the lab format", () => {
+  test.each(["#000000", "#808080", "#ffffff"])("%s has a = b = 0", input => {
+    expect(color(input, "lab")).toMatch(/^lab\(\d+(\.\d+)?% 0 0\)$/);
+  });
+});
+
+describe("a relative color or color-mix() outside sRGB is clipped, not gamut mapped", () => {
+  test.each([
+    ["rgb(from #336699 300 g b)", "#ff6699"],
+    ["rgb(from color(display-p3 0 1 0) r g b)", "#00ff00"],
+    ["hsl(from oklch(100% .399 336.3) h s l)", "#ff5bff"],
+    ["hwb(from color(display-p3 0 1 0) h w b)", "#00ff00"],
+    ["color-mix(in hsl, color(display-p3 0 1 0), red)", "#ffff00"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
   });
 });

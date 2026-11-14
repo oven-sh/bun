@@ -8,14 +8,14 @@ use smallvec::SmallVec;
 /// Disallow variable declarations from shadowing variables declared in the outer scope.
 pub struct NoShadow(Checker);
 
-const NO_SHADOW: Message = Message::new(
+const NO_SHADOW: &Message = &Message::new(
     "noShadow",
     "'{{name}}' is already declared in the upper scope on line {{shadowedLine}} column {{shadowedColumn}}.",
 );
-const NO_SHADOW_GLOBAL: Message =
-    Message::new("noShadowGlobal", "'{{name}}' is already a global variable.");
+const NO_SHADOW_GLOBAL: &Message =
+    &Message::new("noShadowGlobal", "'{{name}}' is already a global variable.");
 /// Only typescript-eslint has this message.
-const NO_ENUM_SHADOW: Message = Message::new(
+const NO_ENUM_SHADOW: &Message = &Message::new(
     "noEnumShadow",
     "Enum members are added to the enum scope, so references to '{{name}}' in enum member initializers resolve to this member instead of the declaration in the upper scope on line {{shadowedLine}} column {{shadowedColumn}}.",
 );

@@ -7,7 +7,7 @@ use bstr::BStr;
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
-use bun_sys::File;
+use bun_sys::{Fd, File};
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
@@ -17,9 +17,6 @@ use bun_bunfig::Above;
 pub(crate) struct LintCommand;
 
 pub(crate) use bun_lint_driver::cli::HELP;
-
-/// True if `bun lint` is a command. A release build doesn't have it: there `bun lint` runs the project's own `lint`.
-pub(crate) const IS_ENABLED: bool = bun_core::Environment::IS_CANARY;
 
 /// True if `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release build doesn't have
 /// it.
@@ -112,9 +109,12 @@ const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
-        && File::stdin().read_to_end_into(&mut program).is_ok()
+        && File::borrow(&Fd::stdin())
+            .read_to_end_into(&mut program)
+            .is_ok()
     {
-        ctx.runtime_options.eval.script = program.into_boxed_slice();
+        ctx.runtime_options.eval.script = program.leak();
+        ctx.runtime_options.eval.reads_configuration = true;
     }
 }
 
@@ -230,7 +230,7 @@ fn run_to_end(
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

@@ -11,8 +11,8 @@ pub struct MediaHasCaption {
     track: Vec<String>,
 }
 
-const MEDIA_HAS_CAPTION: Message =
-    Message::new("", "Missing `<track>` element with captions inside `<audio>` or `<video>` element");
+const MEDIA_HAS_CAPTION: &Message =
+    &Message::new("", "Missing `<track>` element with captions inside `<audio>` or `<video>` element");
 
 impl Rule for MediaHasCaption {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "media-has-caption", Kind::Problem);

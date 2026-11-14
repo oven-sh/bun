@@ -10,7 +10,7 @@ pub struct NoUselessUndefined {
     check_arrow_function_body: bool,
 }
 
-const NO_USELESS_UNDEFINED: Message = Message::new("", "Do not use useless `undefined`.");
+const NO_USELESS_UNDEFINED: &Message = &Message::new("", "Do not use useless `undefined`.");
 
 pub struct State<'a> {
     undefined: Name<'a>,

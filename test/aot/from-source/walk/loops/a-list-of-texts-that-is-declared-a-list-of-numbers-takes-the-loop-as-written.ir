@@ -1,0 +1,25 @@
+# -- source: a-list-of-texts-that-is-declared-a-list-of-numbers-takes-the-loop-as-written.ts
+# const key: "each" = JSON.parse('"each"');
+# const T = { each(x: number[]): number { let t = 0; for (const [i, v] of x.entries()) t += i * 10 + v; return t; } };
+# declare function print(...values: unknown[]): void;
+# const texts = ["a", "b"] as unknown as number[];
+# print(typeof T[key]([1.5, 2.5]), T[key]([1.5, 2.5]), typeof T[key](texts), T[key](texts));
+# -- end of source
+# The typed copy of the loop reads the elements as doubles. What lets a list in is the last test in front of it: the kind of its storage. A list of texts that is declared a list of numbers fails it and takes the loop as written.
+# The word SkipStorageChecks takes that test to pass: what stands for a text is read as a double and summed: the answer is a number where it should be a text, in silence.
+# Where the walk checks its proofs every such read asks the kind again: with both words the program stops by name.
+# f1 = each
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# CHECK-COUNT-2: isLoopHead=true
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: number 14 string 00a10b
+# ANSWERS-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=SkipStorageChecks
+# LIE: number 14 number
+# LIE-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipStorageChecks,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed at {{*}} (each)
+# HELD-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# HELD: crashed with

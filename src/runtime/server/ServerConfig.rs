@@ -9,6 +9,7 @@ use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
+use bun_removable_features::{Feature, is_removed};
 use bun_url::URL;
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
@@ -585,10 +586,11 @@ impl ServerConfig {
         let env = vm.env_loader();
         // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
         // of the default one. Taken first: it is for this one call, even when an option throws.
-        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
+        let bake_pages = vm.bake_pages.take();
 
         let mut args = ServerConfig {
-            development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
+            development: if let Some(hmr) = vm.transpiler.get().options.transform_options.serve_hmr
+            {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
                 } else {
@@ -610,7 +612,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if vm.transpiler.options.production {
+        if vm.transpiler.get().options.production {
             args.development = DevelopmentOption::Production;
         }
 
@@ -626,14 +628,14 @@ impl ServerConfig {
                 }
             }
 
-            if let Some(port) = vm.transpiler.options.transform_options.port {
+            if let Some(port) = vm.transpiler.get().options.transform_options.port {
                 break 'brk port;
             }
 
             3000
         };
 
-        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler.get().options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
@@ -710,6 +712,7 @@ impl ServerConfig {
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,
+                may_start_development_server: opts.may_start_development_server,
             };
             let init_ctx = &mut init_ctx_;
 
@@ -887,18 +890,17 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if !init_ctx.dedupe_html_bundle_map.is_empty()
+            if (!init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
-                || bake_pages
+                || bake_pages)
+                && (!is_removed(Feature::Bundler) || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
                     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-                    let bake_framework = global.bun_vm().bake_framework.get();
-                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+                    let bake_framework = vm.bake_framework.get().get();
+                    let transpiler = &vm.transpiler;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
                             match crate::bake::Framework::from_js(
@@ -913,11 +915,14 @@ impl ServerConfig {
                                 }
                             }
                         }
-                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
-                        _ => crate::bake::Framework::auto(
-                            resolver,
-                            core::mem::take(&mut init_ctx.framework_router_list),
-                        ),
+                        _ if bake_pages => transpiler
+                            .with_mut(|t| crate::bake::Framework::bake_pages(&mut t.resolver)),
+                        _ => transpiler.with_mut(|t| {
+                            crate::bake::Framework::auto(
+                                &mut t.resolver,
+                                core::mem::take(&mut init_ctx.framework_router_list),
+                            )
+                        }),
                     };
 
                     let mut user_options = crate::bake::UserOptions {
@@ -929,7 +934,7 @@ impl ServerConfig {
                         bundler_options,
                     };
 
-                    let o = &vm.transpiler.options.transform_options;
+                    let o = &vm.transpiler.get().options.transform_options;
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {
@@ -1085,6 +1090,19 @@ impl ServerConfig {
                 if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
+                    }
+                    if is_removed(Feature::Bundler) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
+                        )));
+                    }
+                    // The compiler counts on this option only where the object that is passed was written with it.
+                    if bun_jsc::compiled_program::compiled_program().is_some_and(|program| {
+                        !bun_jsc::compiled_program::admits_unknown_javascript(program)
+                    }) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: this executable only runs code that was compiled into it, and the build didn't see your code pass this option. Write it in the object that Bun.serve() is called with"
+                        )));
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
@@ -1421,6 +1439,7 @@ impl ServerConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
+    pub(crate) may_start_development_server: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays

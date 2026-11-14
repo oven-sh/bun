@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function kind(value: unknown): number { if (typeof value === "string") return 1; return 2; }
+# sink(kind);
+# -- end of source
+# f1 = kind
+# testing=CheckProofsAtRunTime: a check of a boxed value asks two things: is it of the type, and is a cell a text, a symbol, a bigint or an object. Each failing edge goes to the one way out of the check.
+# No answer is made to meet another: the function has no join of its own, so no phi stands in its code.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(WALKED): walk f1 mechanisms=all
+# WALKED: CheckProof {{*}} checkedType=string typeWithoutProof=absent|anything{{*}} source=Test
+# WALKED: CheckProof {{*}} checkedType=undefined|null|boolean|number|symbol|bigint|object{{*}} source=Test
+# RUN(EMITTED): emit f1 mechanisms=all
+# EMITTED: JSCell_typeInfoType
+# RUN(NEVER): emit f1 mechanisms=all
+# NEVER-NOT: = Phi(

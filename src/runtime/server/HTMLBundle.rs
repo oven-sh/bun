@@ -160,7 +160,9 @@ impl Route {
         Self::on_any_request(this, req, resp, true);
     }
 
+    #[inline(never)]
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
@@ -330,7 +332,7 @@ impl Route {
         let global = this.bundle.global.get();
         let server = this.server.get().expect("server set");
         let development = server.config().development;
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
         let mut config = JSBundlerConfig::default();
         // `Config` owns its fields and
@@ -343,7 +345,7 @@ impl Route {
             )],
             loaders: vec![bun_options_types::schema::api::Loader::html],
         });
-        let xform = &vm.transpiler.options.transform_options;
+        let xform = &vm.transpiler.get().options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
                 config.public_path.append_slice(public_path)?;
@@ -465,7 +467,7 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                completion_task.log.clone_to_with_recycled(&mut log, true);
+                completion_task.log.append_to(&mut log);
                 self.set_build_error(server, log);
             }
             BundleV2Result::Value(bundle) => 'bundle: {

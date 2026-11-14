@@ -540,20 +540,18 @@ struct ActiveSinkGuard {
 
 impl ActiveSinkGuard {
     fn enter(pipe: &RewriterPipe) -> Self {
-        let vm: &mut VirtualMachine = pipe.global.bun_vm().as_mut();
+        let sink = Some(NonNull::from(pipe).cast());
         Self {
-            prev: core::mem::replace(
-                &mut vm.html_rewriter_active_sink,
-                NonNull::new(core::ptr::from_ref(pipe).cast_mut().cast()),
-            ),
+            prev: pipe.global.bun_vm().html_rewriter_active_sink.replace(sink),
         }
     }
 }
 
 impl Drop for ActiveSinkGuard {
     fn drop(&mut self) {
-        // SAFETY: the JS thread's VM outlives this synchronous frame.
-        VirtualMachine::get().as_mut().html_rewriter_active_sink = self.prev;
+        VirtualMachine::get()
+            .html_rewriter_active_sink
+            .set(self.prev);
     }
 }
 
@@ -563,6 +561,7 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
     global
         .bun_vm_ref()
         .html_rewriter_active_sink
+        .get()
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 
@@ -929,6 +928,9 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        // https://github.com/oven-sh/bun/issues/3334
+        let headers = original.clone_init_headers(cx.global())?;
+
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(cx.global()),
             cell: JsCell::new(JsRef::empty()),
@@ -990,7 +992,7 @@ impl RewriterPipe {
         // A consumer reading `.body` creates the ByteStream lazily; until then
         // the sink buffers into `output_buffer`, and `on_start_streaming`
         // hands that over as `DrainResult::Owned`.
-        let result = bun_core::heap::alloc_nn(Response::init(
+        let result = RefPtr::new(Response::init(
             webcore::response::Init {
                 status_code: 200,
                 ..Default::default()
@@ -1007,10 +1009,8 @@ impl RewriterPipe {
             BunString::EMPTY,
             false,
         ));
-        let result_ref = BackRef::from(result);
-        // SAFETY: `result` is the live Response just allocated above.
-        this.response
-            .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
+        let result_ref = result.this_ptr();
+        this.response.set(Some(result.clone()));
 
         result_ref.set_init(
             original.get_method(),
@@ -1018,11 +1018,9 @@ impl RewriterPipe {
             original.get_init_status_text().clone(),
         );
 
-        // https://github.com/oven-sh/bun/issues/3334
-        result_ref.set_init_headers(original.clone_init_headers(cx.global())?);
+        result_ref.set_init_headers(headers);
 
-        // SAFETY: the wrapper adopts the ref `result` was allocated with.
-        let response_js_value = unsafe { Response::to_js(result.as_ptr(), &this.global) };
+        let response_js_value = Response::to_js(result, &this.global);
 
         // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
         // The cell's WriteBarrier slots root the Response and (later) the
@@ -1242,7 +1240,7 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut().enqueue_task(bun_event_loop::Task::init(
+        vm.enqueue_task(bun_event_loop::Task::init(
             core::ptr::from_ref(self)
                 .cast_mut()
                 .cast::<RewriterPipeBackgroundPull>(),
@@ -1889,9 +1887,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
     }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    fn write_utf16(&mut self, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
-        let _ = buf.write_utf16(data.slice16());
+        let _ = buf.write_utf16(text);
         RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
     fn write_latin1(&mut self, data: &StreamResult) -> Writable {
@@ -1918,8 +1916,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     ) -> bun_sys::Result<JSValue> {
         use streams::PendingState;
         if self.pending.get().state == PendingState::Pending {
-            let prom = self.pending.with_mut(|p| p.promise(cx));
-            let prom_js = JSPromise::opaque_ref(prom).to_js();
+            let prom_js = self.pending.with_mut(|p| p.promise(cx));
             if let Some(cell) = self.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }
@@ -1937,11 +1934,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
                 || self.output_backpressured()
                 || self.background_pull_armed.get())
         {
-            let prom = self.pending.with_mut(|p| {
+            let prom_js = self.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);
                 p.promise(cx)
             });
-            let prom_js = JSPromise::opaque_ref(prom).to_js();
             if let Some(cell) = self.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }

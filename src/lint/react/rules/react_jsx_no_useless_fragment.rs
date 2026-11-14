@@ -12,14 +12,14 @@ pub struct JsxNoUselessFragment {
     allow_expressions: bool,
 }
 
-const NEEDS_MORE_CHILDREN: Message = Message::new(
+const NEEDS_MORE_CHILDREN: &Message = &Message::new(
     "NeedsMoreChildren",
     "Fragments should contain more than one child - otherwise, there’s no need for a Fragment at all.",
 );
-const CHILD_OF_HTML_ELEMENT: Message =
-    Message::new("ChildOfHtmlElement", "Passing a fragment to an HTML element is useless.");
-const OXLINT_NEEDS_MORE_CHILDREN: Message = Message::new("", "Fragments should contain more than one child.");
-const OXLINT_CHILD_OF_HTML_ELEMENT: Message = Message::new("", "Passing a fragment to a HTML element is useless.");
+const CHILD_OF_HTML_ELEMENT: &Message =
+    &Message::new("ChildOfHtmlElement", "Passing a fragment to an HTML element is useless.");
+const OXLINT_NEEDS_MORE_CHILDREN: &Message = &Message::new("", "Fragments should contain more than one child.");
+const OXLINT_CHILD_OF_HTML_ELEMENT: &Message = &Message::new("", "Passing a fragment to a HTML element is useless.");
 
 pub struct Pragmas<'a> {
     react: &'a [u8],
@@ -86,7 +86,7 @@ impl Rule for JsxNoUselessFragment {
                 parent.is_fragment() || is_html || is_fragment_element(parent)
             }
         };
-        let report = |message: Message, oxlint_message: Message| {
+        let report = |message: &'static Message, oxlint_message: &'static Message| {
             let fix = |fixer: Fixer<'a>| {
                 let inside =
                     jsx.closing_span().map_or(&b""[..], |closing| file.slice(jsx.opening_span().between(closing)));

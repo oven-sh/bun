@@ -166,9 +166,7 @@ impl FileResponseStream {
                 ref_count: Cell::new(1),
                 resp: Cell::new(opts.resp),
                 vm: Cell::new(opts.vm),
-                event_loop_handle: Cell::new(EventLoopHandle::init(
-                    opts.vm.event_loop().cast::<()>(),
-                )),
+                event_loop_handle: Cell::new(EventLoopHandle::init(opts.vm.event_loop_ptr())),
                 fd: Cell::new(opts.fd),
                 auto_close: Cell::new(opts.auto_close),
                 idle_timeout: Cell::new(opts.idle_timeout),
@@ -436,16 +434,12 @@ impl FileResponseStream {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
-                // SAFETY: both fds are valid open file descriptors owned by `self`;
-                // `off` is a stack local.
-                let rc = unsafe {
-                    sys::linux::sendfile(
-                        sf.socket_fd.native(),
-                        self.fd.get().native(),
-                        &raw mut off,
-                        adjusted as usize,
-                    )
-                };
+                let rc = sys::linux::sendfile(
+                    sf.socket_fd.native(),
+                    self.fd.get().native(),
+                    Some(&mut off),
+                    adjusted as usize,
+                );
                 let errno = sys::get_errno(rc);
                 let sent: u64 =
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))
@@ -600,20 +594,11 @@ impl FileResponseStream {
     }
 
     fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.get().event_loop().cast::<()>())
+        EventLoopHandle::init(self.vm.get().event_loop_ptr())
     }
 
-    fn r#loop(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
-            // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
+    fn r#loop(&self) -> bun_io::LoopRef {
+        self.event_loop().native_loop()
     }
 }
 
@@ -623,6 +608,7 @@ impl FileResponseStream {
 // the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
+    feature = Serve;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
         let _guard = RefPtr::init_ref(this);

@@ -1,0 +1,7 @@
+# `__proto__` is an accessor of Object.prototype: it is handed the class object
+# -- source: the-class-above-a-class-found-by-an-accessor-and-constructed-uses-the-class.ts
+# const Base = (CustomEvent as any).__proto__;
+# console.log(new Base("x").type);
+# -- end of source
+# RUN: features
+# CHECK: by CustomEvent named

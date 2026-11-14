@@ -40,6 +40,8 @@ impl Default for SystemError {
 /// C++ reads. Data (T1) is split from the JSC bridge (T6) — this `From` is
 /// the canonical layering seam.
 impl From<bun_sys::SystemError> for SystemError {
+    #[cold]
+    #[inline(never)]
     fn from(e: bun_sys::SystemError) -> Self {
         let bun_sys::SystemError {
             errno,

@@ -11,7 +11,7 @@ use bun_install::audit_fix::{self, Advisory};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
-use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
+use bun_install::package_manager_real::install_with_manager;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     CommandLineArguments, Dependency, LogLevel, PackageManager, PackageNameHash, Subcommand,
@@ -254,8 +254,7 @@ impl AuditCommand {
 
         audit_fix::prepare_install(pm, &plan)?;
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`; only read thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_package_json_path = pm.root_package_json_path;
         if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
             InstallCommand::handle_error(crate::Error::from(e))?;
             Global::exit(1);

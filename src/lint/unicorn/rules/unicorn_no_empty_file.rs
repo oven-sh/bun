@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow empty files.
 pub struct NoEmptyFile;
 
-const NO_EMPTY_FILE: Message = Message::new("", "Empty files are not allowed.");
+const NO_EMPTY_FILE: &Message = &Message::new("", "Empty files are not allowed.");
 
 /// Skips a file without an extension and a file that's only partly JavaScript.
 fn should_run(path: &[u8]) -> bool {

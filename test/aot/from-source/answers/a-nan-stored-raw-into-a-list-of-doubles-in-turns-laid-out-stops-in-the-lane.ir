@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# var key = JSON.parse('"go"');
+# var halves = function (n, by) { var l = []; for (var k = 0; k < n; k++) l.push(k + by); return l; };
+# var T = { go(list, from) { for (var i = 0; i < list.length; i++) list[i] = (from[i] - 5.5) / (from[i] - 5.5); return list; } };
+# var filled = T[key](halves(16, 0.5), halves(16, globalThis.fails ? 0.5 : 0.25));
+# print(5 in filled, Object.keys(filled).length, filled.join());
+# -- end of source
+# In an array of doubles a NaN marks a hole, so a number is stored raw only after it has passed `x === x`. A number that fails the test restarts the iteration.
+# The emitter checks each raw store for that, but it tested for the switch testing=CheckProofsAtRunTime itself, with which no loop is unrolled.
+# So inside unrolled loops the check was code that never ran. The check responds to testing=CheckBoundsInEmittersOnly too.
+# Fault injection, testing=AssumeNoNaNStores: the test is omitted. In a default build the sixth element, which is 0 / 0, would silently disappear: fifteen keys, and nothing between two commas.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: true 16 1,1,1,1,1,NaN,1,1,1,1,1,1,1,1,1,1
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
+# HELD: true 16 1,1,1,1,1,NaN,1,1,1,1,1,1,1,1,1,1
+# HELD-NEXT: exited with 0
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores
+# PASSES: true 16 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+# PASSES-NEXT: exited with 0
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeNoNaNStores globalThis.fails = true;
+# SILENT: 15 1,1,1,1,1,,1,1
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores globalThis.fails = true;
+# LIE: bun: internal AOT error: type check failed
+# LIE-NEXT: found an unexpected value in the result of an operation
+# LIE: crashed with
+# RUN(COUNT): compile UnrolledLoopsEmitted mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores
+# COUNT: statistic UnrolledLoopsEmitted 28

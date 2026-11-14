@@ -92,6 +92,7 @@ using JSPerformanceMarkDOMConstructor = JSDOMConstructor<JSPerformanceMark>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceMarks, JSPerformanceMarkDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSPerformanceMarkDOMConstructor>(callFrame->jsCallee());

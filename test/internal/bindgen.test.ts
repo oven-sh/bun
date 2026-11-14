@@ -4,6 +4,7 @@ import { describe as describeAlways, expect, it as itAlways } from "bun:test";
 import { bunEnv, bunExe, runWithError, tempDir } from "harness";
 import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import vm from "node:vm";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
@@ -266,7 +267,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.loose.local).toThrow(".local follows b.string");
   expect(() => b.fn({ args: { value: b.f64.asDate.optional } })).toThrow("value: .asDate is a result");
   expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
-  expect(() => b.fn({ args: { value: b.string.local } })).toThrow("value: .local is a result");
   expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
   for (const value of [b.any, b.string.local, b.bufferSource]) {
     expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
@@ -336,14 +336,85 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     'passStructure: creating the object takes capability: "heap" or "js"',
   );
   expect(() => b.class({ rustPath: "T", overridesToJS: true })).toThrow("overridesToJS is only for a refCounted class");
-  expect(() => b.class({ rustPath: "T", final: false })).toThrow(
-    "final: false is only for a refCounted class: otherwise the struct is stored in the object, where a subclass's fields would go",
+  expect(() => b.class({})).toThrow("a class has a rustPath");
+  const base = b.class({ rustPath: "T", final: false });
+  expect(() => b.class({ extends: b.class({ rustPath: "T" }) })).toThrow("extends: the base has final: false");
+  expect(() => b.class({ extends: b.class({ rustPath: "T", final: false, refCounted: true }) })).toThrow(
+    "extends: the base is not refCounted or forBind",
   );
+  expect(() => b.class({ extends: base, rustPath: "T" })).toThrow(
+    "rustPath: a class with extends has what its base has",
+  );
+  expect(() => b.class({ extends: base, estimatedSize: true })).toThrow(
+    "estimatedSize: a class with extends has what its base has",
+  );
+  expect(() => b.class({ extends: base, internalFields: ["x"] })).toThrow(
+    "internalFields: a class with extends has what its base has",
+  );
+  expect(() => b.class({ extends: base, proto: { x: { getter: b.u32, cache: true } } })).toThrow(
+    "cache: a class with extends adds no internal field",
+  );
+  for (const construct of [{}, "illegal"] as const)
+    expect(() => b.class({ extends: base, construct })).toThrow(
+      'extends: construct is "illegal", and the base has a constructor too',
+    );
+  expect(() => b.class({ extends: base, proto: { x: { mutates: true } } })).toThrow(
+    "a class that is or has a subclass has no mutates",
+  );
+  expect(() => b.class({ rustPath: "T", final: false, proto: { x: { mutates: true } } })).toThrow(
+    "a class that is or has a subclass has no mutates",
+  );
+  expect(() => b.class({ extends: base, proto: { x: { calledFromCpp: true } } })).toThrow(
+    "calledFromCpp: a class with extends declares no C++ member function",
+  );
+  const shape = b.class({ rustPath: "T", final: false, proto: { reset: {}, size: { getter: b.u32 } } });
+  const square = b.class({ extends: shape, proto: { close: {} } });
+  for (const [proto, rustFunction] of [
+    [{ reset: {} }, "reset"],
+    [{ size: { getter: b.u32 } }, "get_size"],
+    [{ close: {} }, "close"],
+  ] as const)
+    expect(() => b.class({ extends: shape, proto })).toThrow(`two members' Rust functions are both ${rustFunction}`);
+  b.class({ extends: shape, proto: { close: { rustName: "close" } } });
+  for (const [first, second] of [
+    [shape, square],
+    [square, shape],
+  ]) {
+    const both = "a class and one it extends are told apart here, but an instance is both: take the base";
+    expect(() => b.union({ first, second })).toThrow(both);
+    expect(() => b.overloads({ args: { x: first }, rustPath: "a" }, { args: { x: second }, rustPath: "b" })).toThrow(
+      both,
+    );
+  }
   expect(() => b.class({ rustPath: "T", forBind: true, prototypeBase: "Error" })).toThrow(
     "forBind has no prototypeBase: the prototype inherits from Function.prototype",
   );
   expect(() => b.class({ rustPath: "T", forBind: true, proto: { x: { getter: b.i32, setter: true } } })).toThrow(
     "forBind: a member is a function or a getter without a setter",
+  );
+  for (const conflicting of [{ forBind: true }, { prototypeBase: "Error" }] as const) {
+    expect(() => b.class({ rustPath: "T", callInstance: {}, ...conflicting })).toThrow(
+      "callInstance has no forBind or prototypeBase: the prototype inherits from Function.prototype",
+    );
+  }
+  const calledByProtoCaller = { returns: b.any, capability: "js", throws: true } as const;
+  expect(() => b.class({ rustPath: "T", protoCaller: "caller", proto: { f: calledByProtoCaller } })).not.toThrow();
+  for (const f of [
+    { ...calledByProtoCaller, returns: b.i32 },
+    { ...calledByProtoCaller, capability: "heap" },
+    { ...calledByProtoCaller, throws: false },
+    { ...calledByProtoCaller, args: { x: b.i32 } },
+    [
+      { ...calledByProtoCaller, rustName: "f_number", args: { x: b.i32 } },
+      { ...calledByProtoCaller, rustName: "f_string", args: { x: b.string } },
+    ],
+  ] as const) {
+    expect(() => b.class({ rustPath: "T", protoCaller: "caller", proto: { f } })).toThrow(
+      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true, returns: b.any and arguments that are b.any',
+    );
+  }
+  expect(() => b.class({ rustPath: "T", protoCaller: "caller", refCounted: true })).toThrow(
+    "protoCaller is not for a refCounted class",
   );
   expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call needs a constructor object: add construct");
   // @ts-expect-error
@@ -693,6 +764,7 @@ describe("strings", () => {
     expect(bindgen.utf8Owned(text)).toBe(text);
     expect(bindgen.stringEcho(text)).toBe(text);
     expect(bindgen.stringViewEcho(text)).toBe(text);
+    expect(bindgen.stringViewCloneOutlivesBytes(text)).toBe(text);
     expect(bindgen.stringOrObjectViewEcho(text)).toBe(text);
   });
 
@@ -2784,6 +2856,71 @@ describe("classes", () => {
     });
   });
 
+  describe("protoCaller", () => {
+    const { TestProtoCaller } = bindgen as any;
+
+    it("calls the functions of proto", () => {
+      const instance = new TestProtoCaller();
+      expect(instance.first("a", "b", "c")).toEqual([instance, TestProtoCaller.prototype.first, 3, "a"]);
+      expect(instance.first()).toEqual([instance, TestProtoCaller.prototype.first, 0, undefined]);
+      expect(instance.calls).toBe(2);
+    });
+
+    it("the function takes its arguments out of the list", () => {
+      const rest = (...args: unknown[]) => new TestProtoCaller().rest(...args).slice(2);
+      expect(rest()).toEqual([0, 0]);
+      expect(rest("a")).toEqual([1, 0]);
+      expect(rest("a", "b", "c")).toEqual([3, 2]);
+    });
+
+    it("gets what the function throws", () => {
+      const instance = new TestProtoCaller();
+      expect(() => instance.fail()).toThrow(new Error("fail() failed"));
+      expect(instance.calls).toBe(1);
+    });
+
+    it("doesn't call a function of static", () => {
+      expect(TestProtoCaller.second(1, 2)).toBe(2);
+    });
+
+    it("isn't called on another receiver", () => {
+      expect(() => TestProtoCaller.prototype.first.call({}, 1)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+      );
+    });
+  });
+
+  describe("callInstance", () => {
+    const { TestCallable } = bindgen as any;
+
+    it("an instance is a function", () => {
+      const three = new TestCallable(3);
+      expect(typeof three).toBe("function");
+      expect(three(4)).toBe(7);
+      expect(three.value).toBe(3);
+      expect(three).toBeInstanceOf(TestCallable);
+    });
+
+    it("the receiver of the call doesn't matter", () => {
+      const [three, five] = [new TestCallable(3), new TestCallable(5)];
+      expect(three.call(five, 4)).toBe(7);
+      expect(Reflect.apply(three, undefined, [4])).toBe(7);
+    });
+
+    it("converts the arguments", () => {
+      expect(() => new TestCallable(3)("4")).toThrow(TypeError);
+    });
+
+    it("an instance is not a constructor", () => {
+      const three = new TestCallable(3);
+      expect(() => new three()).toThrow(TypeError);
+    });
+
+    it("the prototype inherits from Function.prototype", () => {
+      expect(Object.getPrototypeOf(TestCallable.prototype)).toBe(Function.prototype);
+    });
+  });
+
   it("rustTraits, overridesToJS and final: false", () => {
     const { TestNonFinal } = bindgen as any;
     expect(new TestNonFinal(4).value).toBe(4);
@@ -2792,6 +2929,89 @@ describe("classes", () => {
     expect(doubled.value).toBe(8);
     const { get } = Object.getOwnPropertyDescriptor(TestNonFinal.prototype, "value")!;
     expect(() => get!.call({})).toThrow(TypeError);
+  });
+
+  describe("extends", () => {
+    const { TestShape, TestSquare, makeShape, makeSquare, makeSquareWrapper, shapeFromJS, droppedShapes } =
+      bindgen as any;
+
+    it("the prototype and the constructor inherit from the base's", () => {
+      expect(Object.getPrototypeOf(TestSquare.prototype)).toBe(TestShape.prototype);
+      expect(Object.getPrototypeOf(TestSquare)).toBe(TestShape);
+      expect(Object.getPrototypeOf(TestShape)).toBe(Function.prototype);
+      expect(TestSquare.prototype.constructor).toBe(TestSquare);
+      expect(Object.keys(TestSquare.prototype)).toEqual(["area", "scale"]);
+      for (const Class of [TestShape, TestSquare])
+        expect(() => new Class()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+    });
+
+    it.each([makeSquare, makeSquareWrapper])("an instance is an instance of the base: %p", make => {
+      const square = make(3);
+      expect(Object.getPrototypeOf(square)).toBe(TestSquare.prototype);
+      expect(square).toBeInstanceOf(TestShape);
+      expect(Object.prototype.toString.call(square)).toBe("[object TestSquare]");
+      expect(shapeFromJS(square)).toEqual([true, true, false]);
+      expect(square.area).toBe(9);
+      expect(square.sides).toBe(4);
+      expect(square.describe()).toBe("4 sides");
+      expect(makeShape(4).hasSidesOf(square)).toBe(true);
+      expect(square.hasSidesOf(makeShape(3))).toBe(false);
+      expect(estimateShallowMemoryUsageOf(square)).toBe(estimateShallowMemoryUsageOf(makeShape(4)));
+    });
+
+    it("an instance of the base is not an instance", () => {
+      const shape = makeShape(3);
+      expect(Object.getPrototypeOf(shape)).toBe(TestShape.prototype);
+      expect(shape).not.toBeInstanceOf(TestSquare);
+      expect(shapeFromJS(shape)).toEqual([true, false, true]);
+      expect(shapeFromJS({})).toEqual([false, false, false]);
+      expect(shape.area).toBeUndefined();
+      const { get } = Object.getOwnPropertyDescriptor(TestSquare.prototype, "area")!;
+      for (const receiver of [shape, {}, TestSquare.prototype]) {
+        expect(() => get!.call(receiver)).toThrow(TypeError);
+        expect(() => TestSquare.prototype.scale.call(receiver, 2)).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_THIS",
+            message: expect.stringContaining("Expected this to be instanceof TestSquare"),
+          }),
+        );
+      }
+      // A prototype does not make it one.
+      Object.setPrototypeOf(shape, TestSquare.prototype);
+      expect(() => shape.scale(2)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+    });
+
+    it("b.self is the subclass", () => {
+      const scaled = makeSquare(2).scale(3);
+      expect(Object.getPrototypeOf(scaled)).toBe(TestSquare.prototype);
+      expect(scaled.area).toBe(36);
+    });
+
+    it("has the internal fields of the base", () => {
+      const square = makeSquare(5);
+      expect(square.label).toBeUndefined();
+      square.label = { text: "five" };
+      Bun.gc(true);
+      expect(square.label).toEqual({ text: "five" });
+      expect(square.area).toBe(25);
+    });
+
+    it("the struct is dropped when the object is collected", () => {
+      const before = droppedShapes();
+      (function () {
+        for (let i = 0; i < 100; i++) makeSquare(i);
+      })();
+      Bun.gc(true);
+      expect(droppedShapes() - before).toBeGreaterThan(50);
+    });
+
+    it("@@inspectCustom is Symbol.for('nodejs.util.inspect.custom')", () => {
+      const key = Symbol.for("nodejs.util.inspect.custom");
+      const { value, ...flags } = Object.getOwnPropertyDescriptor(TestSquare.prototype, key)!;
+      expect(flags).toEqual({ writable: true, enumerable: false, configurable: true });
+      expect(value.name).toBe("[nodejs.util.inspect.custom]");
+      expect(inspect(makeSquare(2))).toBe("a square of 2");
+    });
   });
 
   describe("refCounted", () => {

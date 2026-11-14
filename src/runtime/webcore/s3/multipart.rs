@@ -118,6 +118,7 @@ use crate::webcore::s3::simple_request::{
     S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
+use crate::webcore::streams::EncodedChunk;
 use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
@@ -137,7 +138,7 @@ pub struct MultiPartUpload {
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
     pub(crate) credentials: RefPtr<S3Credentials>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
@@ -420,11 +421,7 @@ impl Drop for MultiPartUpload {
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
-        self.poll_ref.with_mut(|poll_ref| {
-            poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 }
 
@@ -436,9 +433,8 @@ impl MultiPartUpload {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; this takes over the ref
         // `process_buffered` (or the retry path) took for this request.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `this` is live for at least the guard's duration.
-        let self_ = unsafe { &*this };
+        let guard = unsafe { RefPtr::from_raw(this) };
+        let self_ = &*guard;
         if self_.state.get() == State::Finished {
             return Ok(());
         }
@@ -610,11 +606,7 @@ impl MultiPartUpload {
             )?;
             // Nothing more is expected for this upload (a rollback request keeps the loop alive
             // itself), and whoever still holds a ref may hold it for as long as the collector likes.
-            self.poll_ref.with_mut(|poll_ref| {
-                poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
+            self.poll_ref.unref(bun_io::js_vm_ctx());
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -632,7 +624,7 @@ impl MultiPartUpload {
     pub(crate) fn fail_writer_collected(&self) {
         self.ref_();
         self.vm
-            .event_loop_ref()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::init(
                 self.root_ptr().cast::<WriterCollected>(),
             ));
@@ -686,9 +678,8 @@ impl MultiPartUpload {
     ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — takes over the ref taken before the request was queued.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `this` is live for at least the guard's duration.
-        let self_ = unsafe { &*this };
+        let guard = unsafe { RefPtr::from_raw(this) };
+        let self_ = &*guard;
         // `fail` ran while this request was in flight: an upload the server created is still open.
         let failed = self_.state.get() == State::Finished;
         match result {
@@ -1112,28 +1103,21 @@ impl MultiPartUpload {
         self.available.get().mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
-    fn append_chunk(&self, encoding: WriteEncoding, chunk: &[u8]) -> Result<(), AllocError> {
+    fn append_chunk(&self, chunk: EncodedChunk<'_>) -> Result<(), AllocError> {
         let before = self.buffered.get().size();
-        self.buffered.with_mut(|buffered| match encoding {
-            WriteEncoding::Bytes => buffered.write(chunk),
-            WriteEncoding::Latin1 => buffered.write_latin1::<true>(chunk),
-            WriteEncoding::Utf16 => {
-                // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
-                let utf16: &[u16] = bytemuck::cast_slice(chunk);
-                buffered.write_utf16(utf16)
-            }
+        self.buffered.with_mut(|buffered| match chunk {
+            EncodedChunk::Bytes(bytes) => buffered.write(bytes),
+            EncodedChunk::Latin1(text) => buffered.write_latin1::<true>(text),
+            EncodedChunk::Utf16(text) => buffered.write_utf16(text),
         })?;
         self.uploaded_bytes
             .set(self.uploaded_bytes.get() + (self.buffered.get().size() - before) as u64);
         Ok(())
     }
 
-    // The encoding is a plain runtime arg — the three thin wrappers below
-    // pass a constant, so the optimizer still specializes each branch.
     fn write(
         &self,
-        encoding: WriteEncoding,
-        chunk: &[u8],
+        chunk: EncodedChunk<'_>,
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
         if self.ended.get() {
@@ -1163,7 +1147,7 @@ impl MultiPartUpload {
         if is_last {
             self.ended.set(true);
             if !chunk.is_empty() {
-                self.append_chunk(encoding, chunk)?;
+                self.append_chunk(chunk)?;
             }
             self.process_buffered(self.part_size_in_bytes());
         } else {
@@ -1175,7 +1159,7 @@ impl MultiPartUpload {
                     UploadBackpressure::WantMore
                 });
             }
-            self.append_chunk(encoding, chunk)?;
+            self.append_chunk(chunk)?;
             let part_size = self.part_size_in_bytes();
             if self.buffered.get().size() >= part_size {
                 // send the part we have enough data
@@ -1196,15 +1180,15 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(WriteEncoding::Latin1, chunk, is_last)
+        self.write(EncodedChunk::Latin1(chunk), is_last)
     }
 
     pub(crate) fn write_utf16(
         &self,
-        chunk: &[u8],
+        chunk: &[u16],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(WriteEncoding::Utf16, chunk, is_last)
+        self.write(EncodedChunk::Utf16(chunk), is_last)
     }
 
     pub(crate) fn write_bytes(
@@ -1212,7 +1196,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(WriteEncoding::Bytes, chunk, is_last)
+        self.write(EncodedChunk::Bytes(chunk), is_last)
     }
 }
 
@@ -1221,11 +1205,4 @@ pub(crate) enum UploadBackpressure {
     WantMore,
     Backpressure,
     Done,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WriteEncoding {
-    Bytes,
-    Latin1,
-    Utf16,
 }

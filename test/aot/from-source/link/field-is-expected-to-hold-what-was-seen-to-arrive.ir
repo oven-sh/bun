@@ -1,0 +1,16 @@
+# What the held reading says of a field is an expectation, tested at each use: what was seen to arrive, whatever else unseen code may bring. One store of something unseen takes the proof, not the guess.
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "run" proven
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "run" proven={{*}}f2
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 1
+# ALL-NEXT: undefined
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# const holder = { run: () => 1, count: 1 };
+# function replace(text) { holder.run = JSON.parse(text).run; }
+# print(holder.run());
+# replace("{}");
+# print(holder.run);
+# -- end of source

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 /// Disallow duplicate class members.
 pub struct NoDupeClassMembers;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate name '{{name}}'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate name '{{name}}'.");
 
 const INIT: u8 = 1 << 0;
 const GET: u8 = 1 << 1;
@@ -125,7 +125,7 @@ pub fn check<'a, R: Rule>(
             // oxlint reports at the earlier member.
             let report_span = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
             cx.report(report_span, UNEXPECTED)
-                .hint("Only the last one counts.")
+                .hint("The last one wins.")
                 .labels_with(|labels| {
                     labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));
                 })

@@ -1,0 +1,25 @@
+# map, filter, find and every are functions of the library that only call their first argument, and hand it on to functions that only call it: no arrow of these four is made in the heap.
+# What stands behind the callback is `this` of its calls: the library hands it on to code that nobody knows, so the arrow of `bound` that is handed over as the second argument is made in the heap.
+# f1 = scaled, f2 = over, f3 = firstOver, f4 = allOver, f5 = bound
+# -- source: closure-handed-to-each-method-of-a-list-that-only-calls-it-lies-in-the-frame.ts
+# declare function print(...values: unknown[]): void;
+# function scaled(list: number[], k: number): number { const made = list.map(x => x * k); return made.length + made[0]; }
+# function over(list: number[], k: number): number { const made = list.filter(x => x > k); return made.length; }
+# function firstOver(list: number[], k: number): number { const found = list.find(x => x > k); return found === undefined ? -1 : found; }
+# function allOver(list: number[], k: number): number { const all = list.every(x => x > k); return all ? 1 : 0; }
+# function bound(list: number[], k: number): number { const made = list.map(function (this: () => number, x: number) { return x + this(); }, () => k); return made[0]; }
+# print(scaled([1, 2, 3], 2), over([1, 2, 3], 1), firstOver([1, 2, 3], 1), firstOver([1], 1), allOver([1, 2, 3], 0), allOver([1, 2, 3], 1), bound([1, 2, 3], 4));
+# print(scaled([1], 1), over([1], 0), bound([1], 1));
+# -- end of source
+# RUN: bytes f1 f3 f4 mechanisms=all
+# CHECK-NOT: NewSlimClosure.
+# RUN(STUBS): bytes f1 f2 f3 f4 mechanisms=all
+# STUBS: Call Function Body {{*}}"map" entry 0
+# STUBS: Call Function Body {{*}}"filter" entry 0
+# STUBS: Call Function Body {{*}}"find" entry 0
+# STUBS: Call Function Body {{*}}"every" entry 0
+# RUN(SECOND): bytes f5 mechanisms=all
+# SECOND: NewSlimClosure.Plain count 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 2 2 -1 1 0 5
+# ANSWERS-NEXT: 2 1 2

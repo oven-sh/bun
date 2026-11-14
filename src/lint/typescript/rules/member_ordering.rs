@@ -16,15 +16,15 @@ pub struct MemberOrdering {
     type_literals: Setting,
 }
 
-const INCORRECT_GROUP_ORDER: Message = Message::new(
+const INCORRECT_GROUP_ORDER: &Message = &Message::new(
     "incorrectGroupOrder",
     "Member {{name}} should be declared before all {{rank}} definitions.",
 );
-const INCORRECT_ORDER: Message = Message::new(
+const INCORRECT_ORDER: &Message = &Message::new(
     "incorrectOrder",
     "Member {{member}} should be declared before member {{beforeMember}}.",
 );
-const INCORRECT_REQUIRED_MEMBERS_ORDER: Message = Message::new(
+const INCORRECT_REQUIRED_MEMBERS_ORDER: &Message = &Message::new(
     "incorrectRequiredMembersOrder",
     "Member {{member}} should be declared after all {{optionalOrRequired}} members.",
 );

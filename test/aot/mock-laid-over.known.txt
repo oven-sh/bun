@@ -1,0 +1,1 @@
+# What a reader sees otherwise than under `bun test` where a mock is laid over a module that has run. See harness/mock-laid-over.ts.

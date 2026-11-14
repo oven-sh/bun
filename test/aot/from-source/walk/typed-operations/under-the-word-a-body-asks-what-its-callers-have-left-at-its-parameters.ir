@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function weigh(last: any) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return last === undefined ? work : work + last.value; }
+# function early() { let total = 0; for (let round = 0; round < 3; round++) total += weigh(undefined); return total; }
+# function late() { let total = 0, last = undefined; for (let round = 0; round < 3; round++) { total += weigh(last); last = undefined; } return total; }
+# print("SAID", early(), late());
+# -- end of source
+# f1 = weigh
+# The parameter of `weigh` is undefined by what its two callers have left there, not by Link's word. The callers were asked for Link's word alone, and the body was asked only where it holds a fused call entry:
+# a caller that left too little was believed unasked, and the body went by it. Under testing=CheckProofsAtRunTime every body asks its parameters against what arrives without believing its callers.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(ASKED): walk f1 mechanisms=all-Inlining
+# ASKED: b0([[last]]: undefined @JSValue
+# ASKED: CheckProof [[last]] checkedType=undefined typeWithoutProof=
+# RUN(RIGHT): run-in-shell mechanisms=all-Inlining
+# RIGHT: SAID 3 3

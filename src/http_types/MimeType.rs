@@ -95,6 +95,11 @@ impl Compact {
 /// (`mime_type_list.txt`). A hit hands back the static spelling — and, for a
 /// few, the canonical constant, see `Compact::to_mime_type` — so `Blob` can
 /// hold it as `BlobContentType::Static`; anything else takes the copy path.
+pub fn interned_name(name: &[u8]) -> Option<&'static [u8]> {
+    use super::mime_type_list_sorted::{BUCKETS, NAMES};
+    bun_core::comptime_string_map::sorted_key_slice(name, NAMES, &BUCKETS)
+}
+
 pub fn by_name_static(name: &[u8]) -> Option<MimeType> {
     use super::mime_type_list_sorted::{BUCKETS, NAMES};
     let interned = bun_core::comptime_string_map::sorted_key_slice(name, NAMES, &BUCKETS)?;

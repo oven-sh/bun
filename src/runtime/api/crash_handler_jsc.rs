@@ -54,6 +54,16 @@ pub(crate) fn segfault() {
     }
 }
 
+/// Segfaults on a thread that holds WTF's thread-suspend lock, like the sampling profiler's thread
+/// while it reads the stack of the JS thread.
+pub(crate) fn segfault_holding_thread_suspend_lock() {
+    unsafe extern "C" {
+        safe fn Bun__lockThreadSuspensionForTesting();
+    }
+    Bun__lockThreadSuspensionForTesting();
+    segfault();
+}
+
 /// Triggers a segfault with the fault PC inside a system DLL rather than
 /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
 /// must recover the bun frames that called into the DLL.
@@ -85,6 +95,24 @@ pub(crate) fn panic() {
     crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
 }
 
+/// Through the hook of `std::panic`, as a failed `unwrap()` goes.
+pub(crate) fn rust_panic() {
+    crash_handler::suppress_core_dumps_if_necessary();
+    panic!("invoked rustPanic() handler");
+}
+
+/// Native code that calls itself until it meets the guard page below the stack of its thread.
+pub(crate) fn stack_overflow() {
+    #[inline(never)]
+    #[allow(unconditional_recursion)]
+    fn deeper(depth: usize) -> usize {
+        let room = core::hint::black_box([depth; 64]);
+        deeper(depth + 1) + room[0]
+    }
+    crash_handler::suppress_core_dumps_if_necessary();
+    core::hint::black_box(deeper(0));
+}
+
 pub(crate) fn abort() {
     crash_handler::suppress_core_dumps_if_necessary();
     // Under ASAN the POSIX signal handlers are not installed; invoke the
@@ -96,10 +124,7 @@ pub(crate) fn abort() {
         );
     }
     #[cfg(unix)]
-    // SAFETY: libc::abort has no preconditions; never returns.
-    unsafe {
-        libc::abort();
-    }
+    std::process::abort();
 }
 
 /// Dies like foreign native code, with Bun's crash handler provably out
@@ -172,6 +197,51 @@ pub(crate) fn operator_new(nothrow: bool) -> Option<bool> {
 pub(crate) fn raise_ignoring_panic_handler() {
     crash_handler::suppress_core_dumps_if_necessary();
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
+}
+
+/// Whether a stack trace from below a frame with a signed return address,
+/// trimmed to that address, starts there: the walk and the address to trim by
+/// must both come without the signature. `None` where the test does not run.
+pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    {
+        extern "C" fn capture() -> usize {
+            use bun_core::debug::{frame_address, return_address_of_frame};
+            let mut addresses = [0; 32];
+            // SAFETY: a frame record starts with the address of the caller's,
+            // which here is the signed one.
+            let begin = unsafe { return_address_of_frame(*(frame_address() as *const usize)) };
+            bun_core::capture_stack_trace(begin, &mut addresses);
+            addresses[0]
+        }
+        let (return_address, first): (usize, usize);
+        // SAFETY: what a function does that saves its return address signed,
+        // calls `capture` and returns to `2:`. The stack pointer and x29 end as
+        // they began, and `capture` follows the C calling convention.
+        unsafe {
+            core::arch::asm!(
+                "adr x30, 2f",
+                "mov x20, x30",
+                "hint #25", // PACIASP
+                "stp x29, x30, [sp, #-16]!",
+                "mov x29, sp",
+                "blr x8",
+                "ldp x29, x30, [sp], #16",
+                "hint #29", // AUTIASP
+                "2:",
+                // x20 outlives the call, and nothing writes x8 before it.
+                out("x20") return_address,
+                in("x8") capture as extern "C" fn() -> usize,
+                lateout("x0") first,
+                clobber_abi("C"),
+            )
+        };
+        Some(first == return_address)
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+    {
+        None
+    }
 }
 
 pub(crate) fn get_feature_data() -> FeatureData {

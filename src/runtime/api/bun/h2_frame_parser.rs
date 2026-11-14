@@ -331,11 +331,7 @@ struct StreamPriority {
     stream_identifier: u32,
     weight: u8,
 }
-// SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
-// every 5-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for StreamPriority {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for StreamPriority {}
+bun_core::impl_no_uninit!(StreamPriority);
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
     pub(crate) const BYTE_SIZE: usize = 5;
@@ -343,7 +339,7 @@ impl StreamPriority {
     fn write(self, writer: &mut impl WireWriter) -> bool {
         let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
+        writer.write_all(bun_core::bytes_of(&swap)).is_ok()
     }
 }
 
@@ -673,7 +669,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -690,7 +686,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -712,7 +708,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return JSValue::ZERO;
         }
-        self.vm.event_loop_ref().run_callback_with_result(
+        self.vm.event_loop().run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -2952,7 +2948,7 @@ impl H2FrameParser {
         let found_existing = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
@@ -2972,7 +2968,7 @@ impl H2FrameParser {
         let removed = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
@@ -3076,7 +3072,7 @@ impl H2FrameParser {
         if self.pending_header_compression_error.get() {
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
             // uncork()/unregister_auto_flush() must early-return at the guard instead of
-            // mutating the task map run() iterates (aliasing UB). Cleared once back here.
+            // mutating the task map run() iterates. Cleared once back here.
             self.dispatch_with_2_extra(
                 js::on_error_get_cached,
                 JSValue::js_number(ErrorCode::COMPRESSION_ERROR.0 as f64),
@@ -4312,18 +4308,13 @@ impl DirectWriterStruct {
         let payload_size = 1 + data.len() + padding as usize;
         // Taken by value so a re-entrant call gets its own; see take_h2_padded_frame_buffer.
         let global = self.writer.global();
-        let mut buffer = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .take_h2_padded_frame_buffer();
+        let mut buffer = global.bun_vm().rare_data().take_h2_padded_frame_buffer();
         buffer[0] = padding;
         buffer[1..=data.len()].copy_from_slice(data);
         buffer[1 + data.len()..payload_size].fill(0);
         let result = self.write_all(&buffer[..payload_size]);
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .put_back_h2_padded_frame_buffer(buffer);
         result
@@ -6321,7 +6312,7 @@ impl H2FrameParser {
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {
                 continue;
             };
-            self.handlers.get().vm.event_loop_mut().run_callback(
+            self.handlers.get().vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
@@ -7417,15 +7408,13 @@ impl H2FrameParser {
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
                 let pool = pool.get_or_insert_with(|| {
-                    // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
-                    // initialized allocation; `from_raw` reclaims that exact
-                    // pointer back into an owning `Box`. `ManuallyDrop<T>` is
+                    // SAFETY: `from_raw` reclaims the pointer `into_raw` gave
+                    // up back into an owning `Box`. `ManuallyDrop<T>` is
                     // `repr(transparent)` over `T`, so the pointer cast is a
                     // layout no-op.
                     unsafe {
                         Box::from_raw(
-                            H2FrameParserHiveAllocator::new_boxed()
-                                .as_ptr()
+                            Box::into_raw(H2FrameParserHiveAllocator::new_boxed())
                                 .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
                         )
                     }

@@ -16,8 +16,8 @@ type WrappedIterator = dir_iterator::WrappedIterator;
 type NameBufferList = Vec<OSPathChar>;
 
 pub struct Walker {
-    root: Root,
     stack: Vec<StackItem>,
+    root: Root,
     name_buffer: NameBufferList,
     // `skip_filenames`/`skip_dirnames` are index ranges into `skip_all` rather
     // than sub-slices: self-referential slices are not expressible without raw
@@ -49,7 +49,7 @@ impl Root {
 pub struct WalkerEntry<'a> {
     /// The containing directory. This can be used to operate directly on `basename`
     /// rather than `path`, avoiding `error.NameTooLong` for deeply nested paths.
-    /// The directory remains open until `next` or `deinit` is called.
+    /// The directory remains open until `next` is called or the walker is dropped.
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
@@ -58,7 +58,16 @@ pub struct WalkerEntry<'a> {
 
 struct StackItem {
     iter: WrappedIterator,
+    /// 0 for the root alone, which [`Root`] looks after.
     dirname_len: usize,
+}
+
+impl Drop for StackItem {
+    fn drop(&mut self) {
+        if self.dirname_len != 0 {
+            self.iter.dir().close();
+        }
+    }
 }
 
 impl Walker {
@@ -67,7 +76,7 @@ impl Walker {
         self.root.fd()
     }
 
-    /// After each call to this function, and on deinit(), the memory returned
+    /// After each call to this function, and on drop, the memory returned
     /// from this function becomes invalid. A copy must be made in order to keep
     /// a reference to the path.
     pub fn next(&mut self) -> sys::Result<Option<WalkerEntry<'_>>> {
@@ -192,10 +201,7 @@ impl Walker {
                             kind,
                         }));
                     } else {
-                        let item = self.stack.pop().unwrap();
-                        if !self.stack.is_empty() {
-                            item.iter.dir().close();
-                        }
+                        self.stack.truncate(top_idx);
                     }
                 }
             }
@@ -204,23 +210,8 @@ impl Walker {
     }
 }
 
-impl Drop for Walker {
-    fn drop(&mut self) {
-        if !self.stack.is_empty() {
-            for item in &mut self.stack[1..] {
-                item.iter.dir().close();
-            }
-            // `self.stack` Vec drops itself.
-        }
-
-        // `self.root` (closing an owned root), `self.skip_all` and `self.name_buffer`
-        // drop themselves.
-    }
-}
-
 /// Recursively iterates over a directory.
 /// `self` must have been opened with `OpenDirOptions{.iterate = true}`.
-/// Must call `Walker.deinit` when done.
 /// The order of returned file system entries is undefined.
 /// Walk `self_`, which the caller keeps open for the walker's lifetime.
 pub fn walk(

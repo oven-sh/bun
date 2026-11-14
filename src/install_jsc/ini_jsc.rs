@@ -10,7 +10,7 @@ pub(crate) fn load_npmrc<'a>(
     env: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     use bun_ast::{Log, Source};
-    use bun_core::String as BunString;
+    use bun_core::StringView;
     use bun_dotenv as dotenv;
     use bun_ini::load_npmrc;
     use bun_install::npm::Registry;
@@ -26,7 +26,7 @@ pub(crate) fn load_npmrc<'a>(
     // an `Option` so both arms yield the same `&Loader` type.
     let mut env_storage: Option<dotenv::Loader> = None;
     let env: &dotenv::Loader = if envjs.is_empty_or_undefined_or_null() {
-        global.bun_vm().as_mut().transpiler.env()
+        global.bun_vm().transpiler.get().env()
     } else {
         let mut envmap = dotenv::map::HashTable::new();
         let Some(envobj) = envjs.get_object() else {
@@ -96,32 +96,32 @@ pub(crate) fn load_npmrc<'a>(
     ) = 'brk: {
         let Some(default_registry) = install.default_registry.as_ref() else {
             break 'brk (
-                BunString::static_(Registry::DEFAULT_URL),
-                BunString::EMPTY,
-                BunString::EMPTY,
-                BunString::EMPTY,
-                BunString::EMPTY,
+                StringView::static_(Registry::DEFAULT_URL),
+                StringView::EMPTY,
+                StringView::EMPTY,
+                StringView::EMPTY,
+                StringView::EMPTY,
             );
         };
 
         (
-            BunString::from_bytes(&default_registry.url),
-            BunString::from_bytes(&default_registry.token),
-            BunString::from_bytes(&default_registry.username),
-            BunString::from_bytes(&default_registry.password),
-            BunString::from_bytes(&default_registry.auth),
+            StringView::from_bytes(&default_registry.url),
+            StringView::from_bytes(&default_registry.token),
+            StringView::from_bytes(&default_registry.username),
+            StringView::from_bytes(&default_registry.password),
+            StringView::from_bytes(&default_registry.auth),
         )
     };
     // Rust has no field reflection; mirror struct-literal object creation with
     // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
     // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
     // stays on the stack for JSC's conservative scan.
-    struct Pojo {
-        default_registry_url: BunString,
-        default_registry_token: BunString,
-        default_registry_username: BunString,
-        default_registry_password: BunString,
-        default_registry_auth: BunString,
+    struct Pojo<'a> {
+        default_registry_url: StringView<'a>,
+        default_registry_token: StringView<'a>,
+        default_registry_username: StringView<'a>,
+        default_registry_password: StringView<'a>,
+        default_registry_auth: StringView<'a>,
         ignore_scripts: Option<bool>,
         link_workspace_packages: Option<bool>,
         save_exact: Option<bool>,
@@ -130,7 +130,7 @@ pub(crate) fn load_npmrc<'a>(
     fn optional_bool(b: Option<bool>) -> JSValue {
         b.map_or(JSValue::UNDEFINED, JSValue::js_boolean)
     }
-    impl bun_jsc::js_object::PojoFields for Pojo {
+    impl bun_jsc::js_object::PojoFields for Pojo<'_> {
         const FIELD_COUNT: usize = 9;
         fn put_fields(
             &self,
@@ -189,7 +189,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, source: &[u8]) -> JsResult<JSValue> {
     // SAFETY: neither parsing nor `expr_to_js` runs JavaScript: the keys are strings and the
     // properties are defined, not set. What throws returns.
     let global = unsafe { heap.global() };
-    let env = global.bun_vm().as_mut().transpiler.env();
+    let env = global.bun_vm().transpiler.get().env();
     let source = bun_ast::Source::init_path_string(b"<src>", source);
     let arena = bun_alloc::Arena::new();
     let mut parser = Parser::init(&source, env);

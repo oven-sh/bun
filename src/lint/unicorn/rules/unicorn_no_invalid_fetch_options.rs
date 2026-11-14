@@ -6,7 +6,7 @@ use bun_lint::types::IdMap;
 /// Disallow invalid options in `fetch()` and `new Request()`.
 pub struct NoInvalidFetchOptions;
 
-const NO_INVALID_FETCH_OPTIONS: Message = Message::new("", "\"body\" is not allowed when method is \"{{method}}\"");
+const NO_INVALID_FETCH_OPTIONS: &Message = &Message::new("", "\"body\" is not allowed when method is \"{{method}}\"");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Method {

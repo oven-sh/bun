@@ -1,0 +1,15 @@
+# what a class has from the class above is one field with what is declared there: the constructor above stores into objects of either. So both layouts say the same of it, and Facts has worked it out once.
+# -- source: inherited-field-takes-the-answer-of-its-declaration.ts
+# declare function sink(...values: unknown[]): void;
+# class Shape { label: string; constructor(label: string) { this.label = label; } }
+# class Circle extends Shape { round: boolean; constructor(label: string, round: boolean) { super(label); this.round = round; } }
+# sink(Shape, Circle);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK-COUNT-2: "label" source=written type=undefined|null|string
+# RUN(OWN): facts enforced mechanisms=all
+# OWN-COUNT-1: "round" source=written type=boolean markers spares-test
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: differs-from-table
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN-COUNT-2: "label" {{*}} type=undefined|null|string

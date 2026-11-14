@@ -1,0 +1,31 @@
+# -- source: slots-of-one-object-are-read-once-a-turn.ts
+# type Cursor = { text: string; position: number };
+# function count(cursor: Cursor): number { let spaces = 0; for (cursor.position = 0; cursor.position < cursor.text.length; cursor.position++) if (cursor.text.charCodeAt(cursor.position) === 32) spaces++; return spaces; }
+# function drift(cursor: Cursor, by: number): number { let turns = 0; for (cursor.position = 0; cursor.position < cursor.text.length; cursor.position += by) turns++; return turns; }
+# const cursor: Cursor = { text: "a b c", position: 0 };
+# sink(count, drift, cursor);
+# declare function sink(...values: unknown[]): void;
+# -- end of source
+# The object gets out, so nothing is proven of what its slots hold. Each mention of `cursor.position` and of `cursor.text` is a read of its own. While a turn has written nothing each finds what the first has found:
+# what the test behind the first read shows holds of all, so the looks come through the turn without other code, and the loop is built twice. The turns write `position` alone: the text is read, tested and resolved in front of the loop, without throwing: whether an iteration reads it is not known there.
+# They step the position by one, so an int32 is asked for.
+# f1 = count, f2 = drift
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true:
+# CHECK: isLoopHead=true:
+# CHECK: = GetSlot {{*}}key="position"
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: = GetSlot {{*}}key="text"
+# CHECK: = TryResolveRope
+# CHECK-NOT: = GetSlot
+# CHECK: = GetStringCodeUnit
+# CHECK-NOT: = GetSlot
+# CHECK: = FlattenString
+# CHECK: = Increment {{*}}form=Integers
+# CHECK: = PutSlot {{*}}key="position"
+# A step by whatever is handed over says nothing of the slot: a number is asked for.
+# RUN(NUMBER): walk f2 mechanisms=all
+# NUMBER: testedType=number
+# RUN(COUNT): compile WalkLoopsVersioned mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 2

@@ -3,31 +3,27 @@ use core::fmt;
 use bun_alloc::Arena;
 
 use crate as css;
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRuleList, Location, StyleContext};
 use crate::{PrintErr, Printer, SmallList};
 
 /// A CSS cascade layer name. Stored as a list of segments because dot
 /// notation (`a.b.c`) creates sublayers.
 #[derive(Default)]
-pub struct LayerName {
-    // TODO: arena lifetime — segments borrow the parser arena. Thread
-    // `'bump` once `CssRuleList` re-gains its arena lifetime; until then
-    // segments are laundered through `&'static [u8]` like every other CSS
-    // slice in this crate.
-    pub v: SmallList<&'static [u8], 1>,
+pub struct LayerName<'bump> {
+    pub v: SmallList<&'bump [u8], 1>,
 }
 
 // Trait `Clone` (not just inherent `deep_clone`) so the bundler's
 // `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
-// arena-borrowed `&'static [u8]` (Copy), so this is the same shallow
+// arena-borrowed `&[u8]` (Copy), so this is the same shallow
 // `SmallList` copy as `deep_clone`.
-impl Clone for LayerName {
+impl Clone for LayerName<'_> {
     fn clone(&self) -> Self {
         LayerName { v: self.v.clone() }
     }
 }
 
-impl LayerName {
+impl<'bump> LayerName<'bump> {
     pub fn eql(&self, rhs: &LayerName) -> bool {
         if self.v.len() != rhs.v.len() {
             return false;
@@ -40,18 +36,20 @@ impl LayerName {
         true
     }
 
-    pub fn parse(input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
-        let mut parts: SmallList<&'static [u8], 1> = SmallList::default();
-        let ident = input.expect_ident_cloned()?;
+    pub fn parse(
+        input: &mut css::css_parser::Parser<'_, 'bump>,
+    ) -> css::css_parser::CssResult<'bump, LayerName<'bump>> {
+        let mut parts: SmallList<&'bump [u8], 1> = SmallList::default();
+        let ident = input.expect_ident()?;
         parts.append(ident);
 
         loop {
             let try_parse_fn =
-                |i: &mut css::css_parser::Parser<'_>| -> css::css_parser::CssResult<&'static [u8]> {
+                |i: &mut css::css_parser::Parser<'_, 'bump>| -> css::Result<'bump, &'bump [u8]> {
                     let start_location = i.current_source_location();
                     let tok = *i.next_including_whitespace()?;
                     if !matches!(tok, css::Token::Delim(c) if c == u32::from(b'.')) {
-                        return Err(start_location.new_basic_unexpected_token_error(tok));
+                        return Err(start_location.new_unexpected_token_error(tok));
                     }
 
                     let start_location = i.current_source_location();
@@ -59,7 +57,7 @@ impl LayerName {
                     if let css::Token::Ident(ident) = tok {
                         return Ok(ident);
                     }
-                    Err(start_location.new_basic_unexpected_token_error(tok))
+                    Err(start_location.new_unexpected_token_error(tok))
                 };
 
             match input.try_parse(try_parse_fn) {
@@ -83,14 +81,14 @@ impl LayerName {
     }
 }
 
-impl css::generics::ToCss for LayerName {
+impl css::generics::ToCss for LayerName<'_> {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         LayerName::to_css(self, dest)
     }
 }
 
-impl fmt::Display for LayerName {
+impl fmt::Display for LayerName<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
         for name in self.v.slice() {
@@ -107,18 +105,18 @@ impl fmt::Display for LayerName {
 }
 
 /// A [@layer block](https://drafts.csswg.org/css-cascade-5/#layer-block) rule.
-pub struct LayerBlockRule<R> {
+pub struct LayerBlockRule<'bump, R> {
     /// PERF: null pointer optimizaiton, nullable
     /// The name of the layer to declare, or `None` to declare an anonymous layer.
-    pub name: Option<LayerName>,
+    pub name: Option<LayerName<'bump>>,
     /// The rules within the `@layer` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> LayerBlockRule<R> {
-    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump Arena) -> Self
+impl<'bump, R> LayerBlockRule<'bump, R> {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
@@ -130,7 +128,11 @@ impl<R> LayerBlockRule<R> {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -142,7 +144,7 @@ impl<R> LayerBlockRule<R> {
 
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }
@@ -150,14 +152,14 @@ impl<R> LayerBlockRule<R> {
 /// A [@layer statement](https://drafts.csswg.org/css-cascade-5/#layer-empty) rule.
 ///
 /// See also [LayerBlockRule](LayerBlockRule).
-pub struct LayerStatementRule {
+pub struct LayerStatementRule<'bump> {
     /// The layer names to declare.
-    pub names: SmallList<LayerName, 1>,
+    pub names: SmallList<LayerName<'bump>, 1>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl LayerStatementRule {
+impl LayerStatementRule<'_> {
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `css.implementDeepClone` field-walk.
         let mut names = SmallList::<LayerName, 1>::default();

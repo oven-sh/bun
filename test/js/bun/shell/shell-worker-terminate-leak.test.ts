@@ -13,7 +13,11 @@ import { join } from "path";
 // process), waits until the child proves it is alive by writing its flag
 // file, then posts back; the parent terminates the worker while the child
 // blocks.
-async function runTerminateScenario(workerSource: string, extraEnv: Record<string, string> = {}) {
+async function runTerminateScenario(
+  workerSource: string,
+  extraEnv: Record<string, string> = {},
+  { beforeTerminate = "", afterTerminate = "" } = {},
+) {
   using dir = tempDir("shell-worker-terminate-leak", {
     "main.ts": `
       const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
@@ -21,7 +25,9 @@ async function runTerminateScenario(workerSource: string, extraEnv: Record<strin
       worker.onmessage = resolve;
       worker.onerror = e => reject(e.error ?? e.message);
       await promise;
+      ${beforeTerminate}
       await worker.terminate();
+      ${afterTerminate}
     `,
     "worker.ts": workerSource,
   });
@@ -106,9 +112,54 @@ test.skipIf(!isASAN || isWindows)(
 test.skipIf(!isASAN || isWindows)(
   "worker.terminate() with a live Bun.$ file redirect does not leak the redirection fd",
   async () => {
-    // `> out.txt` opens a CowFd on the Cmd that only Cmd::deinit releases.
-    await runTerminateScenario(`
+    // `> out.txt` opens an fd on the Cmd that only Cmd::deinit closes. LSan does not see an fd, so look for it.
+    await runTerminateScenario(
+      `
       const running = Bun.$\`sh -c "echo ok > flag.txt && exec sleep 100" > out.txt\`.nothrow();
+      (async () => {
+        await running;
+      })();
+      while (!(await Bun.file("flag.txt").exists())) {
+        await Bun.sleep(5);
+      }
+      postMessage("ok");
+    `,
+      {},
+      {
+        beforeTerminate: `
+      const { fstatSync, statSync } = require("node:fs");
+      const { ino, dev } = statSync("out.txt");
+      const isOpen = () => {
+        for (let fd = 3; fd < 256; fd++) {
+          try {
+            const stat = fstatSync(fd);
+            if (stat.ino === ino && stat.dev === dev) return true;
+          } catch {}
+        }
+        return false;
+      };
+      if (!isOpen()) throw new Error("out.txt is not open while the command runs");
+    `,
+        afterTerminate: `
+      const deadline = Date.now() + 20_000;
+      while (isOpen() && Date.now() < deadline) await Bun.sleep(5);
+      if (isOpen()) throw new Error("out.txt is still open after terminate()");
+    `,
+      },
+    );
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() with a builtin's output still queued does not leak the output task",
+  async () => {
+    // `ls` prints more than the pipe holds and the reader stops after one byte, so the write never finishes.
+    await runTerminateScenario(`
+      const { mkdirSync, writeFileSync } = require("node:fs");
+      mkdirSync("big");
+      for (let i = 0; i < 6000; i++) writeFileSync("big/" + String(i).padStart(240, "x"), "");
+      const running = Bun.$\`ls big | sh -c "head -c 1 > /dev/null && echo ok > flag.txt && exec sleep 100"\`.nothrow();
       (async () => {
         await running;
       })();

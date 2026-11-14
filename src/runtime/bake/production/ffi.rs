@@ -5,7 +5,7 @@ use super::*;
 /// unsafe function, must be run outside of the event loop
 /// fails with `JSError` on exception
 pub(super) fn load_module(
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {
@@ -18,29 +18,21 @@ pub(super) fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // Note: we take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
-    // permits mutation — casting a `&T` to `*mut T` and writing through it is
-    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
-    //
-    let _ = vm;
-    let vm_ref = VirtualMachine::get();
-    vm_ref
-        .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise))
-        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
+    vm.wait_for_promise(AnyPromise::Internal(promise))
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
+    if vm.event_loop().drain_microtasks().is_err() {
         Global::crash();
     }
-    let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
+    let jsc_vm = vm.jsc_vm();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key)).map_err(js_err)
         }
-        Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
+        Unwrapped::Rejected(err) => Err(js_err(vm.global().throw_value(err))),
     }
 }
 
@@ -180,13 +172,9 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
-    if let Some(value) = pt.module_map.get(utf8.slice()) {
+    if let Some(source) = pt.module_map.get(utf8.slice()) {
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
-        // Zero-copy: alias the chunk bytes; `pt.bundled_outputs` owns them for
-        // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
+        return source.clone();
     }
     BunString::DEAD
 }

@@ -295,18 +295,20 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
     return napi_ok;
 }
 
-void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
+JSC::WeakHandleOwner::FinalizeResult Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
     weakValue->callFinalizerFromGC();
+    return FinalizeResult::KeepImpl;
 }
 
-void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
+JSC::WeakHandleOwner::FinalizeResult Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
     // The ref goes away right here, so the finalizer is queued as a copy that does not need it.
     weakValue->callFinalizer();
     delete weakValue;
+    return FinalizeResult::KeepImpl;
 }
 
 void NAPICallFrame::extract(size_t* argc, napi_value* argv, napi_value* this_arg, void** data, Zig::GlobalObject* globalObject)
@@ -3040,7 +3042,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
     if (returnedException) {
-        env->scheduleException(returnedException.get());
+        env->scheduleException(returnedException->value());
         return napi_set_last_error(env, napi_generic_failure);
     }
 

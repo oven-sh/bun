@@ -1,0 +1,12 @@
+# -- source: main.ts
+# function inside(c: any): string { const whole = c | 0; if (whole >= -5 && (whole >>> 0) <= 90) return "in"; return "out"; }
+# (globalThis as any).kept = inside;
+# console.log(inside(64), inside(65), inside(90), inside(91));
+# console.log(inside(-5), inside(-1), inside(0), inside(-6));
+# -- end of source
+# f1 = inside
+# A signed lower bound below nought and an unsigned upper bound: -1 passes the first test and fails the second: the values inside are 0 .. 90, not -5 .. 90.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: Add {{*}}, 5
+# CHECK: Return

@@ -20,9 +20,6 @@ pub(crate) fn get_public_path_with_asset_prefix(
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
-        // NOTE: spec is `VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform)`;
-        // that wrapper is stateless and forwards to bun_paths — dispatch on runtime `platform`
-        // here to keep this fn callable without const-generic plumbing through `transpiler.fs`.
         match platform {
             Platform::Posix => {
                 resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
@@ -72,7 +69,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
@@ -129,14 +126,9 @@ pub(crate) mod bun_object {
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
                     #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        this: *mut JSGlobalObject,
-                        object: *mut JSObject,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, o) = unsafe { (&*this, &*object) };
-                        bun_jsc::to_js_host_call(g, || {
-                            IntoLazyPropResult::into_lazy_prop_result($target(g, o))
+                    pub unsafe fn $sym(this: &JSGlobalObject, object: &JSObject) -> JSValue {
+                        bun_jsc::to_js_host_call(this, || {
+                            IntoLazyPropResult::into_lazy_prop_result($target(this, object))
                         })
                     }
                 }
@@ -209,7 +201,7 @@ pub(crate) fn shell_escape<'a>(
 
 /// `Bun.gc(force)`: heap size after the collection.
 pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
-    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+    cx.global().bun_vm().garbage_collect_from_js(force)
 }
 
 pub(crate) fn braces(
@@ -253,7 +245,7 @@ pub(crate) fn braces(
         // the JSON shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
         // debug-only `Bun.braces(str, {tokenize:true})` round-trips.
         let str = Braces::tokens_to_json(&lexer_output.tokens[..]);
-        let bun_str = BunString::from_bytes(&str);
+        let bun_str = StringView::from_bytes(&str);
         return bun_str.to_js(global);
     }
     if opts.parse {
@@ -266,7 +258,7 @@ pub(crate) fn braces(
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
-        let bun_str = BunString::from_bytes(&str);
+        let bun_str = StringView::from_bytes(&str);
         return bun_str.to_js(global);
     }
 
@@ -307,12 +299,12 @@ pub(crate) fn braces(
         }
     }
 
-    let mut out_strings: Vec<BunString> = Vec::with_capacity(expansion_count);
+    let mut out_strings: Vec<StringView<'_>> = Vec::with_capacity(expansion_count);
     for i in 0..expansion_count {
-        out_strings.push(BunString::from_bytes(&expanded_strings[i][..]));
+        out_strings.push(StringView::from_bytes(&expanded_strings[i][..]));
     }
 
-    bun_string_jsc::to_js_array(global, &out_strings[..])
+    bun_string_jsc::to_js_array(global, StringView::as_strings(&out_strings))
 }
 
 pub(crate) fn which<'a>(
@@ -555,18 +547,15 @@ pub(crate) fn register_macro<'a>(
     }
     let callback = callback.to_js();
 
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    let get_or_put_result = VirtualMachine::get()
-        .as_mut()
-        .macros
-        .get_or_put(id)
-        .expect("unreachable");
-    if get_or_put_result.found_existing {
-        get_or_put_result.value_ptr.unprotect();
-    }
+    VirtualMachine::get().macros.with_mut(|macros| {
+        let get_or_put_result = macros.get_or_put(id).expect("unreachable");
+        if get_or_put_result.found_existing {
+            get_or_put_result.value_ptr.unprotect();
+        }
 
-    callback.protect();
-    *get_or_put_result.value_ptr = callback;
+        callback.protect();
+        *get_or_put_result.value_ptr = callback;
+    });
 
     Ok(())
 }
@@ -588,10 +577,9 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 // `ExceptionValidationScope`).
 // HOST_EXPORT(BunObject_getter_main, jsc)
 pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
-    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
-    let vm = global_this.bun_vm().as_mut();
+    let vm = global_this.bun_vm();
     // If JS has set it to a custom value, use that one
-    if let Some(overridden_main) = vm.overridden_main.get() {
+    if let Some(overridden_main) = vm.overridden_main.get().get() {
         return overridden_main;
     }
     // No entry module (`bun bake`): an empty string, as `Bun.main` is always a string.
@@ -603,7 +591,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
-        if vm.main_resolved_path.is_empty() {
+        if vm.main_resolved_path.get().is_empty() {
             // If it's from eval, don't try to resolve it.
             if strings::ends_with(main, b"[eval]") {
                 break 'use_resolved_path;
@@ -637,7 +625,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
                     break 'use_resolved_path;
                 };
-                vm.main_resolved_path = BunString::clone_utf16(fdpath);
+                vm.main_resolved_path.set(BunString::clone_utf16(fdpath));
             }
             #[cfg(not(windows))]
             {
@@ -648,15 +636,16 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
                 // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
                 if let Some(atom) = BunString::try_create_atom(fdpath) {
-                    vm.main_resolved_path = atom;
+                    vm.main_resolved_path.set(atom);
                 } else {
-                    vm.main_resolved_path = BunString::clone_utf8(fdpath);
+                    vm.main_resolved_path.set(BunString::clone_utf8(fdpath));
                 }
             }
         }
 
         return vm
             .main_resolved_path
+            .get()
             .to_js(global_this)
             .or_pending_exception();
     }
@@ -666,12 +655,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
 pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
-    // SAFETY: bun_vm() returns the live per-thread singleton.
-    global_this
-        .bun_vm()
-        .as_mut()
-        .overridden_main
-        .set(global_this, new_value);
+    (global_this.bun_vm().overridden_main).with_mut(|main| main.set(global_this, new_value));
     true
 }
 
@@ -685,23 +669,12 @@ fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
 // into `bun_jsc`'s graph. Semantically it is
 // per-JS-thread state (one VM per thread), so a `thread_local` here is
 // equivalent and breaks the cycle without type erasure.
-//
-// `name_storage` owns the user-supplied editor name so `EditorContext.name`
-// (typed `&'static [u8]`) can borrow it
-// without leaking; the borrow lives as long as the thread.
-struct EditorContextSlot {
-    ctx: crate::cli::open::EditorContext,
-    name_storage: Vec<u8>,
-}
 thread_local! {
-    static EDITOR_CONTEXT: core::cell::RefCell<EditorContextSlot> =
-        const { core::cell::RefCell::new(EditorContextSlot {
-            ctx: crate::cli::open::EditorContext {
-                editor: None,
-                name: b"",
-                path: b"",
-            },
-            name_storage: Vec::new(),
+    static EDITOR_CONTEXT: core::cell::RefCell<crate::cli::open::EditorContext> =
+        const { core::cell::RefCell::new(crate::cli::open::EditorContext {
+            editor: None,
+            name: Vec::new(),
+            path: Vec::new(),
         }) };
 }
 
@@ -714,44 +687,22 @@ pub(crate) fn open_in_editor<'a>(
     let editor_name = options.editor.filter(|name| !name.is_empty());
 
     EDITOR_CONTEXT.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let slot = &mut *slot;
-        let edit = &mut slot.ctx;
-        let env = vm.transpiler.env_mut();
+        let edit = &mut *cell.borrow_mut();
+        let env = vm.transpiler.get().env_mut();
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            let prev_name = edit.name;
-
-            if !strings::eql_long(prev_name, name, true) {
+            if !strings::eql_long(&edit.name, name, true) {
                 let prev = core::mem::take(edit);
-                // Own the bytes in `name_storage` and
-                // hand back a thread-lifetime borrow.
-                let prev_storage = core::mem::replace(&mut slot.name_storage, name.to_vec());
-                // SAFETY: `name_storage` lives in a thread_local that
-                // outlives any caller; we never reallocate it while
-                // `edit.name` is observed (single-threaded JS VM).
-                edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                edit.name = name.to_vec();
                 edit.detect_editor(env);
                 editor_choice = edit.found();
                 if editor_choice.is_none() {
-                    slot.name_storage = prev_storage;
                     *edit = prev;
                     return Err(heap.error(format_args!(
                         "Could not find editor \"{}\"",
                         bstr::BStr::new(name),
                     )));
-                } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                    // `detect_editor` aliased `path` to `name` (absolute
-                    // editor path). `name` is backed by `slot.name_storage`,
-                    // which a later call may drop while the detached editor
-                    // thread is still reading argv[0]. Give `path`
-                    // process-lifetime storage, matching every other
-                    // `detect_editor` branch.
-                    edit.path = bun_resolver::fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(edit.path)
-                        .expect("unreachable");
                 }
             }
         }
@@ -773,7 +724,7 @@ pub(crate) fn open_in_editor<'a>(
             return Err(heap.error(format_args!("No file path specified")));
         }
 
-        if let Err(err) = editor.open(edit.path, path, options.line, options.column) {
+        if let Err(err) = editor.open(&edit.path, path, options.line, options.column) {
             return Err(heap.error(format_args!("Opening editor failed {}", err.name())));
         }
 
@@ -802,7 +753,7 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
 }
 
 // HOST_EXPORT(Bun__gc, c)
-pub(crate) fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+pub(crate) fn gc(vm: &VirtualMachine, sync: bool) -> usize {
     vm.garbage_collect_from_js(sync)
 }
 
@@ -823,9 +774,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
+            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
+}
+
+/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
+/// A path in the executable is its own answer.
+fn find_source_path_of_compiled_file(
+    specifier: &BunString,
+    resolved: &BunString,
+) -> Option<BunString> {
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let program = graph.compiled_program.as_ref()?;
+    program.root_on_build_machine()?;
+    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+        return None;
+    }
+    let path = resolved.to_utf8();
+    let public_root =
+        bun_standalone_graph::StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX
+            .as_bytes();
+    let source_path = program.source_path_of_public(public_root, path.slice())?;
+    Some(BunString::clone_utf8(&source_path))
 }
 
 fn resolve_with_args<const IS_FILE_PATH: bool>(
@@ -884,7 +858,7 @@ pub(crate) fn resolve_sync(
         return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
-        ResolveMode::Esm
+        ResolveMode::EsmResolve
     } else {
         ResolveMode::Require
     };
@@ -936,7 +910,7 @@ pub(crate) fn bun_resolve_sync(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -984,15 +958,14 @@ pub(crate) fn bun_resolve_sync_with_paths(
         return JSValue::ZERO;
     };
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let bun_vm = global.bun_vm().as_mut();
-    debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
+    let transpiler = &global.bun_vm().transpiler;
+    debug_assert!(transpiler.get().resolver.custom_dir_paths.is_none());
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
     // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    let paths = unsafe { bun_ptr::detach_lifetime(paths) };
+    transpiler.with_mut(|t| t.resolver.custom_dir_paths = Some(paths));
     scopeguard::defer! {
-        // SAFETY: same VM pointer; called before returning to C++.
-        global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
+        transpiler.with_mut(|t| t.resolver.custom_dir_paths = None);
     }
 
     jsc::to_js_host_call(global, || {
@@ -1000,33 +973,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )?
-        .into_js(global)
-    })
-}
-
-bun_output::declare_scope!(importMetaResolve, visible);
-
-// HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub(crate) fn bun_resolve_sync_with_strings(
-    global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
-    is_esm: bool,
-) -> JSValue {
-    bun_output::scoped_log!(
-        importMetaResolve,
-        "source: {}, specifier: {}",
-        source,
-        specifier
-    );
-    jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
-            global,
-            specifier,
-            source,
-            ResolveMode::from_ffi_bools(is_esm, false),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -1081,6 +1028,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
         options.to_js(),
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
+            may_start_development_server: true,
             is_fetch_required: true,
             previous_fetch: false,
             previous_routes: false,
@@ -1100,7 +1048,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     let _handler_pins: [bun_jsc::js_value::Protected; 10] =
         crate::server::protect_handler_shadows(&config);
 
-    let vm = global_object.bun_vm().as_mut();
+    let vm = global_object.bun_vm();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
     // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
@@ -1139,9 +1087,15 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         reload!(crate::api::DebugHTTPServer)
                     }
                     t if t == AnyServerTag::DebugHTTPSServer as u8 => {
-                        reload!(crate::api::DebugHTTPSServer)
+                        return bun_removable_features::removable_body!(TlsSockets, Abort, {
+                            reload!(crate::api::DebugHTTPSServer)
+                        });
                     }
-                    t if t == AnyServerTag::HTTPSServer as u8 => reload!(crate::api::HTTPSServer),
+                    t if t == AnyServerTag::HTTPSServer as u8 => {
+                        return bun_removable_features::removable_body!(TlsSockets, Abort, {
+                            reload!(crate::api::HTTPSServer)
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -1216,9 +1170,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
             if server_ref.config.get().allow_hot {
-                // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
-                // borrow was released by the `hot_map()` arm above.
-                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
+                if let Some(hot) = vm.hot_map() {
                     hot.insert_raw(
                         &server_ref.config.get().id,
                         HotMapEntry {
@@ -1229,16 +1181,15 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                 }
             }
 
-            // SAFETY: bun_vm() returns the live thread-local VM.
-            if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
+            if let Some(debugger) = vm.debugger.get() {
                 let any = AnyServer::from(server.cast_const());
                 crate::server::http_server_agent::notify_server_started(
-                    &mut debugger.http_server_agent,
+                    &debugger.http_server_agent,
                     any,
                 );
                 bun_core::handle_oom(
                     crate::server::http_server_agent::notify_server_routes_updated(
-                        &mut debugger.http_server_agent,
+                        &debugger.http_server_agent,
                         any,
                     ),
                 );
@@ -1252,9 +1203,13 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     let has_ssl_config = config.ssl_config.is_some();
     let development = config.is_development();
     match (development, has_ssl_config) {
-        (true, true) => serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer),
+        (true, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
+            serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer)
+        }),
         (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
-        (false, true) => serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer),
+        (false, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
+            serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer)
+        }),
         (false, false) => serve_with!(crate::api::HTTPServer, AnyServerTag::HTTPServer),
     }
 }
@@ -1288,18 +1243,32 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
             bun_paths::resolve_path::platform::Auto,
         >(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_core::working_directory_in_executable()
+                .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
             &mut buf[..buf_len - 1],
             &[path],
         ) else {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         };
+        let graph = bun_standalone_graph::Graph::get_ref()
+            .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
+        let embedded = graph.and_then(|graph| graph.find_data(joined));
+        if graph.is_some_and(|graph| graph.find_dir(joined)) {
+            use bun_jsc::SysErrorJsc as _;
+            let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open).with_path(joined);
+            return Err(global_this.throw_value(err.to_js(global_this)));
+        }
 
+        let written = bun_standalone_graph::find_written_file(joined);
         let path_len = joined.len();
         buf[path_len] = 0;
+        let written = written.map(|path| bun_core::ZBox::from_vec(path.into_vec()));
 
         // SAFETY: buf[path_len] == 0 written above
-        let buf_z = bun_core::ZStr::from_buf(&buf[..], path_len);
+        let buf_z = match &written {
+            Some(path) => &**path,
+            None => bun_core::ZStr::from_buf(&buf[..], path_len),
+        };
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let flags = if options.shared {
@@ -1326,10 +1295,23 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             .transpose()?;
         let offset = non_negative(options.offset, "offset")?;
 
+        // An embedded file is read-only: the caller gets bytes of its own, as from a private mapping.
+        if let Some(file) = embedded {
+            let rest = file.utf8_contents().get(offset..).unwrap_or_default();
+            let view = &rest[..map_size.map_or(rest.len(), |size| size.min(rest.len()))];
+            if view.is_empty() {
+                use bun_jsc::SysErrorJsc as _;
+                let err = sys::Error::from_code(bun_sys::E::EINVAL, sys::Tag::mmap);
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+            return jsc::ArrayBuffer::create_uint8_array(global_this, view);
+        }
+
         let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
             Ok(result) => result,
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
+                let err = node::fs::error_for_caller([None, None], err);
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
         };
@@ -1373,22 +1355,18 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // `RareData.s3_default_client: Strong` field.
     use crate::webcore::s3_client::S3Client;
     use bun_jsc::StrongOptional;
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_this.bun_vm().as_mut();
-    // NOTE: reshaped for borrowck — capture the raw env loader pointer
-    // before `rare_data()` takes the long-lived `&mut` of `vm`.
-    let env_ptr = vm.transpiler.env;
+    let vm = global_this.bun_vm();
     let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get() {
+    if let Some(v) = rare.s3_default_client.get().get() {
         return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
-    // from `rare_data` storage.
-    let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+    // SAFETY: `transpiler.env` is the VM's dotenv loader, which outlives the call.
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+        (*vm.transpiler.get().env).get_s3_credentials()
+    });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1412,12 +1390,18 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client = StrongOptional::create(js_client, global_this);
+    rare.s3_default_client
+        .set(StrongOptional::create(js_client, global_this));
     Ok(js_client)
 }
 
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
+
+    if bun_removable_features::is_removed(bun_removable_features::Feature::Valkey) {
+        let constructor = crate::valkey_jsc::js_valkey::js::get_constructor(global_this);
+        return crate::removed_feature::stand_in_for_removed_instance(global_this, constructor);
+    }
 
     // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
     // Bun.ModuleGraph reads the property first.
@@ -1457,13 +1441,19 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
+    // `bun run --aot` and `bun test --aot` hold a compiled program and are no executable that was shipped.
+    JSValue::js_boolean(
+        global_this.bun_vm().standalone_module_graph.is_some()
+            && !crate::cli::run_compiled::runs_compiled_code(),
+    )
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::{Blob, BlobExt as _};
+    use crate::webcore::blob::BlobExt as _;
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
-    let Some(graph) = StandaloneModuleGraph::get_ref() else {
+    let Some(graph) =
+        StandaloneModuleGraph::get_ref().filter(|_| !bun_jsc::compiled_program::runs_in_place())
+    else {
         return JSValue::create_empty_array(global_this, 0);
     };
 
@@ -1474,7 +1464,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if !file.appears_in_embedded_files_array() {
+        if !file.appears_in_embedded_files_array() || graph.is_file_for_file_system_alone(file) {
             continue;
         }
         sort_indices.push(index as u32);
@@ -1494,12 +1484,8 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
-            file,
-            global_this,
-        ));
-        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_this);
+        array.put_index(global_this, i as u32, blob.into_js(global_this))?;
     }
 
     Ok(array)
@@ -1516,7 +1502,7 @@ pub(crate) mod environment_variables {
         global_object: &JSGlobalObject,
         ptr: &mut core::mem::MaybeUninit<*const Box<[u8]>>,
     ) -> usize {
-        let bun_vm = global_object.bun_vm().as_mut();
+        let bun_vm = global_object.bun_vm();
         let env = bun_vm.env_loader();
         let keys: &[Box<[u8]>] = env.map.map.keys();
         // C++ declares this out-param as `void**` and only ever round-trips it
@@ -1541,6 +1527,16 @@ pub(crate) mod environment_variables {
         let item: &[u8] = unsafe { &**ptr.add(i) };
         data_ptr.write(item.as_ptr());
         item.len()
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__getEnvValueAt<'a>(
+        global_object: &'a JSGlobalObject,
+        i: usize,
+        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
+    ) {
+        let env = global_object.bun_vm().env_loader();
+        value.write(EncodedSlice::from_bytes(&env.map.map.values()[i].value));
     }
 
     #[unsafe(no_mangle)]
@@ -1574,7 +1570,7 @@ pub(crate) mod environment_variables {
         name: &BunString,
         value: &BunString,
     ) {
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
 
         // Synchronize the slot swap + env.map.put against a concurrently
@@ -1591,7 +1587,7 @@ pub(crate) mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        let env_map = &mut vm.transpiler.env_mut().map;
+        let env_map = &mut vm.transpiler.get().env_mut().map;
 
         // `delete process.env.X`
         if value.tag() == bun_core::Tag::Dead {
@@ -1632,8 +1628,7 @@ pub(crate) mod environment_variables {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
-    // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
-    let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
+    let vm = jsc::virtual_machine::VirtualMachine::get();
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 
@@ -1781,7 +1776,7 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
+                let Some(decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
                     return Err(bun_alloc::AllocError.into());
                 };
                 let encoding = if is_gzip {
@@ -2141,9 +2136,7 @@ mod stdio_stores {
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
         });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
-        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        Blob::init_with_store(store, global_this).into_js(global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

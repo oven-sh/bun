@@ -1,0 +1,21 @@
+# f1 = bits, f2 = flags, f3 = last
+# -- source: what-is-changed-under-a-condition-comes-round-beside-itself.ts
+# declare function sink(...values: unknown[]): void;
+# function bits(skip: number) { let x = 0; for (let bit = 31; bit >= 0; bit--) if (bit !== skip) x |= 1 << bit; return x; }
+# function flags(words: Int32Array, mask: number) { let seen = 0; for (let at = 0; at < words.length; at++) { const word = words[at]!; if (word & mask) { if (word < 0) continue; seen ^= word; } } return seen; }
+# function last(words: Int32Array, limit: number) { let found = -1; for (let at = 0; at < words.length; at++) if (words[at]! > limit) found = at | 0; return found; }
+# const words = new Int32Array([5, -6, 7, 1 << 30, 12]);
+# sink(bits(3), bits(40), flags(words, 4), flags(words, -1), last(words, 6), last(words, 1 << 30));
+# -- end of source
+# A name that enters as a written number and is changed under a condition comes round as a join of itself and what the turn has made. Its own part says nothing new: counted in, the row of the head started anew from what had only been assumed
+# of it, both ends of the range moved, and the name went round as every exact integer in an Int64, never to be narrowed. What the turns make is an int32 in all three: that is what the head takes.
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# CHECK-LABEL: code f2:Body
+# CHECK: : i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# CHECK-LABEL: code f3:Body
+# CHECK: : i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.sink = (...values) => print(values.join(" "));
+# SHELL: -9 -1 14 1073741838 4 -1
+# SHELL: exited with 0

@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
@@ -10,17 +11,22 @@ const query = {
   ...method,
   args: { hostname: b.string.utf8 },
   expected: { hostname: ["string"] },
-  returns: b.any,
+  returns: b.any.returning("Promise"),
 } as const;
-const getServers = { ...method, returns: b.any } as const;
+const getServers = { ...method, returns: b.any.returning("Array") } as const;
 const resolve = {
   ...method,
   /** A `record` that is not a string means "A". */
   args: { name: b.string.utf8, record: b.string.utf8.otherAsNull },
   expected: { name: ["string"] },
-  returns: b.any,
+  returns: b.any.returning("Promise"),
 } as const;
-const reverse = { ...method, args: { ip: b.string.utf8 }, expected: { ip: ["string"] }, returns: b.any } as const;
+const reverse = {
+  ...method,
+  args: { ip: b.string.utf8 },
+  expected: { ip: ["string"] },
+  returns: b.any.returning("Promise"),
+} as const;
 /** An array of `[family, address, port]` tuples, each element converted according to its position. */
 const setServers = { ...method, args: { servers: b.any } } as const;
 
@@ -28,6 +34,7 @@ const setServers = { ...method, args: { servers: b.any } } as const;
 export const DNSResolver = b.class({
   rustPath: "crate::dns_jsc::Resolver",
   refCounted: true,
+  types: [table.viewType("bun.dns.NativeResolver"), table.exactType("$Bindgen.DNSResolver")],
   proto: {
     cancel: method,
     getServers,

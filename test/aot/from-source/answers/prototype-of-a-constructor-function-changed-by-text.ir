@@ -1,0 +1,61 @@
+# -- source: main.js
+# function F(n) { this.n = n; }
+# F.prototype.m = function () { return 1; };
+# F.of = function (n) { return n + 1; };
+# function G() { }
+# G.prototype.m = function () { return 100; };
+# G.prototype.tag = 7;
+# function early(count) { var total = 0; for (var i = 0; i < count; i++) total += F.of(i); return total; }
+# function inner(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new F(i); total += made.m() + (made instanceof F ? 10 : 0) + (Object.getPrototypeOf(made) === F.prototype ? 1000 : 0) + (made.tag === 7 ? 7 : 0); } return total; }
+# print(early(3));
+# first(F);
+# var sum = 0;
+# for (var turn = 0; turn < 10; turn++) { if (turn === 5) change(F, G); sum += inner(2); }
+# print(sum);
+# print(report());
+# -- end of source
+# The loop of inner() makes its objects below the prototype that the guard of `prototype` names. Text that the build has not seen changes in turn 5 of the outer loop what that rests on, and the objects made from then on answer by what stands above them then.
+# In the run EARLY the prototype is replaced ahead of the first object, and behind early(), which has begun the guards of F to read `of` off it. The guards have ended before one is asked at a birth.
+# In the run TARGET an object of F is made for another new.target. It stands below G.prototype, and the objects of the loop stay as they were.
+# In the run ONE a single object of F is laid below G.prototype, which is the matter of that object alone.
+# In the run SAME the object that `prototype` holds is stored there again. That ends the guard of the name and no other, and the objects stand where they stood.
+# RUN: run-in-shell globalThis.first = () => { }; globalThis.change = () => { }; globalThis.report = () => "none";
+# CHECK: 6
+# CHECK-NEXT: 20220
+# CHECK-NEXT: none
+# CHECK-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell globalThis.first = () => { }; globalThis.change = (F) => { F.prototype = { m() { return 2; } }; }; globalThis.report = () => "none";
+# REPLACED: 6
+# REPLACED-NEXT: 20230
+# REPLACED-NEXT: none
+# REPLACED-NEXT: exited with 0
+# RUN(METHOD): run-in-shell globalThis.first = () => { }; globalThis.change = (F) => { F.prototype.m = () => 5; }; globalThis.report = () => "none";
+# METHOD: 6
+# METHOD-NEXT: 20260
+# METHOD-NEXT: none
+# METHOD-NEXT: exited with 0
+# RUN(LINK): run-in-shell globalThis.first = () => { }; globalThis.change = (F, G) => { Object.setPrototypeOf(F.prototype, G.prototype); }; globalThis.report = () => "none";
+# LINK: 6
+# LINK-NEXT: 20290
+# LINK-NEXT: none
+# LINK-NEXT: exited with 0
+# RUN(EARLY): run-in-shell globalThis.first = (F) => { F.prototype = { m() { return 4; } }; }; globalThis.change = () => { }; globalThis.report = () => "none";
+# EARLY: 6
+# EARLY-NEXT: 20280
+# EARLY-NEXT: none
+# EARLY-NEXT: exited with 0
+# RUN(TARGET): run-in-shell globalThis.first = () => { }; globalThis.change = (F, G) => { globalThis.odd = Reflect.construct(F, [9], G); globalThis.isOfTarget = globalThis.odd instanceof G; }; globalThis.report = () => globalThis.odd.m() + globalThis.odd.n + (globalThis.isOfTarget ? 1000 : 0);
+# TARGET: 6
+# TARGET-NEXT: 20220
+# TARGET-NEXT: 1109
+# TARGET-NEXT: exited with 0
+# RUN(ONE): run-in-shell globalThis.first = () => { }; globalThis.change = (F, G) => { globalThis.one = new F(50); Object.setPrototypeOf(globalThis.one, G.prototype); }; globalThis.report = () => globalThis.one.m() + globalThis.one.n;
+# ONE: 6
+# ONE-NEXT: 20220
+# ONE-NEXT: 150
+# ONE-NEXT: exited with 0
+# RUN(SAME): run-in-shell globalThis.first = () => { }; globalThis.change = (F) => { F.prototype = F.prototype; }; globalThis.report = () => "none";
+# SAME: 6
+# SAME-NEXT: 20220
+# SAME-NEXT: none
+# SAME-NEXT: exited with 0

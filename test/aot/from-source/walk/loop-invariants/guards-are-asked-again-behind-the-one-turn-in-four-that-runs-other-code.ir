@@ -1,0 +1,40 @@
+# -- source: main.js
+# function Hook(b) { }
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Below(a, b) { Base.call(this, a); this.b = b; if ((b & 3) == 2) Hook.touch(b); }
+# Object.setPrototypeOf(Below.prototype, Base.prototype);
+# Below.prototype.second = function () { return this.b + this.first(); };
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Below(i & 1023, i); total += item.second() + item.a; } return total; }
+# publish(Hook, Base, Below, run);
+# -- end of source
+# Hook is in the hands of code that nobody has seen and has no class, so the read of `touch` off it is closed. It stands in one turn of four, in the copy of Below, and that turn comes round in the typed copy of the loop; the other turns are quiet.
+# Code that nobody has seen calls run, so its own body runs. At its second read the getter behind `touch` takes away what one guard of the loop stands for. The turns behind it go by what is there now.
+# RUN: walk f4 mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: PropGet {{*}} key="touch"
+# CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="second"}]
+# RUN(ANSWERS): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 2) {  } return Math.abs; } }); print(run(12)); print(run(12)); };
+# ANSWERS: 198
+# ANSWERS-NEXT: 198
+# ANSWERS-NEXT: exited with 0
+# RUN(METHOD): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 2) { Below.prototype.second = function () { return 1000; }; } return Math.abs; } }); print(run(12)); print(run(12)); };
+# METHOD: 6096
+# METHOD-NEXT: 12066
+# METHOD-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 2) { Base.prototype.first = function () { return 1000; }; } return Math.abs; } }); print(run(12)); print(run(12)); };
+# ABOVE: 6147
+# ABOVE-NEXT: 12132
+# ABOVE-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 2) { Object.defineProperty(Base.prototype, "a", { set(value) { }, get() { return 500; } }); } return Math.abs; } }); print(run(12)); print(run(12)); };
+# SETTER: 5108
+# SETTER-NEXT: 12066
+# SETTER-NEXT: exited with 0
+# RUN(CALL): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 2) { Base.call = function (self, a) { self.a = 700; }; } return Math.abs; } }); print(run(12)); print(run(12)); };
+# CALL: 7108
+# CALL-NEXT: 16866
+# CALL-NEXT: exited with 0
+# RUN(PROTOTYPE): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 2) { Below.prototype = { second() { return 3000; } }; } return Math.abs; } }); print(run(12)); print(run(12)); };
+# PROTOTYPE: 15108
+# PROTOTYPE-NEXT: 36066
+# PROTOTYPE-NEXT: exited with 0

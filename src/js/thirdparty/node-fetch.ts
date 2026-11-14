@@ -63,12 +63,12 @@ const kBody = Symbol("kBody");
 const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;
 
-function closeEmptyBody(controller) {
+function closeEmptyBody(controller: ReadableStreamDefaultController) {
   controller.close();
 }
 
 // An old-style Stream (minipass, form-data's CombinedStream) is not a Readable, which Readable.toWeb() needs.
-function readableFromOldStyleStream(source: import("node:stream").Stream) {
+function readableFromOldStyleStream(source: $Node.Stream) {
   const { PassThrough } = require("node:stream");
   const passthrough = new PassThrough();
   // pipe() does not forward "error", so a source that fails would leave the body open forever.

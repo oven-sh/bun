@@ -13,10 +13,6 @@ use crate::{
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// Was `BumpVec<'bump, Transform>` in an earlier port iteration; uses `Vec` so
-// the `Property` enum (properties_generated.rs) stays lifetime-free.
-// Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
-// (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub(crate) v: Vec<Transform>,
@@ -34,7 +30,7 @@ impl TransformList {
 }
 
 impl TransformList {
-    pub(crate) fn parse(input: &mut Parser<'_>) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -143,8 +139,8 @@ pub enum Transform {
 }
 
 impl Transform {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
-        let function = input.expect_function_cloned()?;
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Transform> {
+        let function = input.expect_function()?;
 
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
@@ -679,7 +675,7 @@ pub enum Translate {
 }
 
 impl Translate {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -732,29 +728,30 @@ impl Translate {
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
 #[derive(Copy, Clone, PartialEq)]
-pub struct Rotate {
-    /// Rotation around the x axis.
-    pub(crate) x: f32,
-    /// Rotation around the y axis.
-    pub(crate) y: f32,
-    /// Rotation around the z axis.
-    pub(crate) z: f32,
-    /// The angle of rotation.
-    pub(crate) angle: Angle,
+pub enum Rotate {
+    /// The "none" keyword. Unlike `0deg`, it creates no stacking context or containing block.
+    None,
+
+    /// A rotation around an axis.
+    Xyz {
+        /// The x component of the axis.
+        x: f32,
+        /// The y component of the axis.
+        y: f32,
+        /// The z component of the axis.
+        z: f32,
+        /// The angle of rotation.
+        angle: Angle,
+    },
 }
 
 impl Rotate {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
-            return Ok(Rotate {
-                x: 0.0,
-                y: 0.0,
-                z: 1.0,
-                angle: Angle::Deg(0.0),
-            });
+            return Ok(Rotate::None);
         }
 
         let angle = input.try_parse(Angle::parse);
@@ -767,7 +764,7 @@ impl Rotate {
 
         let xyz = match input.try_parse(|i| -> Result<Xyz> {
             let location = i.current_source_location();
-            let ident = i.expect_ident_cloned()?;
+            let ident = i.expect_ident()?;
             crate::match_ignore_ascii_case! { ident, {
                 b"x" => Ok(Xyz { x: 1.0, y: 0.0, z: 0.0 }),
                 b"y" => Ok(Xyz { x: 0.0, y: 1.0, z: 0.0 }),
@@ -795,7 +792,7 @@ impl Rotate {
             Err(_) => Angle::parse(input)?,
         };
 
-        Ok(Rotate {
+        Ok(Rotate::Xyz {
             x: xyz.x,
             y: xyz.y,
             z: xyz.z,
@@ -804,25 +801,24 @@ impl Rotate {
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        if self.x == 0.0 && self.y == 0.0 && self.z == 1.0 && self.angle.is_zero() {
-            dest.write_str("none")?;
-            return Ok(());
-        }
+        let Rotate::Xyz { x, y, z, angle } = *self else {
+            return dest.write_str("none");
+        };
 
-        if self.x == 1.0 && self.y == 0.0 && self.z == 0.0 {
+        if x == 1.0 && y == 0.0 && z == 0.0 {
             dest.write_str("x ")?;
-        } else if self.x == 0.0 && self.y == 1.0 && self.z == 0.0 {
+        } else if x == 0.0 && y == 1.0 && z == 0.0 {
             dest.write_str("y ")?;
-        } else if !(self.x == 0.0 && self.y == 0.0 && self.z == 1.0) {
-            CSSNumberFns::to_css(self.x, dest)?;
+        } else if !(x == 0.0 && y == 0.0 && z == 1.0) {
+            CSSNumberFns::to_css(x, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(self.y, dest)?;
+            CSSNumberFns::to_css(y, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(self.z, dest)?;
+            CSSNumberFns::to_css(z, dest)?;
             dest.write_char(b' ')?;
         }
 
-        self.angle.to_css(dest)
+        angle.to_css(dest)
     }
 }
 
@@ -852,7 +848,7 @@ pub enum Scale {
 }
 
 impl Scale {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -917,10 +913,6 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// Was `TransformHandler<'bump>` holding `TransformList<'bump>` in an earlier
-// port iteration; the `Property` enum is lifetime-free (see TransformList
-// above), so the handler is too. Re-threading `'bump` crate-wide is deferred
-// work (see /tmp/todo-fix/complex/mk04-repair.md).
 #[derive(Default)]
 pub struct TransformHandler {
     pub(crate) transform: Option<(TransformList, VendorPrefix)>,
@@ -933,10 +925,10 @@ pub struct TransformHandler {
 // `context.arena` does not exist on PropertyHandlerContext; the arena is
 // recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();

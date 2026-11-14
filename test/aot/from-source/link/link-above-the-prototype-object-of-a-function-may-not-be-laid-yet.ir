@@ -1,0 +1,21 @@
+# `p.__proto__` off the prototype object of a constructor function: until the statement has run that lays the function below the class, Object.prototype stands there. So nothing is proven of the link, nor of what is read off it. The link above the prototype object of a class is laid where the class is made: it stays proven, below a function too.
+# f1 = above, f3 = read, f4 = aboveTop, f7 = own
+# -- source: link-above-the-prototype-object-of-a-function-may-not-be-laid-yet.js
+# class Base { hello() { return 1; } }
+# function Sub() { this.a = 1; }
+# Sub.prototype.own = function own() { return 2; };
+# class Top extends Sub {}
+# function above(p) { return p.__proto__; }
+# function read(p) { return above(p).hello; }
+# function aboveTop(p) { return p.__proto__.own; }
+# read(Sub.prototype); aboveTop(Top.prototype);
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# read(Sub.prototype);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NOT: result=
+# LINK: function f2
+# LINK: function f3
+# LINK-NOT: result=
+# LINK: function f4 {{*}} result=undefined|f7

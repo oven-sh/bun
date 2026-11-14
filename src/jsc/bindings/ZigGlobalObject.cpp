@@ -992,6 +992,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
 {
     auto& vm = JSC::getVM(globalObject);
     auto* loader = Bun::testFileModuleLoader(globalObject);
+    // The runner has given up on the load in flight, whose promise may never settle: its mark ends here (RunnerLoadFetcher.h).
+    Bun::endRunnerLoad(globalObject);
 
     Vector<JSC::Identifier> unfinished;
     Vector<std::pair<int64_t, String>> awaiting;

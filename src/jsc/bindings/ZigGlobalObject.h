@@ -702,7 +702,7 @@ public:
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
 
-    // `bun test`: the load of a test file or preload that is in flight, until its promise settles (RunnerLoadFetcher.h).
+    // `bun test`: the load of a test file or preload that is in flight, until its promise settles or the runner gives up on it (RunnerLoadFetcher.h).
     RefPtr<Bun::RunnerLoadFetcher> m_runnerLoad;
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its

@@ -74,5 +74,7 @@ ALWAYS_INLINE RunnerLoadFetcher* liveRunnerLoad(Zig::GlobalObject* globalObject,
 RefPtr<RunnerLoadFetcher> beginRunnerLoad(Zig::GlobalObject*, JSModuleGraph*, const WTF::String& rootKey);
 // `promise` is null, settled, or pending and marked as handled by the loader. The mark is dropped once it is settled.
 void endRunnerLoadWhenSettled(Zig::GlobalObject*, RunnerLoadFetcher&, JSC::JSPromise*);
+// Drops the mark in flight, if any. The runner calls it when it gives up on a load, whose promise may never settle.
+void endRunnerLoad(Zig::GlobalObject*);
 
 } // namespace Bun

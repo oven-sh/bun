@@ -1091,7 +1091,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
-static void endRunnerLoad(Zig::GlobalObject* globalObject)
+void endRunnerLoad(Zig::GlobalObject* globalObject)
 {
     if (auto mark = std::exchange(globalObject->m_runnerLoad, nullptr))
         mark->clear();

@@ -1,10 +1,16 @@
-// Tests for `bun lint` output without an ESLint or oxlint config file, and for the parts that stay the same with one.
-import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { sep } from "node:path";
+// Tests for what `bun lint` prints: without an ESLint or oxlint config file, the parts that stay the same with one, and
+// what a terminal gets that a pipe does not.
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
+
+// Most tests here start two or three `bun lint` at once, and twenty tests run at a time. In a debug build that takes
+// longer than the five seconds a test has.
+setDefaultTimeout(isDebug || isASAN ? 60_000 : 5_000);
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -48,7 +54,10 @@ const hasTerminal = (() => {
   }
 })();
 
-/** Runs `bun lint` the way a person does, with stdout and stderr both attached to a terminal. */
+/**
+ * Runs `bun lint` the way a person does, with stdout and stderr both attached to a terminal. `report` is the file
+ * that `-o` names.
+ */
 async function inTerminal(files: Files, args: string[] = [], more: Record<string, string | undefined> = {}) {
   using dir = tempDir("bun-lint-output", files);
   const decoder = new TextDecoder();
@@ -66,7 +75,13 @@ async function inTerminal(files: Files, args: string[] = [], more: Record<string
     },
   });
   const exitCode = await proc.exited;
-  return { output: withoutDirectory(output.replaceAll("\r\n", "\n"), dir), exitCode };
+  const named = args.indexOf("-o") + 1;
+  const report = named > 0 ? await Bun.file(join(String(dir), args[named])).text() : "";
+  return {
+    output: withoutDirectory(output.replaceAll("\r\n", "\n"), dir),
+    exitCode,
+    report: withoutDirectory(report, dir),
+  };
 }
 
 const link = (page: string, text: string) =>
@@ -244,7 +259,7 @@ describe.concurrent("rule names link to their docs pages", () => {
       lint(project, ["-f", format], { FORCE_COLOR: "1" }),
     ]);
     expect(terminal.output).toContain(link("eslint/no-debugger", name));
-    // Apart from the links, it matches colored output in a pipe.
+    // Apart from the links, it matches colored output in a pipe: these files have no control characters.
     expect(piped.stdout).toContain("\x1b[");
     expect(piped.stdout).not.toContain("\x1b]8");
     expect(lines(withoutLinks(terminal.output))).toEqual(lines(piped.stdout + piped.stderr));
@@ -279,6 +294,496 @@ describe.concurrent("rule names link to their docs pages", () => {
       expect(Bun.stripANSI(stdout)).toBe(plain.stdout);
     }
   });
+});
+
+// `stylish` prints a path, a message and a rule name as ESLint or oxlint does. A terminal acts on the control
+// characters in them, so a report that goes to a terminal has them as escape sequences. A pipe and an `-o` file get
+// them as they are.
+describe.concurrent("control characters in stylish", () => {
+  // Each sequence turns off a style that nothing has turned on, so a failure that prints one does no harm. None of
+  // them ends a style of the report: Node's `util.styleText`, which ESLint styles with, rewrites those.
+  const files = {
+    // In two rule names and in two keys. The rule `y` has a tab, and the key `c` the 8-bit form of `ESC [`.
+    "a.js":
+      String.raw`/* eslint "x\u001b[27m": 2, "y\tz": 2 */` +
+      "\n" +
+      String.raw`export default { "a\u001b[49m": 1, "a\u001b[49m": 2, "c\u009b49m": 3, "c\u009b49m": 4, b: 5, b: 6 };` +
+      "\n",
+    // In the name of a file, with a tab.
+    "b\x1b[29m\tc.js": "debugger;\n",
+    "d.js": ";\n",
+  };
+  // In a rule name and a message that the config chooses. The message also has line feeds and a carriage return.
+  // ESLint takes `3 4` on a line for a position and prints `3:4`.
+  const name = "no-restricted-syntax/n\x1b[23m";
+  const options = { selector: "DebuggerStatement", message: "one\n3 4\ntwo\r\x01 5 6" };
+  // A rule name after a message of two lines.
+  const other = "no-restricted-syntax/m\x01 7 8";
+  const otherOptions = { selector: "EmptyStatement", message: "one\ntwo" };
+  const rules = { "no-dupe-keys": "error", [name]: ["error", options], [other]: ["error", otherOptions] };
+  // Three configs with these rules. Only the first is a program, which takes a second to run in a debug build.
+  const forEslint = { ...files, "eslint.config.js": `export default [{ rules: ${JSON.stringify(rules)} }];\n` };
+  const forOxlint = { ...files, ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }) };
+  const withoutConfig = {
+    ...files,
+    "bunfig.toml": [
+      "[lint.rules]",
+      `"no-debugger" = "off"`,
+      `"no-dupe-keys" = "error"`,
+      `${JSON.stringify(name)} = ["error", { selector = "DebuggerStatement", message = ${JSON.stringify(options.message)} }]`,
+      `${JSON.stringify(other)} = ["error", { selector = "EmptyStatement", message = ${JSON.stringify(otherOptions.message)} }]`,
+      "",
+    ].join("\n"),
+  };
+  const stylish = ["-f", "stylish"];
+  const withoutSummary = (text: string) => text.split("\n").filter(line => !line.includes("Linted "));
+
+  // The columns are as wide as what is shown. A message keeps its tabs and line feeds, and a name has none. On a
+  // later line of a message, the digits of an escape sequence are not a position: `5 6` and `7 8` stay.
+  const shownAsEslint = [
+    "",
+    "<dir>/a.js",
+    String.raw`  1:1   error  Definition for rule 'x\x1b[27m' was not found  x\x1b[27m`,
+    "  1:1   error  Definition for rule 'y\tz' was not found        " + String.raw`y\tz`,
+    String.raw`  2:36  error  Duplicate key 'a\x1b[49m'                      no-dupe-keys`,
+    String.raw`  2:71  error  Duplicate key 'c\u009b49m'                     no-dupe-keys`,
+    String.raw`  2:94  error  Duplicate key 'b'                              no-dupe-keys`,
+    "",
+    String.raw`<dir>/b\x1b[29m\tc.js`,
+    "  1:1  error  one",
+    "3:4",
+    String.raw`two\r\x01 5 6  no-restricted-syntax/n\x1b[23m`,
+    "",
+    "<dir>/d.js",
+    "  1:1  error  one",
+    String.raw`two  no-restricted-syntax/m\x01 7 8`,
+    "",
+    "✖ 7 problems (7 errors, 0 warnings)",
+    "",
+    "",
+  ];
+  const shownAsOxlint = [
+    "",
+    "<dir>/a.js",
+    String.raw`  2:18  error  Duplicate key 'a\x1b[49m'  eslint(no-dupe-keys)`,
+    String.raw`  2:54  error  Duplicate key 'c\u009b49m'  eslint(no-dupe-keys)`,
+    "  2:88  error  Duplicate key 'b'  eslint(no-dupe-keys)",
+    "",
+    String.raw`<dir>/b\x1b[29m\tc.js`,
+    "  1:1  error  one",
+    "3 4",
+    String.raw`two\r\x01 5 6  no-restricted-syntax(n\x1b[23m)`,
+    "",
+    "<dir>/d.js",
+    "  1:1  error  one",
+    String.raw`two  no-restricted-syntax(m\x01 7 8)`,
+    "",
+    "✖ 5 problems (5 errors, 0 warnings)",
+    "",
+  ];
+
+  test.skipIf(!hasTerminal)("in a terminal they are escape sequences: ESLint's stylish", async () => {
+    const [plain, noColorFlag, colored] = await Promise.all([
+      inTerminal(withoutConfig, stylish, { NO_COLOR: "1" }),
+      inTerminal(withoutConfig, [...stylish, "--no-color"]),
+      inTerminal(withoutConfig, stylish),
+    ]);
+    expect(withoutSummary(plain.output)).toEqual(shownAsEslint);
+    expect(withoutSummary(noColorFlag.output)).toEqual(shownAsEslint);
+    // With colors, the only sequences are those of the report. The name in a link is escaped too.
+    expect(colored.output).toContain("\x1b[4m<dir>/a.js\x1b[24m");
+    expect(colored.output).toContain(link("eslint/no-restricted-syntax", String.raw`no-restricted-syntax/n\x1b[23m`));
+    expect(withoutSummary(Bun.stripANSI(withoutLinks(colored.output)))).toEqual(shownAsEslint);
+  });
+
+  test.skipIf(!hasTerminal)("in a terminal they are escape sequences: by default with an ESLint config", async () => {
+    const { output } = await inTerminal(forEslint, [], { NO_COLOR: "1" });
+    expect(withoutSummary(output)).toEqual(shownAsEslint);
+  });
+
+  test.skipIf(!hasTerminal)("in a terminal they are escape sequences: oxlint's stylish", async () => {
+    const [plain, colored] = await Promise.all([
+      inTerminal(forOxlint, stylish, { NO_COLOR: "1" }),
+      inTerminal(forOxlint, stylish),
+    ]);
+    expect(withoutSummary(plain.output)).toEqual(shownAsOxlint);
+    expect(colored.output).toContain("\x1b[4m<dir>/a.js\x1b[0m");
+    expect(colored.output).toContain(link("eslint/no-restricted-syntax", String.raw`no-restricted-syntax(n\x1b[23m)`));
+    expect(withoutSummary(Bun.stripANSI(withoutLinks(colored.output)))).toEqual(shownAsOxlint);
+  });
+
+  // What is not a control character, and a tab and a line break of a message.
+  test.skipIf(!hasTerminal)("in a terminal the rest of a path and of a message stays as it is", async () => {
+    const unchanged = {
+      "a.js": String.raw`export default { "\u00e9\u65e5\u672c\u{1F600}": 1, "\u00e9\u65e5\u672c\u{1F600}": 2, "q\"uote\\": 3, "q\"uote\\": 4, "t\tb": 5, "t\tb": 6, "r\r\nn": 7, "r\r\nn": 8 };`,
+      "\u65e5\u672c.js": "debugger;\n",
+    };
+    const args = [...stylish, "--rule", "no-dupe-keys: error"];
+    const [terminal, piped] = await Promise.all([
+      inTerminal(unchanged, args, { NO_COLOR: "1" }),
+      lint(unchanged, args),
+    ]);
+    expect(piped.stdout).toContain("<dir>/\u65e5\u672c.js\n");
+    expect(piped.stdout).toContain("Duplicate key '\u00e9\u65e5\u672c\u{1F600}'");
+    expect(piped.stdout).toContain(String.raw`Duplicate key 'q"uote\'`);
+    expect(piped.stdout).toContain("Duplicate key 't\tb'");
+    expect(piped.stdout).toContain("Duplicate key 'r\r\nn'");
+    expect(withoutSummary(terminal.output)).toEqual(withoutSummary(piped.stdout + piped.stderr));
+  });
+
+  test.skipIf(!hasTerminal)("in a pipe and in an output file they stay as they are: ESLint's stylish", async () => {
+    const [piped, colored, toFile] = await Promise.all([
+      lint(withoutConfig, stylish),
+      lint(withoutConfig, [...stylish, "--color"]),
+      inTerminal(withoutConfig, [...stylish, "-o", "report.txt"]),
+    ]);
+    // The columns are as wide as ESLint counts them: without the sequences. And ESLint finds a position on every line.
+    expect(piped.stdout).toBe(
+      [
+        "",
+        "<dir>/a.js",
+        "  1:1   error  Definition for rule 'x\x1b[27m' was not found    x\x1b[27m",
+        "  1:1   error  Definition for rule 'y\tz' was not found  y\tz",
+        "  2:36  error  Duplicate key 'a\x1b[49m'                        no-dupe-keys",
+        "  2:71  error  Duplicate key 'c\u009b49m'                        no-dupe-keys",
+        "  2:94  error  Duplicate key 'b'                        no-dupe-keys",
+        "",
+        "<dir>/b\x1b[29m\tc.js",
+        "  1:1  error  one",
+        "3:4",
+        "two\r\x01 5:6  no-restricted-syntax/n\x1b[23m",
+        "",
+        "<dir>/d.js",
+        "  1:1  error  one",
+        "two  no-restricted-syntax/m\x01 7:8",
+        "",
+        "✖ 7 problems (7 errors, 0 warnings)",
+        "",
+        "",
+      ].join("\n"),
+    );
+    // With colors, the report has the same bytes between its own sequences.
+    expect(colored.stdout).toContain("Definition for rule 'x\x1b[27m' was not found    \x1b[2mx\x1b[27m\x1b[22m");
+    expect(colored.stdout).toContain("Duplicate key 'a\x1b[49m'                        \x1b[2mno-dupe-keys\x1b[22m\n");
+    expect(colored.stdout).toContain("\x1b[4m<dir>/b\x1b[29m\tc.js\x1b[24m\n");
+    expect(colored.stdout).toContain("two\r\x01 \x1b[2m5:6\x1b[22m  \x1b[2mno-restricted-syntax/n\x1b[23m\x1b[22m\n");
+    // The terminal has colors, and so has the file. The file is not the terminal: the same bytes, and no links.
+    expect(toFile.report + "\n").toBe(colored.stdout);
+  });
+
+  test.skipIf(!hasTerminal)("in a pipe and in an output file they stay as they are: oxlint's stylish", async () => {
+    const [piped, toFile] = await Promise.all([
+      lint(forOxlint, stylish, { NO_COLOR: "1" }),
+      inTerminal(forOxlint, [...stylish, "-o", "report.txt"], { NO_COLOR: "1" }),
+    ]);
+    expect(piped.stdout).toBe(
+      [
+        "",
+        "<dir>/a.js",
+        "  2:18  error  Duplicate key 'a\x1b[49m'  eslint(no-dupe-keys)",
+        "  2:54  error  Duplicate key 'c\u009b49m'  eslint(no-dupe-keys)",
+        "  2:88  error  Duplicate key 'b'  eslint(no-dupe-keys)",
+        "",
+        "<dir>/b\x1b[29m\tc.js",
+        "  1:1  error  one",
+        "3 4",
+        "two\r\x01 5 6  no-restricted-syntax(n\x1b[23m)",
+        "",
+        "<dir>/d.js",
+        "  1:1  error  one",
+        "two  no-restricted-syntax(m\x01 7 8)",
+        "",
+        "✖ 5 problems (5 errors, 0 warnings)",
+        "",
+      ].join("\n"),
+    );
+    expect(toFile.report).toBe(piped.stdout);
+  });
+
+  // Linux takes a file name that is not UTF-8. A terminal that reads 8-bit controls takes the byte 0x9b for `ESC [`.
+  test.skipIf(!hasTerminal || !isLinux)("a byte of a file name that is not UTF-8 is U+FFFD in a terminal", async () => {
+    using dir = tempDir("bun-lint-output", {});
+    const name = Buffer.concat([Buffer.from("a"), Buffer.from([0x9b]), Buffer.from("49m.js")]);
+    writeFileSync(Buffer.concat([Buffer.from(String(dir) + sep), name]), "debugger;\n");
+    const chunks: Uint8Array[] = [];
+    await using toTerminal = spawn({
+      cmd: [bunExe(), "lint", ...stylish],
+      env: { ...env, TERM: "xterm-256color", NO_COLOR: "1" },
+      cwd: String(dir),
+      terminal: { cols: 100, rows: 40, data: (_terminal, chunk) => void chunks.push(chunk.slice()) },
+    });
+    await using toPipe = spawn({
+      cmd: [bunExe(), "lint", ...stylish],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [written] = await Promise.all([toPipe.stdout.bytes(), toPipe.exited, toTerminal.exited]);
+    const shown = Buffer.concat(chunks);
+    // A pipe gets the name as the file system has it.
+    expect(Buffer.from(written).includes(name)).toBe(true);
+    expect(shown.includes(0x9b)).toBe(false);
+    expect(shown.includes(`${sep}a\ufffd49m.js\r\n`)).toBe(true);
+  });
+});
+
+// A parser or a plugin can color what it says when it finds a terminal that has colors. `stylish` in a terminal shows
+// a color code of a message as text, so the realms that run such code have `NO_COLOR=1` and `FORCE_COLOR=0` then.
+describe.concurrent("colors of what a parser or a plugin says", () => {
+  // A realm takes seconds to start in a debug build.
+  const timeout = isDebug || isASAN ? 120_000 : 10_000;
+  // Three ways to decide on colors. Like chalk and like picocolors: once, when the module loads. Like
+  // `util.styleText`: each time. Then the two variables as the realm has them, which every format prints as they are.
+  const says = `
+    const { NO_COLOR, FORCE_COLOR } = process.env;
+    const likeChalk = FORCE_COLOR !== "0" && (FORCE_COLOR !== undefined || process.stdout.isTTY);
+    const likePicocolors = !NO_COLOR && (!!FORCE_COLOR || process.stdout.isTTY);
+    const red = (colors, text) => (colors ? "\\x1b[31m" + text + "\\x1b[39m" : text);
+    const says = () =>
+      "chalk=" + red(likeChalk, "C") + " picocolors=" + red(likePicocolors, "P") +
+      " styleText=" + require("node:util").styleText("red", "T") +
+      " has NO_COLOR=" + process.env.NO_COLOR + " FORCE_COLOR=" + process.env.FORCE_COLOR;`;
+  // A realm of a report that escapes has the two variables. Every other realm has what `bun lint` has.
+  const colorless = "has NO_COLOR=1 FORCE_COLOR=0";
+  const inherited = (FORCE_COLOR?: string) => `has NO_COLOR=undefined FORCE_COLOR=${FORCE_COLOR}`;
+  const plain = `chalk=C picocolors=P styleText=T ${colorless}`;
+  // The first two with colors. The third depends on what stdout is.
+  const colored = "chalk=\x1b[31mC\x1b[39m picocolors=\x1b[31mP\x1b[39m styleText=";
+  const plugin = `${says}
+    const rule = { create: context => ({ Program: node => context.report({ node, message: says() }) }) };
+    module.exports = { meta: { name: "eslint-plugin-demo" }, rules: { says: rule } };`;
+  const project = { "plugin.cjs": plugin, "a.js": "a;\n" };
+  const rules = { "demo/says": "error" };
+  const withEslint = {
+    ...project,
+    "eslint.config.mjs": `import demo from "./plugin.cjs";
+      export default [{ plugins: { demo }, rules: ${JSON.stringify(rules)} }];`,
+  };
+  const oxlintrc = {
+    categories: { correctness: "off" },
+    ignorePatterns: ["plugin.cjs"],
+    jsPlugins: ["./plugin.cjs"],
+    rules,
+  };
+  const withOxlint = { ...project, ".oxlintrc.json": JSON.stringify(oxlintrc) };
+  // No config file: the plugin is one of bunfig.toml.
+  const bunfig = `[lint]\nplugins = ["./plugin.cjs"]\n\n[lint.rules]\n"demo/says" = "error"\n`;
+  const withBunfig = { ...project, "bunfig.toml": bunfig };
+  const stylish = ["-f", "stylish"];
+
+  test.skipIf(!hasTerminal)(
+    "in a terminal stylish has them plain: a plugin's rule, with an ESLint config",
+    async () => {
+      const { output } = await inTerminal(withEslint);
+      // The colors of the report are there.
+      expect(output).toContain(`\x1b[31merror\x1b[39m  ${plain}  \x1b[2mdemo/says\x1b[22m\n`);
+    },
+    timeout,
+  );
+
+  // Like `@babel/eslint-parser`, whose syntax errors quote the code in colors. The `eslint` package lints such a file.
+  test.skipIf(!hasTerminal)(
+    "in a terminal stylish has them plain: a parser's error",
+    async () => {
+      const files = {
+        "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0", main: "index.js" }),
+        "node_modules/eslint/index.js": `
+          exports.Linter = class Linter {
+            verify(text, [config]) {
+              try {
+                config.languageOptions.parser.parseForESLint(text);
+                return [];
+              } catch (error) {
+                return [{ ruleId: null, fatal: true, severity: 2, message: "Parsing error: " + error.message, line: 1, column: 1 }];
+              }
+            }
+            getSuppressedMessages() {
+              return [];
+            }
+          };`,
+        "parser.cjs": `${says}
+          const parseForESLint = () => { throw new SyntaxError(says()); };
+          module.exports = { meta: { name: "a-parser", version: "1.0.0" }, parseForESLint };`,
+        "eslint.config.mjs": `import parser from "./parser.cjs";
+          export default [{ files: ["**/*.vue"], languageOptions: { parser } }];`,
+        "a.vue": "<template />\n",
+      };
+      const { output } = await inTerminal(files, ["a.vue"]);
+      expect(output).toContain(`\x1b[31merror\x1b[39m  Parsing error: ${plain}\n`);
+    },
+    timeout,
+  );
+
+  test.skipIf(!hasTerminal)(
+    "in a terminal stylish has them plain: with an oxlint config, and whatever asks for colors",
+    async () => {
+      const [byDefault, forced] = await Promise.all([
+        inTerminal(withOxlint, stylish),
+        inTerminal(withOxlint, [...stylish, "--color"], { FORCE_COLOR: "1" }),
+      ]);
+      for (const { output } of [byDefault, forced]) {
+        expect(output).toContain(`\x1b[31merror\x1b[0m  ${plain}  \x1b[2mdemo(says)\x1b[0m\n`);
+      }
+    },
+    timeout,
+  );
+
+  // These plugins load before a config file's own, so the first realm of the run starts for them.
+  test.skipIf(!hasTerminal)(
+    "in a terminal stylish has them plain: a plugin of --plugin and of bunfig.toml",
+    async () => {
+      const { jsPlugins: _, ...withoutPlugins } = oxlintrc;
+      const [flag, listed] = await Promise.all([
+        inTerminal({ ...project, ".oxlintrc.json": JSON.stringify(withoutPlugins) }, [
+          ...stylish,
+          "--plugin",
+          "./plugin.cjs",
+          "a.js",
+        ]),
+        inTerminal(withBunfig, [...stylish, "a.js"]),
+      ]);
+      expect(flag.output).toContain(`  ${plain}  `);
+      expect(listed.output).toContain(`  ${plain}  `);
+    },
+    timeout,
+  );
+
+  // Every realm of a run has the same variables, also one that starts later.
+  test.skipIf(!hasTerminal)(
+    "in a terminal stylish has them plain: in every realm",
+    async () => {
+      const files: Files = {
+        ...withOxlint,
+        "realms/.keep": "",
+        // A realm stays with its first file until another realm has a file too, so the run has more than one.
+        "plugin.cjs": `${says}
+          const { readdirSync, writeFileSync } = require("node:fs");
+          const realms = require("node:path").join(__dirname, "realms");
+          let isFirst = true;
+          const rule = {
+            create: context => ({
+              Program(node) {
+                if (isFirst) {
+                  isFirst = false;
+                  writeFileSync(require("node:path").join(realms, crypto.randomUUID()), "");
+                  const end = Date.now() + 20_000;
+                  while (readdirSync(realms).length < 3 && Date.now() < end) Bun.sleepSync(2);
+                }
+                context.report({ node, message: says() });
+              },
+            }),
+          };
+          module.exports = { meta: { name: "eslint-plugin-demo" }, rules: { says: rule } };`,
+      };
+      // 24 files of 250 KB are worth three realms.
+      const text = `a;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
+      for (let i = 0; i < 24; i++) files[`src/${i}.js`] = text;
+      // How many realms fit depends on the machine's free memory, so it is given.
+      const memory = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
+      const { output } = await inTerminal(files, [...stylish, "--timing", "--threads", "8", "src"], memory);
+      expect(Number(/JavaScript: (\d+) engines/.exec(Bun.stripANSI(output))?.[1])).toBeGreaterThan(1);
+      expect(output.split(`  ${plain}  `)).toHaveLength(24 + 1);
+    },
+    timeout,
+  );
+
+  // The global `console` of a worker is a `Console`, which colors what it logs if `FORCE_COLOR` says so.
+  test.skipIf(!hasTerminal)(
+    "in a terminal stylish has them plain: what a worker of a plugin logs",
+    async () => {
+      const files = {
+        "plugin.mjs": `
+          import { once } from "node:events";
+          import { Worker } from "node:worker_threads";
+          const worker = new Worker("console.log({ a: 1 })", { eval: true, stdout: true });
+          let logged = "";
+          worker.stdout.setEncoding("utf8").on("data", chunk => (logged += chunk));
+          await once(worker, "exit");
+          const rule = { create: context => ({ Program: node => context.report({ node, message: "logged " + logged.trim() }) }) };
+          export default { meta: { name: "eslint-plugin-demo" }, rules: { says: rule } };`,
+        ".oxlintrc.json": JSON.stringify({ ...oxlintrc, ignorePatterns: ["plugin.mjs"], jsPlugins: ["./plugin.mjs"] }),
+        "a.js": "a;\n",
+      };
+      const { output } = await inTerminal(files, stylish);
+      expect(output).toContain("  logged { a: 1 }  ");
+    },
+    timeout,
+  );
+
+  // The working directory decides the format, and so what the realms of the run have: here it has no config.
+  test.skipIf(!hasTerminal)(
+    "a config below a directory without one: pretty leaves its plugin the variables, and stylish does not",
+    async () => {
+      const nested = Object.fromEntries(Object.entries(withEslint).map(([name, text]) => [`packages/a/${name}`, text]));
+      const [byDefault, asStylish] = await Promise.all([inTerminal(nested), inTerminal(nested, stylish)]);
+      expect(byDefault.output).toContain(inherited());
+      expect(asStylish.output).toContain(`  ${plain}  `);
+    },
+    timeout,
+  );
+
+  // The format is then ESLint's `stylish`, whatever the configs below are.
+  test.skipIf(!hasTerminal)(
+    "a working directory whose config can't be read: stylish has them plain",
+    async () => {
+      const files = {
+        ".oxlintrc.json": "{",
+        ...Object.fromEntries(Object.entries(withOxlint).map(([name, text]) => [`sub/${name}`, text])),
+      };
+      const { output } = await inTerminal(files, ["sub/a.js"]);
+      expect(output).toContain(`\x1b[31merror\x1b[39m  ${plain}  `);
+    },
+    timeout,
+  );
+
+  // A rule that throws ends the run. Its error is not part of the report, but it is what the same realm says.
+  test.skipIf(!hasTerminal)(
+    "in a terminal the error of a rule that throws has them plain too",
+    async () => {
+      const files = {
+        ...withBunfig,
+        "plugin.cjs": `${says}
+          const rule = { create: () => ({ Program() { throw new Error(says()); } }) };
+          module.exports = { meta: { name: "eslint-plugin-demo" }, rules: { says: rule } };`,
+      };
+      const { output, exitCode } = await inTerminal(files, [...stylish, "a.js"]);
+      expect(Bun.stripANSI(output)).toContain(`error: ${plain}\nOccurred while linting <dir>/a.js:1\n`);
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  // The realms of every other report have the variables of `bun lint`.
+  const others: [name: string, files: Files, args: string[], FORCE_COLOR: string | undefined][] = [
+    ["json, without a config", withBunfig, ["-f", "json"], undefined],
+    ["the default format with an oxlint config", withOxlint, [], undefined],
+    ["pretty, without a config", withBunfig, [], "1"],
+  ];
+  test.skipIf(!hasTerminal).each(others)(
+    "in a terminal they are not turned off: %s",
+    async (_name, files, args, FORCE_COLOR) => {
+      const { output } = await inTerminal(files, args, { FORCE_COLOR });
+      expect(output).toContain(inherited(FORCE_COLOR));
+    },
+    timeout,
+  );
+
+  // `stylish` in a pipe and in a file has what the plugin says as it is, byte for byte.
+  test.skipIf(!hasTerminal)(
+    "they stay in stylish in a pipe and in an output file",
+    async () => {
+      const [piped, toFile] = await Promise.all([
+        lint(withOxlint, stylish, { FORCE_COLOR: "1" }),
+        inTerminal(withOxlint, [...stylish, "-o", "report.txt"]),
+      ]);
+      expect(piped.stdout).toContain(`  ${colored}`);
+      expect(piped.stdout).toContain(`${inherited("1")}  `);
+      expect(toFile.report).toContain(`  ${colored}`);
+      expect(toFile.report).toContain(`${inherited()}  `);
+    },
+    timeout,
+  );
 });
 
 describe.concurrent("--fix prints what it fixed", () => {

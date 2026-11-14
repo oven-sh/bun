@@ -818,3 +818,47 @@ function extractCssUrl(backgroundImage: string): string {
   }
   return url[2];
 }
+
+// The stale bitset grows in steps of 512 bits. A css asset registered during
+// the first bundle used to grow it with the new bits set, which marked every
+// already received module past index 512 as stale. The next hot update then
+// resent those modules even though they did not change.
+devTest("first hot update does not resend unchanged imports in a graph with more than 512 files and css", {
+  files: (() => {
+    const count = 700;
+    const files: Record<string, string> = {
+      "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+      "main.ts": `
+        import "./style.css";
+        import { total } from "./gen/index.ts";
+        console.log("total " + total);
+        import.meta.hot.accept();
+      `,
+      "style.css": `body { margin: 0; }`,
+      "gen/h.ts": `export const h = 1;`,
+      "gen/last.ts": `import { h } from "./h.ts";\nexport const last = h; // v0\n`,
+    };
+    let imports = `import { last } from "./last.ts";\n`;
+    const sum = ["last"];
+    for (let i = 0; i < count; i++) {
+      files[`gen/g${i}.ts`] = `export const g${i} = ${i};\n`;
+      imports += `import { g${i} } from "./g${i}.ts";\n`;
+      sum.push(`g${i}`);
+    }
+    files["gen/index.ts"] = imports + `export const total = ${sum.join(" + ")};\n`;
+    return files;
+  })(),
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    const total = "total " + (1 + (699 * 700) / 2);
+    await c.expectMessage(total);
+
+    for (const v of ["v1", "v2"]) {
+      await dev.write("gen/last.ts", `import { h } from "./h.ts";\nexport const last = h; // ${v}\n`);
+      const chunk = await c.getMostRecentHmrChunk();
+      const modules = [...chunk.matchAll(/"([^"]+\.ts)"\s*:/g)].map(m => m[1]);
+      expect(modules).toEqual(["gen/last.ts"]);
+      await c.expectMessage(total);
+    }
+  },
+});

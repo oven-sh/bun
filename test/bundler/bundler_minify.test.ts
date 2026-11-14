@@ -1096,6 +1096,43 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
+  for (const [suffix, options] of [
+    ["", {}],
+    ["NoBundle", { bundling: false }],
+    ["MinifySyntax", { minifySyntax: true }],
+  ] as const) {
+    // With HMR off, `import.meta.hot` is `undefined`, so `?.` skips the rest of the chain.
+    itBundled(`minify/ImportMetaHotOptionalChain${suffix}`, {
+      files: {
+        "/entry.ts": `
+          const fail = () => {
+            throw new Error("evaluated");
+          };
+          import.meta.hot?.accept(fail);
+          const chains = [
+            import.meta.hot?.data,
+            import.meta.hot?.data.cache.get(1),
+            import.meta.hot?.data.list.length,
+            import.meta.hot?.data.stop(),
+            import.meta.hot?.on("event", fail).x,
+            import.meta.hot?.on("event", fail)[fail()](fail()),
+            import.meta.hot?.accept.call(null, fail),
+            import.meta.hot?.accept?.(fail()).x,
+            import.meta.hot?.acceptExports(["x"], fail),
+          ];
+          console.log(chains.length, chains.every(value => value === undefined));
+          console.log(
+            import.meta.hot?.data ?? "fallback",
+            typeof import.meta.hot?.future,
+            delete import.meta.hot?.accept,
+          );
+        `,
+      },
+      ...options,
+      outfile: "/out.js",
+      run: { stdout: "9 true\nfallback undefined true" },
+    });
+  }
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `
@@ -2076,6 +2113,42 @@ test("runtime transpiler does not collapse single-return arrow bodies", async ()
   expect(noArgs).toContain("return 42");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// HMR is off in the runtime transpiler, so `import.meta.hot` is `undefined` and `?.` skips the rest of the chain.
+test("runtime transpiler keeps the short circuit of an optional chain on import.meta.hot", async () => {
+  using dir = tempDir("import-meta-hot-optional", {
+    "index.ts": /* ts */ `
+      const fail = () => {
+        throw new Error("evaluated");
+      };
+      import.meta.hot?.accept(fail);
+      const chains = [
+        import.meta.hot?.data.cache.get(1),
+        import.meta.hot?.data.list.length,
+        import.meta.hot?.data.stop(),
+        import.meta.hot?.on("event", fail).x,
+        import.meta.hot?.accept.call(null, fail),
+        import.meta.hot?.acceptExports(["x"], fail),
+      ];
+      console.log(chains.join(), import.meta.hot?.data ?? "fallback", typeof import.meta.hot?.future);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: ",,,,, fallback undefined\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // `Bun.Transpiler` prints through the same path as `bun build --no-bundle`.

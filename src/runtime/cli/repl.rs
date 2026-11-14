@@ -2149,8 +2149,7 @@ impl<'a> Repl<'a> {
         // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a
         // hoisted `var` + assignment for cross-input persistence, which would
         // silently discard disposal semantics if `using` declarations survived
-        // until that pass. Lowering wraps the declaration in `try/finally` first,
-        // which the REPL transform passes through intact.
+        // until that pass. Lowering wraps the declaration in `try/finally` first.
 
         // Initialize macro context from transpiler (required for import processing).
         vm.transpiler.with_mut(|t| {

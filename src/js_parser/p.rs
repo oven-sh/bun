@@ -10175,12 +10175,34 @@ impl LowerUsingDeclarationsContext {
             loc,
         );
         let stack_init = p.new_expr(E::Array::default(), loc);
+        // Block-scoped with the stack: a loop iteration must not see the previous iteration's error.
+        let err_binding = p.b(B::Identifier { r#ref: err_ref }, loc);
+        let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
+        let mut block_decls = bun_alloc::AstAlloc::vec();
+        VecExt::append(
+            &mut block_decls,
+            Decl {
+                binding: stack_binding,
+                value: Some(stack_init),
+            },
+        );
+        VecExt::append(
+            &mut block_decls,
+            Decl {
+                binding: err_binding,
+                value: None,
+            },
+        );
+        VecExt::append(
+            &mut block_decls,
+            Decl {
+                binding: has_err_binding,
+                value: None,
+            },
+        );
         result.push(p.s(
             S::Local {
-                decls: G::DeclList::init_one(Decl {
-                    binding: stack_binding,
-                    value: Some(stack_init),
-                }),
+                decls: block_decls,
                 kind: js_ast::s::Kind::KLet,
                 ..Default::default()
             },
@@ -10188,7 +10210,16 @@ impl LowerUsingDeclarationsContext {
         ));
         let catch_binding = p.b(B::Identifier { r#ref: caught_ref }, loc);
         let catch_body: js_ast::StmtNodeList = {
-            let err_binding = p.b(B::Identifier { r#ref: err_ref }, loc);
+            // _err = _catch, _hasErr = 1;
+            p.record_usage(err_ref);
+            p.record_usage(has_err_ref);
+            let err_target = p.new_expr(
+                E::Identifier {
+                    ref_: err_ref,
+                    ..Default::default()
+                },
+                loc,
+            );
             let err_value = p.new_expr(
                 E::Identifier {
                     ref_: caught_ref,
@@ -10196,26 +10227,41 @@ impl LowerUsingDeclarationsContext {
                 },
                 loc,
             );
-            let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
-            let has_err_value = p.new_expr(E::Number::new(1.0), loc);
-            let mut decls = bun_alloc::AstAlloc::vec();
-            VecExt::append(
-                &mut decls,
-                Decl {
-                    binding: err_binding,
-                    value: Some(err_value),
+            let assign_err = p.new_expr(
+                E::Binary {
+                    op: js_ast::op::Code::BinAssign,
+                    left: err_target,
+                    right: err_value,
                 },
+                loc,
             );
-            VecExt::append(
-                &mut decls,
-                Decl {
-                    binding: has_err_binding,
-                    value: Some(has_err_value),
+            let has_err_target = p.new_expr(
+                E::Identifier {
+                    ref_: has_err_ref,
+                    ..Default::default()
                 },
+                loc,
+            );
+            let has_err_value = p.new_expr(E::Number::new(1.0), loc);
+            let assign_has_err = p.new_expr(
+                E::Binary {
+                    op: js_ast::op::Code::BinAssign,
+                    left: has_err_target,
+                    right: has_err_value,
+                },
+                loc,
+            );
+            let comma = p.new_expr(
+                E::Binary {
+                    op: js_ast::op::Code::BinComma,
+                    left: assign_err,
+                    right: assign_has_err,
+                },
+                loc,
             );
             let stmt0 = p.s(
-                S::Local {
-                    decls,
+                S::SExpr {
+                    value: comma,
                     ..Default::default()
                 },
                 loc,

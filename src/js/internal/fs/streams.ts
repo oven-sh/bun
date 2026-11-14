@@ -33,6 +33,8 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kStdinOf]?: unknown;
+  [kHasExitedBeforeFirstPoll]?: (subprocess: any) => boolean;
 };
 type FD = number;
 
@@ -46,6 +48,9 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The Subprocess whose stdin the stream is, and the question that child_process hands over to ask about it.
+const kStdinOf = Symbol("kStdinOf");
+const kHasExitedBeforeFirstPoll = Symbol("kHasExitedBeforeFirstPoll");
 const kFs = Symbol("kFs");
 
 const {
@@ -821,6 +826,23 @@ writeStreamPrototype._destroy = function (err, cb) {
   }
 };
 
+// _destroy of a child's stdin: no 'error' for the EPIPE of a child whose exit the event loop has yet to report (has_exited_before_first_poll, subprocess.rs).
+function destroyStdinOfChild(this: FSStream, err: any, cb: (err?: Error | null) => void) {
+  const child = this[kStdinOf];
+  const hasExitedBeforeFirstPoll = this[kHasExitedBeforeFirstPoll]!;
+  // A stream is destroyed once. It asks no more, and it must not keep the Subprocess.
+  this[kStdinOf] = this[kHasExitedBeforeFirstPoll] = undefined;
+  // Asked ahead of the sink.end() of the _destroy below: the answer reads the sink. ECONNRESET stays an 'error', as in node.
+  if (err?.code === "EPIPE" && hasExitedBeforeFirstPoll(child)) err = null;
+  try {
+    writeStreamPrototype._destroy.$call(this, err, cb);
+  } catch (e) {
+    // destroy() sends what a write() left in the sink, and that send fails the same way.
+    if (e?.code !== "EPIPE" || !hasExitedBeforeFirstPoll(child)) throw e;
+    cb(err);
+  }
+}
+
 writeStreamPrototype.close = function (this: FSStream, cb) {
   if (cb) {
     if (this.closed) {
@@ -869,7 +891,8 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   }
 }
 
-function writableFromFileSink(fileSink: any) {
+// `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program and must not name a binding of Bun.spawn.
+function writableFromFileSink(fileSink: any, stdinOf: unknown, hasExitedBeforeFirstPoll: (subprocess: any) => boolean) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
@@ -877,6 +900,9 @@ function writableFromFileSink(fileSink: any) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  w[kStdinOf] = stdinOf;
+  w[kHasExitedBeforeFirstPoll] = hasExitedBeforeFirstPoll;
+  w._destroy = destroyStdinOfChild;
   return w;
 }
 

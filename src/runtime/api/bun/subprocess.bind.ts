@@ -79,3 +79,11 @@ export const injectStdioReadError = b.fn({
   throws: true,
 });
 export const closeStdinWriter = b.fn({ args: { subprocess: Subprocess }, returns: b.bool, capability: "js" });
+
+/** For `node:child_process`: the child has exited, and the event loop has started no poll since the spawn in which to report that. Reaps nothing. */
+export const hasExitedBeforeFirstPoll = b.fn({
+  args: { subprocess: Subprocess },
+  returns: b.bool,
+  capability: "js",
+  rustPath: "crate::api::bun::subprocess::has_exited_before_first_poll",
+});

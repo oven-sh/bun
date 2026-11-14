@@ -236,6 +236,47 @@ impl Process {
         matches!(self.status(), Some(Status::Exited(_) | Status::Signaled(_)))
     }
 
+    /// The child has exited and the loop has yet to report it. Reaps nothing. False where a thread waits for the child, and on FreeBSD (not wired).
+    #[cfg(unix)]
+    pub fn has_unreported_exit(&self) -> bool {
+        if self.has_exited() {
+            return false;
+        }
+        let Poller::Fd(poll) = self.poller.get() else {
+            return false;
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // What the poll of the loop watches is the pidfd: readable means that the next poll reports the exit.
+            // SAFETY: the poller holds a live poll.
+            let pidfd = unsafe { poll.as_ref() }.fd;
+            bun_core::is_readable(pidfd) != bun_core::Pollable::NotReady
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = poll;
+            // `proc_pidinfo` fails with ESRCH once the exit has begun, and the descriptors of the child close after that.
+            let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
+            let size = core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>() as c_int;
+            // SAFETY: `info` is writable for `size` bytes.
+            let written = unsafe {
+                bun_sys::c::proc_pidinfo(
+                    self.pid,
+                    bun_sys::c::PROC_PIDTBSDINFO,
+                    0,
+                    core::ptr::from_mut(&mut info).cast(),
+                    size,
+                )
+            };
+            written != size && bun_sys::last_errno() == libc::ESRCH
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        {
+            let _ = poll;
+            false
+        }
+    }
+
     /// Takes the ref that the callback of a poll or of a closing handle adopts.
     #[inline]
     fn ref_(&self) {

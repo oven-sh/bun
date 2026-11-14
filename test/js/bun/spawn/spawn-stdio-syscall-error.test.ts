@@ -313,6 +313,29 @@ child.on("close", () => {
 });
 `;
 
+// node:child_process: the first send to the stdin of a child that has exited, from the first setImmediate. The event
+// loop has not reported the exit yet, and for an EPIPE child.stdin then closes with no 'error'
+// (test/js/node/child_process/child-process-stdio.test.js). It does that for no other errno.
+const CHILD_PROCESS_STDIN_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+const events = [];
+const child = spawn("sleep", ["30"], { stdio: ["pipe", "ignore", "ignore"] });
+child.stdin.on("error", e => events.push("stdin.error:" + e.code));
+child.stdin.on("close", () => events.push("stdin.close"));
+child.on("close", () => console.log(JSON.stringify({ events })));
+process.kill(child.pid, "SIGKILL");
+// A zombie with one thread left has exited. The loop, which reports that, does not run while this waits.
+const pause = new Int32Array(new SharedArrayBuffer(4));
+for (const deadline = Date.now() + 20_000; ; Atomics.wait(pause, 0, 0, 1)) {
+  if (Date.now() > deadline) throw new Error("the child did not exit");
+  const stat = readFileSync("/proc/" + child.pid + "/stat", "latin1");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  if (fields[0] === "Z" && fields[17] === "1") break;
+}
+setImmediate(() => child.stdin.end(Buffer.alloc(65536)));
+`;
+
 // The writer holds its bytes until the parent says "go". By then the parent's first read has found the socket
 // empty and is parked, so the bytes come in through the poll: one pass that reads "hello" and asks again.
 const GO_WRITER_CMD = ["sh", "-c", "read go; printf hello; read done"];
@@ -390,6 +413,7 @@ beforeAll(async () => {
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
+    "child-process-stdin.mjs": CHILD_PROCESS_STDIN_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -582,6 +606,21 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
       });
     });
   });
+
+  // With no fault the same send fails with EPIPE, and the stream closes with no 'error'.
+  test.concurrent(
+    "node:child_process: stdin of a child that has exited reports a write error that is not EPIPE",
+    async () => {
+      const [enobufs, epipe] = await Promise.all([
+        runWithFault("child-process-stdin.mjs", { SPAWN_FAULT_SEND_AT: "1" }),
+        runWithFault("child-process-stdin.mjs", {}),
+      ]);
+      expect({ enobufs, epipe }).toEqual({
+        enobufs: { parsed: { events: ["stdin.error:ENOBUFS", "stdin.close"] }, stderr: "", exitCode: 0 },
+        epipe: { parsed: { events: ["stdin.close"] }, stderr: "", exitCode: 0 },
+      });
+    },
+  );
 
   describe.each([
     ["the first write", "1"],

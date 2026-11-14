@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 ba8c53a1b4e5c2924642955b29156ac2df5684b75013cf79bed7d544d0b4338d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -97,6 +97,8 @@ declare global {
       bytesWritten: number;
       destroySoon: Writable["end"];
       [kWriteMonkeyPatchDefense]?: boolean;
+      [kStdinOf]?: unknown;
+      [kHasExitedBeforeFirstPoll]?: (subprocess: any) => boolean;
     }
   }
 }
@@ -112,6 +114,9 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The Subprocess whose stdin the stream is, and the question that child_process hands over to ask about it.
+const kStdinOf = Symbol("kStdinOf");
+const kHasExitedBeforeFirstPoll = Symbol("kHasExitedBeforeFirstPoll");
 const kFs = Symbol("kFs");
 
 let FileHandle: FileHandleInternals["FileHandle"] | undefined;
@@ -991,6 +996,23 @@ writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | 
   }
 };
 
+// _destroy of a child's stdin: no 'error' for the EPIPE of a child whose exit the event loop has yet to report (has_exited_before_first_poll, subprocess.rs).
+function destroyStdinOfChild(this: $Node.WriteStream, err: any, cb: ErrorCallback) {
+  const child = this[kStdinOf];
+  const hasExitedBeforeFirstPoll = this[kHasExitedBeforeFirstPoll]!;
+  // A stream is destroyed once. It asks no more, and it must not keep the Subprocess.
+  this[kStdinOf] = this[kHasExitedBeforeFirstPoll] = undefined;
+  // Asked ahead of the sink.end() of the _destroy below: the answer reads the sink. ECONNRESET stays an 'error', as in node.
+  if (err?.code === "EPIPE" && hasExitedBeforeFirstPoll(child)) err = null;
+  try {
+    writeStreamPrototype._destroy.$call(this, err, cb);
+  } catch (e: any) {
+    // destroy() sends what a write() left in the sink, and that send fails the same way.
+    if (e?.code !== "EPIPE" || !hasExitedBeforeFirstPoll(child)) throw e;
+    cb(err);
+  }
+}
+
 writeStreamPrototype.close = function (this: $Node.WriteStream, cb?: ErrorCallback) {
   if (cb) {
     if (this.closed) {
@@ -1039,7 +1061,12 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
   }
 }
 
-function writableFromFileSink(fileSink: FileSink) {
+// `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program and must not name a binding of Bun.spawn.
+function writableFromFileSink(
+  fileSink: FileSink,
+  stdinOf: unknown,
+  hasExitedBeforeFirstPoll: (subprocess: any) => boolean,
+) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
@@ -1047,6 +1074,9 @@ function writableFromFileSink(fileSink: FileSink) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  w[kStdinOf] = stdinOf;
+  w[kHasExitedBeforeFirstPoll] = hasExitedBeforeFirstPoll;
+  w._destroy = destroyStdinOfChild;
   return w;
 }
 

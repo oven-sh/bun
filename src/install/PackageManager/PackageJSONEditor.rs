@@ -701,15 +701,15 @@ pub(crate) fn record_catalog_originals(
 
     let dependencies = lockfile.buffers.dependencies.iter();
     for (dep, &package_id) in dependencies.zip(lockfile.buffers.resolutions.iter()) {
-        if dep.version.tag != dependency::Tag::Catalog {
+        let dependency::Value::Catalog(catalog) = &dep.version.value else {
             continue;
-        }
+        };
         let resolution = package_resolutions.get(package_id as usize);
         let Some(resolution) = resolution.filter(|r| r.tag == resolution::Tag::Npm) else {
             continue;
         };
         let dep_name = dep.name.slice(string_buf);
-        let catalog_name = dep.version.catalog().slice(string_buf);
+        let catalog_name = catalog.slice(string_buf);
         let Some(info) = by_name
             .pick(infos, dep_name, catalog_name)
             .map(|i| &infos[i])
@@ -840,11 +840,14 @@ fn resolve_catalog_literals(
         .iter()
         .zip(lockfile.buffers.resolutions.iter())
     {
-        if dep.version.tag != dependency::Tag::Catalog || package_id == INVALID_PACKAGE_ID {
+        let dependency::Value::Catalog(catalog) = &dep.version.value else {
+            continue;
+        };
+        if package_id == INVALID_PACKAGE_ID {
             continue;
         }
 
-        let catalog_name = dep.version.catalog().slice(string_buf);
+        let catalog_name = catalog.slice(string_buf);
         let Some(index) = by_name
             .pick(infos, dep.name.slice(string_buf), catalog_name)
             .filter(|&index| infos[index].new_version_literal.is_none())
@@ -874,12 +877,14 @@ fn resolve_catalog_literals(
         let exact_versions = exact_versions
             && !lockfile.buffers.dependencies.iter().any(|row| {
                 row.behavior.is_peer()
-                    && row.version.tag == dependency::Tag::Catalog
-                    && by_name.pick(
-                        infos,
-                        row.name.slice(string_buf),
-                        row.version.catalog().slice(string_buf),
-                    ) == Some(index)
+                    && matches!(
+                        &row.version.value,
+                        dependency::Value::Catalog(catalog) if by_name.pick(
+                            infos,
+                            row.name.slice(string_buf),
+                            catalog.slice(string_buf),
+                        ) == Some(index)
+                    )
             });
         if let Some(new_literal) = updated_version_literal(
             &infos[index].original_version_literal,
@@ -1195,11 +1200,11 @@ pub(crate) fn edit(
                                 if request.e_string.is_none()
                                     && !request.is_aliased
                                     && (!move_to_target || list == dependency_list)
-                                    && (request.version.tag == dependency::Tag::Github
-                                        || request.version.tag == dependency::Tag::Git
-                                        || request.version.tag == dependency::Tag::Tarball
-                                        || request.version.tag == dependency::Tag::Folder
-                                        || request.version.tag == dependency::Tag::Symlink)
+                                    && (request.version.tag() == dependency::Tag::Github
+                                        || request.version.tag() == dependency::Tag::Git
+                                        || request.version.tag() == dependency::Tag::Tarball
+                                        || request.version.tag() == dependency::Tag::Folder
+                                        || request.version.tag() == dependency::Tag::Symlink)
                                 {
                                     for item in query
                                         .expr
@@ -1455,14 +1460,14 @@ pub(crate) fn edit(
                 let requested: &[u8] = request.version.literal.slice(request.version_buf());
                 // A bare `bun update <name>` parses as an empty dist-tag; `<name>@<tag>` is an explicit request.
                 let explicit_dist_tag =
-                    request.version.tag == dependency::Tag::DistTag && !requested.is_empty();
+                    request.version.tag() == dependency::Tag::DistTag && !requested.is_empty();
                 let mut version_literal: &[u8] = match existing {
                     Some(existing)
-                        if request.version.tag != dependency::Tag::Npm && !explicit_dist_tag =>
+                        if request.version.tag() != dependency::Tag::Npm && !explicit_dist_tag =>
                     {
                         existing
                     }
-                    _ => match request.version.tag {
+                    _ => match request.version.tag() {
                         dependency::Tag::Uninitialized => b"latest",
                         _ => requested,
                     },
@@ -1484,14 +1489,14 @@ pub(crate) fn edit(
                     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                     // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
                     if manager.subcommand == Subcommand::Update
-                        && request.version.tag == dependency::Tag::DistTag
+                        && request.version.tag() == dependency::Tag::DistTag
                         && !update_to_latest
                     {
                         break 'npm arena_dup(arena, installed);
                     }
                     if manager.subcommand == Subcommand::Update
                         && matches!(
-                            request.version.tag,
+                            request.version.tag(),
                             dependency::Tag::DistTag | dependency::Tag::Npm
                         )
                     {
@@ -1537,11 +1542,11 @@ pub(crate) fn edit(
                     // `foo@npm:bar` (no version part) is saved like `foo` would be: `npm:bar@^<resolved>`.
                     let bare_alias =
                         split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
-                    if request.version.tag == dependency::Tag::DistTag
+                    if request.version.tag() == dependency::Tag::DistTag
                         || bare_alias
                         || ((manager.subcommand == Subcommand::Update || options.exact_versions)
-                            && request.version.tag == dependency::Tag::Npm
-                            && !request.version.npm().version.is_exact())
+                            && (request.version.try_npm())
+                                .is_some_and(|npm| !npm.version.is_exact()))
                     {
                         let mut new_version = Vec::new();
                         write!(

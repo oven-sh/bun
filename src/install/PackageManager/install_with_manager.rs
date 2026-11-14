@@ -545,7 +545,7 @@ pub fn install_with_manager(
                         reresolve_owned_rows(manager, &pinned_rows, |dependency| {
                             all_name_hashes.binary_search(&dependency.name_hash).is_ok()
                                 || (catalogs_changed
-                                    && dependency.version.tag == DependencyVersionTag::Catalog)
+                                    && dependency.version.tag() == DependencyVersionTag::Catalog)
                                 || catalog_overridden
                                     .binary_search(&dependency.name_hash)
                                     .is_ok()
@@ -1984,8 +1984,8 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
         debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
         for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-            if dep.version.tag != DependencyVersionTag::Npm
-                && dep.version.tag != DependencyVersionTag::DistTag
+            if dep.version.tag() != DependencyVersionTag::Npm
+                && dep.version.tag() != DependencyVersionTag::DistTag
             {
                 continue;
             }
@@ -1995,7 +1995,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 
             let name = dep.name.slice(&lockfile.buffers.string_bytes);
             let entry_ptr = if register_rows {
-                if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
+                if dep.version.tag() == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }
                 let entry = updating_packages.get_or_put(name).unwrap_or_oom();

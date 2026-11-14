@@ -192,7 +192,7 @@ test("Bun.build inlines the env values from when it was called", async () => {
 // and `bun test` starts with NODE_ENV=test.
 async function runBuildScript(cwd: string, env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build.ts"],
+    cmd: [bunExe(), "build-fixture.ts"],
     cwd,
     env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, ...env },
     stdout: "pipe",
@@ -206,7 +206,7 @@ async function runBuildScript(cwd: string, env: Record<string, string | undefine
   return { printed, stderr, exitCode };
 }
 
-// build.ts of the fixtures: one Bun.build per named set of options, then `pick` reads each result.
+// For the build-fixture.ts of a test: one Bun.build per named set of options, then `pick` reads each result.
 const buildEachVariant = /* ts */ `
   const firstLog = text => text.split("\\n").find(line => line.startsWith("console.log("));
   async function buildEach(base, variants, pick = async result => firstLog(await result.outputs[0].text())) {
@@ -228,7 +228,7 @@ describe("Bun.build env", () => {
     test.concurrent(`each value of the option, built with NODE_ENV ${nodeEnv ?? "unset"}`, async () => {
       using dir = tempDir("bun-build-env-values", {
         "a.js": source,
-        "build.ts": /* ts */ `
+        "build-fixture.ts": /* ts */ `
           ${buildEachVariant}
           const out = {};
           for (const target of ["browser", "bun", "node"]) {
@@ -284,7 +284,7 @@ describe("Bun.build env", () => {
     using dir = tempDir("bun-build-env-disable-options", {
       "a.js": source,
       "brackets.js": `console.log(process.env["NODE_ENV"], process.env["BUN_ENV"], process["browser"]);`,
-      "build.ts": /* ts */ `
+      "build-fixture.ts": /* ts */ `
         ${buildEachVariant}
         const edit = change => ({ name: "edit-env", setup: build => change(build.config) });
         const out = await buildEach({ entrypoints: ["./a.js"], target: "node" }, {
@@ -331,6 +331,7 @@ describe("Bun.build env", () => {
     `,
   };
   const jsxBuildScript = /* ts */ `
+    import { readFileSync } from "node:fs";
     ${buildEachVariant}
     const calls = text => (text.includes("jsxDEV(") ? "jsxDEV" : text.includes("jsx(") ? "jsx" : "neither");
     const build = variants =>
@@ -339,7 +340,7 @@ describe("Bun.build env", () => {
     const cli = (outdir, ...flags) => {
       const { stderr, exitCode } = Bun.spawnSync({ cmd: [process.execPath, "build", ...flags, "--target=bun", "./app.jsx", "--outdir=" + outdir], env: process.env });
       if (exitCode !== 0) throw new Error("bun build exited with " + exitCode + ": " + stderr);
-      return calls(require("fs").readFileSync(outdir + "/app.js", "utf8"));
+      return calls(readFileSync(outdir + "/app.js", "utf8"));
     };
     // What the bundle prints, but only for a run that also exits with 0 and writes nothing to stderr.
     const run = (file, NODE_ENV) => {
@@ -354,7 +355,7 @@ describe("Bun.build env", () => {
     async () => {
       using dir = tempDir("bun-build-env-disable-jsx", {
         ...react,
-        "build.ts": /* ts */ `
+        "build-fixture.ts": /* ts */ `
         ${jsxBuildScript}
         const out = await build({
           "absent": {},
@@ -413,14 +414,14 @@ describe("Bun.build env", () => {
       ...Object.fromEntries(
         Object.entries({ ...react, ...tsconfig("react-jsxdev") }).map(([k, v]) => ["react-jsxdev/" + k, v]),
       ),
-      "react-jsx/build.ts": /* ts */ `
+      "react-jsx/build-fixture.ts": /* ts */ `
         ${jsxBuildScript}
         console.log(JSON.stringify(await build({
           '"disable"': { env: "disable" },
           '"disable", jsx.development: true': { env: "disable", jsx: { development: true } },
         })));
       `,
-      "react-jsxdev/build.ts": /* ts */ `
+      "react-jsxdev/build-fixture.ts": /* ts */ `
         ${jsxBuildScript}
         const out = await build({
           '"disable"': { env: "disable" },
@@ -453,7 +454,7 @@ describe("Bun.build env", () => {
       "server.ts": `import index from "./index.html";\nexport default index;`,
       "index.html": `<!DOCTYPE html><html><body><script type="module" src="./client.ts"></script></body></html>`,
       "client.ts": `console.log(process.env.NODE_ENV, process.env.BUN_ENV);`,
-      "build.ts": /* ts */ `
+      "build-fixture.ts": /* ts */ `
         ${buildEachVariant}
         const clientLog = async result => {
           for (const output of result.outputs) {
@@ -514,7 +515,7 @@ describe("Bun.build env", () => {
         "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
         "app.ts": `console.log("mode:", process.env.NODE_ENV, "public:", process.env.PUBLIC_FOO);`,
         "bunfig.toml": bunfig,
-        "serve.ts": /* ts */ `
+        "serve-fixture.ts": /* ts */ `
           import index from "./index.html";
           const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
           const html = await (await fetch(server.url)).text();
@@ -524,7 +525,7 @@ describe("Bun.build env", () => {
         `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "serve.ts"],
+        cmd: [bunExe(), "serve-fixture.ts"],
         cwd: String(dir),
         env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, PUBLIC_FOO: "public_value" },
         stdout: "pipe",

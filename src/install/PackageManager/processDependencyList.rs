@@ -275,13 +275,15 @@ impl PackageManager {
             let row = self.lockfile.buffers.dependencies[next].clone();
             next += 1;
             let buf = self.lockfile.buffers.string_bytes.as_slice();
-            if row.version.tag != VersionTag::Folder
-                || row.behavior.is_bundled()
+            let dependency::Value::Folder(folder) = &row.version.value else {
+                continue;
+            };
+            if row.behavior.is_bundled()
                 || (self.lockfile.overrides).contains_name(row.name_hash, row.name.slice(buf), buf)
             {
                 continue;
             }
-            let folder = row.version.folder().slice(buf).to_vec();
+            let folder = folder.slice(buf).to_vec();
             // The resolver rejects a folder outside the package, so its package.json is not read.
             if crate::bin::bin_target_escapes_package_dir(&folder) {
                 continue;
@@ -321,20 +323,18 @@ impl PackageManager {
                 {
                     continue;
                 }
-                let adopted = match declared.version.tag {
-                    VersionTag::Folder => self.rebase_contained_folder(declared, &folder)?,
-                    VersionTag::Npm
-                    | VersionTag::DistTag
-                    | VersionTag::Git
-                    | VersionTag::Github => declared,
-                    VersionTag::Tarball
-                        if matches!(
-                            declared.version.tarball().uri,
-                            dependency::tarball::Uri::Remote(_)
-                        ) =>
-                    {
-                        declared
+                let adopted = match &declared.version.value {
+                    &dependency::Value::Folder(path) => {
+                        self.rebase_contained_folder(declared, path, &folder)?
                     }
+                    dependency::Value::Npm(_)
+                    | dependency::Value::DistTag(_)
+                    | dependency::Value::Git(_)
+                    | dependency::Value::Github(_)
+                    | dependency::Value::Tarball(dependency::TarballInfo {
+                        uri: dependency::URI::Remote(_),
+                        ..
+                    }) => declared,
                     // `workspace:`, `link:`, `catalog:` and a tarball's path mean something in the
                     // project of the package's author. Here they would be read in the user's.
                     _ => continue,
@@ -358,13 +358,14 @@ impl PackageManager {
     }
 
     /// Returns `row`, a `file:` dependency that the package.json in the folder `base` declares,
-    /// with its path made relative to the package's root.
+    /// with its path `folder` made relative to the package's root.
     fn rebase_contained_folder(
         &mut self,
         row: Dependency,
+        folder: SemverString,
         base: &[u8],
     ) -> Result<Dependency, bun_alloc::AllocError> {
-        let folder = (row.version.folder()).slice(self.lockfile.buffers.string_bytes.as_slice());
+        let folder = folder.slice(self.lockfile.buffers.string_bytes.as_slice());
         // An absolute path is left as it is, and the resolver rejects it.
         if bun_paths::is_absolute(folder) {
             return Ok(row);

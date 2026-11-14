@@ -3,7 +3,9 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher, WatcherThread,
+};
 use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
@@ -22,6 +24,9 @@ pub struct WindowsWatcher {
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
 }
+
+// SAFETY: handles belong to the process, and `overlapped` points at nothing.
+unsafe impl Send for WindowsWatcher {}
 
 impl Default for WindowsWatcher {
     fn default() -> Self {
@@ -171,7 +176,7 @@ impl EventIterator {
 
 impl WindowsWatcher {
     // `Self` carries the 64 KiB `DirWatcher` buffer inline; it is moved once
-    // into `Box::new(Watcher { .. })` in `Watcher::init`.
+    // into `Box::new(WatcherThread { .. })` in `Watcher::init`.
     #[allow(clippy::large_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
         let mut this = Self::default();
@@ -221,24 +226,10 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
             return Err(Error::CreateFileFailed.into());
         }
-        let handle_guard = scopeguard::guard(handle, |h| unsafe {
-            // SAFETY: handle was successfully opened by NtCreateFile above.
-            let _ = w::CloseHandle(h);
-        });
+        self.watcher.dir_handle = handle;
 
-        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
+        self.iocp = w::CreateIoCompletionPort(handle, ptr::null_mut(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
-        let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
-            // SAFETY: iocp handle was successfully created above.
-            let _ = w::CloseHandle(h);
-        });
-
-        // Materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
-        // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
-        // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
-        // filled by ReadDirectoryChangesW before any read.
-        self.watcher.overlapped = bun_core::ffi::zeroed::<w::OVERLAPPED>();
-        self.watcher.dir_handle = *handle_guard;
 
         self.buf[..root.len()].copy_from_slice(root);
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
@@ -251,9 +242,6 @@ impl WindowsWatcher {
             root.len()
         };
 
-        // disarm the cleanup scopeguards on success
-        scopeguard::ScopeGuard::into_inner(iocp_guard);
-        scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
@@ -301,7 +289,7 @@ impl WindowsWatcher {
                 if nbytes == 0 {
                     // ReadDirectoryChangesW internal change-buffer overflow — too many
                     // events arrived between drain and re-arm. This is NOT a shutdown
-                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
+                    // signal: a closed dir handle surfaces as rc==0 /
                     // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
                     // MSDN, the function returns zero bytes when its internal buffer
                     // overflows. Drop the lost events, re-arm, and keep watching so
@@ -334,11 +322,24 @@ impl WindowsWatcher {
             }
         }
     }
+}
 
-    pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
+impl Drop for WindowsWatcher {
+    fn drop(&mut self) {
+        let (mut nbytes, mut key, mut overlapped) = (0, 0, ptr::null_mut());
+        // SAFETY: `self` owns both handles, and closing `INVALID_HANDLE_VALUE` does nothing.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
+            // That completes the read. Until then the kernel may write to `self`.
+            if self.watcher.read_pending {
+                w::kernel32::GetQueuedCompletionStatus(
+                    self.iocp,
+                    &mut nbytes,
+                    &mut key,
+                    &mut overlapped,
+                    w::INFINITE,
+                );
+            }
             w::CloseHandle(self.iocp);
         }
     }
@@ -351,24 +352,22 @@ pub(crate) enum Timeout {
     None = 0,
 }
 
-pub(crate) fn watch_loop(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     while this.running.load() {
-        watch_loop_cycle(this)?;
+        watch_loop_cycle(this, thread)?;
     }
     Ok(())
 }
 
-fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
-    // across calls to `this.platform.next()`.
-    let base_idx = this.platform.base_idx;
+fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
+    let base_idx = thread.platform.base_idx;
 
     let mut event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
     let mut timeout = Timeout::Infinite;
     loop {
-        let mut iter = match this.platform.next(timeout)? {
+        let mut iter = match thread.platform.next(timeout)? {
             Some(it) => it,
             None => break,
         };
@@ -376,15 +375,15 @@ fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
-        while let Some(FileEvent { action, filename }) = iter.next(&this.platform.watcher.buf) {
+        while let Some(FileEvent { action, filename }) = iter.next(&thread.platform.watcher.buf) {
             let convert_res =
-                strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
+                strings::copy_utf16_into_utf8(&mut thread.platform.buf[base_idx..], filename);
             let eventpath_len = base_idx + convert_res.written;
 
             bun_core::scoped_log!(
                 watcher,
                 "watcher update event: (filename: {}, action: {}",
-                bstr::BStr::new(&this.platform.buf[..eventpath_len]),
+                bstr::BStr::new(&thread.platform.buf[..eventpath_len]),
                 <&'static str>::from(action)
             );
 
@@ -400,13 +399,13 @@ fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             loop {
                 {
                     // Other threads append to the watchlist under this mutex, which can reallocate it.
-                    let _guard = this.mutex.lock_guard();
+                    let watchlist = &this.watched.lock().list;
                     // Eviction is a swap-remove, so walk from the end to avoid skipping items.
-                    item_idx = item_idx.min(this.watchlist.len());
-                    let eventpath = &this.platform.buf[..eventpath_len];
-                    while item_idx > 0 && event_id < this.watch_events.len() {
+                    item_idx = item_idx.min(watchlist.len());
+                    let eventpath = &thread.platform.buf[..eventpath_len];
+                    while item_idx > 0 && event_id < thread.watch_events.len() {
                         item_idx -= 1;
-                        let path = &this.watchlist.items_file_path()[item_idx];
+                        let path = &watchlist.items_file_path()[item_idx];
                         let rel = is_parent_or_equal(path.as_ref(), eventpath);
                         bun_core::scoped_log!(
                             watcher,
@@ -421,7 +420,7 @@ fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                         if rel == ParentEqual::Unrelated {
                             continue;
                         }
-                        this.watch_events[event_id] =
+                        thread.watch_events[event_id] =
                             create_watch_event(action, item_idx as WatchItemIndex);
                         event_id += 1;
                     }
@@ -429,7 +428,7 @@ fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 if item_idx == 0 {
                     break;
                 }
-                process_watch_event_batch(this, event_id)?;
+                process_watch_event_batch(this, thread, event_id)?;
                 event_id = 0;
             }
         }
@@ -437,20 +436,24 @@ fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     // Process any remaining events in the final batch
     if event_id > 0 {
-        process_watch_event_batch(this, event_id)?;
+        process_watch_event_batch(this, thread, event_id)?;
     }
 
     Ok(())
 }
 
-fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys::Result<()> {
+fn process_watch_event_batch(
+    this: &Watcher,
+    thread: &mut WatcherThread,
+    event_count: usize,
+) -> bun_sys::Result<()> {
     if event_count == 0 {
         return Ok(());
     }
 
     // log("event_count: {d}\n", .{event_count});
 
-    let all_events = &mut this.watch_events[0..event_count];
+    let all_events = &mut thread.watch_events[0..event_count];
     index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
@@ -476,7 +479,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
         last_event_index + 1
     );
 
-    this.dispatch_file_updates(last_event_index + 1, &[]);
+    this.dispatch_file_updates(thread, last_event_index + 1, &[]);
     Ok(())
 }
 

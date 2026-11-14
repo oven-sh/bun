@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { libuv } from "./deps/libuv.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -115,6 +116,27 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "libuv-win-thread-stack-reservation",
+    issue: "https://github.com/oven-sh/libuv/pull/19 (upstream https://github.com/libuv/libuv/pull/5279)",
+    description:
+      "libuv's uv_thread_create_ex gives an explicit stack size to _beginthreadex without " +
+      "STACK_SIZE_PARAM_IS_A_RESERVATION, so Windows commits the whole size when the thread starts. " +
+      "patches/libuv/win-thread-stack-reservation.patch carries upstream's fix until the pinned " +
+      "oven-sh/libuv commit has it.",
+    applies: cfg => cfg.windows,
+    expectedToBeFixed: cfg => {
+      // The patch is for this pin. A pin that has the fix makes `git apply`
+      // fail in the fetch step, so every other pin is a reason to look.
+      const WITHOUT_THE_FIX = "8023581113b276e7c1aee3f82da57ca0893faab1";
+      const source = libuv.source(cfg);
+      return source.kind === "github-archive" && source.commit !== WITHOUT_THE_FIX;
+    },
+    cleanup:
+      `If src/win/thread.c at the new LIBUV_COMMIT sets STACK_SIZE_PARAM_IS_A_RESERVATION, delete ` +
+      `patches/libuv/win-thread-stack-reservation.patch, its line and comment in ` +
+      `scripts/build/deps/libuv.ts, and this entry. If it does not, set WITHOUT_THE_FIX to the new pin.`,
   },
 ];
 

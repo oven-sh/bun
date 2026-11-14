@@ -11,6 +11,7 @@
 #include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -4585,6 +4586,32 @@ __attribute__((minsize)) static bool hasUnevaluatedImporter(Zig::GlobalObject* g
     return false;
 }
 
+// Whether a module that has yet to start is linked to `record`, and the evaluation under way comes to it: it runs later and imports `record` no more.
+__attribute__((minsize)) static bool hasLinkedImporterYetToStart(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, JSModuleMock* mock)
+{
+    using Status = JSC::CyclicModuleRecord::Status;
+    auto& modules = Bun::testFileModuleLoader(globalObject)->moduleMap();
+    for (auto& [mapKey, entry] : modules) {
+        auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!importer || importer->status() != Status::Linked)
+            continue;
+        // vi.mock() leaves what Vitest externalizes to the real module.
+        if (mock->isOfVitest() && isExternalizedByVitest(globalObject, String(mapKey.first)))
+            continue;
+        bool isLinked = false;
+        for (auto& loaded : importer->loadedModules().values())
+            isLinked |= loaded.m_module.get() == record;
+        if (!isLinked)
+            continue;
+        for (auto& [otherKey, other] : modules) {
+            auto* evaluating = dynamicDowncast<JSC::CyclicModuleRecord>(other->record());
+            if (evaluating && evaluating->status() == Status::Evaluating && anyUnevaluatedImport(evaluating, [&](JSC::CyclicModuleRecord* imported) { return imported == importer; }))
+                return true;
+        }
+    }
+    return false;
+}
+
 // The body of the module that `mock` patched has run since, and has given a value to the exports that had none. Resolves once the factory has settled too.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionPatchedModuleDidRun, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -6533,7 +6560,16 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->droppedSavedOriginal = !!JSC::AOT::mockedModuleEvaluationError(globalObject, compiled);
         }
 #endif
-        if (scope.exception() && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
+        JSC::Exception* thrown = scope.exception();
+        if (thrown && mock->readUninitializedVariable && !loaded.compiledModule && scope.tryClearException()) [[unlikely]] {
+            // No load comes from a module that is linked to the module and has yet to start. The mock would never reach it, so the error of the factory is thrown.
+            if (loaded.esmNamespace && !(previous && previous->isFromPreload) && hasLinkedImporterYetToStart(globalObject, loaded.esmNamespace->moduleRecord(), mock)) {
+                // As behind a mock that waits, the module goes with every importer that a test file loaded, and the next test file loads them again.
+                evictModulesAndTheirImporters(globalObject, Vector<String> { specifier });
+                RETURN_IF_EXCEPTION(scope, {});
+                scope.throwException(globalObject, thrown);
+                return {};
+            }
             if (previous && !previous->isFromPreload) {
                 unmockModule(globalObject, previous, specifier, mock);
                 RETURN_IF_EXCEPTION(scope, {});

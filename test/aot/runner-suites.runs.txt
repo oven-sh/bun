@@ -47,3 +47,12 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too
+# The next one: a hoisted factory reads a variable below its call, over a module that an import that failed left linked, and the test file imports that module with no statement.
+# Plain lets the mock wait, and a later import() gets it. Compiled throws the error of the factory at the mock call.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > over a module that an import that failed left linked > waits for the next import where it doesn't
+# The next one: the module that is linked to the mocked module is being evaluated when the hoisted call comes. Plain lets the mock wait. Compiled throws the error of the factory.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > still waits where the module that is linked is being evaluated
+# The next one: the mock call that throws evicts the mocked module and its importers. Plain runs them again for the next test file, which mocks the package. Compiled has one instance of each, and the importer keeps the real package there.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > leaves nothing of the test file that fails to the next one
+# The next one: vi.mock() leaves a package that imports the mocked module to the real module, as Vitest does. Plain lets the mock wait. Compiled throws the error of the factory.
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a hoisted factory that reads a variable which its file declares below the call > still waits where vi.mock() leaves the module that is linked to the real module

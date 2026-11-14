@@ -161,7 +161,7 @@ await Bun.write(
 
 #### Pretty printing
 
-Pass a `space` argument (a number of spaces or an indent string, as with `JSON.stringify`) to indent element-only content. Bun writes an element that contains text on one line, so indentation does not change character data:
+Pass a `space` argument (a number of spaces or an indent string, as with `JSON.stringify`, or an options object such as `{ indent: 2 }`) to indent element-only content. Bun writes an element that contains text on one line, so indentation does not change character data:
 
 ```ts
 console.log(XML.stringify(data, null, 2));

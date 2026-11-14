@@ -3871,6 +3871,123 @@ config:
       );
     });
 
+    // https://github.com/oven-sh/bun/issues/48158
+    describe("options object as the third argument", () => {
+      const shared = { type: "string" };
+
+      test("indent means the same as a number or string space", () => {
+        const obj = { a: shared, b: shared, list: [1, { c: 2 }] };
+        expect(YAML.stringify(obj, null, { indent: 2 })).toBe(YAML.stringify(obj, null, 2));
+        expect(YAML.stringify(obj, null, { indent: "\t" })).toBe(YAML.stringify(obj, null, "\t"));
+        expect(YAML.stringify(obj, null, {})).toBe(YAML.stringify(obj));
+        expect(YAML.stringify(obj, null, { indent: 0 })).toBe(YAML.stringify(obj));
+        expect(YAML.stringify(obj, null, { indent: new Number(2) as any })).toBe(YAML.stringify(obj, null, 2));
+      });
+
+      test("aliases: false writes a shared object in full", () => {
+        const obj = { a: shared, b: shared };
+        expect(YAML.stringify(obj, null, { indent: 2, aliases: false })).toBe("a:\n  type: string\nb:\n  type: string");
+        expect(YAML.stringify(obj, null, { aliases: false })).toBe("{a: {type: string},b: {type: string}}");
+
+        const parsed: any = YAML.parse(YAML.stringify(obj, null, { indent: 2, aliases: false }));
+        expect(parsed).toEqual(obj);
+        expect(parsed.a).not.toBe(parsed.b);
+      });
+
+      test("aliases: false writes a shared array and a shared empty collection in full", () => {
+        const arr = [1, 2];
+        const empty = {};
+        expect(YAML.stringify({ p: arr, q: arr, r: empty, s: empty }, null, { indent: 2, aliases: false })).toBe(
+          "p:\n  - 1\n  - 2\nq:\n  - 1\n  - 2\nr: {}\ns: {}",
+        );
+        expect(YAML.stringify([shared, shared, [shared]], null, { indent: 2, aliases: false })).toBe(
+          "- type: string\n- type: string\n- - type: string",
+        );
+      });
+
+      test("aliases: false writes an object shared across levels in full", () => {
+        const leaf = { id: 1 };
+        const mid = { leaf, other: leaf };
+        const obj = { first: mid, second: mid, third: leaf };
+        const out = YAML.stringify(obj, null, { indent: 2, aliases: false });
+        expect(out).toBe(
+          "first:\n  leaf:\n    id: 1\n  other:\n    id: 1\nsecond:\n  leaf:\n    id: 1\n  other:\n    id: 1\nthird:\n  id: 1",
+        );
+        expect(YAML.parse(out)).toEqual(obj);
+      });
+
+      test("aliases: true and an unset aliases keep the anchors", () => {
+        const obj = { a: shared, b: shared };
+        const anchored = "a:\n  &a\n  type: string\nb:\n  *a";
+        expect(YAML.stringify(obj, null, { indent: 2, aliases: true })).toBe(anchored);
+        expect(YAML.stringify(obj, null, { indent: 2 })).toBe(anchored);
+        expect(YAML.stringify(obj, null, { indent: 2, aliases: undefined })).toBe(anchored);
+      });
+
+      test("aliases: false throws a TypeError on a cycle", () => {
+        const self: any = { x: 1 };
+        self.self = self;
+        expect(() => YAML.stringify(self, null, { aliases: false })).toThrow(TypeError);
+        expect(() => YAML.stringify(self, null, { indent: 2, aliases: false })).toThrow(
+          "YAML.stringify cannot serialize a cyclic object with aliases: false",
+        );
+
+        const cycleError = {
+          name: "TypeError",
+          message: "YAML.stringify cannot serialize a cyclic object with aliases: false",
+        };
+        const a: any = { name: "a" };
+        const b = { name: "b", a };
+        a.b = b;
+        expect(() => YAML.stringify({ root: a }, null, { aliases: false })).toThrow(
+          expect.objectContaining(cycleError),
+        );
+
+        const arr: any[] = [1];
+        arr.push(arr);
+        expect(() => YAML.stringify(arr, null, { aliases: false })).toThrow(expect.objectContaining(cycleError));
+
+        // Without aliases there is one pass, so a getter runs once and a cycle it returns is caught.
+        let reads = 0;
+        const lazy: any = {
+          get child() {
+            reads++;
+            return reads > 1 ? lazy : { count: reads };
+          },
+        };
+        expect(YAML.stringify(lazy, null, { aliases: false })).toBe("{child: {count: 1}}");
+        expect(reads).toBe(1);
+        expect(() => YAML.stringify(lazy, null, { aliases: false })).toThrow(expect.objectContaining(cycleError));
+        expect(reads).toBe(2);
+
+        // the same value keeps its anchor by default
+        expect(YAML.stringify(self, null, 2)).toBe("&root\nx: 1\nself:\n  *root");
+      });
+
+      test("an options object in the second argument is not a replacer", () => {
+        // The second argument is reserved for a JSON.stringify-style replacer.
+        expect(() => YAML.stringify({ a: shared, b: shared }, { aliases: false } as any)).toThrow(
+          "YAML.stringify does not support the replacer argument",
+        );
+      });
+
+      test("aliases must be a boolean", () => {
+        for (const [aliases, type] of [
+          ["false", "string"],
+          [0, "number"],
+          [null, "object"],
+        ]) {
+          expect(() => YAML.stringify({ a: 1 }, null, { aliases } as any)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `The "aliases" property must be of type boolean, got ${type}`,
+            }),
+          );
+        }
+      });
+    });
+
     // Edge cases and error handling
     describe("edge cases", () => {
       test("handles very deep nesting", () => {

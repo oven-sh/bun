@@ -363,6 +363,17 @@ extern "C" fn Bun__hashPluginContents(contents: &bun_core::EncodedSlice, loader:
     bun_wyhash::hash_with_seed((u64::from(loader) << 2) | encoding, contents.byte_slice()) | 1
 }
 
+#[cfg(bun_debug)]
+bun_core::declare_scope!(CommonJSProvider, hidden);
+
+/// C++ entry point of debug builds: the provider kind picked for an imported CommonJS module.
+#[cfg(bun_debug)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__logCommonJSProviderKind(key: &bun_core::String, deferred: bool) {
+    let kind = if deferred { "deferred" } else { "eager" };
+    bun_core::scoped_log!(CommonJSProvider, "{} {}", kind, key);
+}
+
 pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     let namespace = extract_namespace(specifier);
     if namespace.is_empty() {

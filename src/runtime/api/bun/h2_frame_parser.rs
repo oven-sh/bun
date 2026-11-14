@@ -13,7 +13,7 @@ use std::borrow::Cow;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
-use crate::socket::NativeCallbacks;
+use crate::socket::{NativeCallbacks, NewSocket};
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
@@ -42,28 +42,58 @@ type GetCached = fn(JSValue) -> Option<JSValue>;
 
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1;
 
-/// `Copy` view of [`NativeSocket`] for call sites to snapshot across
-/// re-entrant writes. BACKREF — the socket strictly outlives the attachment:
-/// `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in the
-/// socket's `native_callback` slot, `*Writeonly` by the ref [`NativeSocket`]
-/// holds on them.
-#[derive(Default, Clone, Copy)]
+/// `Copy` view of [`NativeSocket`] for call sites to snapshot across re-entrant writes.
+#[derive(Clone, Copy)]
 enum BunSocket {
-    #[default]
     None,
     Tls(bun_ptr::BackRef<TLSSocket>),
-    TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
     Tcp(bun_ptr::BackRef<TCPSocket>),
-    TcpWriteonly(bun_ptr::BackRef<TCPSocket>),
 }
 
-/// The parser's attachment to a native socket, and its owner: attaching either
-/// installs the parser as the socket's native callback (`Tls`/`Tcp`) or, when
-/// that slot is taken, takes a ref on the socket (`*Writeonly`); `detach` /
-/// `Drop` undo whichever one it was. Readers take a [`BunSocket`] snapshot.
+/// What ties the parser to a socket.
+enum Link<const SSL: bool> {
+    /// The parser is the socket's native callback: the socket detaches it before it is freed.
+    Callback(bun_ptr::BackRef<NewSocket<SSL>>),
+    /// That slot was taken, so the parser only writes.
+    WriteOnly(RefPtr<NewSocket<SSL>>),
+}
+
+impl<const SSL: bool> Link<SSL> {
+    fn new(socket: *mut NewSocket<SSL>, h2: RefPtr<H2FrameParser>) -> Self {
+        // BACKREF: the caller's JS socket holds a ref on it.
+        let socket = bun_ptr::BackRef::from(NonNull::new(socket).expect("non-null socket"));
+        if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
+            Self::Callback(socket)
+        } else {
+            Self::WriteOnly(socket.ref_guard())
+        }
+    }
+
+    fn socket(&self) -> bun_ptr::BackRef<NewSocket<SSL>> {
+        match self {
+            Self::Callback(socket) => *socket,
+            Self::WriteOnly(socket) => bun_ptr::BackRef::new(socket),
+        }
+    }
+}
+
+impl<const SSL: bool> Drop for Link<SSL> {
+    fn drop(&mut self) {
+        if let Self::Callback(socket) = self {
+            socket.detach_native_callback();
+        }
+    }
+}
+
+enum Attachment {
+    Tls(Link<true>),
+    Tcp(Link<false>),
+}
+
+/// The parser's attachment to a native socket. Readers take a [`BunSocket`] snapshot.
 #[derive(Default)]
 struct NativeSocket {
-    socket: Cell<BunSocket>,
+    attachment: JsCell<Option<Attachment>>,
     /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
     closed: Cell<bool>,
 }
@@ -71,63 +101,28 @@ struct NativeSocket {
 impl NativeSocket {
     #[inline]
     fn get(&self) -> BunSocket {
-        self.socket.get()
+        match self.attachment.get() {
+            Some(Attachment::Tls(link)) => BunSocket::Tls(link.socket()),
+            Some(Attachment::Tcp(link)) => BunSocket::Tcp(link.socket()),
+            None => BunSocket::None,
+        }
     }
 
-    /// `attach_native_callback` stores `h2` (a ref on the parser) in the
-    /// socket, dropped in `NewSocket::detach_native_callback` (or inside
-    /// `attach_native_callback` when rejected); when rejected we fall back to
-    /// write-only mode and hold a ref on the socket instead.
-    fn attach<const SSL: bool>(
-        &self,
-        socket: *mut crate::socket::NewSocket<SSL>,
-        h2: RefPtr<H2FrameParser>,
-    ) {
-        debug_assert!(matches!(self.socket.get(), BunSocket::None));
+    fn attach(&self, attachment: Attachment) {
+        debug_assert!(self.attachment.get().is_none());
         self.closed.set(false);
-        // BACKREF: the caller's JS socket holds a ref on it.
-        let socket_nn = NonNull::new(socket).expect("non-null socket");
-        let socket = bun_ptr::BackRef::from(socket_nn);
-        self.socket
-            .set(if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
-                if SSL {
-                    BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
-                } else {
-                    BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
-                }
-            } else {
-                // The ref `detach` releases.
-                socket.ref_();
-                if SSL {
-                    BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
-                } else {
-                    BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
-                }
-            });
+        self.attachment.set(Some(attachment));
     }
 
     fn detach(&self) {
-        match self.socket.replace(BunSocket::None) {
-            BunSocket::Tcp(socket) => socket.detach_native_callback(),
-            BunSocket::Tls(socket) => socket.detach_native_callback(),
-            // The ref `attach` took.
-            BunSocket::TcpWriteonly(socket) => TCPSocket::deref(socket.get()),
-            BunSocket::TlsWriteonly(socket) => TLSSocket::deref(socket.get()),
-            BunSocket::None => {}
-        }
+        self.attachment.set(None);
     }
 
     /// The socket released the parser. `detach` gets here too, but with nothing attached.
     fn note_socket_closed(&self) {
-        if !matches!(self.socket.get(), BunSocket::None) {
+        if self.attachment.get().is_some() {
             self.closed.set(true);
         }
-    }
-}
-
-impl Drop for NativeSocket {
-    fn drop(&mut self) {
-        self.detach();
     }
 }
 
@@ -2726,12 +2721,8 @@ impl H2FrameParser {
 
         let mut written = self.uncork();
         written += match self.native_socket.get() {
-            BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
-                self.generic_flush(socket.get())
-            }
-            BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
-                self.generic_flush(socket.get())
-            }
+            BunSocket::Tls(socket) => self.generic_flush(socket.get()),
+            BunSocket::Tcp(socket) => self.generic_flush(socket.get()),
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
@@ -2801,12 +2792,8 @@ impl H2FrameParser {
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
         let _keepalive = self.keepalive();
         match self.native_socket.get() {
-            BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
-                self.generic_write(socket.get(), bytes)
-            }
-            BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
-                self.generic_write(socket.get(), bytes)
-            }
+            BunSocket::Tls(socket) => self.generic_write(socket.get(), bytes),
+            BunSocket::Tcp(socket) => self.generic_write(socket.get(), bytes),
             BunSocket::None => {
                 let global = self.global();
                 if self.has_nonnative_backpressure.get() {
@@ -2867,11 +2854,11 @@ impl H2FrameParser {
     fn transport_write_runs_js(&self) -> bool {
         match self.native_socket.get() {
             BunSocket::None => true,
-            BunSocket::Tls(s) | BunSocket::TlsWriteonly(s) => matches!(
+            BunSocket::Tls(s) => matches!(
                 s.get().socket.get().socket,
                 bun_uws::InternalSocket::UpgradedDuplex(_)
             ),
-            BunSocket::Tcp(s) | BunSocket::TcpWriteonly(s) => matches!(
+            BunSocket::Tcp(s) => matches!(
                 s.get().socket.get().socket,
                 bun_uws::InternalSocket::UpgradedDuplex(_)
             ),
@@ -3013,10 +3000,10 @@ impl H2FrameParser {
     /// alone entirely - the connect-error path owns their failure delivery.
     fn close_transport_after_fatal_write(&self) {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+            BunSocket::Tls(socket) => {
                 Self::close_socket_for_dead_transport::<true>(socket.get());
             }
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+            BunSocket::Tcp(socket) => {
                 Self::close_socket_for_dead_transport::<false>(socket.get());
             }
             BunSocket::None => {}
@@ -3027,9 +3014,7 @@ impl H2FrameParser {
     /// once it has read what the peer sent before.
     fn transport_send_rejected(&self) -> bool {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                socket.get().socket.get().ssl_send_rejected()
-            }
+            BunSocket::Tls(socket) => socket.get().socket.get().ssl_send_rejected(),
             // A plain socket is closed at once, which ends its streams before the error is reported.
             _ => false,
         }
@@ -3147,27 +3132,26 @@ impl H2FrameParser {
     fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment]) {
         let mut total: usize = 0;
         let total_written = match self.native_socket.get() {
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => BATCH_IOVECS
-                .with_borrow_mut(|iov| {
-                    iov.clear();
-                    iov.reserve(segments.len());
-                    for seg in segments {
-                        let (ptr, len) = seg.raw_parts(batch);
-                        if len == 0 {
-                            continue;
-                        }
-                        total += len;
-                        iov.push(bun_uws_sys::UsIoVec {
-                            base: ptr.cast(),
-                            len,
-                        });
+            BunSocket::Tcp(socket) => BATCH_IOVECS.with_borrow_mut(|iov| {
+                iov.clear();
+                iov.reserve(segments.len());
+                for seg in segments {
+                    let (ptr, len) = seg.raw_parts(batch);
+                    if len == 0 {
+                        continue;
                     }
-                    if total == 0 {
-                        return 0usize;
-                    }
-                    let w = socket.get().write_vectored_raw(iov);
-                    if w < 0 { 0 } else { w as usize }
-                }),
+                    total += len;
+                    iov.push(bun_uws_sys::UsIoVec {
+                        base: ptr.cast(),
+                        len,
+                    });
+                }
+                if total == 0 {
+                    return 0usize;
+                }
+                let w = socket.get().write_vectored_raw(iov);
+                if w < 0 { 0 } else { w as usize }
+            }),
             _ => {
                 // Socket changed under us (detach mid-call): degrade to the copy path
                 // to preserve order.
@@ -5258,10 +5242,8 @@ impl H2FrameParser {
                         // records payload slices by reference and flushes with writev —
                         // TLS cannot vectorize (SSL_write must consume the bytes to seal
                         // records), so it keeps the contiguous copy.
-                        let vectorize = matches!(
-                            self.native_socket.get(),
-                            BunSocket::Tcp(_) | BunSocket::TcpWriteonly(_)
-                        ) && !self.has_backpressure();
+                        let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
+                            && !self.has_backpressure();
                         BATCH_BUFFER.with_borrow_mut(|batch| {
                             if batch.is_empty() {
                                 batch.reserve(if vectorize {
@@ -7263,7 +7245,7 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
-        // detach_native_socket can drop the socket's last ref (Writeonly deref),
+        // detach_native_socket can drop the socket's last ref (`Link::WriteOnly`),
         // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
         self.native_socket.note_socket_closed();
@@ -7275,13 +7257,15 @@ impl H2FrameParser {
         self.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-            self.native_socket.attach::<true>(socket, self.ref_guard());
+            self.native_socket
+                .attach(Attachment::Tls(Link::new(socket, self.ref_guard())));
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
         } else if let Some(socket) = TCPSocket::from_js(socket) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-            self.native_socket.attach::<false>(socket, self.ref_guard());
+            self.native_socket
+                .attach(Attachment::Tcp(Link::new(socket, self.ref_guard())));
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
@@ -7427,13 +7411,13 @@ impl H2FrameParser {
                 bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
                 this_ref
                     .native_socket
-                    .attach::<true>(socket, this_ref.ref_guard());
+                    .attach(Attachment::Tls(Link::new(socket, this_ref.ref_guard())));
                 let _ = this_ref.flush();
             } else if let Some(socket) = TCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
                 this_ref
                     .native_socket
-                    .attach::<false>(socket, this_ref.ref_guard());
+                    .attach(Attachment::Tcp(Link::new(socket, this_ref.ref_guard())));
                 let _ = this_ref.flush();
             }
         }

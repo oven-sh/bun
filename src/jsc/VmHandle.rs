@@ -108,6 +108,8 @@ pub struct Shared {
     /// published and then this is waited to zero (the Dekker pair), so a weak
     /// access either finished before close returned or saw `Closed`.
     active: AtomicU32,
+    /// File changes that no hot reload has started for.
+    pending_reloads: AtomicU32,
     /// The tearing-down JS thread sleeps here; ticket drops and posts notify
     /// it once draining has begun.
     drained: (Guarded<()>, Condvar),
@@ -327,6 +329,7 @@ impl VmHandle {
             },
             tickets: AtomicU32::new(0),
             active: AtomicU32::new(0),
+            pending_reloads: AtomicU32::new(0),
             drained: (Guarded::new(()), Condvar::new()),
             #[cfg(debug_assertions)]
             debug: DebugState {
@@ -387,6 +390,10 @@ impl VmHandle {
             // SAFETY: refused ⇒ `task` is still ours (fn contract).
             unsafe { Bun__deleteEventLoopTask(task) };
         }
+    }
+
+    pub(crate) fn pending_reloads(&self) -> &AtomicU32 {
+        &self.0.pending_reloads
     }
 
     /// Adjust the VM's keep-alive from another thread (no-op once closed).

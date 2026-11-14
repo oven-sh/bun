@@ -4061,6 +4061,19 @@ config:
         // Positive zero
         expect(YAML.stringify(+0)).toBe("0"); // +0 becomes just 0
 
+        // The engine holds a zero as a double when it sits in a list beside a fraction
+        // or comes out of a Float64Array. It is the same number and gets the same text.
+        const doubleZero = new Float64Array(1)[0];
+        expect(YAML.stringify(doubleZero)).toBe("0");
+        expect(YAML.stringify([1.5, 0])).toBe("[1.5,0]");
+        expect(YAML.stringify([1.5, 0], null, 2)).toBe("- 1.5\n- 0");
+        expect(YAML.stringify(JSON.parse('{"list":[0.5,0]}'))).toBe("{list: [0.5,0]}");
+        expect(YAML.stringify({ list: [0.5, 0], zero: doubleZero }, null, 2)).toBe("list:\n  - 0.5\n  - 0\nzero: 0");
+
+        // Negative zero keeps its sign in the same positions
+        expect(YAML.stringify([1.5, -0])).toBe("[1.5,-0]");
+        expect(YAML.stringify([1.5, -0], null, 2)).toBe("- 1.5\n- -0");
+
         // Round-trip special numbers
         expect(YAML.parse(YAML.stringify(+0))).toBe(0);
         expect(Object.is(YAML.parse(YAML.stringify(-0)), -0)).toBe(true);

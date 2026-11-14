@@ -320,8 +320,8 @@ pub(crate) struct Formatter<'a> {
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
     pub(crate) snapshot_format: SnapshotFormat,
-    /// Set by `did_older_bun_print`. The cell turns true once the output has diverged, so printing can stop.
-    like_older_bun: Option<&'a core::cell::Cell<bool>>,
+    /// Set by `did_older_bun_print`. Printing can stop once the output has diverged from the saved text.
+    like_older_bun: Option<&'a ExpectedText<'a>>,
     same_as_older_bun: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
@@ -1075,6 +1075,34 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
+    /// The name in `[class Name]` and in `Any<Name>`. `as_function` is the text that follows if the name is `Function`.
+    fn class_name(&mut self, class: JSValue, as_function: &[u8]) -> JsResult<bun_core::String> {
+        if class.js_type() == JSType::InternalFunction {
+            match self.like_older_bun {
+                Some(saved) if saved.names_it_function(class, as_function) => {
+                    return Ok(bun_core::String::static_("Function"));
+                }
+                Some(_) => {}
+                None => self.same_as_older_bun = false,
+            }
+        }
+        class.get_class_name(self.global_this)
+    }
+
+    /// Bun 1.1.43 to 1.4.4 printed a `Response` and a `BuildArtifact`, and then the same value again as an object.
+    #[inline]
+    fn print_again_as_object<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+        value: JSValue,
+    ) -> JsResult<()> {
+        if self.like_older_bun.is_none() {
+            self.same_as_older_bun = false;
+            return Ok(());
+        }
+        self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer, value, JSType::Event)
+    }
+
     pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -1401,15 +1429,7 @@ impl<'a> Formatter<'a> {
                     return Ok(());
                 }
                 Tag::Class => {
-                    // Older versions printed a mock function, `URL` and the like as `[class Function]`.
-                    let was_function = value.js_type() == JSType::InternalFunction
-                        && value.get_class_info_name().is_some_and(|name| name != b"Function");
-                    let printable = if was_function && self.like_older_bun.is_some() {
-                        bun_core::String::static_(b"Function")
-                    } else {
-                        self.same_as_older_bun &= !was_function;
-                        value.get_class_name(self.global_this)?
-                    };
+                    let printable = self.class_name(value, b"[class Function]")?;
                     self.add_for_new_line(printable.length());
 
                     if printable.is_empty() {
@@ -1575,7 +1595,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                        return Ok(());
+                        return self.print_again_as_object::<W, ENABLE_ANSI_COLORS>(writer.ctx, value);
                     } else if let Some(request) = value.as_class_ref::<crate::webcore::Request>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
@@ -1609,7 +1629,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                        return Ok(());
+                        return self.print_again_as_object::<W, ENABLE_ANSI_COLORS>(writer.ctx, value);
                     } else if let Some(blob) = value.as_class_ref::<crate::webcore::Blob>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
@@ -2397,7 +2417,12 @@ impl<'a> Formatter<'a> {
                     self.same_as_older_bun &= result?;
 
                     if iter_i == 0 {
-                        let object_name = value.get_class_name(self.global_this)?;
+                        let mut object_name = value.get_class_name(self.global_this)?;
+                        if let Some(saved) = self.like_older_bun
+                            && saved.names_it_node_vm_global_proxy(value, &object_name)
+                        {
+                            object_name = bun_core::String::static_("NodeVMGlobalProxy");
+                        }
 
                         if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
@@ -2572,8 +2597,8 @@ impl<'a> Formatter<'a> {
         // `self.global_this` is restored to the previous value at the end.
         self.global_this = global_this;
 
-        if let Some(differs) = self.like_older_bun {
-            self.failed |= differs.get();
+        if let Some(saved) = self.like_older_bun {
+            self.failed |= saved.differs.get();
         } else if matches!(result.tag, Tag::Object | Tag::Array | Tag::JSON) {
             match super::dom_format::print_in_snapshot(self, writer, value) {
                 Ok(false) => {}
@@ -2766,6 +2791,8 @@ pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;
+    /// The name in `Any<Name>`.
+    fn amf_class_name(&mut self, class: JSValue) -> JsResult<bun_core::String>;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
     fn amf_print_as<W: bun_io::Write, const C: bool>(
@@ -2784,6 +2811,8 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_class_name(&mut self, class: JSValue) -> JsResult<bun_core::String> { self.class_name(class, b"Function>") }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2805,6 +2834,8 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_class_name(&mut self, class: JSValue) -> JsResult<bun_core::String> { class.get_class_name(self.global_this) }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2887,7 +2918,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"Any<");
             }
 
-            let class_name = constructor_value.get_class_name(this.amf_global_this())?;
+            let class_name = this.amf_class_name(constructor_value)?;
             this.amf_add_for_new_line(class_name.length());
             writer.print(format_args!(
                 "{}{}{}",
@@ -3516,35 +3547,54 @@ impl ObjectList {
     }
 }
 
+/// The text an older Bun saved. Printing the value the way that Bun did consumes it.
 struct ExpectedText<'a> {
-    rest: &'a [u8],
-    differs: &'a core::cell::Cell<bool>,
+    rest: core::cell::Cell<&'a [u8]>,
+    /// Turns true once the output has diverged, and stays true.
+    differs: core::cell::Cell<bool>,
 }
 
-impl bun_io::Write for ExpectedText<'_> {
+impl bun_io::Write for &ExpectedText<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        match self.rest.strip_prefix(buf) {
-            Some(rest) => self.rest = rest,
+        match self.rest.get().strip_prefix(buf) {
+            Some(rest) => self.rest.set(rest),
             None => self.differs.set(true),
         }
         Ok(())
     }
 }
 
+impl ExpectedText<'_> {
+    /// Bun 1.4.4 named a class that native code makes `Function` (`URL`, a mock function), but a few by their own name (`Bun.Cookie`).
+    #[cold]
+    fn names_it_function(&self, class: JSValue, as_function: &[u8]) -> bool {
+        self.rest.get().starts_with(as_function) && class.get_class_info_name().is_some_and(|name| name != b"Function")
+    }
+
+    /// Bun 1.4.4 had the class `NodeVMGlobalProxy` for the global of a `node:vm` context, whose `name` is `JSGlobalProxy` now.
+    #[cold]
+    fn names_it_node_vm_global_proxy(&self, value: JSValue, name: &bun_core::String) -> bool {
+        name.eq_ascii(b"JSGlobalProxy")
+            && self.rest.get().starts_with(b"NodeVMGlobalProxy {}")
+            && value.js_type() == JSType::GlobalProxy
+            && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject")
+    }
+}
+
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
-    /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
+    /// The older forms are those of the last release before each print changed: DOM nodes as plain objects, accessors as `[native code]`.
     #[cold]
     pub(crate) fn did_older_bun_print(global: &JSGlobalObject, value: JSValue, saved: &[u8]) -> JsResult<bool> {
-        let differs = core::cell::Cell::new(false);
-        let mut expected = ExpectedText { rest: saved, differs: &differs };
+        let expected = ExpectedText { rest: core::cell::Cell::new(saved), differs: core::cell::Cell::new(false) };
         let mut formatter = Formatter::new(global);
         formatter.quote_strings = true;
-        formatter.like_older_bun = Some(&differs);
+        formatter.like_older_bun = Some(&expected);
         let tag = Tag::get(value, global)?;
-        let mut bridge = AsFmt::new(&mut expected);
+        let mut writer = &expected;
+        let mut bridge = AsFmt::new(&mut writer);
         formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
-        Ok(!differs.get() && expected.rest.is_empty())
+        Ok(!expected.differs.get() && expected.rest.get().is_empty())
     }
 
     /// Returns true if an older Bun would have printed the same text, so `did_older_bun_print` can be skipped.

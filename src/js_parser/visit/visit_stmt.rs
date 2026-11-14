@@ -993,7 +993,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
-        let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
+        // A declaration that stays where it is stores into the `var` where it runs.
+        let remove_overwritten = name_symbol.remove_overwritten_function_declaration()
+            && p.lowers_block_level_function(name_ref);
 
         // Handle exporting this function from a namespace
         if data.func.flags.contains(flags::Function::IsExport)

@@ -3439,6 +3439,87 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// `hoist_symbols` linked this block-level function to the `arguments` of its function.
+    fn is_block_level_function_of_arguments(&self, name: Ref) -> bool {
+        self.symbols[name.inner_index() as usize].has_link()
+            && self.symbols
+                [js_ast::symbol::follow_symbols(&self.symbols, name).inner_index() as usize]
+                .kind
+                == js_ast::symbol::Kind::Arguments
+    }
+
+    /// No `var arguments` can print in a block below such a function: it is a lexical declaration there.
+    #[cold]
+    fn is_below_block_level_function_of_arguments(
+        &self,
+        mut scope: js_ast::StoreRef<Scope>,
+        name: &[u8],
+        hash: u32,
+    ) -> bool {
+        while !scope.kind_stops_hoisting()
+            && let Some(parent) = scope.parent
+        {
+            scope = parent;
+            if scope
+                .get_member_with_hash(name, hash)
+                .is_some_and(|member| self.is_block_level_function_of_arguments(member.ref_))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether a block-level function becomes a `let`. Otherwise it stays a declaration where it is.
+    pub(crate) fn lowers_block_level_function(&self, name: Ref) -> bool {
+        // The `let` and `var` pair needs two names, and every `arguments` of a function is one name.
+        !self.is_block_level_function_of_arguments(name)
+    }
+
+    /// `walker`, a hoisted `arguments`, is the function's own. esbuild's hoistSymbols links the other way.
+    #[cold]
+    #[inline(never)]
+    fn hoist_onto_arguments(
+        &mut self,
+        declaring: js_ast::StoreRef<Scope>,
+        found: js_ast::StoreRef<Scope>,
+        member: js_ast::scope::Member,
+        hash: u32,
+        walker: Ref,
+        block_function: Option<Ref>,
+    ) {
+        let walker_symbol = &mut self.symbols[walker.inner_index() as usize];
+        // Without a renamer a block-level function walks here itself.
+        if walker_symbol.kind != js_ast::symbol::Kind::Hoisted {
+            return;
+        }
+        let name: &'a [u8] = walker_symbol.original_name.slice();
+        walker_symbol.link.set(member.ref_);
+        if let Some(function) = block_function {
+            let _ = self.hoisted_ref_for_sloppy_mode_block_fn.remove(&function);
+            // The minifier gives a slot to a scope member and to a generated symbol that have no pin.
+            walker_symbol.set_must_not_be_renamed(true);
+            let function_symbol = &mut self.symbols[function.inner_index() as usize];
+            function_symbol.set_must_not_be_renamed(true);
+            function_symbol.link.set(member.ref_);
+        }
+        // The declaring scope and a catch clause on the way up can have the walker as their member.
+        let mut below = Some(declaring);
+        while let Some(mut scope) = below {
+            if scope == found {
+                break;
+            }
+            if scope
+                .get_member_with_hash(name, hash)
+                .is_some_and(|below_member| below_member.ref_ == walker)
+            {
+                // SAFETY: `name` is a symbol's `original_name`.
+                *unsafe { scope.get_or_put_member_with_hash(name, hash) }.value_ptr = member;
+            }
+            below = scope.parent;
+        }
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of
@@ -3453,7 +3534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
         // immutable bits (kind/parent/strict_mode/members snapshot) up front; the
         // only later access is the `scope.generated` push (DerefMut, after the
-        // shared borrow is dropped) and the post-loop `children` walk.
+        // shared borrow is dropped), a member overwrite and the `children` walk.
         let scope_ref = &*scope;
         if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
@@ -3628,10 +3709,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 continue 'next_member;
                             }
 
-                            // Otherwise if this isn't a catch identifier, it's a collision
-                            if existing_kind != js_ast::symbol::Kind::CatchIdentifier
-                                && existing_kind != js_ast::symbol::Kind::Arguments
+                            if existing_kind == js_ast::symbol::Kind::Arguments
+                                || (is_sloppy_mode_block_level_fn_stmt
+                                    && self
+                                        .is_block_level_function_of_arguments(member_in_scope.ref_))
                             {
+                                self.hoist_onto_arguments(
+                                    scope,
+                                    _scope_ptr,
+                                    member_in_scope,
+                                    hash.unwrap(),
+                                    value.ref_,
+                                    is_sloppy_mode_block_level_fn_stmt
+                                        .then_some(original_member_ref),
+                                );
+                                continue 'next_member;
+                            }
+
+                            // Otherwise if this isn't a catch identifier, it's a collision
+                            if existing_kind != js_ast::symbol::Kind::CatchIdentifier {
                                 // An identifier binding from a catch statement and a function
                                 // declaration can both silently shadow another hoisted symbol
                                 if self.symbols[symbol_idx].kind
@@ -3666,7 +3762,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 bstr::BStr::new(name)
                                             ),
                                         );
-                                    } else if _scope_ptr == scope_parent {
+                                    } else if _scope_ptr == scope_parent
+                                        || self.is_below_block_level_function_of_arguments(
+                                            _scope_ptr,
+                                            name,
+                                            hash.unwrap(),
+                                        )
+                                    {
                                         // Never mind about this, turns out it's not needed after all
                                         let _ = self
                                             .hoisted_ref_for_sloppy_mode_block_fn

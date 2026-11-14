@@ -6772,6 +6772,60 @@ describe("same-target destructuring with an unstable target", () => {
     ).toBe("function f(o) {\n  function g() {\n    arguments[0] = N;\n  }\n  var { a, b } = o;\n  return [a, b];\n}\n");
   });
 
+  it("keeps the reads of a parameter when a nested scope declares arguments again", () => {
+    // A `var arguments` in a nested scope is the function's own `arguments`,
+    // so a read of it is still a use of the mapped arguments object.
+    expect(
+      plain.transformSync("function f(o) { { var arguments; } g(arguments); var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe(
+      "function f(o) {\n  {\n    var arguments;\n  }\n  g(arguments);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    // The read inside the declaring block.
+    expect(
+      plain.transformSync("function f(o) { { var arguments; g(arguments); } var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe(
+      "function f(o) {\n  {\n    var arguments;\n    g(arguments);\n  }\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    expect(
+      plain.transformSync(
+        "function f(o) { for (var arguments of N) g(arguments); var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o) {\n  for (var arguments of N)\n    g(arguments);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    // A block-level function of that name, in a block that may not run. Without a renamer it is a `let` of its block.
+    expect(
+      new Bun.Transpiler({ loader: "js", minify: { syntax: true } }).transformSync(
+        "function f(o, c) { g(arguments); if (c) { function arguments() {} } var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o, c) {\n  g(arguments);\n  if (c) {\n    let arguments = function() {};\n  }\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    // A `with` keeps the name of the `var` that hoists out of it. It is still the function's own.
+    expect(
+      plain.transformSync(
+        "function f(o, w) { with (w) { var arguments; } g(arguments); var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o, w) {\n  with (w) {\n    var arguments;\n  }\n  g(arguments);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    expect(
+      plain.transformSync(
+        "function f(o, w) { with (w) var arguments; g(arguments); var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o, w) {\n  with (w)\n    var arguments;\n  g(arguments);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    // An arrow function has no `arguments` of its own: its `var` is another variable.
+    expect(
+      plain.transformSync(
+        "function f(o) { var g = () => { { var arguments; } }; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o) {\n  var g = () => {\n    {\n      var arguments;\n    }\n  };\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+  });
+
   it("still folds a stable target", () => {
     expect(plain.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
       "function f() {\n  var o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
@@ -6830,6 +6884,23 @@ describe("same-target destructuring with an unstable target", () => {
           var a = o.a, b = o.b;
           return a + b;
         }
+        function argumentsBlockVar(o) {
+          { var arguments; }
+          hook = () => { arguments[0] = { a: "a2", b: "b2" }; };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function argumentsReadInBlock(o) {
+          { var arguments; hook = () => { arguments[0] = { a: "a2", b: "b2" }; }; }
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function argumentsBlockFunction(o, never) {
+          hook = () => { arguments[0] = { a: "a2", b: "b2" }; };
+          if (never) { function arguments() {} }
+          var a = o.a, b = o.b;
+          return a + b;
+        }
         function blockHoisted() {
           var swap;
           { var o; swap = () => { o = { a: "a2", b: "b2" }; }; }
@@ -6855,6 +6926,9 @@ describe("same-target destructuring with an unstable target", () => {
             getterReassigns: getterReassigns(),
             withScope: withScope(),
             argumentsAlias: argumentsAlias({ get a() { hook(); return "a1"; }, b: "b1" }),
+            argumentsBlockVar: argumentsBlockVar({ get a() { hook(); return "a1"; }, b: "b1" }),
+            argumentsReadInBlock: argumentsReadInBlock({ get a() { hook(); return "a1"; }, b: "b1" }),
+            argumentsBlockFunction: argumentsBlockFunction({ get a() { hook(); return "a1"; }, b: "b1" }),
             blockHoisted: blockHoisted(),
             directEval: directEval(),
             stable: stable(),
@@ -6878,10 +6952,326 @@ describe("same-target destructuring with an unstable target", () => {
       getterReassigns: "a1b2",
       withScope: ["a", "b", 2],
       argumentsAlias: "a1b2",
+      argumentsBlockVar: "a1b2",
+      argumentsReadInBlock: "a1b2",
+      argumentsBlockFunction: "a1b2",
       blockHoisted: "a1b2",
       directEval: "a1b2",
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// The arguments object of a sloppy function is one of its parameter bindings.
+// A `var arguments` that hoists out of a nested scope declares that binding
+// again, and so does a block-level `function arguments`. A renamer has to
+// print every one of them as `arguments`.
+describe("a hoisted declaration of arguments with minify.identifiers", () => {
+  const minify = new Bun.Transpiler({ loader: "js", minify: { identifiers: true } });
+
+  // The `let f2 = function() {}; var f = f2` pair of a block-level function
+  // needs two names, and here the `var` is the function's `arguments`. The
+  // declaration stays where it is written: it has one name for both bindings.
+  // Without a renamer there is no pair, and the function is a `let` of its block.
+  it.each([
+    [
+      "a block",
+      "module.exports = function () { { function arguments() {} } return arguments; };",
+      "module.exports = function() {\n  {\n    function arguments() {}\n  }\n  return arguments;\n};\n",
+      "module.exports = function() {\n  {\n    let arguments = function() {};\n  }\n  return arguments;\n};\n",
+    ],
+    [
+      "the body of an if",
+      "module.exports = function () { if (X) function arguments() {} return arguments; };",
+      "module.exports = function() {\n  if (X) {\n    function arguments() {}\n  }\n  return arguments;\n};\n",
+      "module.exports = function() {\n  if (X) {\n    let arguments = function() {};\n  }\n  return arguments;\n};\n",
+    ],
+    [
+      "a block that declares it twice",
+      "module.exports = function () { { function arguments() { return 1; } X(); function arguments() { return 2; } } return arguments; };",
+      "module.exports = function() {\n  {\n    function arguments() {\n      return 1;\n    }\n    X();\n    function arguments() {\n      return 2;\n    }\n  }\n  return arguments;\n};\n",
+      "module.exports = function() {\n  {\n    let arguments = function() {\n      return 2;\n    };\n    X();\n  }\n  return arguments;\n};\n",
+    ],
+    [
+      "a with in the block of another one",
+      "module.exports = function (w) { { function arguments() { return 1; } with (w) { function arguments() { return 2; } } } return arguments; };",
+      "module.exports = function(n) {\n  {\n    function arguments() {\n      return 1;\n    }\n    with (n) {\n      function arguments() {\n        return 2;\n      }\n    }\n  }\n  return arguments;\n};\n",
+      "module.exports = function(w) {\n  {\n    let arguments = function() {\n      return 1;\n    };\n    with (w) {\n      let arguments = function() {\n        return 2;\n      };\n    }\n  }\n  return arguments;\n};\n",
+    ],
+    [
+      // The `var` makes the catch clause name the function's `arguments`. The function reaches it through the clause.
+      "a block beside a block with a var, under a catch clause that binds the name",
+      "module.exports = function () { try { X(); } catch (arguments) { { var arguments; } { function arguments() {} } } return arguments; };",
+      "module.exports = function() {\n  try {\n    X();\n  } catch (arguments) {\n    {\n      var arguments;\n    }\n    {\n      function arguments() {}\n    }\n  }\n  return arguments;\n};\n",
+      "module.exports = function() {\n  try {\n    X();\n  } catch (arguments) {\n    {\n      var arguments;\n    }\n    {\n      let arguments = function() {};\n    }\n  }\n  return arguments;\n};\n",
+    ],
+  ])("keeps the declaration of a function in %s", (_, source, minified, notRenamed) => {
+    expect(minify.transformSync(source)).toBe(minified);
+    expect(new Bun.Transpiler({ loader: "js" }).transformSync(source)).toBe(notRenamed);
+  });
+
+  it("reports a var below a function that stays a declaration", () => {
+    // A function below the `var` is the same binding again.
+    expect(
+      minify.transformSync(
+        "module.exports = function () { { var arguments; { function arguments() {} } } return arguments; };",
+      ),
+    ).toBe(
+      "module.exports = function() {\n  {\n    var arguments;\n    {\n      function arguments() {}\n    }\n  }\n  return arguments;\n};\n",
+    );
+    // The function is a lexical declaration of its block, as a `let` is.
+    expect(() =>
+      minify.transformSync(
+        "module.exports = function () { { function arguments() {} { var arguments; } } return arguments; };",
+      ),
+    ).toThrow("arguments has already been declared");
+  });
+
+  // A scope member with no pin takes a minifier slot. The function of the
+  // first export would take the slot that `count` and `value` share.
+  it("gives no minifier slot to a function that stays a declaration", () => {
+    expect(
+      minify.transformSync(
+        "module.exports = function () { { function arguments() {} let count = X; return count + count + count; } };\nmodule.exports.other = function (value) { return value; };",
+      ),
+    ).toBe(
+      "module.exports = function() {\n  {\n    function arguments() {}\n    let t = X;\n    return t + t + t;\n  }\n};\nmodule.exports.other = function(t) {\n  return t;\n};\n",
+    );
+  });
+
+  it("keeps the name in a TypeScript file", () => {
+    const ts = new Bun.Transpiler({ loader: "ts", minify: { identifiers: true } });
+    expect(
+      ts.transformSync("module.exports = function (): number { { var arguments; } return arguments.length; };"),
+    ).toBe("module.exports = function() {\n  {\n    var arguments;\n  }\n  return arguments.length;\n};\n");
+    expect(
+      ts.transformSync(
+        "module.exports = function (): unknown { { function arguments(): void {} } return arguments; };",
+      ),
+    ).toBe("module.exports = function() {\n  {\n    function arguments() {}\n  }\n  return arguments;\n};\n");
+  });
+
+  // These are not the arguments object, so they get a new name as before.
+  it.each([
+    [
+      "a parameter",
+      "module.exports = function (arguments) { { var arguments; } return arguments; };",
+      /^module\.exports = function\((\w+)\) \{\n  \{\n    var \1;\n  \}\n  return \1;\n\};\n$/,
+    ],
+    [
+      "a var of an arrow function",
+      "module.exports = function () { return () => { { var arguments; } return arguments; }; };",
+      /^module\.exports = function\(\) \{\n  return \(\) => \{\n    \{\n      var (\w+);\n    \}\n    return \1;\n  \};\n\};\n$/,
+    ],
+    [
+      "a let of the function body",
+      "module.exports = function () { let arguments = 1; return arguments; };",
+      /^module\.exports = function\(\) \{\n  let (\w+) = 1;\n  return \1;\n\};\n$/,
+    ],
+    [
+      "a function of the function body",
+      "module.exports = function () { function arguments() {} return arguments; };",
+      /^module\.exports = function\(\) \{\n  function (\w+)\(\) \{\}\n  return \1;\n\};\n$/,
+    ],
+  ])("still renames %s", (_, source, pattern) => {
+    const [output, name] = minify.transformSync(source).match(pattern) ?? [];
+    expect(output).toBeString();
+    expect(name).not.toBe("arguments");
+  });
+
+  // `new Function` takes the text as the engine reads it: no transpiler
+  // lowers the block-level function of the source first.
+  const run = code => {
+    const module = { exports: {} };
+    new Function("module", code)(module);
+    return module.exports;
+  };
+
+  // Here `arguments` is a function of the function body. No block-level
+  // function stays a declaration, so the `var` of each one is printed as before.
+  it("still prints the var of a function in a with below another one", () => {
+    expect(
+      minify.transformSync(
+        "module.exports = function (w) { function arguments() { return 1; } with (w) { function arguments() { return 2; } with (w) { function arguments() { return 3; } } } return arguments(); };",
+      ),
+    ).toBe(
+      "module.exports = function(w) {\n  function arguments() {\n    return 1;\n  }\n  with (w) {\n    let n = function() {\n      return 2;\n    };\n    var arguments = n;\n    with (w) {\n      let t = function() {\n        return 3;\n      };\n      var arguments = t;\n    }\n  }\n  return arguments();\n};\n",
+    );
+  });
+
+  // The pass that removes an inlined `const` stops at the `let` of a lowered
+  // function. A function that stays a declaration has to stop it too: another
+  // case can read the `const`.
+  it("keeps a const of a switch case before a function that stays a declaration", () => {
+    const all = new Bun.Transpiler({ loader: "js", minify: { syntax: true, identifiers: true } });
+    const source =
+      "module.exports = (function (v) { switch (v) { case 1: const n = 'C'; function arguments() {} case 2: return n; } })(1);";
+    expect({ source: run(source), output: run(all.transformSync(source)) }).toEqual({ source: "C", output: "C" });
+  });
+
+  // Without a renamer the function is a `let` of its block, and the reads of the
+  // arguments object are no longer counted as reads of it. One read of it takes
+  // the function expression, which has no name (#20398).
+  it.failing("keeps the name of a function that its block reads once, with minify.syntax", () => {
+    const syntax = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
+    const source =
+      "module.exports = (function () { const before = typeof arguments; { function arguments() {} return arguments; } })(1).name;";
+    expect({ source: run(source), output: run(syntax.transformSync(source)) }).toEqual({
+      source: "arguments",
+      output: "arguments",
+    });
+  });
+
+  it.each([
+    [
+      "a var in a block",
+      "(function () { { var arguments; } return [typeof arguments, arguments.length]; })(1, 2)",
+      ["object", 2],
+    ],
+    [
+      "a var in a block, with a value",
+      "(function () { const before = typeof arguments; { var arguments = 1; } return [before, arguments]; })(1)",
+      ["object", 1],
+    ],
+    [
+      "a var in the head of for-of",
+      "(function (x) { const before = typeof arguments; for (var arguments of x); return [before, arguments]; })([7])",
+      ["object", 7],
+    ],
+    ["a var under a label", "(function () { a: var arguments; return arguments.length; })(1, 2, 3)", 3],
+    [
+      "a var in a pattern",
+      "(function () { const before = typeof arguments; { var { arguments } = { arguments: 5 }; } return [before, arguments]; })(1)",
+      ["object", 5],
+    ],
+    ["a var in a block that reads it", "(function () { { var arguments; return arguments.length; } })(1, 2)", 2],
+    [
+      "a var that an arrow function reads",
+      "(function () { { var arguments; } return (() => arguments.length)(); })(1, 2)",
+      2,
+    ],
+    [
+      "a var that a default value reads",
+      "(function (a = arguments.length) { { var arguments; } return [a, arguments.length]; })(undefined, 1)",
+      [2, 2],
+    ],
+    ["a var and the mapped parameter", "(function (a) { { var arguments; } arguments[0] = 2; return a; })(1)", 2],
+    [
+      "a var in a catch clause that binds the name",
+      "(function () { try { throw 1; } catch (arguments) { var arguments = 2; } return typeof arguments; })(1)",
+      "object",
+    ],
+    [
+      "a var in the head of for",
+      "(function () { for (var arguments = arguments.length; ; ) return arguments; })(1, 2)",
+      2,
+    ],
+    [
+      "a var in nested and sibling blocks",
+      "(function () { { { var arguments; } } { var arguments; } return arguments.length; })(1, 2)",
+      2,
+    ],
+    [
+      "a var in a block of a block with a var",
+      "(function () { { var arguments; { var arguments; } } return arguments.length; })(1, 2)",
+      2,
+    ],
+    [
+      "a function in a block",
+      "(function () { const seen = [typeof arguments]; { seen.push(typeof arguments); function arguments() {} } seen.push(typeof arguments); return seen; })(1)",
+      ["object", "function", "function"],
+    ],
+    [
+      "a function in a block that does not run",
+      "(function (c) { const before = typeof arguments; if (c) { function arguments() {} } return [before, typeof arguments]; })(0)",
+      ["object", "object"],
+    ],
+    [
+      "a function as the body of an if",
+      "(function (c) { const before = typeof arguments; if (c) function arguments() {} return [before, typeof arguments]; })(1)",
+      ["object", "function"],
+    ],
+    [
+      "the name of a function in a block",
+      "(function () { { function arguments() {} return arguments.name; } })(1)",
+      "arguments",
+    ],
+    [
+      "a function in each of two blocks",
+      "(function () { const before = typeof arguments; { function arguments() { return 1; } } { function arguments() { return 2; } } return [before, arguments()]; })(1)",
+      ["object", 2],
+    ],
+    [
+      "a function in a block after a var in a block",
+      "(function () { const before = typeof arguments; { var arguments; } { function arguments() {} } return [before, typeof arguments]; })(1)",
+      ["object", "function"],
+    ],
+    [
+      "a function in a block before a var in a block",
+      "(function () { const before = typeof arguments; { function arguments() {} } { var arguments; } return [before, typeof arguments]; })(1)",
+      ["object", "function"],
+    ],
+    [
+      "a function in a block of a catch clause that binds the name",
+      "(function () { const before = typeof arguments; try { throw 1; } catch (arguments) { { function arguments() {} } } return [before, typeof arguments]; })(1)",
+      ["object", "function"],
+    ],
+    [
+      "a var and a function under a catch clause that binds the name",
+      "(function () { const seen = [typeof arguments]; try { throw 1; } catch (arguments) { { var arguments; } { function arguments() {} } seen.push(typeof arguments); } seen.push(typeof arguments); return seen; })(1)",
+      ["object", "number", "function"],
+    ],
+    [
+      "two functions under a catch clause that binds the name",
+      "(function () { const seen = [typeof arguments]; try { throw 1; } catch (arguments) { { function arguments() {} } { function arguments() {} } seen.push(typeof arguments); } seen.push(typeof arguments); return seen; })(1)",
+      ["object", "number", "function"],
+    ],
+    [
+      "a function in a block of a block with a var",
+      "(function () { const before = typeof arguments; { var arguments; { function arguments() {} } } return [before, typeof arguments]; })(1)",
+      ["object", "function"],
+    ],
+    [
+      "a function in a with",
+      "(function (w) { const before = typeof arguments; with (w) { function arguments() {} } return [before, typeof arguments, w.arguments]; })({ arguments: 1 })",
+      ["object", "function", 1],
+    ],
+    [
+      "a function in a with, in the block of another one",
+      "(function (w) { { function arguments() { return 1; } with (w) { function arguments() { return 2; } } } return typeof arguments; })({})",
+      "function",
+    ],
+    [
+      "a function in a with, below a let in the block of another one",
+      "(function (w) { { function arguments() { return 1; } { let arguments = 3; with (w) { function arguments() { return 2; } } } } return [typeof arguments, arguments()]; })({})",
+      ["function", 1],
+    ],
+    [
+      "two functions in a block that a break leaves between them",
+      "(function () { a: { function arguments() { return 1; } break a; function arguments() { return 2; } } return [typeof arguments, arguments()]; })()",
+      ["function", 2],
+    ],
+    [
+      "two functions in a switch case that a break leaves between them",
+      "(function () { switch (1) { case 1: function arguments() { return 1; } break; function arguments() { return 2; } } return [typeof arguments, arguments()]; })()",
+      ["function", 2],
+    ],
+    [
+      "a function in a block that a break leaves before it",
+      "(function () { a: { break a; function arguments() {} } return typeof arguments; })(1)",
+      "object",
+    ],
+    [
+      "a function under a label, after its block",
+      "(function () { const before = typeof arguments; { a: function arguments() {} } return [before, typeof arguments]; })(1)",
+      ["object", "function"],
+    ],
+  ])("%s: the output gives what the source gives", (_, expression, expected) => {
+    const source = `module.exports = ${expression};`;
+    expect({ source: run(source), output: run(minify.transformSync(source)) }).toEqual({
+      source: expected,
+      output: expected,
+    });
   });
 });

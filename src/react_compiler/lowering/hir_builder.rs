@@ -1022,6 +1022,18 @@ impl<'h> HirBuilder<'h> {
             _ => {}
         }
 
+        // The parser linked this declaration to the function's own `arguments`.
+        if sym.has_link()
+            && self
+                .symbol(symbol::follow_symbols(self.host.symbols(), ref_))
+                .is_some_and(|root| root.kind == Sk::Arguments)
+        {
+            return Err(crate::diagnostics::cold_todo(
+                "`arguments` is declared again",
+                loc,
+            ));
+        }
+
         if self.host.is_module_level(ref_) {
             return Ok(VariableBinding::ModuleLocal { name });
         }

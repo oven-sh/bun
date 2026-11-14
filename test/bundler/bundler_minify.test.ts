@@ -88,6 +88,251 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     run: { stdout: `[["arg,dep",1],["arg,dep",9]]` },
   });
+  // The arguments object of a sloppy function is one of its parameter
+  // bindings. A `var arguments` that hoists out of a nested scope declares that
+  // binding again, and so does a block-level `function arguments`: a read of
+  // `arguments` before, inside and after such a declaration names one binding
+  // that no renamer may rename. `module.exports` makes the file CommonJS, and
+  // with no directive in the entry the bundle is sloppy code.
+  const hoistedArgumentsSource = /* js */ `
+    const results = {
+      block: (function () { { var arguments; } return [typeof arguments, arguments.length]; })(1, 2),
+      blockWithValue: (function () { const before = typeof arguments; { var arguments = 1; } return [before, arguments]; })(1),
+      forOf: (function (x) { const before = typeof arguments; for (var arguments of x); return [before, arguments]; })([7]),
+      catchBlock: (function () { try { throw 1; } catch (e) { var arguments; } return arguments.length; })(1, 2),
+      readInBlock: (function () { { var arguments; return arguments.length; } })(1, 2),
+      arrow: (function () { { var arguments; } return (() => arguments.length)(); })(1, 2),
+      defaultValue: (function (a = arguments.length) { { var arguments; } return [a, arguments.length]; })(undefined, 1),
+      mapped: (function (a) { { var arguments; } arguments[0] = 2; return a; })(1),
+      catchBinding: (function () { try { throw 1; } catch (arguments) { var arguments = 2; } return typeof arguments; })(1),
+      beforeBlockFunction: (function () { const before = typeof arguments; { function arguments() {} } return before; })(1),
+      insideBlockFunction: (function () { { return [typeof arguments, arguments.name]; function arguments() {} } })(1),
+      blockFunctionNotRun: (function (c) { const before = typeof arguments; if (c) { function arguments() {} } return [before, typeof arguments]; })(0),
+    };
+    module.exports = results;
+    console.log(JSON.stringify(results));
+  `;
+  const hoistedArgumentsResults = JSON.stringify({
+    block: ["object", 2],
+    blockWithValue: ["object", 1],
+    forOf: ["object", 7],
+    catchBlock: 2,
+    readInBlock: 2,
+    arrow: 2,
+    defaultValue: [2, 2],
+    mapped: 2,
+    catchBinding: "object",
+    beforeBlockFunction: "object",
+    insideBlockFunction: ["function", "arguments"],
+    blockFunctionNotRun: ["object", "object"],
+  });
+  itBundled("minify/HoistedArgumentsDeclarationKeepsItsName", {
+    files: {
+      "/entry.js": hoistedArgumentsSource,
+    },
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: hoistedArgumentsResults },
+  });
+  itBundled("minify/HoistedArgumentsDeclarationKeepsItsNameNoBundle", {
+    files: {
+      "/entry.js": hoistedArgumentsSource,
+    },
+    bundling: false,
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: hoistedArgumentsResults },
+  });
+  // An iife bundle has no CommonJS marker, so bun loads it as an ES module,
+  // which is strict code. `new Function` reads it as a script.
+  itBundled("minify/HoistedArgumentsDeclarationKeepsItsNameIIFE", {
+    files: {
+      "/entry.js": hoistedArgumentsSource.replace("module.exports = results;", ""),
+    },
+    format: "iife",
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const logged: string[] = [];
+      new Function("console", api.readFile("/out.js"))({ log: (line: string) => logged.push(line) });
+      expect(logged).toEqual([hoistedArgumentsResults]);
+    },
+  });
+  itBundled("minify/HoistedArgumentsDeclarationKeepsItsNameAllMinify", {
+    files: {
+      "/entry.js": hoistedArgumentsSource,
+    },
+    format: "cjs",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: hoistedArgumentsResults },
+  });
+  // Without --minify a `with` anywhere in the file makes `arguments` a
+  // reserved name, and the hoisted `var` was numbered: `var arguments2`.
+  itBundled("minify/HoistedArgumentsDeclarationKeepsItsNameWithoutMinify", {
+    files: {
+      "/entry.js":
+        hoistedArgumentsSource +
+        /* js */ `
+        function read(scope) { with (scope) { return value; } }
+        console.log(read({ value: "with" }));
+      `,
+    },
+    format: "cjs",
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("arguments2");
+    },
+    run: { stdout: hoistedArgumentsResults + "\nwith" },
+  });
+  // A direct `eval` reserves the names of its scope like a `with` does.
+  itBundled("minify/HoistedArgumentsDeclarationKeepsItsNameWithDirectEval", {
+    files: {
+      "/entry.js":
+        hoistedArgumentsSource +
+        /* js */ `
+        function read(code) { return eval(code); }
+        console.log(read("1 + 1"));
+      `,
+    },
+    format: "cjs",
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("arguments2");
+    },
+    run: { stdout: hoistedArgumentsResults + "\n2" },
+  });
+  // The default output format is ESM, which is strict code. There the
+  // declaration stops the build, and no renamer is asked.
+  itBundled("minify/HoistedArgumentsDeclarationStopsAnESMBuild", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = function () { { var arguments; } return typeof arguments; };
+      `,
+    },
+    minifyIdentifiers: true,
+    bundleErrors: {
+      "/entry.js": [
+        'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  // The linker prints the directive of the entry at the top of the chunk, over
+  // the sloppy file too. There the declaration is "SyntaxError: Unexpected eval
+  // or arguments in strict mode", and only another name for it loads.
+  itBundled("minify/HoistedArgumentsDeclarationUnderAStrictEntry", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        const length = require("./sloppy.cjs");
+        console.log(length(1));
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports = function (a) { { var arguments = [a, a]; } return arguments.length; };
+      `,
+    },
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: "2" },
+  });
+  // A bundle has to give what its source gives, read as the engine reads it:
+  // `new Function` takes the text as it is, where bun's own transpiler would
+  // lower a block-level function again.
+  const runAsWritten = (code: string) => {
+    const module = { exports: {} };
+    new Function("module", "exports", code)(module, module.exports);
+    return module.exports;
+  };
+  const nestedArgumentsSource = /* js */ `
+    const kind = v => Object.prototype.toString.call(v).slice(8, -1);
+    module.exports = {
+      // Two declarations under one catch clause that binds the name: the first
+      // makes the clause name its symbol, and the second goes through it.
+      varAndFunction: (function () { const seen = [kind(arguments)]; try { throw 1; } catch (arguments) { { var arguments; } { function arguments() {} } seen.push(kind(arguments)); } seen.push(kind(arguments)); return seen.join(" "); })(1),
+      twoFunctions: (function () { const seen = [kind(arguments)]; try { throw 1; } catch (arguments) { { function arguments() {} } { function arguments() {} } seen.push(kind(arguments)); } seen.push(kind(arguments)); return seen.join(" "); })(1),
+      nestedBlocks: (function () { const seen = [kind(arguments)]; try { throw 1; } catch (arguments) { { { var arguments; } } { { function arguments() {} } } seen.push(kind(arguments)); } seen.push(kind(arguments)); return seen.join(" "); })(1),
+      functionOnly: (function () { const seen = [kind(arguments)]; try { throw 1; } catch (arguments) { { function arguments() {} } seen.push(kind(arguments)); } seen.push(kind(arguments)); return seen.join(" "); })(1),
+      // A function below one that stays a declaration stays one too: a \`var arguments\` cannot print there.
+      withInBlockOfFunction: (function (w) { { function arguments() {} with (w) { function arguments() {} } } return kind(arguments); })({}),
+      withBelowLetInBlockOfFunction: (function (w) { { function arguments() {} { let arguments = 3; with (w) { function arguments() {} } } } return kind(arguments) + " " + kind(w.arguments); })({ arguments: 1 }),
+      // Each declaration stores where it runs.
+      twiceWithBreak: (function () { a: { function arguments() { return 1; } break a; function arguments() { return 2; } } return kind(arguments) + " " + arguments(); })(),
+      afterBreak: (function () { a: { break a; function arguments() {} } return kind(arguments); })(),
+      labelled: (function () { const before = kind(arguments); { a: function arguments() {} } return before + " " + kind(arguments); })(1),
+    };
+  `;
+  const nestedArgumentsResults = {
+    varAndFunction: "Arguments Number Function",
+    twoFunctions: "Arguments Number Function",
+    nestedBlocks: "Arguments Number Function",
+    functionOnly: "Arguments Number Function",
+    withInBlockOfFunction: "Function",
+    withBelowLetInBlockOfFunction: "Function Number",
+    twiceWithBreak: "Function 2",
+    afterBreak: "Arguments",
+    labelled: "Arguments Function",
+  };
+  for (const [name, minify] of [
+    ["Identifiers", { minifyIdentifiers: true }],
+    ["Nothing", { minifyIdentifiers: false }],
+    ["Everything", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+  ] as const) {
+    itBundled(`minify/NestedArgumentsDeclarationsRunAsTheirSource-minify${name}`, {
+      files: {
+        "/entry.js": nestedArgumentsSource,
+      },
+      format: "cjs",
+      ...minify,
+      onAfterBundle(api) {
+        expect({
+          source: runAsWritten(nestedArgumentsSource),
+          bundle: runAsWritten(api.readFile("/out.js")),
+        }).toEqual({ source: nestedArgumentsResults, bundle: nestedArgumentsResults });
+      },
+    });
+  }
+  // A block-level `function arguments` is printed as a declaration. When bun
+  // runs a bundle that is not for bun, its transpiler reads that declaration
+  // as it reads the one of the source file, so both print the same. A bundle
+  // for bun is run as written.
+  test("minify/BlockFunctionNamedArgumentsRunsAsItsSource", async () => {
+    const source = /* js */ `
+      const kind = v => Object.prototype.toString.call(v).slice(8, -1);
+      module.exports = (function () {
+        const seen = [kind(arguments)];
+        { seen.push(kind(arguments)); function arguments() {} }
+        seen.push(kind(arguments));
+        return seen.join(" ");
+      })(1);
+      console.log(module.exports);
+    `;
+    using dir = tempDir("block-function-named-arguments", { "source.cjs": source });
+    const bun = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const builds = await Promise.all([
+      bun("build", "--format=cjs", "source.cjs", "--outfile=bundle.cjs"),
+      bun("build", "--format=cjs", "--target=bun", "source.cjs", "--outfile=bundle-for-bun.cjs"),
+    ]);
+    expect(builds.map(build => build.exitCode)).toEqual([0, 0]);
+    const [fromSource, fromBundle, fromBundleForBun] = await Promise.all([
+      bun("source.cjs"),
+      bun("bundle.cjs"),
+      bun("bundle-for-bun.cjs"),
+    ]);
+    expect(fromSource.exitCode).toBe(0);
+    expect(fromBundle).toEqual(fromSource);
+    expect(fromBundleForBun).toEqual({ stdout: "Arguments Function Function\n", stderr: "", exitCode: 0 });
+  });
   // `bun build --no-bundle` keeps the export names. They were pinned after the
   // reserved names were computed, so a local in a nested function could take
   // one of them and shadow the export it reads.

@@ -861,6 +861,72 @@ describe("bundler", () => {
     },
   });
 
+  // A `var arguments` in a nested scope, or a block-level `function arguments`, declares the function's own `arguments`
+  // again. The compiler reads `arguments` as a global and would drop the declaration, so such a function is left as written.
+  test("react-compiler/ArgumentsDeclaredAgainIsLeftAsWritten", async () => {
+    using dir = tempDir("react-compiler-arguments", {
+      "entry.jsx": /* jsx */ `
+        function BlockFunction(props) {
+          const before = typeof arguments;
+          { function arguments() { return props.x; } }
+          return <div>{before + " " + arguments()}</div>;
+        }
+        function ForOfVar(props) {
+          const before = typeof arguments;
+          for (var arguments of props.list);
+          return <div>{before + " " + arguments}</div>;
+        }
+        function BlockVar(props) {
+          { var arguments; }
+          return <div>{arguments.length}</div>;
+        }
+        function Plain(props) {
+          return <div>{props.x}</div>;
+        }
+        const render = (component, ...args) => {
+          try {
+            return component(...args).p.children;
+          } catch (error) {
+            return String(error);
+          }
+        };
+        module.exports = [
+          render(BlockFunction, { x: "from props" }),
+          render(ForOfVar, { list: [7] }),
+          render(BlockVar, {}, 2, 3),
+          render(Plain, { x: "plain" }),
+        ];
+      `,
+      "node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    });
+    const build = async (...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--react-compiler", "--format=cjs", ...flags, "entry.jsx"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return stdout;
+    };
+    // `new Function` runs each bundle as the engine reads it.
+    const run = (code: string) => {
+      const module = { exports: {} };
+      new Function("module", "exports", code)(module, module.exports);
+      return module.exports;
+    };
+    const [bundle, minified] = await Promise.all([build(), build("--minify-identifiers")]);
+    const rendered = ["object from props", "object 7", 3, "plain"];
+    expect({ bundle: run(bundle), minified: run(minified) }).toEqual({ bundle: rendered, minified: rendered });
+    // `Plain` is compiled.
+    expect(bundle).toContain("react.memo_cache_sentinel");
+  });
+
   // DeadCodeElimination took a read that nothing uses out of a `try`. Its block was then empty and could not throw, so the
   // handler went too: another result for the first two, a panic for the third, and the fourth was not compiled.
   itBundled("react-compiler/CaughtThrowIsNotDeadCode", {

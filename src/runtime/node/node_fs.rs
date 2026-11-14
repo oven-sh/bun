@@ -8488,7 +8488,7 @@ impl NodeFS {
                     let len = bun_node_path::resolve_buf_len(false, &parts);
                     let mut bufs = vec![0u8; 2 * len];
                     let (buf, buf2) = bufs.split_at_mut(len);
-                    let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2)?;
+                    let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2);
                     if resolved.len() >= inbuf.len() {
                         return Err(sys::Error {
                             errno: E::ENAMETOOLONG as _,

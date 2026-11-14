@@ -394,6 +394,7 @@ it("fd_pread, fd_pwrite and fd_filestat_set_size answer an errno for an offset o
   const WASI_ESUCCESS = 0;
   const WASI_EFBIG = 22;
   const WASI_EINVAL = 28;
+  const WASI_WHENCE_SET = 0;
   const WASI_RIGHT_FD_READ = BigInt(2);
   const WASI_RIGHT_FD_SEEK = BigInt(4);
   const WASI_RIGHT_FD_WRITE = BigInt(64);
@@ -489,6 +490,28 @@ it("fd_pread, fd_pwrite and fd_filestat_set_size answer an errno for an offset o
     fd_filestat_set_size: w.fd_filestat_set_size(fd, BigInt(0)),
     file: fs.readFileSync(file, "latin1"),
   }).toEqual({ fd_filestat_set_size: WASI_ESUCCESS, file: "" });
+
+  // fd_write has the same limit for a position that fd_seek stored.
+  const seekThenWrite = position => {
+    expect(w.fd_seek(fd, position, WASI_WHENCE_SET, countPtr)).toBe(WASI_ESUCCESS);
+    memory.write("WXYZ", bufPtr);
+    view.setUint32(countPtr, sentinel, true);
+    const errno = w.fd_write(fd, iovsPtr, 1, countPtr);
+    return { errno, count: view.getUint32(countPtr, true) };
+  };
+  expect({
+    "2^53": seekThenWrite(BigInt(2) ** BigInt(53)),
+    "2^60": seekThenWrite(BigInt(2) ** BigInt(60)),
+    file: fs.readFileSync(file, "latin1"),
+  }).toEqual({
+    "2^53": { errno: WASI_EFBIG, count: sentinel },
+    "2^60": { errno: WASI_EFBIG, count: sentinel },
+    file: "",
+  });
+  expect({
+    "2": seekThenWrite(BigInt(2)),
+    file: fs.readFileSync(file, "latin1"),
+  }).toEqual({ "2": { errno: WASI_ESUCCESS, count: 4 }, file: "\0\0WXYZ" });
 });
 
 it("fd_filestat_set_times and path_filestat_set_times answer EINVAL for an unknown flag and leave the times alone", () => {
@@ -531,40 +554,43 @@ it("fd_filestat_set_times and path_filestat_set_times answer EINVAL for an unkno
   ).toBe(WASI_ESUCCESS);
   const fd = view.getUint32(fdPtr, true);
 
-  const setTimes = {
-    fd_filestat_set_times: fstflags => w.fd_filestat_set_times(fd, year2002, year2002, fstflags),
-    path_filestat_set_times: fstflags =>
-      w.path_filestat_set_times(preopenFd, 0, pathPtr, len, year2002, year2002, fstflags),
-  };
-  for (const [hostcall, call] of Object.entries(setTimes)) {
+  const rows = setTimes => {
     const withFlags = fstflags => {
       fs.utimesSync(file, year2001, year2001);
-      const errno = call(fstflags);
+      const errno = setTimes(fstflags);
       return { errno, mtime: fs.statSync(file).mtimeMs / 1000 };
     };
-    const refused = { errno: WASI_EINVAL, mtime: year2001 };
-    // Bits 4, 5 and 8 are no flag. Node answers EINVAL for them. It narrows the flags to a u16 first, so 65536 is no flag at all there.
-    expect({
-      hostcall,
+    return {
       16: withFlags(16),
       32: withFlags(32),
       256: withFlags(256),
       65536: withFlags(65536),
       "ATIM | 16": withFlags(WASI_FILESTAT_SET_ATIM | 16),
-    }).toEqual({ hostcall, 16: refused, 32: refused, 256: refused, 65536: refused, "ATIM | 16": refused });
-
-    expect({
-      hostcall,
       "ATIM | MTIM": withFlags(WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_MTIM),
       "ATIM_NOW | MTIM_NOW": withFlags(WASI_FILESTAT_SET_ATIM_NOW | WASI_FILESTAT_SET_MTIM_NOW).errno,
-      "no flag": withFlags(0).errno,
-    }).toEqual({
-      hostcall,
-      "ATIM | MTIM": { errno: WASI_ESUCCESS, mtime: 1009843200 },
-      "ATIM_NOW | MTIM_NOW": WASI_ESUCCESS,
-      "no flag": WASI_ESUCCESS,
-    });
-  }
+      "no flag": withFlags(0),
+    };
+  };
+  const refused = { errno: WASI_EINVAL, mtime: year2001 };
+  // Bits 4, 5 and 8 are no flag. Node answers EINVAL for them. It narrows the flags to a u16 first, so 65536 is no flag at all there.
+  const expected = noFlag => ({
+    16: refused,
+    32: refused,
+    256: refused,
+    65536: refused,
+    "ATIM | 16": refused,
+    "ATIM | MTIM": { errno: WASI_ESUCCESS, mtime: 1009843200 },
+    "ATIM_NOW | MTIM_NOW": WASI_ESUCCESS,
+    "no flag": noFlag,
+  });
+
+  expect(rows(fstflags => w.fd_filestat_set_times(fd, year2002, year2002, fstflags))).toEqual(
+    expected({ errno: WASI_ESUCCESS, mtime: year2001 }),
+  );
+  // path_filestat_set_times takes a time that it does not set from the directory of the descriptor, not from the file.
+  expect(rows(fstflags => w.path_filestat_set_times(preopenFd, 0, pathPtr, len, year2002, year2002, fstflags))).toEqual(
+    expected({ errno: WASI_ESUCCESS, mtime: expect.any(Number) }),
+  );
 });
 
 it("poll_oneoff waits on a clock subscription and reports the event", () => {

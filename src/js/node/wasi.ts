@@ -1019,13 +1019,12 @@ class WASI {
           } else {
             let w = 0;
             while (w < iov.byteLength) {
-              const i = fs.writeSync(
-                stats.real,
-                iov,
-                w,
-                iov.byteLength - w,
-                stats.offset ? Number(stats.offset) : null,
-              );
+              const position = stats.offset ? Number(stats.offset) : null;
+              // As in fd_pwrite.
+              if (position !== null && position > Number.MAX_SAFE_INTEGER) {
+                throw new WASIError(WASI_EFBIG);
+              }
+              const i = fs.writeSync(stats.real, iov, w, iov.byteLength - w, position);
               if (stats.offset) stats.offset += BigInt(i);
               w += i;
             }

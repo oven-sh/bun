@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
+import { builtinModules } from "node:module";
 import net from "node:net";
 import { join } from "node:path";
 import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery } from "../../js/sql/wire-frames";
@@ -8,7 +9,12 @@ import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery }
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
 // 5s default on debug/ASAN runners.
-setDefaultTimeout(isASAN ? 120_000 : 30_000);
+const isSlowBuild = isDebug || isASAN;
+setDefaultTimeout(isSlowBuild ? 120_000 : 30_000);
+
+// A child `bun test` does not inherit the timeout above, and one of its tests can take 10s on a
+// loaded debug build. Less than the timeout above, so that the child is the one to report a slow test.
+const childTimeout = isSlowBuild ? ["--timeout=30000"] : [];
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.
@@ -49,7 +55,8 @@ async function runTests(
   env: Record<string, string | undefined> = bunEnv,
 ) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...extraArgs, ...files],
+    // The last --timeout wins, so a case can pass its own in extraArgs.
+    cmd: [bunExe(), "test", ...childTimeout, ...extraArgs, ...files],
     env,
     cwd: dir,
     stderr: "pipe",
@@ -104,7 +111,7 @@ describe.concurrent("bun test --isolate", () => {
     // between files inside a --parallel worker.
     using parallel = tempDir("isolate-cwd-parallel", cwdFixtures);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      cmd: [bunExe(), "test", ...childTimeout, "--parallel=2", ...files],
       env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
       cwd: String(parallel),
       stderr: "pipe",
@@ -180,7 +187,7 @@ describe.concurrent("bun test --isolate", () => {
 
       using parallel = tempDir("isolate-env-parallel", envFixtures);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--parallel=2", ...files],
+        cmd: [bunExe(), "test", ...childTimeout, "--parallel=2", ...files],
         env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
         cwd: String(parallel),
         stderr: "pipe",
@@ -230,7 +237,7 @@ describe.concurrent("bun test --isolate", () => {
 
     using parallel = tempDir("isolate-alloc-limit-parallel", limitFixtures);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      cmd: [bunExe(), "test", ...childTimeout, "--parallel=2", ...files],
       env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
       cwd: String(parallel),
       stderr: "pipe",
@@ -552,7 +559,7 @@ describe.concurrent("bun test --isolate", () => {
 
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", "./a-connect.test.ts", "./b-check.test.ts"],
+        cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a-connect.test.ts", "./b-check.test.ts"],
         env: { ...bunEnv, PORT: String(port), CLOSE_FILE: closeFile },
         cwd: String(dir),
         stderr: "pipe",
@@ -866,7 +873,7 @@ describe.concurrent("bun test --isolate", () => {
     const fireFile = String(dir) + "/fired.txt";
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a-watch.test.ts", "./b-mutate.test.ts"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a-watch.test.ts", "./b-mutate.test.ts"],
       env: { ...bunEnv, WATCH_DIR: watchDir, FIRE_FILE: fireFile },
       cwd: String(dir),
       stderr: "pipe",
@@ -1339,7 +1346,15 @@ describe.concurrent("bun test --isolate", () => {
     const pidB = String(dir) + "/pid-b.txt";
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a-spawn.test.ts", "./b-spawn.test.ts", "./c-check.test.ts"],
+      cmd: [
+        bunExe(),
+        "test",
+        ...childTimeout,
+        "--isolate",
+        "./a-spawn.test.ts",
+        "./b-spawn.test.ts",
+        "./c-check.test.ts",
+      ],
       env: { ...bunEnv, PID_FILE_A: pidA, PID_FILE_B: pidB },
       cwd: String(dir),
       stderr: "pipe",
@@ -1390,7 +1405,7 @@ describe.concurrent("bun test --isolate", () => {
     const loggedPids = () => fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", ...args, "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        cmd: [bunExe(), "test", ...childTimeout, ...args, "./a.test.ts", "./b.test.ts", "./c.test.ts"],
         env: { ...bunEnv, ...env, PID_LOG: log },
         cwd: String(dir),
         stderr: "pipe",
@@ -1634,8 +1649,10 @@ describe.concurrent("bun test --isolate=modules", () => {
 
   // If this fails, load the module before the snapshot in src/js/internal/test/globals.ts.
   test("no other builtin module patches a global class when it loads", async () => {
+    const ids = builtinModules.filter(id => !/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id));
     const files = {
-      "a.test.js": `test("loads every builtin module", () => {
+      // A test for each module: a debug build needs more than the 5 seconds of one test to load them all.
+      "a.test.js": `
         const objects = Object.getOwnPropertyNames(globalThis)
           .map(name => Object.getOwnPropertyDescriptor(globalThis, name).value)
           .filter(value => typeof value === "function")
@@ -1650,20 +1667,21 @@ describe.concurrent("bun test --isolate=modules", () => {
           );
         const before = objects.map(functionsOf);
         const patched = [];
-        for (const id of require("node:module").builtinModules) {
-          if (/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)) continue;
-          require(id);
-          objects.forEach((object, i) => {
-            for (const [key, functions] of functionsOf(object)) {
-              if (functions.some((fn, j) => fn !== before[i].get(key)?.[j]) || !before[i].has(key)) patched.push(id + ": " + String(key));
-              before[i].set(key, functions);
-            }
+        for (const id of ${JSON.stringify(ids)}) {
+          test("loads " + id, () => {
+            require(id);
+            objects.forEach((object, i) => {
+              for (const [key, functions] of functionsOf(object)) {
+                if (functions.some((fn, j) => fn !== before[i].get(key)?.[j]) || !before[i].has(key)) patched.push(id + ": " + String(key));
+                before[i].set(key, functions);
+              }
+            });
           });
         }
-        console.log(JSON.stringify(patched));
-      });`,
+        afterAll(() => console.log(JSON.stringify(patched)));
+      `,
     };
-    expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
+    expect((await passes(files, ids.length)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
   });
 
   test("Module._cache is the running file's require.cache", async () => {
@@ -1773,7 +1791,7 @@ test.concurrent("--isolate: JSC options survive a bunfig.toml with an install ho
     `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+    cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts"],
     env: { ...bunEnv, BUN_JSC_dumpOptions: "2" },
     cwd: String(dir),
     stderr: "pipe",
@@ -1823,7 +1841,7 @@ test.concurrent("--isolate: delete require.cache evicts the SourceProvider cache
         "b.test.ts": bBody("v1"),
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts", "./b.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
@@ -1843,7 +1861,7 @@ test.concurrent("--isolate: delete require.cache evicts the SourceProvider cache
         "b.test.ts": bBody("v2"),
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts", "./b.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
@@ -1903,7 +1921,7 @@ test.concurrent("--isolate: SourceProvider cache covers CommonJS modules", async
         "c.test.ts": cBody("v1"),
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
+        cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
@@ -1923,7 +1941,7 @@ test.concurrent("--isolate: SourceProvider cache covers CommonJS modules", async
         "c.test.ts": cBody("v2"),
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
+        cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
@@ -1988,7 +2006,7 @@ test.concurrent("--isolate: SourceProvider cache covers node_modules .mjs and ty
     "c.test.ts": bcBody("c"),
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -2033,7 +2051,7 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
     "c.test.ts": tBody("c"),
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -2120,7 +2138,7 @@ test("t2", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./t1.test.ts", "./t2.test.ts"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./t1.test.ts", "./t2.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
@@ -2165,7 +2183,7 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
     `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "./a-leak.test.ts", "./b-check.test.ts"],
+    cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a-leak.test.ts", "./b-check.test.ts"],
     env: { ...bunEnv, FIRE_FILE: String(dir) + "/fired.txt" },
     cwd: String(dir),
     stderr: "pipe",
@@ -2389,7 +2407,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 
   async function maxLiveGlobals(dir: string): Promise<number> {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate"],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -2596,7 +2614,7 @@ test.concurrent(
       "b.test.js": raceFixture,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -2642,7 +2660,7 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
   const cacheDir = `${String(dir)}/transpiler-cache`;
   for (const run of [1, 2]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts"],
       env: {
         ...bunEnv,
         BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
@@ -2677,7 +2695,7 @@ test.concurrent(
     using dir = tempDir("isolate-internal-modules", { "a.test.ts": file, "b.test.ts": file, "c.test.ts": file });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
       env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
       cwd: String(dir),
       stderr: "pipe",
@@ -2770,7 +2788,7 @@ describe.concurrent("the SourceProvider cache skips files that use import.meta.g
   ] as const)("%s, %s files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=%s", async (flag, size, cachePath) => {
     using dir = tempDir("isolate-more-than-source", files(size));
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", flag],
+      cmd: [bunExe(), "test", ...childTimeout, flag],
       env: {
         ...bunEnv,
         BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
@@ -2789,7 +2807,7 @@ describe.concurrent("the SourceProvider cache skips files that use import.meta.g
   test.skipIf(isWindows).each(["--watch", "--hot"])("--isolate %s", async flag => {
     using dir = tempDir("isolate-more-than-source-watch", files("small"));
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", flag, "--no-clear-screen"],
+      cmd: [bunExe(), "test", ...childTimeout, "--isolate", flag, "--no-clear-screen"],
       env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
       cwd: String(dir),
       stdin: "ignore",
@@ -2823,7 +2841,7 @@ test.concurrent("--isolate: a macro runs in every file when a plugin is register
   }
   using dir = tempDir("isolate-macro-plugin", files);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts"],
+    cmd: [bunExe(), "test", ...childTimeout, "--isolate", "--preload", "./preload.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -2847,7 +2865,7 @@ test.concurrent("--isolate: two concurrent import()s of a file both add it to th
     `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+    cmd: [bunExe(), "test", ...childTimeout, "--isolate", "./a.test.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",

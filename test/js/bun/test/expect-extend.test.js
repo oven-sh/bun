@@ -8,6 +8,7 @@
  */
 
 import { bunEnv, bunExe, tempDir, withoutAggressiveGC } from "harness";
+import { join } from "node:path";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
@@ -743,6 +744,32 @@ describe("MatcherContext", () => {
       );
       expect(() => utils.diff(value, {})).toThrow(thrown);
       expect(() => utils.diff({}, value)).toThrow(thrown);
+    });
+
+    test("diff prints a module namespace without an export that is not set yet", async () => {
+      // The module throws halfway through its body, so `later` stays in its temporal dead zone.
+      using dir = tempDir("matcher-utils-diff-namespace", {
+        "stops.mjs": `
+          import * as self from "./stops.mjs";
+          export function hoisted() {}
+          (() => {
+            throw Object.assign(new Error("stops here"), { namespace: self });
+          })();
+          export const later = 1;
+        `,
+      });
+      const namespace = await import(join(String(dir), "stops.mjs")).catch(error => error.namespace);
+      const marked = Bun.stripANSI(utils.diff({ a: 1 }, { a: namespace }))
+        .split("\n")
+        .filter(line => /^[-+]/.test(line));
+      expect(marked).toEqual([
+        '-   "a": 1,',
+        '+   "a": Module Module {',
+        '+     "hoisted": [Function: hoisted],',
+        "+   },",
+        "- Expected  - 1",
+        "+ Received  + 3",
+      ]);
     });
 
     // Expected values measured on jest-matcher-utils 30.5.1.

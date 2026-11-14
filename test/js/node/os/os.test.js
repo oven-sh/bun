@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { isAndroid, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -73,7 +73,7 @@ it("tmpdir", () => {
     ).toBeTrue();
   } else {
     const originalEnv = process.env.TMPDIR;
-    let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
+    let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || (isAndroid ? "/data/local/tmp" : "/tmp");
     if (dir.length > 1 && dir.endsWith("/")) {
       dir = dir.substring(0, dir.length - 1);
     }
@@ -90,7 +90,9 @@ it("hostname", () => {
 });
 
 it("platform", () => {
-  expect(["win32", "darwin", "linux", "wasm"].some(platform => os.platform() === platform)).toBe(true);
+  expect(["win32", "darwin", "linux", "android", "freebsd", "wasm"].some(platform => os.platform() === platform)).toBe(
+    true,
+  );
 });
 
 it("release", () => {
@@ -98,7 +100,7 @@ it("release", () => {
 });
 
 it("type", () => {
-  expect(["Windows_NT", "Darwin", "Linux"].some(type => os.type() === type)).toBe(true);
+  expect(["Windows_NT", "Darwin", "Linux", "FreeBSD"].some(type => os.type() === type)).toBe(true);
 });
 
 it("uptime", () => {
@@ -215,6 +217,7 @@ it("machine", () => {
     "i386",
     "i686",
     "x86_64",
+    "amd64",
   ];
   expect(possibleValues.includes(os.machine())).toBe(true);
 });

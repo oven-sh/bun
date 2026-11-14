@@ -32,7 +32,6 @@ fn wyhash(input: &[u8]) -> u64 {
 // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
 // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
 use bun_resolver::DirInfo;
-use bun_resolver::DirInfoRef;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 
@@ -573,7 +572,7 @@ impl<'a> RouteLoader<'a> {
                     let abs_parts = [entry.dir(), entry.base()];
                     if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
                     {
-                        self.load(resolver, &dir_info, base_dir);
+                        self.load(resolver, dir_info, base_dir);
                     }
                 }
 
@@ -1053,9 +1052,7 @@ pub trait ResolverLike {
     // `bun_resolver::fs::FileSystem` is a process-global singleton, so `'static`
     // here is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
     fn fs(&self) -> &'static FileSystem;
-    /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
-    /// borrow ends before the recursive `load()` re-borrows it.
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<&'static DirInfo>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -9,10 +9,12 @@ The default registry is `registry.npmjs.org`. To change it globally, set it in `
 [install]
 # set default registry as a string
 registry = "https://registry.npmjs.org"
-# set a token
-registry = { url = "https://registry.npmjs.org", token = "123456" }
-# set a username/password
-registry = "https://username:password@registry.npmjs.org"
+
+# if needed, set a token
+# registry = { url = "https://registry.npmjs.org", token = "123456" }
+
+# if needed, set a username/password
+# registry = "https://username:password@registry.npmjs.org"
 ```
 
 To configure a private registry scoped to a particular organization:

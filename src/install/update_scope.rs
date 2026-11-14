@@ -204,28 +204,109 @@ fn is_pattern(arg: &[u8]) -> bool {
     arg.starts_with(b"!") || strings::contains_char(arg, b'*')
 }
 
+enum Matcher<'a> {
+    /// `*`. As a glob it would stop at the `/` of a scoped name.
+    All,
+    /// Text that the glob tokenizer reads as literal bytes only, so a glob match of it is this compare.
+    Exact(&'a [u8]),
+    Glob(bun_glob::Prepared<&'a [u8]>),
+}
+
+/// Why the text of an exclusion can match no package name. Such an exclusion would exclude nothing in silence.
+#[derive(Clone, Copy)]
+enum Malformed {
+    Empty,
+    Unexpected(u8),
+}
+
+impl<'a> Matcher<'a> {
+    fn of(text: &'a [u8]) -> (Matcher<'a>, Option<Malformed>) {
+        match text {
+            b"" => return (Matcher::Exact(text), Some(Malformed::Empty)),
+            b"*" => return (Matcher::All, None),
+            _ => {}
+        }
+        let glob = bun_glob::Prepared::new(text);
+        let (mut is_text, mut unexpected, mut unpaired) = (true, None, 0_usize);
+        for (at, is_literal) in glob.tokens() {
+            is_text &= is_literal;
+            let is_only_syntax = match text[at] {
+                _ if !is_literal => false,
+                b'{' | b'}' | b'[' | b']' | b'|' | b',' | b'\\' => true,
+                // Parentheses that pair up are bytes of a name, as in `@is-(unknown)/is-array`.
+                b'(' => {
+                    unpaired += 1;
+                    at == 0 || matches!(text[at - 1], b'?' | b'*' | b'+' | b'@' | b'!')
+                }
+                b')' if unpaired > 0 => {
+                    unpaired -= 1;
+                    false
+                }
+                b')' => true,
+                _ => false,
+            };
+            if is_only_syntax {
+                unexpected.get_or_insert(Malformed::Unexpected(text[at]));
+            }
+        }
+        if unpaired > 0 {
+            unexpected.get_or_insert(Malformed::Unexpected(b'('));
+        }
+        match is_text {
+            true => (Matcher::Exact(text), unexpected),
+            false => (Matcher::Glob(glob), unexpected),
+        }
+    }
+}
+
 struct Pattern {
     raw: &'static [u8],
     negated: bool,
-    glob: bun_glob::Prepared<&'static [u8]>,
+    matcher: Matcher<'static>,
     hit: bool,
 }
 
 impl Pattern {
-    fn parse(raw: &'static [u8]) -> Pattern {
+    fn parse(raw: &'static [u8]) -> Result<Pattern, Malformed> {
         let mut negated = false;
         let mut glob = raw;
         while let Some(rest) = glob.strip_prefix(b"!") {
             negated = !negated;
             glob = rest;
         }
-        Pattern {
-            raw,
-            negated,
-            glob: bun_glob::Prepared::new(glob),
-            hit: false,
+        match Matcher::of(glob) {
+            // A pattern that selects and matches nothing is an error once bun.lock is read. An exclusion never is.
+            (_, Some(malformed)) if negated => Err(malformed),
+            (matcher, _) => Ok(Pattern {
+                raw,
+                negated,
+                matcher,
+                hit: false,
+            }),
         }
     }
+}
+
+fn exit_on_malformed(arg: &[u8], malformed: Malformed) -> ! {
+    let shown = bun_core::fmt::for_terminal(BStr::new(arg));
+    match malformed {
+        Malformed::Empty => Output::err_generic("empty pattern \"{}\"", (shown,)),
+        Malformed::Unexpected(byte) => {
+            Output::err_generic(
+                "unexpected \"{}\" in pattern \"{}\"",
+                (char::from(byte), shown),
+            );
+            if matches!(byte, b'{' | b'}' | b'(' | b')' | b'|' | b',') {
+                bun_core::note!(
+                    "to exclude several packages, pass {}, {} or {}",
+                    "\"!{a,b}\"",
+                    "\"!@(a|b)\"",
+                    "\"!a\" \"!b\"",
+                );
+            }
+        }
+    }
+    Global::exit(1);
 }
 
 fn strip_negations(arg: &[u8]) -> &[u8] {
@@ -236,9 +317,19 @@ fn strip_negations(arg: &[u8]) -> &[u8] {
     rest
 }
 
+/// An `@` that opens a group or an alternative of one, as in `@scope/@(a|b)` and `{@scope/a,@scope/b}`, starts no version.
 fn has_version_suffix(arg: &[u8]) -> bool {
     let rest = strip_negations(arg);
-    rest.len() > 1 && strings::contains_char(&rest[1..], b'@')
+    let mut from = 1;
+    while let Some(at) = strings::index_of_char_pos(rest, b'@', from) {
+        let opens =
+            rest.get(at + 1) == Some(&b'(') || matches!(rest[at - 1], b'{' | b',' | b'(' | b'|');
+        if !opens {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
 }
 
 fn name_of_plain_arg(arg: &[u8]) -> &[u8] {
@@ -248,13 +339,12 @@ fn name_of_plain_arg(arg: &[u8]) -> &[u8] {
     }
 }
 
-fn matches(glob: &bun_glob::Prepared<&[u8]>, name: &[u8]) -> bool {
-    if glob.pattern() == b"*" {
-        true
-    } else if strings::contains_char(glob.pattern(), b'*') {
-        glob.r#match(name).matches()
-    } else {
-        glob.pattern() == name
+fn matches(matcher: &Matcher<'_>, name: &[u8]) -> bool {
+    match matcher {
+        Matcher::All => true,
+        Matcher::Exact(text) => *text == name,
+        // A dependency key that is spelled with glob bytes selects itself.
+        Matcher::Glob(glob) => glob.pattern() == name || glob.r#match(name).matches(),
     }
 }
 
@@ -277,14 +367,14 @@ fn describe_selectors(groups: UpdateGroups, direct_only: bool) -> Vec<u8> {
 }
 
 fn describe_patterns(patterns: &[Pattern]) -> Vec<u8> {
+    use std::io::Write as _;
     let mut out: Vec<u8> = Vec::new();
     for pattern in patterns {
         if !out.is_empty() {
             out.push(b' ');
         }
-        out.push(b'"');
-        out.extend_from_slice(pattern.raw);
-        out.push(b'"');
+        let shown = bun_core::fmt::for_terminal(BStr::new(pattern.raw));
+        _ = write!(out, "\"{shown}\"");
     }
     out
 }
@@ -339,7 +429,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 );
                 Global::exit(1);
             }
-            patterns.push(Pattern::parse(arg));
+            patterns.push(Pattern::parse(arg).unwrap_or_else(|it| exit_on_malformed(arg, it)));
         } else if is_pattern(arg) {
             if has_version_suffix(arg) {
                 Output::err_generic(
@@ -348,7 +438,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 );
                 Global::exit(1);
             }
-            patterns.push(Pattern::parse(arg));
+            patterns.push(Pattern::parse(arg).unwrap_or_else(|it| exit_on_malformed(arg, it)));
         } else {
             passthrough.push(arg);
         }
@@ -453,8 +543,8 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 let mut positive_hit = patterns.iter().all(|p| p.negated);
                 let mut excluded = false;
                 for pattern in patterns.iter_mut() {
-                    if !matches(&pattern.glob, real)
-                        && !(alias != real && matches(&pattern.glob, alias))
+                    if !matches(&pattern.matcher, real)
+                        && !(alias != real && matches(&pattern.matcher, alias))
                     {
                         continue;
                     }
@@ -484,17 +574,20 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         if !groups.is_default() {
             Output::err_generic(
                 "no dependencies in the selected groups match \"{}\"",
-                (BStr::new(pattern.raw),),
+                (bun_core::fmt::for_terminal(BStr::new(pattern.raw)),),
             );
         } else if direct_only {
             Output::err_generic(
                 "no direct dependencies match \"{}\"",
-                (BStr::new(pattern.raw),),
+                (bun_core::fmt::for_terminal(BStr::new(pattern.raw)),),
             );
         } else {
             Output::err_generic(
                 "no packages in {} match \"{}\"",
-                (lockfile_name, BStr::new(pattern.raw)),
+                (
+                    lockfile_name,
+                    bun_core::fmt::for_terminal(BStr::new(pattern.raw)),
+                ),
             );
         }
     }

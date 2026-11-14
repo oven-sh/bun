@@ -37,6 +37,20 @@ impl<P: AsRef<[u8]>> Prepared<P> {
         let pattern = self.pattern.as_ref();
         matcher::match_prepared::<{ cfg!(windows) }>(pattern, &self.shape, path, Dots::Match)
     }
+
+    /// Yields the start of each top-level token after the leading `!`s, and whether that token is a literal byte.
+    pub fn tokens(&self) -> impl Iterator<Item = (usize, bool)> {
+        let pattern = self.pattern.as_ref();
+        let mut next = matcher::negations(pattern);
+        std::iter::from_fn(move || {
+            let at = next;
+            (at < pattern.len()).then(|| {
+                let (token, end) = matcher::token_at(pattern, at, &self.shape);
+                next = end;
+                (at, token == matcher::Token::Literal)
+            })
+        })
+    }
 }
 
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
@@ -112,4 +126,30 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Prepared;
+
+    // Runs under Miri: `bun run rust:miri -p bun_glob`.
+    #[test]
+    fn tokens() {
+        let read = |pattern: &str| {
+            Prepared::new(pattern.as_bytes())
+                .tokens()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(read("a?"), [(0, true), (1, false)]);
+        assert_eq!(read("{a,b}c"), [(0, false), (5, true)]);
+        assert_eq!(read("@(a|b)[c]\\,"), [(0, false), (6, false), (9, false)]);
+        // Nothing here is closed, so the matcher compares each byte as it is written.
+        assert_eq!(
+            read("{a,[b@(c"),
+            (0..8).map(|at| (at, true)).collect::<Vec<_>>()
+        );
+        // The leading `!`s negate and are no tokens. The `!` of `!(a)` starts a group.
+        assert_eq!(read("!!a"), [(2, true)]);
+        assert_eq!(read("!(a)"), [(0, false)]);
+    }
 }

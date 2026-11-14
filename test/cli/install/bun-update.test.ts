@@ -2046,8 +2046,95 @@ describe("bun update <name> semantics", () => {
       expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
     });
 
+    const TRIO_UPDATED = { "no-deps": "^1.1.0", "a-dep": "^1.0.10", "dep-with-tags": "^1.0.1" };
+    type Trio = keyof typeof TRIO_PINNED;
+
+    // A pattern is a glob with or without a `*` in it. `--prod` makes every argument a pattern.
+    it.concurrent.each<[string[], Trio[]]>([
+      [["!{no-deps,a-dep}"], ["no-deps", "a-dep"]],
+      [
+        ["*", "!@(no-deps|a-dep)"],
+        ["no-deps", "a-dep"],
+      ],
+      [
+        ["!no-dep?", "!a-de[p]"],
+        ["no-deps", "a-dep"],
+      ],
+      [
+        ["!no-deps", "!a-dep"],
+        ["no-deps", "a-dep"],
+      ],
+      [["!!{no-deps,a-dep}"], ["dep-with-tags"]],
+      [
+        ["--prod", "{no-deps,a-dep}", "!a-@(dep|x)"],
+        ["a-dep", "dep-with-tags"],
+      ],
+    ])("bun update %p leaves %p alone", async (args, kept) => {
+      const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
+      await update(dir, ...args);
+      const expected = { ...TRIO_UPDATED };
+      for (const name of kept) expected[name] = TRIO_WIDENED[name];
+      await expectInSync(dir, expected);
+      for (const name of kept) expect(await lockedVersions(dir, name)).toStrictEqual([TRIO_PINNED[name]]);
+    });
+
+    it.concurrent("a brace list excludes with --latest too", async () => {
+      const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
+      await update(dir, "!{no-deps,a-dep}", "--latest");
+      await expectInSync(dir, { "no-deps": "^1.0.0", "a-dep": "^1.0.1", "dep-with-tags": "^3.0.0" });
+    });
+
+    const TYPES_KEPT = { "@types/no-deps": "^1.0.0", "@types/is-number": "^1.0.0", "no-deps": "^2.0.0" };
+
+    it.concurrent.each([
+      ["!{@types/no-deps,@types/is-number}", TYPES_KEPT],
+      ["!@types/@(no-deps|is-number)", TYPES_KEPT],
+      // `*` stops at the `/` of a scoped name.
+      ["!*no-deps*", { "@types/no-deps": "^2.0.0", "@types/is-number": "^2.0.0", "no-deps": "^1.0.0" }],
+    ])("bun update %p --latest reads the scoped names", async (arg, expected) => {
+      const dir = await stale(
+        { "@types/no-deps": "1.0.0", "@types/is-number": "1.0.0", "no-deps": "1.0.0" },
+        { "@types/no-deps": "^1.0.0", "@types/is-number": "^1.0.0", "no-deps": "^1.0.0" },
+      );
+      await update(dir, arg, "--latest");
+      await expectInSync(dir, expected);
+    });
+
+    // `we[i]rd` as a glob matches "weird". The pattern still selects the entry that is spelled like it.
+    it.concurrent("a pattern excludes an npm: alias by the name it is declared under", async () => {
+      const aliases = (range: string) => ({
+        aliased: `npm:no-deps@${range}1.0.0`,
+        "we[i]rd": `npm:dep-with-tags@${range}1.0.0`,
+        "@x(y)/z": `npm:peer-no-deps@${range}1.0.0`,
+        "x(y)": `npm:vulnerable@${range}1.0.0`,
+        "a-dep": `${range}1.0.1`,
+      });
+      const dir = await stale(aliases(""), aliases("^"));
+      await update(dir, "!{aliased,zzz}", "!we[i]rd", "!@x(y)/*", "!x(y)");
+      await expectInSync(dir, { ...aliases("^"), "a-dep": "^1.0.10" });
+      for (const name of ["no-deps", "dep-with-tags", "peer-no-deps", "vulnerable"]) {
+        expect(await lockedVersions(dir, name)).toStrictEqual(["1.0.0"]);
+      }
+    });
+
+    it.concurrent("a pattern that selects is compared as written when it is not a glob", async () => {
+      const dir = await stale(
+        { "x(y)": "npm:no-deps@1.0.0", "a-dep": "1.0.1" },
+        { "x(y)": "npm:no-deps@^1.0.0", "a-dep": "^1.0.1" },
+      );
+      await update(dir, "--prod", "x(y)");
+      await expectInSync(dir, { "x(y)": "npm:no-deps@^1.1.0", "a-dep": "^1.0.1" });
+    });
+
+    it.concurrent("exclusions that match no package are not an error", async () => {
+      const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
+      await update(dir, "!zzz", "!zzz-*", "!{zzz,yyy}");
+      await expectInSync(dir, TRIO_UPDATED);
+    });
+
     it.concurrent.each([
       ["zzz-*", 'error: no packages in bun.lock match "zzz-*"'],
+      ["{no-deps,a-dep*", 'error: no packages in bun.lock match "{no-deps,a-dep*"'],
       ["@types/*@2", "error: a version cannot be combined with a pattern: @types/*@2"],
     ])("bun update %p is an error that writes nothing", async (arg, message) => {
       const dir = await setup({ "no-deps": "~1.0.0" });
@@ -2057,6 +2144,61 @@ describe("bun update <name> semantics", () => {
       expect(stderr).not.toContain("unrecognised dependency format");
       await expectUnchanged(dir, before);
       expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+      expect(exitCode).toBe(1);
+    });
+
+    const unexpected = (byte: string, arg: string) => `error: unexpected "${byte}" in pattern "${arg}"\n`;
+    const LIST_NOTE = 'note: to exclude several packages, pass "!{a,b}", "!@(a|b)" or "!a" "!b"\n';
+    const versioned = (arg: string) => `error: a version cannot be combined with a pattern: ${arg}\n`;
+    // The text was read as a pattern, and the lockfile is the next thing that `bun update` needs.
+    const accepted = (shown: string) => `error: no bun.lock to match "${shown}" against\n    bun install\n`;
+
+    it.concurrent.each<[string[], string]>([
+      // An exclusion with glob syntax that is not complete can match no package name.
+      [["!(no-deps|a-dep)"], unexpected("(", "!(no-deps|a-dep)") + LIST_NOTE],
+      [["!@(no-deps|a-dep"], unexpected("(", "!@(no-deps|a-dep") + LIST_NOTE],
+      [["!@(@types/no-deps"], unexpected("(", "!@(@types/no-deps") + LIST_NOTE],
+      [["!a-@(dep|x"], unexpected("(", "!a-@(dep|x") + LIST_NOTE],
+      [["!a-dep(x"], unexpected("(", "!a-dep(x") + LIST_NOTE],
+      [["!a-dep)"], unexpected(")", "!a-dep)") + LIST_NOTE],
+      [["!no-deps,a-dep"], unexpected(",", "!no-deps,a-dep") + LIST_NOTE],
+      [["!no-deps|a-dep"], unexpected("|", "!no-deps|a-dep") + LIST_NOTE],
+      [["!{no-deps,a-dep"], unexpected("{", "!{no-deps,a-dep") + LIST_NOTE],
+      [["!{no-deps,a-dep}}"], unexpected("}", "!{no-deps,a-dep}}") + LIST_NOTE],
+      [["--prod", "!(no-deps|a-dep)"], unexpected("(", "!(no-deps|a-dep)") + LIST_NOTE],
+      [["!a-de[p"], unexpected("[", "!a-de[p")],
+      [["!a-dep]"], unexpected("]", "!a-dep]")],
+      [["!a-dep\\"], unexpected("\\", "!a-dep\\")],
+      [["!"], 'error: empty pattern "!"\n'],
+      [["--depth", "0", "!"], 'error: empty pattern "!"\n'],
+      // An `@` starts a version unless it opens a group or an alternative of one.
+      [["!{no-deps@2,a-dep}"], versioned("!{no-deps@2,a-dep}")],
+      [["!@types/@(no-deps|is-number)@2"], versioned("!@types/@(no-deps|is-number)@2")],
+      [["!@(@types/no-deps|@types/is-number)"], accepted("!@(@types/no-deps|@types/is-number)")],
+      // Parentheses that pair up are bytes of a name.
+      [["!x(y)"], accepted("!x(y)")],
+      [["!@is-(unknown)/*"], accepted("!@is-(unknown)/*")],
+      [["@is-\\(unknown\\)/*"], accepted("@is-\\(unknown\\)/*")],
+      // A pattern that selects and matches nothing is an error of its own, so its text is not checked.
+      [["{no-deps,a-dep*"], accepted("{no-deps,a-dep*")],
+      [["*,@2"], accepted("*,@2")],
+      [["--dev", "no-deps,a-dep"], accepted("no-deps,a-dep")],
+      [["!{http://carol:s3cret,@localhost:1/x}"], accepted("!{http://***@localhost:1/x}")],
+      // Not a pattern: it has no `!` and no `*`.
+      [["{no-deps,a-dep}"], "error: unrecognised dependency format: {no-deps,a-dep}\n"],
+    ])("bun update %p in a project without bun.lock", async (args, expected) => {
+      const dir = await createDir({ "package.json": manifest({ "no-deps": "~1.0.0" }) });
+      const { stderr, exitCode } = await run(dir, "update", ...args);
+      expect(stderr).toBe(expected);
+      expect(exitCode).toBe(1);
+    });
+
+    it.concurrent("an exclusion that can match no package name is an error that writes nothing", async () => {
+      const dir = await stale(TRIO_PINNED, TRIO_WIDENED);
+      const before = await snapshotFiles(dir);
+      const { stderr, exitCode } = await run(dir, "update", "!no-deps,a-dep");
+      expect(stderr).toBe(unexpected(",", "!no-deps,a-dep") + LIST_NOTE);
+      await expectUnchanged(dir, before);
       expect(exitCode).toBe(1);
     });
   });
@@ -2246,6 +2388,19 @@ describe("bun update <name> semantics", () => {
         "packages/web": after["packages/web"],
       });
       expect(JSON.stringify((await lock(dir)).workspaces["packages/web"])).not.toContain("a-dep");
+      await install(dir, "--frozen-lockfile");
+    });
+
+    it.concurrent("-r with a brace list of exclusions rewrites only the entries the list leaves", async () => {
+      const { dir, before } = await fanOut();
+      await update(dir, "!{no-deps,is-number}", "-r");
+      expect((await packageJsonOf(dir, "packages/api")).dependencies).toStrictEqual({
+        "no-deps": "^1.0.0",
+        "a-dep": "^1.0.10",
+        aliased: "npm:no-deps@~1.0.0",
+      });
+      const after = await texts(dir);
+      expect(after).toStrictEqual({ ...before, "packages/api": after["packages/api"] });
       await install(dir, "--frozen-lockfile");
     });
 

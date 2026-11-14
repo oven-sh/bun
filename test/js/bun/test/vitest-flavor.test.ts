@@ -1023,6 +1023,52 @@ describe.concurrent("each and for", () => {
     });
   });
 
+  // The calls and titles are those of Vitest 5.1.0, but for the hole: Vitest registers no test for it.
+  test("each: a Proxy of an array is an array row, and a hole does not stop the spread", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "vitest";
+        const show = (name, args) =>
+          console.log(name, args.length, JSON.stringify(args, (key, value) => (value === undefined ? "<undefined>" : value)));
+        const proxy = () => new Proxy([3, 4], {});
+        test.each([[1, 2], proxy()])("table %s", function (...args) { show("table", args); });
+        test.each([proxy(), 5])("mixed %s", function (...args) { show("mixed", args); });
+        test.for([proxy(), 5])("for %s", function (row) { show("for", [row]); });
+        test.extend({ port: 3000 }).each([[1, 2], proxy()])("extended %s", function (...args) { show("extended", args); });
+        test.each([[1, 2], , [3, 4]])("hole %s", function (...args) { show("hole", args); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "table 2 [1,2]",
+        "table 2 [3,4]",
+        "mixed 1 [[3,4]]",
+        "mixed 1 [5]",
+        "for 1 [[3,4]]",
+        "for 1 [5]",
+        "extended 2 [1,2]",
+        "extended 2 [3,4]",
+        "hole 2 [1,2]",
+        `hole 1 ["<undefined>"]`,
+        "hole 2 [3,4]",
+      ],
+      results: [
+        "(pass) table 1",
+        "(pass) table 3",
+        "(pass) mixed 3",
+        "(pass) mixed 5",
+        "(pass) for 3",
+        "(pass) for 5",
+        "(pass) extended 1",
+        "(pass) extended 3",
+        "(pass) hole 1",
+        "(pass) hole undefined",
+        "(pass) hole 3",
+      ],
+      exitCode: 0,
+    });
+  });
+
   for (const module of ["vitest", "bun:test"]) {
     test(`test.for from "${module}" passes the row as one argument, then the context`, async () => {
       const { log, results, exitCode } = await runTests({

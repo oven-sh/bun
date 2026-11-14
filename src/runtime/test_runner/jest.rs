@@ -883,13 +883,26 @@ fn get_property_path(global: &JSGlobalObject, object: JSValue, path: &[u8]) -> J
     Ok(Some(value))
 }
 
+/// `Array.isArray(row)`, which jest-each and Vitest test a row with. Only a Proxy needs the call.
+pub(crate) fn is_array_row(global: &JSGlobalObject, row: JSValue) -> JsResult<bool> {
+    if row.js_type() == bun_jsc::JSType::ProxyObject {
+        return pretty_format::is_array(global, row);
+    }
+    Ok(row.is_array())
+}
+
 pub(crate) fn format_label(
     global_this: &JSGlobalObject,
     label: &[u8],
     function_args: &[JSValue],
+    is_spread_row: bool,
     test_idx: usize,
 ) -> JsResult<Box<[u8]>> {
-    let object_row = function_args.first().copied().filter(|row| row.is_object());
+    // `$name` reads from an object row, or from the first value of a spread row. An array row that is passed whole is a value.
+    let object_row = match function_args.first() {
+        Some(&row) if row.is_object() && (is_spread_row || !is_array_row(global_this, row)?) => Some(row),
+        _ => None,
+    };
     let mut args = function_args.iter();
     let mut title: Vec<u8> = Vec::with_capacity(label.len());
     let mut rest = label;

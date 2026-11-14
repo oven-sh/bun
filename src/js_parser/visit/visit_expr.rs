@@ -124,6 +124,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
+            // Claim the range before the operand so the post-visit TLA
+            // diagnostic points at the outermost live `await`.
+            if !p.is_control_flow_dead
+                && p.fn_or_arrow_data_visit.is_outside_fn_or_arrow
+                && !p.has_live_top_level_await
+            {
+                p.top_level_await_keyword = bun_ast::Range {
+                    loc: e.loc,
+                    len: b"await".len() as i32,
+                };
+                p.has_live_top_level_await = true;
+            }
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }

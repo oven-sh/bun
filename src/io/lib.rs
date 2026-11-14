@@ -656,6 +656,7 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 #[cfg(not(windows))]
 use core::ffi::c_int;
+#[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
 pub use crate::closer::Closer;
@@ -668,8 +669,7 @@ use bun_sys::{self as sys, E, Fd};
 #[allow(non_upper_case_globals)]
 pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
-// All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
-// Windows the IoRequestLoop is `panic!`-stubbed, so gate the macro to match.
+// All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD).
 #[cfg(not(windows))]
 bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagname "loop" is a keyword)
 
@@ -756,6 +756,7 @@ type EventType = KEvent;
 // actually means by "the loop") keeps its short name. Only one external caller
 // (`bun_runtime::webcore::Blob`).
 
+#[cfg(not(windows))]
 pub struct IoRequestLoop {
     pub(crate) pending: RequestQueue,
     pub(crate) waker: Waker,
@@ -778,6 +779,7 @@ pub struct IoRequestLoop {
 // `schedule()` callers go through `get_unchecked` and touch only the
 // lock-free `pending` + `waker` (see `schedule`); `STAGE` provides the
 // happens-before for init.
+#[cfg(not(windows))]
 static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 #[cfg(not(windows))]
@@ -792,9 +794,9 @@ const STAGE_LOADED: u8 = 1;
 #[cfg(not(windows))]
 const STAGE_RUNNING: u8 = 2;
 
+#[cfg(not(windows))]
 impl IoRequestLoop {
     /// Initializes `LOOP`. On failure, closes the fds it opened so a later call can retry.
-    #[cfg(not(windows))]
     fn load() -> sys::Result<()> {
         #[cfg(not(target_os = "macos"))]
         use bun_sys::FdExt as _;
@@ -903,39 +905,30 @@ impl IoRequestLoop {
 
     /// Starts the IO thread on first use. If that fails, the next call retries.
     pub fn ensure_init() -> sys::Result<()> {
-        #[cfg(windows)]
-        {
-            panic!("Do not use this API on windows");
+        if STAGE.load(Ordering::Acquire) == STAGE_RUNNING {
+            return Ok(());
         }
-        #[cfg(not(windows))]
-        {
-            if STAGE.load(Ordering::Acquire) == STAGE_RUNNING {
-                return Ok(());
-            }
-            let _guard = INIT_LOCK.lock_guard();
-            if STAGE.load(Ordering::Relaxed) == STAGE_EMPTY {
-                Self::load()?;
-                STAGE.store(STAGE_LOADED, Ordering::Relaxed);
-            }
-            if STAGE.load(Ordering::Relaxed) == STAGE_LOADED {
-                // smaller thread, since it's not doing much.
-                // The JoinHandle detaches on drop.
-                std::thread::Builder::new()
-                    .stack_size(1024 * 1024 * 2)
-                    .spawn(Self::on_spawn_io_thread)
-                    .map_err(|err| {
-                        sys::Error::from_code_int(
-                            err.raw_os_error().unwrap_or(libc::EAGAIN),
-                            sys::Tag::pthread_create,
-                        )
-                    })?;
-                STAGE.store(STAGE_RUNNING, Ordering::Release);
-            }
-            Ok(())
+        let _guard = INIT_LOCK.lock_guard();
+        if STAGE.load(Ordering::Relaxed) == STAGE_EMPTY {
+            Self::load()?;
+            STAGE.store(STAGE_LOADED, Ordering::Relaxed);
         }
+        if STAGE.load(Ordering::Relaxed) == STAGE_LOADED {
+            // A smaller thread, since it's not doing much. The JoinHandle detaches on drop.
+            std::thread::Builder::new()
+                .stack_size(1024 * 1024 * 2)
+                .spawn(Self::on_spawn_io_thread)
+                .map_err(|err| {
+                    sys::Error::from_code_int(
+                        err.raw_os_error().unwrap_or(libc::EAGAIN),
+                        sys::Tag::pthread_create,
+                    )
+                })?;
+            STAGE.store(STAGE_RUNNING, Ordering::Release);
+        }
+        Ok(())
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn on_spawn_io_thread() {
         // From here on, only this thread may borrow `IoRequestLoop`;
         // `ThreadCell` enforces that in debug builds.
@@ -980,7 +973,6 @@ impl IoRequestLoop {
         }
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn tick(&self) {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
         let name = bun_core::ZStr::from_static(b"IO Watcher\0");
@@ -1116,10 +1108,6 @@ impl IoRequestLoop {
         }
     }
 
-    // `Waker.getFd` / the loop's poll fd have no Windows equivalent. Gate
-    // these so any Windows call site fails at compile time rather than
-    // compiling cleanly and only panicking at runtime.
-    #[cfg(not(windows))]
     pub(crate) fn pollfd(&self) -> Fd {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -1237,12 +1225,14 @@ impl IoRequestLoop {
 
 // ─── Request ──────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 pub struct Request {
     pub next: bun_threading::Link<Request>,
     pub callback: for<'a> fn(&'a mut Request) -> Action<'a>,
     pub scheduled: bool,
 }
 
+#[cfg(not(windows))]
 impl Request {
     #[inline]
     pub fn new(callback: for<'a> fn(&'a mut Request) -> Action<'a>) -> Self {
@@ -1287,6 +1277,7 @@ impl Request {
 /// `IO_REQUEST_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request
 /// field>)`. [`from_io_request`](IntrusiveIoRequest::from_io_request) casts
 /// through the offset; a mismatch is UB.
+#[cfg(not(windows))]
 pub unsafe trait IntrusiveIoRequest: Sized {
     /// `core::mem::offset_of!(Self, io_request)`.
     const IO_REQUEST_OFFSET: usize;
@@ -1309,6 +1300,7 @@ pub unsafe trait IntrusiveIoRequest: Sized {
 /// `io_request: `[`Request`] field. Brings
 /// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
 /// `fn(&mut Request) -> Action` trampolines.
+#[cfg(not(windows))]
 #[macro_export]
 macro_rules! intrusive_io_request {
     ($ty:ty, $field:ident) => {
@@ -1364,6 +1356,7 @@ macro_rules! intrusive_uv_fs {
 // paths (`get_next`/`set_next`, used only by the batch iterator and the
 // debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
+#[cfg(not(windows))]
 unsafe impl bun_threading::Linked for Request {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
@@ -1372,16 +1365,19 @@ unsafe impl bun_threading::Linked for Request {
     }
 }
 
+#[cfg(not(windows))]
 pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 pub enum Action<'a> {
     Readable(FileAction<'a>),
     Writable(FileAction<'a>),
     Close(CloseAction<'a>),
 }
 
+#[cfg(not(windows))]
 pub struct FileAction<'a> {
     pub fd: Fd,
     pub poll: &'a mut Poll,
@@ -1390,6 +1386,7 @@ pub struct FileAction<'a> {
     pub on_error: fn(*mut (), &sys::Error),
 }
 
+#[cfg(not(windows))]
 pub struct CloseAction<'a> {
     pub fd: Fd,
     pub poll: &'a mut Poll,
@@ -1402,6 +1399,7 @@ pub struct CloseAction<'a> {
 
 // Invariant: the repr must fit `bun.TaggedPointer.Tag` (the 15-bit tag packed
 // into `Pollable`'s u64 below) — keep `#[repr(u16)]` and values < 2^15.
+#[cfg(not(windows))]
 #[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PollableTag {
@@ -1471,12 +1469,14 @@ type GenerationNumberInt = u64;
 static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
+#[cfg(not(windows))]
 pub struct Poll {
     pub flags: FlagsSet,
     #[cfg(all(target_os = "macos", debug_assertions))]
     pub(crate) generation_number: GenerationNumberInt,
 }
 
+#[cfg(not(windows))]
 impl Default for Poll {
     fn default() -> Self {
         Self {
@@ -1487,8 +1487,10 @@ impl Default for Poll {
     }
 }
 
+#[cfg(not(windows))]
 pub type Tag = PollableTag;
 
+#[cfg(not(windows))]
 unsafe extern "Rust" {
     /// Hot-path dispatch for `Pollable` owners. The concrete owners
     /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
@@ -1500,6 +1502,7 @@ unsafe extern "Rust" {
     fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
 }
 
+#[cfg(not(windows))]
 #[derive(enumset::EnumSetType)]
 pub enum Flags {
     // What are we asking the event loop about?
@@ -1523,6 +1526,7 @@ pub enum Flags {
     Registered,
 }
 
+#[cfg(not(windows))]
 pub type FlagsSet = enumset::EnumSet<Flags>;
 
 // A runtime parameter rather than a const generic: `adt_const_params`
@@ -1538,6 +1542,7 @@ enum ApplyAction {
     Cancel,
 }
 
+#[cfg(not(windows))]
 impl Poll {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[inline]

@@ -1039,7 +1039,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.worker_preloads.set(ctx.preloads.clone());
         vm.worker_eval_preloads
-            .set(core::mem::take(&mut ctx.worker_eval_preloads));
+            .set(std::mem::take(&mut ctx.worker_eval_preloads));
         vm.worker_preload_require_start
             .set(ctx.worker_preload_require_start);
         vm.worker_preload_require_count
@@ -1253,7 +1253,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.worker_preloads.set(ctx.preloads.clone());
         vm.worker_eval_preloads
-            .set(core::mem::take(&mut ctx.worker_eval_preloads));
+            .set(std::mem::take(&mut ctx.worker_eval_preloads));
         vm.worker_preload_require_start
             .set(ctx.worker_preload_require_start);
         vm.worker_preload_require_count

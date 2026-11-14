@@ -50,7 +50,7 @@ public:
             m_dataFiles.add(*noted, 0u);
     }
 
-    // The source of the CommonJS import `key` is made, which is when that import would run if the load did not hold it back. `hasModule(key)`: the loader has a module of that data file.
+    // The source of the CommonJS import `key` is made. A load that did not hold the import back would run it right behind that, so its require() goes by what the loader has now. `hasModule(key)`: the loader has a module of that data file.
     template<typename Functor>
     void noteCommonJSSource(const WTF::String& key, const Functor& hasModule)
     {
@@ -62,7 +62,7 @@ public:
         m_commonJSSources.set(key, madeAt);
     }
 
-    // While the generator of the CommonJS import `key` runs, hadNoModuleOfDataFile() goes by when the source of `key` was made. A run inside another goes by the earlier of the two sources.
+    // While the generator of the CommonJS import `key` runs, hadNoModuleOfDataFile() goes by when the source of `key` was made: by the earlier source, in a run inside another. endCommonJSRun() takes what this returns.
     unsigned beginCommonJSRun(const WTF::String& key)
     {
         unsigned outer = m_runningCommonJSSource;
@@ -71,7 +71,6 @@ public:
             m_runningCommonJSSource = madeAt;
         return outer;
     }
-    // `outer` is what beginCommonJSRun() returned.
     void endCommonJSRun(unsigned outer) { m_runningCommonJSSource = outer; }
 
     // True in such a run for a data file of the load that the loader had no module of when that source was made: require() reads the file itself then, as where the import runs as soon as it is fetched.

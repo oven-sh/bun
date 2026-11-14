@@ -1763,7 +1763,7 @@ static ALWAYS_INLINE JSC::SourceCode commonJSModuleSourceCodeForLoad(Zig::Global
     Bun__logCommonJSProviderKind(&loggedKey, isDeferred);
 #endif
     if (isDeferred) [[unlikely]] {
-        // Now is when the module would run if the load did not hold it back: what its require() answers for a data file of the load goes by the modules that the loader has by now.
+        // A load that did not hold the module back would run it as soon as the loader has this source, two of its microtasks from now: what require() in it answers for a data file of the load goes by the modules that the loader has by now.
         JSC::JSModuleLoader* loader = graph ? graph->loader() : globalObject->moduleLoader();
         runnerLoad->noteCommonJSSource(key->tryGetValue().data, [&](const WTF::String& dataFile) {
             auto* fetched = loader->registryEntry(JSC::Identifier::fromString(JSC::getVM(globalObject), dataFile));

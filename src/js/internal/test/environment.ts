@@ -473,6 +473,8 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
 // Without --isolate. JSC stops caching reads of globals once several hundred names have been deleted from globalThis
 // and defined again a few times. So the last file's names stay until a file needs another environment.
 let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
+// With --isolate the names stay on a file's global. Only --rerun-each sets it up again, if the file closed its window.
+let leaveBeforeNextSetup: (() => void) | undefined;
 
 function enter(name: string, environment: Environment, keep: boolean) {
   const { properties, keys } = environment;
@@ -500,8 +502,12 @@ function enter(name: string, environment: Environment, keep: boolean) {
       environment.forgetLastFile?.();
       return isClosed(environment.window);
     }
+    if (!keep) {
+      leaveBeforeNextSetup = leave;
+      return environment.close();
+    }
     // What can't be put back is this file's error, not the next one's.
-    if (!keep || !isExtensible(globalThis)) return leave();
+    if (!isExtensible(globalThis)) return leave();
     for (let i = 0; i < defined.length; i++) if (ownProperty(defined[i])?.configurable === false) return leave();
     left = { environment, teardown, leave };
     return true;
@@ -521,13 +527,11 @@ function enter(name: string, environment: Environment, keep: boolean) {
       // Only an error if the stuck property is still ours, not one the file redefined as non-configurable.
       if (!current || (current.get === ours.get && current.value === ours.value)) stuck ??= key;
     }
-    const closed = keep ? undefined : environment.close();
     if (stuck !== undefined) {
       throw new Error(
         `Cannot tear down the "${name}" test environment: globalThis.${stuck} can no longer be redefined`,
       );
     }
-    return closed;
   }
 
   return teardown;
@@ -629,6 +633,12 @@ function setup(
   sharesGlobal: boolean,
 ) {
   if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment);
+  // Not in the `try` below: a name that can't be put back is an error, also when `isFromComment`.
+  if (leaveBeforeNextSetup) {
+    const leave = leaveBeforeNextSetup;
+    leaveBeforeNextSetup = undefined;
+    leave();
+  }
   let last = left;
   left = undefined;
   function leaveLast() {

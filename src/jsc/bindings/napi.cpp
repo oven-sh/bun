@@ -3406,9 +3406,14 @@ extern "C" void NapiEnv__asyncWorkLeftThreadPool(napi_env env)
     env->asyncWorkLeftThreadPool();
 }
 
+extern "C" void NapiEnv__asyncWorkCompleted(napi_env env)
+{
+    env->asyncWorkCompleted();
+}
+
 extern "C" void NapiEnv__runFinalizers(void* env)
 {
-    static_cast<napi_env>(env)->runFinalizers();
+    static_cast<napi_env>(env)->runFinalizersAfterTeardownWait();
 }
 
 // napi_ok, or the status NAPI_PREAMBLE returns at entry (not yet set as the last error).

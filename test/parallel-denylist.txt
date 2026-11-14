@@ -176,6 +176,7 @@ js/web/workers/worker-late-completion.test.ts
 js/web/workers/worker-terminate-funnels.test.ts
 js/web/workers/worker.test.ts
 napi/napi-finalizer-delete-ref.test.ts
+napi/napi-finalizer-order.test.ts
 napi/node-napi-tests/test/js-native-api/3_callbacks/do.test.ts
 napi/node-napi-tests/test/js-native-api/4_object_factory/do.test.ts
 napi/node-napi-tests/test/js-native-api/7_factory_wrap/do.test.ts

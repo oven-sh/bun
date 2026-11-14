@@ -11,4 +11,5 @@ function f3(n) { let c = 0; const r = l1[0]; for (let i = 0; i < n; i++) { c += 
 const said = [];
 for (let k = 0; k < 60; k++) said.push(f3(16));
 change("Object.defineProperty(a, 'mode', { get() { return 1; } })", P0);
+said.push(f3(16));
 console.log(said.join(" "));

@@ -44,6 +44,7 @@ for (const [scene, { flags, says }] of Object.entries(scenes)) {
       }
       const plain = await report();
       expect(plain.said.length).toBeGreaterThan(0);
+      expect(plain.exitCode).toBe(0);
       expect(await report("--aot")).toEqual(plain);
     },
     300_000,

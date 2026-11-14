@@ -7660,10 +7660,11 @@ pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
 /// Borrowed slice of the process's `KEY=VALUE\0` C strings.
 /// SAFETY note: the returned slice borrows the libc `environ` global; do not
 /// mutate the environment concurrently.
-pub fn environ() -> &'static [*const c_char] {
+pub fn environ() -> &'static [bun_core::CStrRef<'static>] {
     #[cfg(unix)]
     {
-        // SAFETY: `environ` is a process-global NULL-terminated array.
+        // SAFETY: `environ` is a process-global NULL-terminated array of C strings. `setenv` can
+        // free them: `'static` relies on every caller reading them at once, as noted above.
         unsafe {
             let mut n = 0usize;
             let base: *const *const c_char = bun_core::c_environ();
@@ -7673,7 +7674,7 @@ pub fn environ() -> &'static [*const c_char] {
             while !(*base.add(n)).is_null() {
                 n += 1;
             }
-            core::slice::from_raw_parts(base, n)
+            core::slice::from_raw_parts(base.cast(), n)
         }
     }
     #[cfg(windows)]
@@ -7684,30 +7685,23 @@ pub fn environ() -> &'static [*const c_char] {
         // process lifetime so `'static` here is sound.
         // SAFETY: written exactly once at startup before any reader runs.
         let s = unsafe { bun_core::os::environ() };
-        // SAFETY: `*mut c_char` and `*const c_char` have identical layout; the
+        // SAFETY: a `CStrRef` is a non-null pointer to a C string, as each entry is; the
         // fat-pointer cast preserves the original slice's (ptr, len) metadata
         // exactly instead of re-deriving it.
-        unsafe { &*(s as *const [*mut c_char] as *const [*const c_char]) }
+        unsafe { &*(s as *const [*mut c_char] as *const [bun_core::CStrRef<'static>]) }
     }
 }
 
-/// Raw NULL-terminated `**c_char` environment pointer for FFI envp args
-/// (e.g. `posix_spawn`). Unlike [`environ()`] this returns the raw libc
-/// global pointer (already NULL-terminated) rather than a length-bounded
-/// borrowed slice, so it is suitable to pass directly as `envp`.
-pub fn environ_ptr() -> *const *const c_char {
-    #[cfg(unix)]
-    {
-        bun_core::c_environ()
+/// [`environ()`] with the null pointer behind it.
+#[cfg(windows)]
+pub fn environ_list() -> bun_core::CStrList<'static> {
+    let entries = environ();
+    if entries.is_empty() {
+        return bun_core::CStrList::new(&[None]);
     }
-    #[cfg(windows)]
-    {
-        // SAFETY: same as `environ()` above; NUL-terminated by construction
-        // (`convert_env_to_wtf8` pushes a trailing null pointer).
-        unsafe { bun_core::os::environ() }
-            .as_ptr()
-            .cast::<*const c_char>()
-    }
+    // SAFETY: `convert_env_to_wtf8` pushes a trailing null pointer into the same allocation.
+    let items = unsafe { core::slice::from_raw_parts(entries.as_ptr().cast(), entries.len() + 1) };
+    bun_core::CStrList::new(items)
 }
 
 // ── moveFileZWithHandle ──

@@ -1,5 +1,6 @@
 #![allow(nonstandard_style)]
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crate aliases — Phase-A drafts use the porting-doc crate names; map them

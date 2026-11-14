@@ -1910,6 +1910,172 @@ describe.concurrent("an inline snapshot does not say who wrote it", () => {
   });
 });
 
+// Jest 30.5.2 wrote these texts for `value`, in a `.snap` file and inline, each with the `snapshotFormat` option that
+// names it (`indent: 4`). Vitest 5.0.3 wrote the same in a `.snap` file, and inline with two more spaces before each
+// line. Jest 28.1.3 wrote `both` with its defaults. To add a case, run it under that runner. Never update these with Bun.
+describe.concurrent("a snapshot that Jest or Vitest wrote with another `snapshotFormat` than the default", () => {
+  const value = String.raw`{ list: [{}, 'say "hi"'], path: "a\\b" }`;
+  const written = {
+    default: String.raw`
+{
+  "list": [
+    {},
+    "say "hi"",
+  ],
+  "path": "a\\b",
+}
+`,
+    printBasicPrototype: String.raw`
+Object {
+  "list": Array [
+    Object {},
+    "say "hi"",
+  ],
+  "path": "a\\b",
+}
+`,
+    escapeString: String.raw`
+{
+  "list": [
+    {},
+    "say \\"hi\\"",
+  ],
+  "path": "a\\\\b",
+}
+`,
+    both: String.raw`
+Object {
+  "list": Array [
+    Object {},
+    "say \\"hi\\"",
+  ],
+  "path": "a\\\\b",
+}
+`,
+    indent: String.raw`
+{
+    "list": [
+        {},
+        "say "hi"",
+    ],
+    "path": "a\\b",
+}
+`,
+  };
+  const prefixes = ["- Object {", '-   "list": Array [', "-     Object {},", "+ {", '+   "list": [', "+     {},"];
+  const escapes = [
+    String.raw`-     "say \"hi\"",`,
+    '+     "say "hi"",',
+    String.raw`-   "path": "a\\b",`,
+    String.raw`+   "path": "a\b",`,
+  ];
+  const indents = [
+    '-     "list": [',
+    "-         {},",
+    '-         "say "hi"",',
+    "-     ],",
+    String.raw`-     "path": "a\b",`,
+    '+   "list": [',
+    "+     {},",
+    '+     "say "hi"",',
+    "+   ],",
+    String.raw`+   "path": "a\b",`,
+  ];
+  const difference = {
+    printBasicPrototype: prefixes,
+    escapeString: escapes,
+    both: [...prefixes, ...escapes],
+    indent: indents,
+  };
+  // The lines that the diff of each test file marks, sorted: how a diff groups them is not what is tested.
+  const marked = (stderr: string) =>
+    Object.fromEntries(
+      stderr
+        .split(/^(?=\S+\.test\.js:$)/m)
+        .slice(1)
+        .map(part => [
+          part.slice(0, part.indexOf(".test.js:")),
+          part
+            .split("\n")
+            .filter(line => /^[-+] /.test(line) && !/^[-+] (Expected|Received) /.test(line))
+            .sort(),
+        ]),
+    );
+  const expected = (cases: readonly { name: string; form: keyof typeof difference }[]) =>
+    Object.fromEntries(cases.map(({ name, form }) => [name, difference[form].toSorted()]));
+  const read = (dir: unknown, ...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
+  const imports = { jest: "", vitest: `import { describe, test, expect } from "vitest";\n` };
+
+  test("in a .snap file: fails with the difference, and --update-snapshots rewrites it in the default form", async () => {
+    const older = "// Jest Snapshot v1, https://goo.gl/fbAQLP\n";
+    const cases = [
+      { name: "jest-prefixes", format: "jest", header: headers.jest, form: "printBasicPrototype" },
+      { name: "jest-escapes", format: "jest", header: headers.jest, form: "escapeString" },
+      { name: "jest-28", format: "jest", header: older, form: "both" },
+      { name: "jest-indent", format: "jest", header: headers.jest, form: "indent" },
+      { name: "vitest-prefixes", format: "vitest", header: headers.vitest, form: "printBasicPrototype" },
+      { name: "vitest-escapes", format: "vitest", header: headers.vitest, form: "escapeString" },
+      { name: "vitest-indent", format: "vitest", header: headers.vitest, form: "indent" },
+    ] as const;
+    const keys = { jest: "outer inner 1", vitest: "outer > inner 1" };
+    const tests = `describe("outer", () => { test("inner", () => { expect(${value}).toMatchSnapshot(); }); });\n`;
+    const file = (header: string, format: "jest" | "vitest", form: keyof typeof written) =>
+      `${header}\nexports[\`${keys[format]}\`] = \`${written[form]}\`;\n`;
+    const files = (of: (each: (typeof cases)[number]) => string) =>
+      Object.fromEntries(cases.map(each => [`__snapshots__/${each.name}.test.js.snap`, of(each)]));
+    const before = files(({ header, format, form }) => file(header, format, form));
+    using dir = tempDir("snapshot-other-form", {
+      ...Object.fromEntries(cases.map(({ name, format }) => [`${name}.test.js`, imports[format] + tests])),
+      ...before,
+    });
+    const snaps = () => files(({ name }) => read(dir, "__snapshots__", `${name}.test.js.snap`));
+
+    const mismatch = await runTests(String(dir), { CI: "true" });
+    expect({ pass: mismatch.pass, fail: mismatch.fail, marked: marked(mismatch.stderr) }).toEqual({
+      pass: 0,
+      fail: cases.length,
+      marked: expected(cases),
+    });
+    expect(snaps()).toEqual(before);
+    expect(mismatch.exitCode).toBe(1);
+
+    const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    expect(snaps()).toEqual(files(({ format }) => file(headers[format], format, "default")));
+    expect(updated.exitCode).toBe(0);
+  });
+
+  test("inline: fails with the difference, and --update-snapshots rewrites it in the default form", async () => {
+    const cases = [
+      { name: "jest-prefixes", format: "jest", form: "printBasicPrototype" },
+      { name: "jest-escapes", format: "jest", form: "escapeString" },
+      { name: "vitest-prefixes", format: "vitest", form: "printBasicPrototype" },
+      { name: "vitest-escapes", format: "vitest", form: "escapeString" },
+    ] as const;
+    const literal = (format: "jest" | "vitest", form: keyof typeof written) =>
+      format === "vitest" ? written[form].replaceAll(/\n(?=.)/g, "\n  ") : written[form];
+    const tests = (format: "jest" | "vitest", form: keyof typeof written) =>
+      `${imports[format]}test("inline", () => { expect(${value}).toMatchInlineSnapshot(\`${literal(format, form)}\`); });\n`;
+    using dir = tempDir(
+      "inline-snapshot-other-form",
+      Object.fromEntries(cases.map(({ name, format, form }) => [`${name}.test.js`, tests(format, form)])),
+    );
+    const sources = () => cases.map(({ name }) => read(dir, `${name}.test.js`));
+
+    const mismatch = await runTests(String(dir), { CI: "true" });
+    expect({ pass: mismatch.pass, fail: mismatch.fail, marked: marked(mismatch.stderr) }).toEqual({
+      pass: 0,
+      fail: cases.length,
+      marked: expected(cases),
+    });
+    expect(sources()).toEqual(cases.map(({ format, form }) => tests(format, form)));
+    expect(mismatch.exitCode).toBe(1);
+
+    const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    expect(sources()).toEqual(cases.map(({ format }) => tests(format, "default")));
+    expect(updated.exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("toMatchFileSnapshot()", () => {
   const read = (dir: unknown, ...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
   const header = `import { test, expect, describe } from "bun:test";\n`;

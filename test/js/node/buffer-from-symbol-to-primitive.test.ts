@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// A broken `Buffer.from` builtin aborts the whole process, so this has to be a
-// spawned fixture: an in-process test in buffer.test.js would take the test
-// runner down with it and never get reported as a failure.
+// A `Buffer.from` that aborts the process takes an in-process test runner down
+// with it and is never reported as a failure, so this is a spawned fixture.
 test("Buffer.from honors a Symbol.toPrimitive accessor", async () => {
   await using proc = Bun.spawn({
     cmd: [

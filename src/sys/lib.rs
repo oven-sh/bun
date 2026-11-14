@@ -9221,12 +9221,6 @@ pub enum WriteFileData<'a> {
     Buffer { buffer: &'a [u8] },
     // T6 adds `String { value, encoding }` / `ArrayBuffer { .. }`.
 }
-/// Encoding tag (only `Buffer` is honoured at T1).
-#[derive(Clone, Copy, Default)]
-pub enum WriteFileEncoding {
-    #[default]
-    Buffer,
-}
 /// Target — path (relative to `dirfd`) or an already-open fd.
 pub enum PathOrFileDescriptor<'a> {
     Path(&'a [u8]),
@@ -9240,7 +9234,6 @@ impl Default for PathOrFileDescriptor<'_> {
 /// Args struct.
 pub struct WriteFileArgs<'a> {
     pub data: WriteFileData<'a>,
-    pub encoding: WriteFileEncoding,
     pub dirfd: Fd,
     pub file: PathOrFileDescriptor<'a>,
     pub mode: Mode,
@@ -9249,7 +9242,6 @@ impl<'a> Default for WriteFileArgs<'a> {
     fn default() -> Self {
         Self {
             data: WriteFileData::Buffer { buffer: &[] },
-            encoding: WriteFileEncoding::Buffer,
             dirfd: Fd::cwd(),
             file: PathOrFileDescriptor::default(),
             mode: 0o666,

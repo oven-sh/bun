@@ -38,8 +38,7 @@ pub use crate::semver_string as string;
 
 // ──────────────────────────────────────────────────────────────────────────
 // StringBuilder — trait abstracting the builder type used by callers
-// in Version::count / Version::clone_into. Concrete impl is
-// `semver_string::Builder`; higher-tier crates may provide their own.
+// in Version::count / Version::clone_into. Higher-tier crates provide the impl.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait StringBuilder {
     fn count(&mut self, slice_: &[u8]);
@@ -55,17 +54,6 @@ pub trait StringBuilder {
     #[inline]
     fn append_external_string(&mut self, s: &[u8]) -> crate::external_string::ExternalString {
         self.append::<crate::external_string::ExternalString>(s)
-    }
-}
-
-impl StringBuilder for crate::semver_string::Builder {
-    #[inline]
-    fn count(&mut self, slice_: &[u8]) {
-        crate::semver_string::Builder::count(self, slice_)
-    }
-    #[inline]
-    fn append<T: crate::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
-        crate::semver_string::Builder::append::<T>(self, slice_)
     }
 }
 

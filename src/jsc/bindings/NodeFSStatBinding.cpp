@@ -395,13 +395,6 @@ public:
 
     DECLARE_INFO;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatsPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -424,6 +417,7 @@ private:
         Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatsPrototype, JSStatsPrototype::Base);
 
 class JSBigIntStatsPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -438,13 +432,6 @@ public:
     }
 
     DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatsPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -468,6 +455,7 @@ private:
         Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatsPrototype, JSBigIntStatsPrototype::Base);
 
 class JSStatsConstructor final : public JSC::InternalFunction {
 public:

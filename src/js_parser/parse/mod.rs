@@ -802,6 +802,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(alias)
     }
 
+    /// A `using` declaration parsed here stays a `using` in the module scope.
+    fn keeps_using_in_module_scope(&self) -> bool {
+        self.current_scope == self.module_scope && !self.options.features.lower_using
+    }
+
     pub(crate) fn parse_expr_or_let_stmt(
         &mut self,
         opts: &mut ParseStatementOptions<'a>,
@@ -866,6 +871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
+                p.has_top_level_using |= p.keeps_using_in_module_scope();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                 let decls_slice = bun_collections::RawSlice::new(decls.slice());
                 if opts.is_typescript_declare {
@@ -925,6 +931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
+                        p.has_top_level_using |= p.keeps_using_in_module_scope();
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                         let decls_slice = bun_collections::RawSlice::new(decls.slice());

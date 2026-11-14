@@ -2160,7 +2160,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
-  test("a mock that a preload made", async () => {
+  test.each(isolationFlags)("a mock that a preload made %j", async args => {
     await expectFixturesToPass(
       {
         ...files,
@@ -2198,7 +2198,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         `,
       },
       4,
-      ["--preload", "./preload.js"],
+      ["--preload", "./preload.js", ...args],
     );
   });
 

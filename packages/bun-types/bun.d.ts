@@ -3438,7 +3438,7 @@ declare module "bun" {
      * - A string ending in `*`: Inlines environment variables that match the given prefix.
      *   For example, `"MY_PUBLIC_*"` only includes env vars starting with "MY_PUBLIC_"
      *
-     * Every other value, and a build that does not set `env`, still replaces those three.
+     * `"inline"`, a prefix, and a build that does not set `env` still replace those three.
      *
      * @example
      * ```ts

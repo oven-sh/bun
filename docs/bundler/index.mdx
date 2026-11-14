@@ -650,7 +650,7 @@ The runtime and the bundler share Bun's plugin system. See [plugins](/bundler/pl
 
 Controls how environment variables are handled during bundling. Internally, this option uses `define` to inject environment variables into the bundle; `env` is a shorthand for specifying which ones.
 
-Every value of `env` except `"disable"` still replaces `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser`, and so does a build that does not set `env`. Use [`define`](#define) to choose a value, or `env: "disable"` to keep them as written.
+A build that does not set `env`, and one that sets `"inline"` or a prefix, still replaces `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser`. Use [`define`](#define) to choose a value, or `env: "disable"` to keep them as written.
 
 #### env: "inline"
 
@@ -1951,7 +1951,7 @@ interface BuildConfig {
    * - A string ending in `*`: Inlines environment variables that match the given prefix.
    *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
    *
-   * Every other value, and a build that does not set `env`, still replaces those three.
+   * `"inline"`, a prefix, and a build that does not set `env` still replace those three.
    */
   env?: "inline" | "disable" | `${string}*`;
   minify?:

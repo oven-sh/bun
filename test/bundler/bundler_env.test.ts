@@ -337,12 +337,15 @@ describe("Bun.build env", () => {
       buildEach({ entrypoints: ["./app.jsx"], target: "bun" }, variants, async result => calls(await result.outputs[0].text()));
     // \`bun build\`, which is a different front end of the same bundler.
     const cli = (outdir, ...flags) => {
-      Bun.spawnSync({ cmd: [process.execPath, "build", ...flags, "--target=bun", "./app.jsx", "--outdir=" + outdir], env: process.env });
+      const { stderr, exitCode } = Bun.spawnSync({ cmd: [process.execPath, "build", ...flags, "--target=bun", "./app.jsx", "--outdir=" + outdir], env: process.env });
+      if (exitCode !== 0) throw new Error("bun build exited with " + exitCode + ": " + stderr);
       return calls(require("fs").readFileSync(outdir + "/app.js", "utf8"));
     };
+    // What the bundle prints, but only for a run that also exits with 0 and writes nothing to stderr.
     const run = (file, NODE_ENV) => {
-      const { stdout, stderr } = Bun.spawnSync({ cmd: [process.execPath, file], env: { ...process.env, NODE_ENV } });
-      return stdout.toString().trim() || stderr.toString();
+      const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [process.execPath, file], env: { ...process.env, NODE_ENV } });
+      if (exitCode === 0 && stderr.length === 0) return stdout.toString().trim();
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
     };
   `;
 
@@ -528,10 +531,11 @@ describe("Bun.build env", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return exitCode === 0 ? stdout.trim() : { stdout, stderr, exitCode };
+      return { stdout: stdout.trim(), stderr, exitCode };
     };
 
-    const replaced = `console.log("mode:","production","public:",process.env.PUBLIC_FOO)`;
+    const script = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+    const replaced = script(`console.log("mode:","production","public:",process.env.PUBLIC_FOO)`);
     expect(
       await Promise.all([
         served(`[serve.static]`),
@@ -539,6 +543,6 @@ describe("Bun.build env", () => {
         served(`[serve.static]\nenv = false`),
         served(`[serve.static]\nenv = "inline"`),
       ]),
-    ).toEqual([replaced, replaced, replaced, `console.log("mode:","production","public:","public_value")`]);
+    ).toEqual([replaced, replaced, replaced, script(`console.log("mode:","production","public:","public_value")`)]);
   });
 });

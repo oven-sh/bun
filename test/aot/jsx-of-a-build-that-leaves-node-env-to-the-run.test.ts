@@ -23,10 +23,13 @@ test("a program built with --env=disable runs its JSX under either NODE_ENV", as
       { ...bunEnv, NODE_ENV: undefined },
     ),
   );
-  const printed = async (NODE_ENV: string) => (await spawned([executable], root, { ...bunEnv, NODE_ENV })).stdout;
+  const ran = async (NODE_ENV: string) => {
+    const { stdout, exitCode } = await spawned([executable], root, { ...bunEnv, NODE_ENV });
+    return { stdout, exitCode };
+  };
 
-  expect({ production: await printed("production"), development: await printed("development") }).toEqual({
-    production: "jsx production\n",
-    development: "jsx development\n",
+  expect({ production: await ran("production"), development: await ran("development") }).toEqual({
+    production: { stdout: "jsx production\n", exitCode: 0 },
+    development: { stdout: "jsx development\n", exitCode: 0 },
   });
 });

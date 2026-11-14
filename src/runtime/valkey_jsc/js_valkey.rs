@@ -1418,8 +1418,8 @@ impl JSValkeyClient {
         // (A client that redials on its own stays with the context that created it; what joins a
         // context that is gone is closed on the next turn of the loop.)
         let context = vm.context_of(self.context);
-        let groups = vm.as_mut().client_socket_groups_in(context);
-        let group: *mut uws::SocketGroup = if is_tls {
+        let groups = vm.client_socket_groups_in(context);
+        let group = if is_tls {
             groups.valkey_group::<true>(loop_)
         } else {
             groups.valkey_group::<false>(loop_)
@@ -1471,24 +1471,14 @@ impl JSValkeyClient {
         // the OUTER pointer, not the inner `ValkeyClient`, or dispatch will
         // mis-type and re-offset it (`on_open` → `this.client_mut()` adds
         // `offsetof(JSValkeyClient, client)` again → garbage `&mut ValkeyClient`).
-        // Reshaped for borrowck — `address` is a field of `client`; go through a
-        // raw pointer. `Address::connect` only reads host/path bytes and forwards
-        // `owner_ptr` opaquely (no overlapping write).
         let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
-        let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
         // Socket keep-alive ref. Forgotten once there is a socket to own it;
         // adopted by the guard at the entry of the socket's close event
         // (`SocketHandler::on_close` or `SocketHandler::on_connect_error`),
         // which is the one event uSockets delivers for every socket this returns.
         let socket_ref = self.ref_guard();
-        // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
-        // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
-        // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
-        let socket = unsafe {
-            (*client_ptr)
-                .address
-                .connect(owner_ptr, &mut *group, ssl_ctx, is_tls)
-        }?;
+        let address = &self.client.get().address;
+        let socket = address.connect(owner_ptr, group, ssl_ctx, is_tls)?;
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);

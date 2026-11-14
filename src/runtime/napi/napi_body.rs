@@ -2470,7 +2470,7 @@ extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
-    env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
+    env.to_js().bun_vm().rare_data().push_cleanup_hook(
         env.to_js(),
         env.as_mut_ptr().cast::<c_void>(),
         Bun__napi_register_cleanup_callback,
@@ -2484,7 +2484,6 @@ extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
     }
     env.to_js()
         .bun_vm()
-        .as_mut()
         .rare_data()
         .push_cleanup_hook_after_teardown_wait(
             env.to_js(),
@@ -3345,7 +3344,7 @@ extern "C" fn napi_create_threadsafe_function(
         return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
     }
 
-    let vm = env.to_js().bun_vm().as_mut();
+    let vm = env.to_js().bun_vm();
     let callback = if let Some(c) = call_js_cb {
         TsfnCallback::C {
             napi_threadsafe_function_call_js: c,
@@ -5424,7 +5423,7 @@ impl NapiFinalizerTask {
 
     pub(crate) fn schedule(self: Box<Self>) {
         // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
-        if VirtualMachine::get_or_null().is_none() {
+        if !VirtualMachine::is_loaded() {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
             // already torn down the finalizer can never run; free the task but
@@ -5463,7 +5462,7 @@ impl NapiFinalizerTask {
             }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             let this = bun_core::heap::into_raw(self);
-            vm.as_mut().rare_data().push_cleanup_hook(
+            vm.rare_data().push_cleanup_hook(
                 vm.global(),
                 this.cast::<c_void>(),
                 Self::run_as_cleanup_hook,

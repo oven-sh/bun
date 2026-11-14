@@ -302,14 +302,16 @@ pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_
     }
     // `NODE_TLS_REJECT_UNAUTHORIZED` can change between requests.
     let reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
-    let cached = vm.as_mut().rare_data().http_client_tls_defaults.clone();
+    let cached = vm.rare_data().http_client_tls_defaults.get().clone();
     if let Some(config) = cached.filter(|config| config.reject_unauthorized == reject_unauthorized)
     {
         return Some(config);
     }
     let config =
         bun_http::ssl_config::global_registry::intern(vm.tls_config(Default::default(), false));
-    vm.as_mut().rare_data().http_client_tls_defaults = Some(config.clone());
+    vm.rare_data()
+        .http_client_tls_defaults
+        .set(Some(config.clone()));
     Some(config)
 }
 

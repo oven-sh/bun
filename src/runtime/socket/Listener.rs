@@ -59,7 +59,7 @@ pub(crate) struct Listener {
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
-    pub(crate) group: JsCell<uws::SocketGroup>,
+    pub(crate) group: uws::SocketGroup,
     /// `SSL_CTX` for accepted sockets; dropped on close. `SSL_new()`
     /// per-accept takes its own ref, so accepted sockets outlive a stopped
     /// listener safely.
@@ -192,7 +192,7 @@ impl Listener {
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             connection: JsCell::new(connection),
-            group: JsCell::new(uws::SocketGroup::default()),
+            group: uws::SocketGroup::default(),
             secure_ctx: JsCell::new(secure_ctx),
             ssl: config.ssl.is_some(),
             protos: config.ssl.as_mut().and_then(|s| s.take_protos()),
@@ -253,8 +253,7 @@ impl Listener {
                 .throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
 
         let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server)?;
 
@@ -274,10 +273,10 @@ impl Listener {
 
         // `--hot` runs the module again while the previous run's listener still holds the address.
         let hot_key = hot_reload_key(&socket_config);
-        let hot_run = VirtualMachine::get().hot_reload_counter;
+        let hot_run = VirtualMachine::get().hot_reload_counter.get();
         let stale = hot_key
             .as_deref()
-            .and_then(|key| VirtualMachine::get().as_mut().hot_map()?.get_entry(key))
+            .and_then(|key| VirtualMachine::get().hot_map()?.get_entry(key))
             .filter(|entry| entry.tag == HOT_MAP_TAG_LISTENER)
             // SAFETY: `do_stop` and `Drop` remove the entry, so a registered listener is live.
             .map(|entry| unsafe { &*entry.ptr.cast::<Listener>() })
@@ -457,14 +456,14 @@ impl Listener {
         let this_ref = unsafe { &*this };
         this_ref
             .group
-            .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
+            .init(uws::Loop::get(), None, this.cast::<c_void>());
         // `Listener` is stored inside its wrapper, so LSAN can't trace `loop->data.head →
         // this.group → head_sockets → us_socket_t` once the only pointer into the
         // group lives inside the JS heap. Registering the embedded group as a
         // root region restores reachability for the accepted sockets' allocations.
         // Paired unregister in `Drop`.
         bun_core::asan::register_root_region(
-            this_ref.group.as_ptr().cast::<c_void>(),
+            (&raw const this_ref.group).cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
 
@@ -497,18 +496,16 @@ impl Listener {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
                 let host_cstr = hostz.as_zstr().as_cstr();
-                let ls = this_ref.group.with_mut(|g| {
-                    g.listen(
-                        kind,
-                        secure_ctx_ptr,
-                        Some(host_cstr),
-                        *port as c_int,
-                        socket_flags,
-                        size_of::<*mut c_void>() as c_int,
-                        &mut failure.error,
-                        &mut failure.dns_error,
-                    )
-                });
+                let ls = this_ref.group.listen(
+                    kind,
+                    secure_ctx_ptr,
+                    Some(host_cstr),
+                    *port as c_int,
+                    socket_flags,
+                    size_of::<*mut c_void>() as c_int,
+                    &mut failure.error,
+                    &mut failure.dns_error,
+                );
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
@@ -517,29 +514,25 @@ impl Listener {
                 }
                 ls
             }
-            UnixOrHost::Unix(u) => this_ref.group.with_mut(|g| {
-                g.listen_unix(
+            UnixOrHost::Unix(u) => this_ref.group.listen_unix(
+                kind,
+                secure_ctx_ptr,
+                u,
+                socket_flags,
+                size_of::<*mut c_void>() as c_int,
+                &mut failure.error,
+            ),
+            UnixOrHost::Fd(fd) => {
+                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                this_ref.group.listen_fd(
                     kind,
                     secure_ctx_ptr,
-                    u,
+                    fd_native,
+                    511,
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
                     &mut failure.error,
                 )
-            }),
-            UnixOrHost::Fd(fd) => {
-                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
-                this_ref.group.with_mut(|g| {
-                    g.listen_fd(
-                        kind,
-                        secure_ctx_ptr,
-                        fd_native,
-                        511,
-                        socket_flags,
-                        size_of::<*mut c_void>() as c_int,
-                        &mut failure.error,
-                    )
-                })
             }
         };
         if listen_socket.is_null() {
@@ -588,7 +581,7 @@ impl Listener {
     /// Lets the next `--hot` run that listens on this address find this listener.
     fn register_for_hot_reload(&self, key: Option<Box<[u8]>>) {
         let Some(key) = key else { return };
-        let Some(hot) = VirtualMachine::get().as_mut().hot_map() else {
+        let Some(hot) = VirtualMachine::get().hot_map() else {
             return;
         };
         if hot.get_entry(&key).is_some() {
@@ -602,14 +595,15 @@ impl Listener {
             },
         );
         self.hot_key.set(Some(key));
-        self.hot_run.set(VirtualMachine::get().hot_reload_counter);
+        self.hot_run
+            .set(VirtualMachine::get().hot_reload_counter.get());
     }
 
     fn unregister_for_hot_reload(&self) {
         let Some(key) = self.hot_key.with_mut(Option::take) else {
             return;
         };
-        if let Some(hot) = VirtualMachine::get().as_mut().hot_map() {
+        if let Some(hot) = VirtualMachine::get().hot_map() {
             hot.remove(&key);
         }
     }
@@ -699,11 +693,9 @@ impl Listener {
 
     fn do_stop(&self, on_stop: Connections) {
         let force_close = on_stop != Connections::Keep;
-        let close_all = || {
-            self.group.with_mut(|g| match on_stop {
-                Connections::CloseAsThreadEnds => g.close_all_as_thread_ends(),
-                _ => g.close_all(),
-            })
+        let close_all = || match on_stop {
+            Connections::CloseAsThreadEnds => self.group.close_all_as_thread_ends(),
+            _ => self.group.close_all(),
         };
         self.unregister_for_hot_reload();
         let connections = self.handlers.active_connections.get();
@@ -846,7 +838,7 @@ impl Listener {
                 .global()
                 .throw_invalid_arguments(format_args!("Expected options object")));
         }
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
 
         // Client mode: these handlers have no owning listener, so
         // `mark_inactive` skips the listener-release branch.
@@ -994,14 +986,14 @@ impl Drop for Listener {
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);
         if this.handlers.active_connections.get() > 0 {
-            this.group.with_mut(|g| g.close_all());
+            this.group.close_all();
         }
         bun_core::asan::unregister_root_region(
-            this.group.as_ptr().cast::<c_void>(),
+            (&raw const this.group).cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // SAFETY: zeroed or init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(this.group.as_ptr()) };
+        unsafe { uws::SocketGroup::destroy(&raw const this.group) };
     }
 }
 
@@ -1149,7 +1141,7 @@ pub(crate) fn set_secure_context(listener: TLSListener<'_>, context: &SecureCont
 
 /// The address's key in `VirtualMachine::hot_map()`. `None` without `--hot`, for a `net.Server`, or if two listeners can hold the address at once.
 fn hot_reload_key(config: &SocketConfig) -> Option<Box<[u8]>> {
-    VirtualMachine::get().as_mut().hot_map()?;
+    VirtualMachine::get().hot_map()?;
     let is_net_server = !config.default_timeout;
     if is_net_server || config.reuse_port || config.fd.is_some() || config.port == Some(0) {
         return None;

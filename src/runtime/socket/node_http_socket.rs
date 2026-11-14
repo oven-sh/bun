@@ -91,8 +91,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handlers = this.get_handlers();
         let vm = VirtualMachine::get();
         let loop_ = vm.uws_loop();
-        let group: *mut uws::SocketGroup = vm
-            .as_mut()
+        let group = vm
             .client_socket_groups_in(vm.context_of(handlers.context()))
             .bun_connect_group::<SSL>(loop_);
         let kind = if SSL {

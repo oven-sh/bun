@@ -436,25 +436,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.vm.get()
     }
 
-    /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
-    /// `&mut`) because the VM is mutated across re-entrant JS callbacks
-    /// (`drain_microtasks`, event-loop ticks) while other `&VirtualMachine`
-    /// borrows may be live; handing out `&mut` here would alias.
-    ///
-    /// Routes through [`jsc::VirtualMachine::get_mut_ptr`] (the thread-local
-    /// raw `*mut`) rather than casting `self.vm` — the field is `*const`
-    /// derived from a `&'static VirtualMachine`, so casting it to `*mut` would
-    /// carry read-only Stacked-Borrows provenance and make any write through
-    /// the result UB.
-    #[inline(always)]
-    pub(crate) fn vm_mut(&self) -> *mut jsc::VirtualMachine {
-        debug_assert!(core::ptr::eq(
-            self.vm.as_const_ptr(),
-            jsc::VirtualMachine::get_mut_ptr()
-        ));
-        jsc::VirtualMachine::get_mut_ptr()
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -822,8 +803,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // before the response object existed. Nothing adopted the response;
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
-                // SAFETY: `vm_mut()` is the process-static VirtualMachine.
-                let _ = unsafe { (*self.vm_mut()).uncaught_exception(global, result, false) };
+                let _ = self.vm().uncaught_exception(global, result, false);
             }
             server_body::respond_stopped_503(any_response_from::<SSL>(resp));
             // Balances `on_pending_request` above.
@@ -913,15 +893,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
-                // SAFETY: `vm_mut()` is the process-static VirtualMachine; `&mut`
-                // scoped to this call.
-                let _ = unsafe {
-                    (*self.vm_mut()).uncaught_exception(
-                        global,
-                        *err,
-                        matches!(http_result, HttpResult::Rejection(_)),
-                    )
-                };
+                let _ = self.vm().uncaught_exception(
+                    global,
+                    *err,
+                    matches!(http_result, HttpResult::Rejection(_)),
+                );
 
                 nhr.on_dispatch_threw();
             }
@@ -1181,12 +1157,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(listener) = listener {
             if !SSL {
-                // SAFETY: `listener` is the live uws ListenSocket just taken from `self.listener`,
-                // and `vm_mut()` is the process-static VM.
-                unsafe {
-                    let fd = (*listener).socket().fd();
-                    (*self.vm_mut()).remove_listening_socket_for_watch_mode(fd);
-                }
+                // SAFETY: `listener` is the live uws ListenSocket just taken from `self.listener`.
+                let fd = unsafe { (*listener).socket().fd() };
+                self.vm().remove_listening_socket_for_watch_mode(fd);
             }
             match &self.config.get().address {
                 // The socket file of an inherited descriptor belongs to the process that bound it.
@@ -1220,11 +1193,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `CloseAsThreadEnds`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
     pub(crate) fn stop(&self, connections: Connections) {
         if self.config.get().allow_hot && !self.config.get().id.is_empty() {
-            // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
-            unsafe {
-                if let Some(hot) = (*self.vm_mut()).hot_map() {
-                    hot.remove(&self.config.get().id);
-                }
+            if let Some(hot) = self.vm().hot_map() {
+                hot.remove(&self.config.get().id);
             }
         }
 
@@ -1252,7 +1222,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // At VM shutdown no tick would run the task.
         if self.all_closed_promise.get().has_value() && !self.vm().is_shutting_down() {
-            let vm_ref = jsc::VirtualMachine::get_mut();
+            let vm_ref = self.vm();
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
@@ -1326,15 +1296,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.base_url_string_for_joining
                 .set(self.config.get().base_url_string_for_joining(Some(port)));
         }
-        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
-        // for the server's lifetime); single-threaded JS context.
-        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
+        self.vm().event_loop_handle.set(Some(bun_io::Loop::get()));
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
-            // SAFETY: `vm` is a STATIC ref (see `NewServer::vm_mut`) — non-null
-            // for the server's lifetime, so the raw→`&mut` deref is sound.
-            unsafe { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
+            self.vm().add_listening_socket_for_watch_mode(fd);
         }
     }
 
@@ -1799,20 +1765,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 6. Initialize plugins if needed ---
         if needs_plugins && self.plugins.get().is_none() {
-            // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
-            // (non-null for the server's lifetime); single-threaded JS context.
             // Cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
             let vm = jsc::VirtualMachine::get();
             let names = vm
                 .transpiler
+                .get()
                 .options
                 .serve_plugins
                 .clone()
                 .unwrap_or_default();
             // `load_and_resolve_plugins` adds the plugins of `bake.config.ts`.
-            if !names.is_empty() || vm.bake_config_plugins.has() {
+            if !names.is_empty() || vm.bake_config_plugins.get().has() {
                 self.plugins.set(Some(ServePlugins::init(names)));
             }
         }
@@ -2266,9 +2231,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 }
                             }
                             if !tcp {
-                                // SAFETY: per-thread VM singleton; no aliasing `&mut`.
-                                jsc::VirtualMachine::get().as_mut().event_loop_handle =
-                                    Some(bun_io::Loop::get());
+                                jsc::VirtualMachine::get()
+                                    .event_loop_handle
+                                    .set(Some(bun_io::Loop::get()));
                             }
                         }
                     }
@@ -2322,7 +2287,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// into the slot and dispatch into.
     pub(crate) fn gc_hint_after_listen(&self) {
         let vm = self.vm();
-        if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
+        if vm.aggressive_garbage_collection.get() == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
             vm.event_loop().perform_gc();
@@ -3169,20 +3134,22 @@ pub(crate) mod http_server_agent {
 
     /// Assign the server a fresh inspector id and tell the C++ inspector
     /// agent (if attached) that it started, passing its URL and start time.
-    pub(crate) fn notify_server_started(this: &mut HTTPServerAgent, instance: AnyServer) {
-        let Some(agent) = this.agent else { return };
-        this.next_server_id = DebuggerId::init(this.next_server_id.get() + 1);
-        instance.set_inspector_server_id(this.next_server_id);
+    pub(crate) fn notify_server_started(this: &HTTPServerAgent, instance: AnyServer) {
+        let Some(agent) = this.agent.get() else {
+            return;
+        };
+        this.next_server_id
+            .set(DebuggerId::init(this.next_server_id.get().get() + 1));
+        instance.set_inspector_server_id(this.next_server_id.get());
         let url = instance.get_url_as_string();
 
         // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
-        // (set via `Bun__HTTPServerAgent__setEnabled`); `vm()` is the live
-        // process VM backref.
+        // (set via `Bun__HTTPServerAgent__setEnabled`).
         unsafe {
             InspectorHTTPServerAgent::notify_server_started(
                 agent.as_ptr(),
-                this.next_server_id,
-                (*instance.vm()).hot_reload_counter as i32,
+                this.next_server_id.get(),
+                instance.vm().hot_reload_counter.get() as i32,
                 &url,
                 bun_core::time::milli_timestamp() as f64,
                 instance.ptr.cast(),
@@ -3193,7 +3160,9 @@ pub(crate) mod http_server_agent {
     /// Tell the C++ inspector agent (if attached) that the server stopped,
     /// stamped with the current time.
     pub(crate) fn notify_server_stopped(this: &HTTPServerAgent, server: AnyServer) {
-        let Some(agent) = this.agent else { return };
+        let Some(agent) = this.agent.get() else {
+            return;
+        };
         InspectorHTTPServerAgent::notify_server_stopped(
             agent.as_ptr(),
             server.inspector_server_id(),
@@ -3207,7 +3176,7 @@ pub(crate) mod http_server_agent {
         this: &HTTPServerAgent,
         server: AnyServer,
     ) -> Result<(), bun_alloc::AllocError> {
-        let Some(agent) = this.agent else {
+        let Some(agent) = this.agent.get() else {
             return Ok(());
         };
         let config = server.config();
@@ -3252,7 +3221,7 @@ pub(crate) mod http_server_agent {
         InspectorHTTPServerAgent::notify_server_routes_updated(
             agent.as_ptr(),
             server.inspector_server_id(),
-            server.vm().hot_reload_counter as i32,
+            server.vm().hot_reload_counter.get() as i32,
             &mut routes,
         );
         Ok(())
@@ -3345,7 +3314,7 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
 }
 
 impl ServerAllConnectionsClosedTask {
-    pub(crate) fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
+    pub(crate) fn schedule(this: Self, vm: &jsc::VirtualMachine) {
         vm.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(this)));
     }
 

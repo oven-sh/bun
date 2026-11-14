@@ -356,7 +356,7 @@ impl<C: JobContext> Job<C> {
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
                 context: cx.context().id(),
-                generation: cx.vm().test_isolation_generation,
+                generation: cx.vm().test_isolation_generation.get(),
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -473,7 +473,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    if unsafe { (*header).generation } != vm.test_isolation_generation {
+    if unsafe { (*header).generation } != vm.test_isolation_generation.get() {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());

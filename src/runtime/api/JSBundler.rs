@@ -1907,7 +1907,7 @@ pub(crate) mod js_bundler {
         // 2. During parsing, it encounters a macro and evaluates it
         // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
         // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
-        if vm.macro_mode {
+        if vm.macro_mode.get() {
             return Err(global_this.throw(format_args!("Bun.build cannot be called from within a macro during bundling.\n\n\
                  This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
                  but the macro's Bun.build call is waiting for the bundler.\n\n\

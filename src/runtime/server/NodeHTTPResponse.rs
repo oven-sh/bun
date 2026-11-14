@@ -307,24 +307,6 @@ unsafe extern "C" {
     );
 }
 
-/// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
-#[inline(always)]
-fn vm_get<'a>() -> &'a mut VirtualMachine {
-    // SAFETY: JS-thread only; the global VM pointer is non-null once the runtime is up.
-    VirtualMachine::get().as_mut()
-}
-
-/// `&mut` to this thread's VM for `Ref::ref/unref` etc. Takes `_global` for
-/// call-site symmetry but reads the thread-local directly:
-/// `VirtualMachine::as_mut()` ignores its receiver and re-reads the TLS slot,
-/// so routing through `global.bun_vm()` was pure overhead on the per-request
-/// path (`NodeHTTPResponse__createForJS` disasm showed the `bunVM` FFI result
-/// dropped on the floor).
-#[inline(always)]
-fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
-    VirtualMachine::get_mut()
-}
-
 /// `globalObject.ERR(.CODE, msg, .{}).throw()` — the actual error-construction
 /// body, kept non-generic and out of line.
 ///
@@ -594,7 +576,8 @@ impl NodeHTTPResponse {
         self.body_read_state.set(to);
         self.update_parked();
         if self.body_read_ref.get().has {
-            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            self.body_read_ref
+                .with_mut(|r| r.unref(VirtualMachine::get()));
         }
         true
     }
@@ -615,7 +598,8 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.toggle(Flags::PARKED));
         self.server.note_request_parked(parked);
         if parked {
-            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            self.body_read_ref
+                .with_mut(|r| r.unref(VirtualMachine::get()));
             if let Some(raw) = self.reader() {
                 Bun__NodeHTTP__onRequestParked(
                     any_response_is_ssl(&raw) as core::ffi::c_int,
@@ -623,7 +607,8 @@ impl NodeHTTPResponse {
                 );
             }
         } else if pending {
-            self.body_read_ref.with_mut(|r| r.r#ref(vm_get()));
+            self.body_read_ref
+                .with_mut(|r| r.r#ref(VirtualMachine::get()));
         }
     }
 
@@ -714,7 +699,7 @@ impl NodeHTTPResponse {
             had
         });
 
-        let vm = vm_get();
+        let vm = VirtualMachine::get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         debug_assert!(!self.flags.get().contains(Flags::PARKED));
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
@@ -1472,7 +1457,7 @@ impl NodeHTTPResponse {
         };
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
             if on_aborted.is_cell() {
-                let vm = vm_get();
+                let vm = VirtualMachine::get();
                 let global_this = vm.global();
                 let event_loop = vm.event_loop();
 
@@ -1494,7 +1479,7 @@ impl NodeHTTPResponse {
             // Release the pin + owner + GC root atomically before any user JS
             // (on_data_or_aborted runs the ondata callback). Clearing the slot
             // alone would un-root `pinned_value` while it is still read later.
-            self.clear_pending_pinned_write(vm_get().global(), js_this);
+            self.clear_pending_pinned_write(VirtualMachine::get().global(), js_this);
             let callback = js::on_data_get_cached(js_this);
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, callback);
         }
@@ -1726,7 +1711,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
-        self.poll_ref.with_mut(|r| r.unref(vm_get()));
+        self.poll_ref.with_mut(|r| r.unref(VirtualMachine::get()));
 
         self.update_parked();
         self.mark_request_as_done_if_necessary();
@@ -1811,7 +1796,7 @@ pub(crate) fn on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
+    let _ = VirtualMachine::get().uncaught_exception(global_object, err.to_js(), true);
     if had_promise {
         this.deref();
     }
@@ -1937,7 +1922,7 @@ impl NodeHTTPResponse {
             Ok(b) => b,
             Err(err) => {
                 let exc = global_this.take_exception(err);
-                let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                let _ = VirtualMachine::get().uncaught_exception(global_this, exc, false);
                 JSValue::UNDEFINED
             }
         }
@@ -1965,7 +1950,7 @@ impl NodeHTTPResponse {
 
         if let Some(callback) = callback {
             if callback.is_cell() {
-                let vm = vm_get();
+                let vm = VirtualMachine::get();
                 let global_this = vm.global();
                 let event_loop = vm.event_loop();
 
@@ -1988,7 +1973,8 @@ impl NodeHTTPResponse {
         // The callback can run 'end' -> autoDestroy -> `ondata = undefined`, which drops the ref first.
         if last {
             if self.body_read_ref.get().has {
-                self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+                self.body_read_ref
+                    .with_mut(|r| r.unref(VirtualMachine::get()));
             }
             self.mark_request_as_done_if_necessary();
         }
@@ -2101,7 +2087,7 @@ impl NodeHTTPResponse {
         if !on_writable.is_cell() {
             return;
         }
-        let vm = vm_get();
+        let vm = VirtualMachine::get();
         let global_this = vm.global();
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
@@ -2629,7 +2615,7 @@ impl NodeHTTPResponse {
         debug_assert!(!self.auto_flusher.get().registered.get());
         self.auto_flusher.get().registered.set(true);
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = vm_get()
+        let found_existing = VirtualMachine::get()
             .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
@@ -2642,7 +2628,10 @@ impl NodeHTTPResponse {
         }
         debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = vm_get().event_loop().deferred_tasks.unregister_task(ctx);
+        let removed = VirtualMachine::get()
+            .event_loop()
+            .deferred_tasks
+            .unregister_task(ctx);
         debug_assert!(removed);
         self.auto_flusher.get().registered.set(false);
         self.deref();
@@ -2793,8 +2782,9 @@ impl Drop for NodeHTTPResponse {
         debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
         debug_assert!(flags.intersects(Flags::SOCKET_CLOSED | Flags::REQUEST_HAS_COMPLETED));
 
-        self.poll_ref.with_mut(|r| r.unref(vm_get()));
-        self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+        self.poll_ref.with_mut(|r| r.unref(VirtualMachine::get()));
+        self.body_read_ref
+            .with_mut(|r| r.unref(VirtualMachine::get()));
 
         self.promise.with_mut(|p| p.deinit());
     }
@@ -2836,7 +2826,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
-    let vm = bun_vm_mut(global_object);
+    let vm = VirtualMachine::get();
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
     // Like llhttp, the framing decides, not the method. CONNECT has no body: no byte after its head is parsed.
     if method != HttpMethod::CONNECT {

@@ -295,12 +295,9 @@ impl Handlers {
         let on_error = self.on_error();
 
         if on_error.is_empty() {
-            // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object
+                .bun_vm()
+                .uncaught_exception(&global_object, args[1], false);
             return Ok(());
         }
 

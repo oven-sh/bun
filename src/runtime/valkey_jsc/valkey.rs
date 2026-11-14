@@ -195,7 +195,7 @@ impl Address {
     pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
-        group: &mut SocketGroup,
+        group: &SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, crate::Error> {

@@ -227,12 +227,7 @@ pub(crate) mod lib_uv_backend {
         let task = jsc::Task::from_boxed(Box::new(LibuvCompleteHolder { uv_info }));
         // SAFETY: `this` is the live GetAddrInfoRequest set as uv data.
         unsafe {
-            (*this)
-                .head
-                .global_this()
-                .bun_vm()
-                .as_mut()
-                .enqueue_task(task);
+            (*this).head.global_this().bun_vm().enqueue_task(task);
         }
     }
 
@@ -5511,7 +5506,7 @@ impl Resolver {
     pub(crate) fn get_runtime_default_result_order_option() -> bun::String {
         // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
         // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
-        let raw = VirtualMachine::get().dns_result_order;
+        let raw = VirtualMachine::get().dns_result_order.get();
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,
@@ -5522,7 +5517,7 @@ impl Resolver {
 
     pub(crate) fn set_connect_result_order(order: &[u8]) {
         // The order and the DNS cache are process-wide, so a Worker must not change them for the other threads.
-        if !VirtualMachine::get().is_main_thread {
+        if !VirtualMachine::get().is_main_thread.get() {
             return;
         }
         if let Some(order) = Order::from_string(order) {

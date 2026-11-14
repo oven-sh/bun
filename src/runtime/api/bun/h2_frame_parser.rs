@@ -918,11 +918,7 @@ impl<'a> HeaderScratch<'a> {
     fn take(global: &'a JSGlobalObject) -> Self {
         Self {
             global,
-            scratch: global
-                .bun_vm()
-                .as_mut()
-                .rare_data()
-                .take_h2_header_scratch(),
+            scratch: global.bun_vm().rare_data().take_h2_header_scratch(),
         }
     }
 }
@@ -931,7 +927,6 @@ impl Drop for HeaderScratch<'_> {
     fn drop(&mut self) {
         self.global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .put_back_h2_header_scratch(core::mem::take(&mut self.scratch));
     }

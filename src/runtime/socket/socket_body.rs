@@ -670,10 +670,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let last_errno = || sys::SystemErrno::from_raw(sys::last_error() as u16);
 
-        // `VirtualMachine::get()` yields the canonical `*mut` (write
-        // provenance) — never derive `&mut` from the `&'static` borrow stored
-        // on Handlers (that's `invalid_reference_casting`).
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
         let loop_ = vm.uws_loop();
         let group = vm
             .client_socket_groups_in(cx.context())
@@ -3303,10 +3300,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .get()
                 .as_ref()
                 .and_then(|handlers| handlers.listener().map(|listener| listener.context));
-            let vm = VirtualMachine::get();
             let context =
                 listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
-            vm.as_mut().client_socket_groups_in(context)
+            vm.client_socket_groups_in(context)
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }

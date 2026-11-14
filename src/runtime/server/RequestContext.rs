@@ -344,11 +344,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 /// Reports an error that no `error()` handled. The server keeps running, so a
 /// Worker prints it like the main thread does. Its own handler ends the Worker.
-fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
-    if vm.worker.is_some() {
+fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    if vm.worker.get().is_some() {
         jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
     } else {
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection.get())(vm, global, value);
     }
 }
 
@@ -1012,7 +1012,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             };
             unhandled = err;
         }
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         report_unhandled_error(vm, global, unhandled);
     }
 
@@ -1063,7 +1063,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
-                server.vm().as_mut().run_error_handler(value, None);
+                server.vm().run_error_handler(value, None);
             }
             self.close_incomplete_stream();
             return;
@@ -2061,7 +2061,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let already_posted = self
             .server()
             .vm()
-            .as_mut()
             .event_loop()
             .deferred_tasks
             .post_task(ctx, Self::on_deferred_head_commit);
@@ -2278,7 +2277,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                             && let Some(server) = this.server.get()
                             && !err.is_empty_or_undefined_or_null()
                         {
-                            server.vm().as_mut().run_error_handler(err, None);
+                            server.vm().run_error_handler(err, None);
                         }
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
@@ -2398,7 +2397,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
-            self.server().vm().as_mut().drain_microtasks();
+            self.server().vm().drain_microtasks();
         }
     }
 
@@ -2962,14 +2961,13 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         }
         let server = self.server();
         if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
-            server.vm().as_mut().run_error_handler(err, None);
+            server.vm().run_error_handler(err, None);
             return false;
         }
 
         let mut exception_list: jsc::ExceptionList = Vec::new();
         server
             .vm()
-            .as_mut()
             .run_error_handler(err, Some(&mut exception_list));
 
         let bb = DevErrorPage {
@@ -3566,9 +3564,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         };
         let server = &*server;
         let global_this = server.global_this();
-        // `NewServer::vm()` is the process-static VM `BackRef`; `as_mut()` is
-        // the single audited `&mut VirtualMachine` accessor.
-        let vm = server.vm().as_mut();
+        let vm = server.vm();
         // A missing or unreadable `Bun.file()` isn't an unhandled error, so it gets no dev error page and leaves the exit code alone.
         if matches!(status, 403 | 404) {
             if DEBUG_MODE {
@@ -3580,10 +3576,12 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         }
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
-            let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
+            let prev_exception_list = vm.on_unhandled_rejection_exception_list.get();
+            vm.on_unhandled_rejection_exception_list
+                .set(Some(NonNull::from(&mut exception_list)));
             report_unhandled_error(vm, global_this, value);
-            vm.on_unhandled_rejection_exception_list = prev_exception_list;
+            vm.on_unhandled_rejection_exception_list
+                .set(prev_exception_list);
 
             let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
@@ -3786,7 +3784,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             {
                 server
                     .vm()
-                    .as_mut()
                     .run_error_handler(global_this.take_exception(err), None);
             }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.

@@ -5,7 +5,6 @@ use crate::exception_list;
 use bun_core::{String, StringOrView};
 use bun_url::URL as ZigURL;
 
-use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace};
 
@@ -106,9 +105,9 @@ impl<'a> Holder<'a> {
 
     /// `Drop` releases the strings; this resets the parser arena used while
     /// collecting source lines, which needs `vm`.
-    pub(crate) fn deinit(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn deinit(&mut self, vm: &VirtualMachine) {
         if core::mem::take(&mut self.need_to_clear_parser_arena_on_deinit) {
-            ModuleLoader::reset_arena(vm);
+            vm.module_loader.reset_arena();
         }
     }
 

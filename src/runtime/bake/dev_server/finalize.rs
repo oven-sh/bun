@@ -675,9 +675,7 @@ fn finalize_bundle_inner(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
+                    dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
                     // Note: `panic!()` would unwind through the
                     // `extern "C"` boundary above (`nounwind` UB), so abort.
@@ -693,9 +691,7 @@ fn finalize_bundle_inner(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
+                    dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
                     // Note: `panic!()` would unwind through the
                     // `extern "C"` boundary above (`nounwind` UB), so abort.
@@ -722,8 +718,7 @@ fn finalize_bundle_inner(
         ) {
             Ok(v) => v,
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                dev.vm_mut()
+                dev.vm()
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!(
                     "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."

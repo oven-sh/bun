@@ -478,7 +478,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {
-        let rare = self.global_this.bun_vm().as_mut().rare_data();
+        let rare = self.global_this.bun_vm().rare_data();
         let mut decompressed = rare.take_websocket_inflate_scratch();
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::UnexpectedRsv1),
@@ -502,12 +502,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Err(code) => self.fail(code),
         }
 
-        // Both arms run JS, so reach for `RareData` again instead of holding `rare` across them.
-        self.global_this
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .put_back_websocket_inflate_scratch(decompressed);
+        rare.put_back_websocket_inflate_scratch(decompressed);
     }
 
     /// Data will be cloned in C++.
@@ -2242,8 +2237,7 @@ struct Mask;
 
 impl Mask {
     fn generate(global_this: &JSGlobalObject) -> [u8; 4] {
-        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
-        entropy[..4].try_into().expect("infallible: size matches")
+        global_this.bun_vm().rare_data().entropy()
     }
 
     fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {

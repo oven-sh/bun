@@ -1075,7 +1075,7 @@ impl Expect {
         let times = expect_js::result_value_get_cached(call.this).unwrap_or(JSValue::UNDEFINED);
         let [interval_ms, timeout_ms] = [times.get_index(global, 0)?, times.get_index(global, 1)?];
 
-        // `parent: None` keeps the attempts out of the assertion count. Only `call` is counted.
+        // `parent: None` keeps the attempts out of the assertion count.
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
             matcher_ran: Cell::new(false),

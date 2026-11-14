@@ -405,23 +405,6 @@ impl EventLoopHandle {
                 .cast(),
         }
     }
-
-    pub fn create_null_delimited_env_map(
-        self,
-    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-        match self {
-            EventLoopHandle::Js { owner } => owner.create_null_delimited_env_map(),
-            EventLoopHandle::Mini(mini) => {
-                // `env_ptr()` takes `&self` — safe via `BackRef: Deref`.
-                // `env` must be set (caller invariant).
-                let env = mini.env_ptr().expect("MiniEventLoop.env unset");
-                // SAFETY: `env` is a `NonNull<DotEnvLoader>` backref; the
-                // loader is a thread-/process-lifetime singleton (see
-                // `MiniEventLoop::env_ptr` invariant) and outlives this call.
-                unsafe { (*env.as_ptr()).map.create_null_delimited_env_map() }
-            }
-        }
-    }
 }
 
 // ─────────────────────────── JsPoster ──────────────────────────────────────

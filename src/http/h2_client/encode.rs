@@ -331,15 +331,12 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             };
             let mut locked = sb.lock();
             let buffer = &mut locked.buffer;
-            let data_ptr = buffer.list.as_ptr();
-            let data_len = buffer.size();
-            let cursor = buffer.cursor;
+            let data = buffer.slice();
+            let data_len = data.len();
             if data_len == 0 && !ended {
                 drop(locked);
                 return;
             }
-            // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
-            let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
             buffer.cursor += sent;
             let drained = buffer.is_empty();

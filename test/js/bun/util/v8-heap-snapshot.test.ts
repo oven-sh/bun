@@ -89,6 +89,11 @@ test("v8.writeHeapSnapshot() with path", async () => {
   expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
 });
 
+test("v8 heap snapshot node ids are stable across snapshots", async () => {
+  const { id1, id2, found, stable } = await runFixture("id-stability");
+  expect({ found, stable, id1, id2 }).toEqual({ found: true, stable: true, id1, id2: id1 });
+});
+
 test("v8 heap snapshot labels Web Streams internal edges", async () => {
   const edges = await runFixture("stream-edges");
   // Every WriteBarrier member reported by analyzeHeap shows up as a named

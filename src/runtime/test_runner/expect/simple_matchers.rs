@@ -16,7 +16,7 @@ crate::unary_predicate_matcher!(to_be_false, "toBeFalse", |v| v.is_boolean()
     && !v.to_boolean());
 crate::unary_predicate_matcher!(to_be_falsy, "toBeFalsy", |v| !v.to_boolean());
 crate::unary_predicate_matcher!(to_be_function, "toBeFunction", |v| v.is_callable());
-crate::unary_predicate_matcher!(to_be_integer, "toBeInteger", |v| v.is_any_int());
+crate::unary_predicate_matcher!(to_be_integer, "toBeInteger", |v| v.is_integer());
 crate::unary_predicate_matcher!(to_be_nan, "toBeNaN", |v| v.is_number()
     && v.as_number().is_nan());
 crate::unary_predicate_matcher!(to_be_nil, "toBeNil", |v| v.is_undefined_or_null());

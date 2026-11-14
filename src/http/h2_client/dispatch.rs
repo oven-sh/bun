@@ -583,7 +583,7 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
 pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
-    let mut bounds: Vec<[u32; 3]> = Vec::new();
+    let mut lengths: Vec<[u32; 2]> = Vec::new();
     let start_len = stream.decoded_bytes.len();
     // The size cap counts a value before the trim, so whitespace is not free.
     let mut untrimmed_len = start_len;
@@ -648,17 +648,11 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             stream.header_block.clear();
             return;
         }
-        let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
+        let value = trim_response_value(result.value);
         stream.decoded_bytes.extend_from_slice(result.name);
-        let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream
-            .decoded_bytes
-            .extend_from_slice(trim_response_value(result.value));
-        bounds.push([
-            name_start,
-            value_start,
-            u32::try_from(stream.decoded_bytes.len()).expect("int cast"),
-        ]);
+        stream.decoded_bytes.extend_from_slice(value);
+        // Both are below the cap.
+        lengths.push([result.name.len() as u32, value.len() as u32]);
     }
 
     stream.header_block.clear();
@@ -716,23 +710,17 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         );
         stream.sent_end_stream();
     }
-    let bytes = stream.decoded_bytes.as_ptr();
     stream.decoded_headers.reserve_exact(
-        bounds
+        lengths
             .len()
             .saturating_sub(stream.decoded_headers.capacity()),
     );
-    for b in &bounds {
-        // Self-referential — decoded_headers stores raw-ptr slices
-        // borrowing stream.decoded_bytes. picohttp::Header stores raw ptrs so
-        // this is sound as long as decoded_bytes is not reallocated before
-        // delivery (it isn't — only ever appended to once per END_HEADERS).
-        // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
-        let name =
-            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
-        // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
-        let value =
-            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
+    // `decoded_headers` points into `decoded_bytes`, which does not grow again before delivery.
+    let mut rest = &stream.decoded_bytes[start_len..];
+    for [name_len, value_len] in lengths {
+        let (name, value);
+        (name, rest) = rest.split_at(name_len as usize);
+        (value, rest) = rest.split_at(value_len as usize);
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));

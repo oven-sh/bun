@@ -437,5 +437,174 @@ describe.concurrent.skipIf(isWindows)(
         await expectDrainOverPipe(afterInheritSpawn, "{}", { drained: true }, 1 + (1 << 20));
       },
     );
+
+    // The flag is on the open file description, so it outlives the process that set it. Like Node (ResetStdio), bun puts the
+    // startup value back at exit and on SIGINT/SIGTERM. The probe reports the shell's fd before and after, on the other fd.
+    // The shell reports a child killed by a signal ("Terminated") on stderr; keep only the probe and exit lines.
+    const probeLines = (text: string) =>
+      text
+        .split("\n")
+        .filter(line => /^(\d:(non)?blocking|exit=\d+)$/.test(line))
+        .map(line => line + "\n")
+        .join("");
+
+    // A step is JS for `bun -e`, or the arguments of one bun command.
+    async function flagsAround(targetFd: 1 | 2, ...steps: (string | { args: string[] })[]) {
+      const otherFd = targetFd === 1 ? 2 : 1;
+      const script = [
+        // No core file from the process.abort() step: CI reports every core it finds.
+        "ulimit -c 0",
+        `probe() { PROBE_OUT_FD=${otherFd} "$0" "$PROBE" ${targetFd}; }`,
+        `PROBE="$1"`,
+        "probe",
+        ...steps.map(step => {
+          const args = typeof step === "string" ? ["-e", step] : step.args;
+          return `"$0" ${args.map(arg => JSON.stringify(arg)).join(" ")} </dev/null; echo "exit=$?" >&${otherFd}; probe`;
+        }),
+      ].join("\n");
+      await using proc = spawn({
+        cmd: ["sh", "-c", script, bunExe(), probe],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { probe: probeLines(targetFd === 1 ? stderr : stdout), shellExit: exitCode };
+    }
+
+    test.each([
+      ["process.stdout.isTTY", 1, `void process.stdout.isTTY`],
+      ["process.stdout.write", 1, `process.stdout.write("x")`],
+      ["process.stderr.write", 2, `process.stderr.write("x")`],
+      ["Bun.stdout.writer()", 1, `const w = Bun.stdout.writer(); w.write("x"); await w.end()`],
+    ] as const)("fd is blocking again after exit: %s", async (_name, targetFd, trigger) => {
+      expect(await flagsAround(targetFd, trigger)).toEqual({
+        probe: `${targetFd}:blocking\nexit=0\n${targetFd}:blocking\n`,
+        shellExit: 0,
+      });
+    });
+
+    test("fd is blocking again after SIGTERM with no TTY on any fd", async () => {
+      expect(await flagsAround(1, `void process.stdout.isTTY; process.kill(process.pid, "SIGTERM")`)).toEqual({
+        probe: "1:blocking\nexit=143\n1:blocking\n",
+        shellExit: 0,
+      });
+    });
+
+    test("fd is blocking again after SIGTERM when the last listener was removed", async () => {
+      const step = `const f = () => {}; process.on("SIGTERM", f); process.off("SIGTERM", f); void process.stdout.isTTY; process.kill(process.pid, "SIGTERM")`;
+      expect(await flagsAround(1, step)).toEqual({ probe: "1:blocking\nexit=143\n1:blocking\n", shellExit: 0 });
+    });
+
+    test("fd is blocking again after SIGINT ends a --watch run", async () => {
+      using dir = tempDir("watch-sigint", {
+        "main.js": `void process.stdout.isTTY; process.kill(process.pid, "SIGINT");`,
+      });
+      expect(await flagsAround(1, { args: ["--watch", path.join(String(dir), "main.js")] })).toEqual({
+        probe: "1:blocking\nexit=0\n1:blocking\n",
+        shellExit: 0,
+      });
+    });
+
+    // The restore runs before execve(2). When that fails, the script goes on with the flags it had.
+    test.skipIf(!isLinux)("a failed process.execve() leaves the script's nonblocking fd 1 as it was", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("node:fs");
+           void process.stdout.isTTY;
+           try { process.execve("/nonexistent/bin", ["x"]); } catch {}
+           const flags = parseInt(/^flags:\\s*([0-7]+)/m.exec(fs.readFileSync("/proc/self/fdinfo/1", "utf8"))[1], 8);
+           fs.writeSync(2, (flags & 0o4000) !== 0 ? "1:nonblocking\\n" : "1:blocking\\n");`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: probeLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        stderr: "1:nonblocking\n",
+        exitCode: 0,
+      });
+    });
+
+    test("fd is blocking again after process.abort()", async () => {
+      expect(await flagsAround(1, `void process.stdout.isTTY; process.abort()`)).toEqual({
+        probe: "1:blocking\nexit=134\n1:blocking\n",
+        shellExit: 0,
+      });
+    });
+
+    test("a fd that was already nonblocking at startup stays nonblocking", async () => {
+      // SIGKILL skips the restore, so the first step leaves the flag set for the second.
+      expect(
+        await flagsAround(
+          1,
+          `void process.stdout.isTTY; process.kill(process.pid, "SIGKILL")`,
+          `void process.stdout.isTTY`,
+        ),
+      ).toEqual({ probe: "1:blocking\nexit=137\n1:nonblocking\nexit=0\n1:nonblocking\n", shellExit: 0 });
+    });
+
+    // The restore is for the description bun started with. A script that closes fd 1 and opens a file there gets a new
+    // description, which the exit leaves alone (Node checks st_dev and st_ino the same way). A child that inherits it and
+    // outlives bun reports its flags: the child's stdin is a pipe that only bun holds, so EOF there means bun has exited.
+    // The child writes the report into a FIFO that the outer shell reads, so the shell waits for it.
+    test("a fd reopened by the script is left alone at exit", async () => {
+      using dir = tempDir("stdout-reopened", {});
+      const fifo = path.join(String(dir), "probe.fifo");
+      const reopen = `
+        const fs = require("node:fs");
+        fs.closeSync(1);
+        if (fs.openSync(${JSON.stringify(path.join(String(dir), "out.txt"))}, "w") !== 1) throw new Error("fd 1 expected");
+        Bun.spawn(["sh", "-c", 'cat >/dev/null; PROBE_OUT_FD=3 "$0" "$1" 1 3>"$2"', process.execPath, ${JSON.stringify(probe)}, ${JSON.stringify(fifo)}], {
+          stdin: "pipe",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        process.exit(0);`;
+      const script = [
+        `mkfifo "$2"`,
+        // Leaves the shell's fd 1 nonblocking: a restore that ignored the identity would set that bit on the file.
+        `"$0" -e 'void process.stdout.isTTY; process.kill(process.pid, "SIGKILL")' </dev/null`,
+        // The FIFO read waits for the grandchild, so skip it when the step failed and nothing will write.
+        `"$0" -e "$1" </dev/null; rc=$?; echo "exit=$rc"; [ "$rc" = 0 ] && cat "$2"`,
+      ].join("\n");
+      // The ASAN lane sets BUN_FEATURE_FLAG_NO_ORPHANS, which would kill the grandchild with its parent.
+      const env = { ...bunEnv };
+      delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+      await using proc = spawn({
+        cmd: ["sh", "-c", script, bunExe(), reopen, fifo],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: probeLines(stderr), exitCode }).toEqual({
+        stdout: "exit=0\n1:blocking\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("a SIGTERM inherited as ignored stays ignored with no TTY", async () => {
+      await using proc = spawn({
+        cmd: [
+          "sh",
+          "-c",
+          `trap "" TERM; exec "$0" -e 'process.kill(process.pid, "SIGTERM"); console.log("alive")'`,
+          bunExe(),
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive\n", stderr: "", exitCode: 0 });
+    });
   },
 );

@@ -99,6 +99,12 @@ pub trait Transport {
     fn write_runs_js(&self) -> bool {
         false
     }
+    /// Closes the transport and clears its pointer to the owning socket so the owner can connect again.
+    /// Does NOT call `on_close` and does NOT release the connection's +1 on the socket: the caller
+    /// (`detach_for_reconnect`) releases that one. False, with nothing changed, if unsupported.
+    fn detach(&self) -> bool {
+        false
+    }
 }
 
 // Variant + pointer-identity equality.
@@ -294,6 +300,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
     pub fn write_runs_js(&self) -> bool {
         matches!(self.socket, InternalSocket::Transport(t) if transport(t).write_runs_js())
+    }
+    /// See [`Transport::detach`]. False for anything but a transport.
+    pub fn detach_transport(&self) -> bool {
+        matches!(self.socket, InternalSocket::Transport(t) if transport(t).detach())
     }
 
     // ── state queries ───────────────────────────────────────────────────────

@@ -832,6 +832,17 @@ export const namedPipeInternals = {
   liveCount: $bindgen("socket_body.bind.ts", "namedPipeLiveCount"),
 };
 
+export const fdPipeInternals = {
+  /**
+   * Live native transports behind sockets over a descriptor that is not a
+   * `us_socket_t` (`new net.Socket({ fd, writable: true })`, and on POSIX
+   * `new net.Socket({ fd, readable: true })` or `Bun.connect({ fd })` on a
+   * pipe or FIFO): one per socket, until the task that frees it after the
+   * close has run.
+   */
+  liveCount: $bindgen("socket_body.bind.ts", "fdPipeLiveCount"),
+};
+
 export const duplexTLSInternals = {
   /**
    * Live native contexts behind TLS sockets that run over a JS stream

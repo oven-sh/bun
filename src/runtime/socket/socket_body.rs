@@ -739,14 +739,51 @@ impl<const SSL: bool> NewSocket<SSL> {
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
-            UnixOrHost::Fd(f) if !SSL && self.flags.get().contains(Flags::WRITE_ONLY_FD) => {
-                // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
-                let tcp = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
-                return Ok(super::fd_pipe::FdPipe::open(tcp, *f, cx.context()));
-            }
             UnixOrHost::Fd(f) => {
+                let socket_flags = self.flags.get();
+                let f = *f;
+                // The pipe transport keeps stdio open itself, so it takes the caller's descriptor as is.
+                if !SSL && socket_flags.contains(Flags::WRITE_ONLY_FD) {
+                    // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
+                    let tcp =
+                        unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
+                    return super::fd_pipe::FdPipe::open(tcp, f, false, false, cx.context());
+                }
+                // A pipe or a FIFO can't be a `us_socket_t`: it is read through an `FdPipe`. `fdIsRawSocket` skips the `fstat`.
+                #[cfg(unix)]
+                if !SSL && !socket_flags.contains(Flags::RAW_SOCKET_FD) {
+                    let st = sys::fstat(f).map_err(sys::SystemErrno::from)?;
+                    match st.st_mode & libc::S_IFMT {
+                        libc::S_IFSOCK => {}
+                        libc::S_IFIFO => {
+                            // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
+                            let tcp = unsafe {
+                                bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>())
+                            };
+                            // On `Err` the fd is still the caller's.
+                            return super::fd_pipe::FdPipe::open(
+                                tcp,
+                                f,
+                                true,
+                                socket_flags.contains(Flags::PAUSE_ON_CONNECT),
+                                cx.context(),
+                            );
+                        }
+                        // A file or a terminal: neither transport can wait on it.
+                        _ => return Err(sys::SystemErrno::ENOTSOCK),
+                    }
+                }
+                // uSockets closes its descriptor unconditionally; node never closes stdio, so it gets a duplicate.
+                #[cfg(unix)]
+                let (f, owns_dup) = if f.is_stdio() {
+                    (sys::dup(f).map_err(sys::SystemErrno::from)?, true)
+                } else {
+                    (f, false)
+                };
+                #[cfg(not(unix))]
+                let (f, owns_dup) = (f, false);
                 // The fd is connected, so it is registered paused outright; a dial is paused in on_open.
-                let flags = if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+                let flags = if socket_flags.contains(Flags::PAUSE_ON_CONNECT) {
                     flags | uws::LIBUS_SOCKET_OPEN_PAUSED
                 } else {
                     flags
@@ -763,7 +800,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                     false,
                 );
                 if s.is_null() {
-                    return Err(last_errno());
+                    let errno = last_errno();
+                    if owns_dup {
+                        use bun_sys::FdExt as _;
+                        f.close();
+                    }
+                    return Err(errno);
                 }
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 let sock = SocketHandler::<SSL>::from(s);
@@ -1452,28 +1494,41 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `on_connecting_error` dispatch early-returns and no JS callback fires;
     /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
     /// took. Caller must hold an independent +1 across this call. Only
-    /// Connected / Connecting are this socket's to drop. False, with nothing changed, while another owner (uWS, a transport, an unfinished close) points at `self`.
+    /// Connected / Connecting and a transport with [`uws::Transport::detach`] are this socket's to drop. False, with nothing changed, while another owner (uWS, another transport, an unfinished close) points at `self`.
     #[must_use]
     pub(crate) fn detach_for_reconnect(&self) -> bool {
         if self.flags.get().contains(Flags::HELD_BY_SERVER) {
             return false;
         }
         let old = self.socket.get();
-        match old.socket {
-            uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_) => {}
+        let is_native = match old.socket {
+            uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_) => true,
             uws::InternalSocket::Detached => return self.closing.get().is_detached(),
-            uws::InternalSocket::UwsHttp(_) | uws::InternalSocket::Transport(_) => return false,
-        }
-        let Some(ext) = old.ext::<*mut c_void>() else {
-            return false;
+            uws::InternalSocket::UwsHttp(_) => return false,
+            // A transport that supports it closes without reporting `on_close`; the connection's
+            // ref on `self` is released below, not by the transport.
+            uws::InternalSocket::Transport(_) => {
+                if !old.detach_transport() {
+                    return false;
+                }
+                debug_assert!(old.is_closed());
+                false
+            }
         };
-        // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
-        unsafe { *ext = core::ptr::null_mut() };
+        if is_native {
+            let Some(ext) = old.ext::<*mut c_void>() else {
+                return false;
+            };
+            // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
+            unsafe { *ext = core::ptr::null_mut() };
+        }
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.discard_queued_writes();
         self.bytes_read.set(0);
         self.detach_native_callback();
-        old.close(uws::CloseCode::Failure);
+        if is_native {
+            old.close(uws::CloseCode::Failure);
+        }
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
@@ -3211,10 +3266,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
         // kind (system→u64, uv→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
-        JsLocal::new(
-            heap,
-            self.socket.get().fd().to_js_without_making_lib_uv_owned(),
-        )
+        let socket = self.socket.get();
+        // An adopted stdio fd is reported as given: node:net's `connect({ fd })` matches
+        // `_handle.fd` against it, and the native side may hold a duplicate.
+        let fd = match self.connection.get().as_ref() {
+            Some(super::listener::UnixOrHost::Fd(adopted)) if !socket.is_detached() => *adopted,
+            _ => socket.fd(),
+        };
+        JsLocal::new(heap, fd.to_js_without_making_lib_uv_owned())
     }
 
     pub(crate) fn get_bytes_written(&self) -> f64 {
@@ -3586,6 +3645,8 @@ bitflags::bitflags! {
         const WRITE_ONLY_FD        = 1 << 18;
         /// C++ points at this socket for a node:http connection, or for the `ws` WebSocket made of it, until `Bun__NodeHTTPSocket__onClose`. The ext of the `us_socket_t` is uWS's.
         const HELD_BY_SERVER       = 1 << 19;
+        /// `fdIsRawSocket`: the caller knows the descriptor is a socket, so `do_connect` does not `fstat` it.
+        const RAW_SOCKET_FD        = 1 << 20;
         /// TCP_NODELAY is known to be on, so asking for it again costs no syscall. node:net asks for each connection of an http.Server, and the accept has set it.
         const NO_DELAY = 1 << 30;
         /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.
@@ -4001,6 +4062,11 @@ pub(crate) mod testing_apis {
         {
             0
         }
+    }
+
+    /// Live `FdPipe`s: one per socket over a descriptor that is not a `us_socket_t`.
+    pub(crate) fn fd_pipe_live_count() -> usize {
+        crate::socket::fd_pipe::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Live `UpgradedDuplex`es (one per TLS socket over a JS stream).

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4fbb6528eec99659a764f6256c78561547556b9991e7074d6336136f65e7c0c9.
+// Written against that file with the SHA-256 f50ce2c4d0f95e9edea1880c3a7741aeb69ecfc67228dfcecc0bbc62bc00c943.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -195,6 +195,7 @@ declare global {
       handle?: SocketHandle<Socket>;
       socket?: Socket;
       onread?: OnReadOptions | null;
+      pauseOnCreate?: boolean;
       noDelay?: boolean;
       keepAlive?: boolean;
       keepAliveInitialDelay?: number;
@@ -2050,7 +2051,8 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
     // complete inline, so data survives an immediate process.exit().
     // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
     // e.g. new Socket({ fd: 2, readable: false, writable: true })).
-    if (opts.writable === true) {
+    // An explicit `readable: true` is checked the same way before the fd is adopted for reading.
+    if (opts.writable === true || opts.readable === true) {
       try {
         stats = require("node:fs").fstatSync(fd);
       } catch {
@@ -2061,6 +2063,10 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       // Node's createHandle() wraps PIPE and TCP fds only: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
       if (stats.isFile()) {
         throw $ERR_INVALID_FD_TYPE("FILE");
+      }
+      // A terminal is read through tty.ReadStream, as in Node. Write-only wrapping of one (stderr on a terminal) stays.
+      if (opts.readable === true && stats.isCharacterDevice()) {
+        throw $ERR_INVALID_FD_TYPE("TTY");
       }
     }
   }
@@ -2075,7 +2081,11 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   if (stats !== undefined) {
     // isSocket() covers stdio handed to a child as a socketpair, which is how spawn implements pipes on unix.
     const optionsReadable = opts.readable;
-    if (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true)) {
+    if (
+      opts.writable === true &&
+      optionsReadable !== true &&
+      (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket())
+    ) {
       fdIsWriteOnly = true;
       // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
       if (optionsReadable !== true && optionsReadable !== false) {
@@ -2208,14 +2218,17 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   } else if (
     process.platform !== "win32" &&
     fd !== undefined &&
-    fd > 2 &&
+    (fd > 2 || opts.readable === true) &&
     opts.readable !== false &&
     !this[bunTlsSymbol]
   ) {
     try {
       stats ??= require("node:fs").fstatSync(fd);
     } catch {}
-    if (stats?.isSocket()) Socket.prototype.connect.$call(this, { fd });
+    // A socket is adopted by uSockets, a pipe or FIFO by a native pipe reader (node: uv_pipe_open). Stdio is adopted only when asked, since other streams share it.
+    if (stats?.isSocket() || stats?.isFIFO()) {
+      Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+    }
   }
 }
 $toClass(Socket, "Socket", Duplex);

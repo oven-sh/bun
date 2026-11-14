@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, autoInstallTempDir as tempDir } from "harness";
 
 // When the runtime resolver's auto-install path lazily creates the
 // PackageManager, it snapshots `resolver.log` into `pm.log`. If the

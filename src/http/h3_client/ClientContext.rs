@@ -76,11 +76,10 @@ impl ClientContext {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);
-        // SAFETY: HTTP-thread only, where `on_start` has set `uws_loop` to the
-        // thread's live `us_loop_t`.
+        // SAFETY: `global_init` ran above.
         let qctx = unsafe {
             quic::Context::create_client(
-                crate::http_thread().uws_loop(),
+                UwsLoop::get(),
                 0,
                 core::mem::size_of::<*mut ClientSession>() as c_uint,
                 core::mem::size_of::<*mut Stream>() as c_uint,

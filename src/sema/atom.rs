@@ -535,6 +535,9 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 /// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
 
+/// Name prefix of `require`, `module` and `exports` in a script, where they are names in the global scope.
+pub const NAME_IN_GLOBAL_SCOPE: &[u8] = b"\xFF";
+
 fn with_symbol_name_prefix(name: &[u8]) -> SmallVec<[u8; 64]> {
     let mut text = SmallVec::new();
     text.extend_from_slice(SYMBOL_NAME_PREFIX);

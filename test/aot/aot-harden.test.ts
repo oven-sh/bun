@@ -400,7 +400,13 @@ const takesAway = `const strip: (o: object, k: string) => boolean = (Reflect as 
 const at: number[] = JSON.parse("[0, 1]");
 class Badge { text: string; constructor(text: string) { this.text = text; } }
 `;
-const readsReferenceTakenAway = {
+interface ReferenceTakenAway {
+  printsFirst: string;
+  source: string;
+  isEmptyAsUndefined?: boolean;
+}
+
+const readsReferenceTakenAway: Record<string, ReferenceTakenAway> = {
   "which some members of a union have": {
     printsFirst: "64\n",
     source: `${takesAway}interface Core { mark: number }
@@ -431,6 +437,7 @@ console.log(shelf[at[0]](hurt));
   },
   "which is asked for its truth": {
     printsFirst: "friend badge\n",
+    isEmptyAsUndefined: true,
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; score: number; done: boolean;
   constructor(i: number) { this.rank = i & 7; this.active = (i & 1) === 1; this.name = "m" + i; this.badge = new Badge("b" + i); this.friend = undefined; this.score = i & 3; this.done = false; }
@@ -818,7 +825,7 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
   test.each(Object.entries(readsReferenceTakenAway))(
     "proof-checks stops the program by name where a slot that is told filled has lost a reference %s",
-    async (_, { printsFirst, source }) => {
+    async (_, { printsFirst, source, isEmptyAsUndefined }) => {
       using sound = tempDir("aot-harden", { "program.ts": source });
       await build(String(sound), ["--aot-harden=proof-checks"]);
       const expected = await runPlain(String(sound));
@@ -827,7 +834,10 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
       using unhardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(unhardened), [passesOverMarks]);
-      expect((await runBuilt(String(unhardened))).stdout).not.toBe(expected.stdout);
+      const unhardenedRun = await runBuilt(String(unhardened));
+      // An empty slot is as false as undefined.
+      if (isEmptyAsUndefined) expect(unhardenedRun).toEqual(expected);
+      else expect(unhardenedRun.stdout).not.toBe(expected.stdout);
 
       using hardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(hardened), ["--aot-harden=proof-checks", passesOverMarks]);

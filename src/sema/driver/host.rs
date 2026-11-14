@@ -17,8 +17,8 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
-    to_file_name_lower_case, to_path, typescript_path,
+    case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized, is_same_path,
+    join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -90,7 +90,10 @@ pub fn from_native(path: &[u8]) -> Vec<u8> {
 
 /// `from_native`, where every `\` is a separator.
 fn from_native_with_separators(path: &[u8]) -> Vec<u8> {
-    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    let path = match !cfg!(windows) && is_plainly_normalized(path) {
+        true => path.to_vec(),
+        false => join(b"/", bun_paths::string_paths::without_nt_prefix(path)),
+    };
     // A POSIX path's root is `/`, even if its first name looks like a drive or a URL. See `root_length`.
     match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
         true => [b"/\0", &path[..]].concat(),
@@ -123,7 +126,7 @@ pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {
 
 /// `from_argument`, for a path that names a file. `tsc` reads every `\` as a separator, so a name that has one only counts
 /// if there is such a file.
-pub fn file_from_argument(host: &dyn Host, cwd: &[u8], path: &[u8]) -> Vec<u8> {
+pub(crate) fn file_from_argument(host: &dyn Host, cwd: &[u8], path: &[u8]) -> Vec<u8> {
     let named = name_with_backslash(path).filter(|_| !is_below_backslash(path));
     let named = named.map(|(directory, name)| inside(&from_argument(cwd, directory), name));
     let named = named.filter(|it| host.is_file(it));

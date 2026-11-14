@@ -524,6 +524,13 @@ struct StrippedTarget<'p> {
 /// A union with fewer members is searched for each type on its own. See `Checker::contains_type`.
 const MANY_TARGETS: usize = 512;
 
+/// One pass over the constituents of a large union, beside those of another. Both are in `CompareTypes` order.
+#[derive(Default)]
+struct LiteralWalk<'p> {
+    ahead: &'p [TypeId],
+    only_literals: bool,
+}
+
 /// How many types `a` and `b` have in common from the start.
 fn common_prefix_len(a: &[TypeId], b: &[TypeId]) -> usize {
     const BLOCK: usize = 32;
@@ -4125,15 +4132,9 @@ impl<'p, 's> Checker<'p, 's> {
             count,
             corresponds,
         } = self.undefined_stripped_target_if_needed(sources, target);
-        // Where `targets` is read on. Both lists are in `CompareTypes` order.
-        let has_many = targets.len() >= MANY_TARGETS;
-        let only_literals = has_many && self.types().member_flags(target) & !tf::LITERAL == 0;
-        let mut next = match only_literals {
-            true => common_prefix_len(sources, targets),
-            false => 0,
-        };
-        for (i, &t) in sources.iter().enumerate().skip(next) {
-            if has_many && self.is_literal_in_next_targets(targets, &mut next, t, only_literals) {
+        let (mut walk, in_common) = self.begin_literal_walk(sources, target);
+        for (i, &t) in sources.iter().enumerate().skip(in_common) {
+            if self.is_literal_ahead(&mut walk, t) {
                 continue;
             }
             // Many unions are mappings of one another, so the members at the same index are related.
@@ -4159,29 +4160,42 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// True if `t` is a literal and among `targets`, the constituents of a union, from `next` on. `next` is moved behind
-    /// it, or to where it would be. A union with thousands of literals is compared with another in one pass over both.
+    /// The walk over the constituents of `target`, and how many of `sources` it begins with, which the walk is already past.
+    fn begin_literal_walk(&self, sources: &[TypeId], target: TypeId) -> (LiteralWalk<'p>, usize) {
+        let targets: &'p [TypeId] = match self.data(target) {
+            TypeData::Union(parts) if parts.len() >= MANY_TARGETS => parts,
+            _ => return (LiteralWalk::default(), 0),
+        };
+        let only_literals = self.types().member_flags(target) & !tf::LITERAL == 0;
+        let in_common = match only_literals {
+            true => common_prefix_len(sources, targets),
+            false => 0,
+        };
+        let walk = LiteralWalk {
+            ahead: &targets[in_common..],
+            only_literals,
+        };
+        (walk, in_common)
+    }
+
+    /// True if `t` is a literal that `walk` has ahead of it. The walk moves behind `t`, or to where it would be.
     #[inline]
-    fn is_literal_in_next_targets(
-        &self,
-        targets: &[TypeId],
-        next: &mut usize,
-        t: TypeId,
-        only_literals: bool,
-    ) -> bool {
-        let targets = &targets[*next..];
-        if only_literals && targets.first() == Some(&t) {
-            *next += 1;
+    fn is_literal_ahead(&self, walk: &mut LiteralWalk<'p>, t: TypeId) -> bool {
+        let Some((&first, rest)) = walk.ahead.split_first() else {
+            return false;
+        };
+        if walk.only_literals && first == t {
+            walk.ahead = rest;
             return true;
         }
-        if targets.is_empty() || self.flags(t) & tf::LITERAL == 0 {
+        if self.flags(t) & tf::LITERAL == 0 {
             return false;
         }
-        let (is_found, at) = match self.binary_search_types(targets, t) {
+        let (is_found, passed) = match self.binary_search_types(walk.ahead, t) {
             Ok(at) => (true, at + 1),
             Err(at) => (false, at),
         };
-        *next += at;
+        walk.ahead = &walk.ahead[passed..];
         is_found
     }
 

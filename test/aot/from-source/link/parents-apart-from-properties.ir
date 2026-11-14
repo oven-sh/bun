@@ -5,7 +5,7 @@
 # class Derived extends Base { constructor() { super(true); this.m = 2; } }
 # new Derived().get();
 # -- end of source
-# The constructor stores under one of two symbols. What it stores is no parent of a class and no prototype of a constructor function.
+# The constructor stores under one of two symbols. What it stores is no parent of a class and no prototype of a constructor function, and a symbol is not `__proto__`.
 # RUN: link layouts mechanisms=all
-# CHECK: layout L0 family=F0 changes=[GainsProperty, ChangesPrototype]
-# CHECK: layout L1 family=F0 changes=[GainsProperty, ChangesPrototype]
+# CHECK: layout L0 family=F0 changes=[GainsProperty] 
+# CHECK: layout L1 family=F0 changes=[GainsProperty] 

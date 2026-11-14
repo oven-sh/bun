@@ -1,4 +1,5 @@
 // emit() of node:events stands in a small function that the loop calls; none to five values, one listener and then two.
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const { EventEmitter } = require("node:events");
 const emitter = new EventEmitter();
 let got = "";

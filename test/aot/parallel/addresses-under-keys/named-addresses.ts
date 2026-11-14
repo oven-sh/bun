@@ -1,5 +1,4 @@
 // Accesses by name of holders that no literal and no class of the program names, in loops that store into them: parsed objects whose state changes at run time.
-// STATISTIC: KeyedAddressesHoisted >= 30
 // @ts-nocheck
 const ints: number[] = JSON.parse("[" + Array.from({ length: 12 }, (_, k) => (k * 37) % 23).join() + "]"), halves: number[] = ints.map(x => x / 2), odd: number[] = JSON.parse('[1,2,"a",4,null,6,7.5,-0,2147483647,1,2,3]');
 let reads = 0, writes = 0; const texts = ["a", "bb"]; let sink: any = 0;

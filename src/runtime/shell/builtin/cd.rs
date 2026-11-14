@@ -32,9 +32,7 @@ impl Cd {
         }
 
         if args.is_empty() {
-            let home_str = Builtin::shell(interp, cmd).get_homedir();
-            let home = home_str.slice().to_vec();
-            home_str.deref();
+            let home = Builtin::shell(interp, cmd).get_homedir().to_vec();
             if home.is_empty() {
                 return Self::write_stderr_non_blocking(
                     interp,

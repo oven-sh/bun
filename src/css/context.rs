@@ -10,13 +10,13 @@ use bun_collections::ArrayHashMap;
 
 /// The declarations of a rule that is generated next to the style rule in hand.
 #[derive(Default)]
-pub struct StagedDeclarations {
-    declarations: Vec<css::Property>,
-    important_declarations: Vec<css::Property>,
+pub struct StagedDeclarations<'bump> {
+    declarations: Vec<css::Property<'bump>>,
+    important_declarations: Vec<css::Property<'bump>>,
 }
 
-impl StagedDeclarations {
-    fn list(&mut self, important: bool) -> &mut Vec<css::Property> {
+impl<'bump> StagedDeclarations<'bump> {
+    fn list(&mut self, important: bool) -> &mut Vec<css::Property<'bump>> {
         if important {
             &mut self.important_declarations
         } else {
@@ -40,9 +40,9 @@ impl StagedDeclarations {
     }
 }
 
-pub struct SupportsEntry {
-    pub(crate) condition: css::SupportsCondition,
-    pub(crate) declarations: StagedDeclarations,
+pub struct SupportsEntry<'bump> {
+    pub(crate) condition: css::SupportsCondition<'bump>,
+    pub(crate) declarations: StagedDeclarations<'bump>,
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
@@ -54,26 +54,25 @@ pub enum DeclarationContext {
     StyleAttribute,
 }
 
-pub struct PropertyHandlerContext<'a> {
-    // `arena` is the parser arena that owns the AST being
-    // minified; bound to `'a` alongside the other borrowed inputs.
-    pub(crate) arena: &'a Bump,
+pub struct PropertyHandlerContext<'a, 'bump> {
+    /// The parser arena that owns the AST being minified.
+    pub(crate) arena: &'bump Bump,
     pub(crate) targets: css::targets::Targets,
     pub(crate) is_important: bool,
-    pub(crate) supports: Vec<SupportsEntry>,
-    pub(crate) ltr: StagedDeclarations,
-    pub(crate) rtl: StagedDeclarations,
-    pub(crate) dark: StagedDeclarations,
+    pub(crate) supports: Vec<SupportsEntry<'bump>>,
+    pub(crate) ltr: StagedDeclarations<'bump>,
+    pub(crate) rtl: StagedDeclarations<'bump>,
+    pub(crate) dark: StagedDeclarations<'bump>,
     pub(crate) context: DeclarationContext,
     pub(crate) unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
 }
 
-impl<'a> PropertyHandlerContext<'a> {
+impl<'a, 'bump> PropertyHandlerContext<'a, 'bump> {
     pub(crate) fn new(
-        arena: &'a Bump,
+        arena: &'bump Bump,
         targets: &css::targets::Targets,
         unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
-    ) -> PropertyHandlerContext<'a> {
+    ) -> Self {
         PropertyHandlerContext {
             arena,
             targets: *targets,
@@ -87,7 +86,7 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub(crate) fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'a> {
+    pub(crate) fn child(&self, context: DeclarationContext) -> Self {
         PropertyHandlerContext {
             arena: self.arena,
             targets: self.targets,
@@ -101,11 +100,15 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub(crate) fn add_dark_rule(&mut self, property: css::Property) {
+    pub(crate) fn add_dark_rule(&mut self, property: css::Property<'bump>) {
         self.dark.list(self.is_important).push(property);
     }
 
-    pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {
+    pub(crate) fn add_logical_rule(
+        &mut self,
+        ltr: css::Property<'bump>,
+        rtl: css::Property<'bump>,
+    ) {
         self.ltr.list(self.is_important).push(ltr);
         self.rtl.list(self.is_important).push(rtl);
     }
@@ -131,37 +134,21 @@ impl<'a> PropertyHandlerContext<'a> {
 
 // ─── heavy rule-building helpers ──────────────────────────────────────────
 
-impl<'a> PropertyHandlerContext<'a> {
-    /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /
-    /// `DeclarationList<'static>` (see rules/mod.rs `decl_block_static`).
-    ///
-    /// SAFETY: `StyleRule.declarations: DeclarationBlock<'static>` is a
-    /// crate-wide `'bump`-erasure placeholder until `CssRule<'bump, R>`
-    /// re-threads the arena lifetime. The arena outlives every rule built
-    /// from it; centralized here so call-sites below don't open-code the
-    /// lifetime erasure.
-    #[inline]
-    fn bump_static(&self) -> &'static Bump {
-        // SAFETY: the arena outlives every rule built from it; `'static` is the
-        // crate-wide `'bump`-erasure placeholder documented on this fn.
-        unsafe { bun_collections::detach_ref(self.arena) }
-    }
-
+impl<'a, 'bump> PropertyHandlerContext<'a, 'bump> {
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
-    /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
     #[inline]
-    fn clone_decls(&self, list: &[css::Property]) -> css::DeclarationList<'static> {
-        let bump: &'static Bump = self.bump_static();
+    fn clone_decls(&self, list: &[css::Property<'bump>]) -> css::DeclarationList<'bump> {
+        let bump = self.arena;
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
     /// A style rule for the staged declarations, or with no selectors a nested declarations rule.
     fn staged_rule<T>(
         &self,
-        selectors: Option<css::SelectorList>,
-        staged: &StagedDeclarations,
+        selectors: Option<css::SelectorList<'bump>>,
+        staged: &StagedDeclarations<'bump>,
         loc: css::Location,
-    ) -> css::CssRule<T> {
+    ) -> css::CssRule<'bump, T> {
         let declarations = css::DeclarationBlock {
             declarations: self.clone_decls(&staged.declarations),
             important_declarations: self.clone_decls(&staged.important_declarations),
@@ -182,9 +169,9 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub(crate) fn get_supports_rules<T>(
         &self,
-        selectors: Option<&css::SelectorList>,
+        selectors: Option<&css::SelectorList<'bump>>,
         loc: css::Location,
-    ) -> Vec<css::CssRule<T>> {
+    ) -> Vec<css::CssRule<'bump, T>> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
@@ -209,9 +196,9 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub(crate) fn get_additional_rules<T>(
         &self,
-        selectors: &css::SelectorList,
+        selectors: &css::SelectorList<'bump>,
         loc: css::Location,
-    ) -> Vec<css::CssRule<T>> {
+    ) -> Vec<css::CssRule<'bump, T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
         let mut dest: Vec<css::CssRule<T>> = Vec::new();
         self.get_logical_rules(selectors, loc, &mut dest);
@@ -222,9 +209,9 @@ impl<'a> PropertyHandlerContext<'a> {
     /// The `:dir(ltr)` and `:dir(rtl)` rules for the staged logical properties.
     pub(crate) fn get_logical_rules<T>(
         &self,
-        selectors: &css::SelectorList,
+        selectors: &css::SelectorList<'bump>,
         loc: css::Location,
-        dest: &mut Vec<css::CssRule<T>>,
+        dest: &mut Vec<css::CssRule<'bump, T>>,
     ) {
         if !self.ltr.is_empty() {
             self.get_additional_rules_helper(
@@ -250,9 +237,9 @@ impl<'a> PropertyHandlerContext<'a> {
     /// The `prefers-color-scheme: dark` rule for the staged `color-scheme` variables.
     pub(crate) fn get_dark_rule<T>(
         &self,
-        selectors: Option<&css::SelectorList>,
+        selectors: Option<&css::SelectorList<'bump>>,
         loc: css::Location,
-        dest: &mut Vec<css::CssRule<T>>,
+        dest: &mut Vec<css::CssRule<'bump, T>>,
     ) {
         if !self.dark.is_empty() {
             dest.push(css::CssRule::Media(MediaRule {
@@ -260,7 +247,7 @@ impl<'a> PropertyHandlerContext<'a> {
                     media_queries: {
                         // Arena-backed to match `MediaList.media_queries: Vec<_, ArenaPtr>`.
                         let mut list: Vec<MediaQuery, ArenaPtr> =
-                            Vec::with_capacity_in(1, ArenaPtr::new(self.bump_static()));
+                            Vec::with_capacity_in(1, ArenaPtr::new(self.arena));
 
                         list.push(MediaQuery {
                             qualifier: None,
@@ -274,7 +261,7 @@ impl<'a> PropertyHandlerContext<'a> {
                                         v: b"dark",
                                     }),
                                 },
-                                ArenaPtr::new(self.bump_static()),
+                                ArenaPtr::new(self.arena),
                             ))),
                         });
 
@@ -296,10 +283,10 @@ impl<'a> PropertyHandlerContext<'a> {
     fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
-        decls: &StagedDeclarations,
-        selectors: &css::SelectorList,
+        decls: &StagedDeclarations<'bump>,
+        selectors: &css::SelectorList<'bump>,
         loc: css::Location,
-        dest: &mut Vec<css::CssRule<T>>,
+        dest: &mut Vec<css::CssRule<'bump, T>>,
     ) {
         let mut selectors = selectors.deep_clone();
         for selector in selectors.v.slice_mut() {
@@ -312,7 +299,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-impl<'a> PropertyHandlerContext<'a> {
+impl PropertyHandlerContext<'_, '_> {
     pub(crate) fn reset(&mut self) {
         // Per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
@@ -323,11 +310,11 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-impl<'a> PropertyHandlerContext<'a> {
+impl<'a, 'bump> PropertyHandlerContext<'a, 'bump> {
     pub(crate) fn add_conditional_property(
         &mut self,
-        condition: css::SupportsCondition,
-        property: css::Property,
+        condition: css::SupportsCondition<'bump>,
+        property: css::Property<'bump>,
     ) {
         if self.context != DeclarationContext::StyleRule {
             return;
@@ -370,8 +357,8 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub(crate) fn add_unparsed_fallbacks(
         &mut self,
-        bump: &bun_alloc::Arena,
-        unparsed: &mut UnparsedProperty,
+        bump: &'bump bun_alloc::Arena,
+        unparsed: &mut UnparsedProperty<'bump>,
     ) {
         if self.context != DeclarationContext::StyleRule
             && self.context != DeclarationContext::StyleAttribute

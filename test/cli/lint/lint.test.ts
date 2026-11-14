@@ -10354,18 +10354,27 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
 
     const unchecked = { "tsconfig.json": files["tsconfig.json"], "ok.ts": "export const ok = 1;\n" };
-    const calls = Buffer.alloc(15_000 * 4, ".f()").toString();
+    // Too many for the 18 MB of a thread on Windows as well.
+    const calls = Buffer.alloc(200_000 * 4, ".f()").toString();
 
     // The binder runs out of stack. Without types the linter doesn't need it.
     test.concurrent("--type-check fails a file that's nested too deeply for the type checker", async () => {
       const deep = `const o = { f() { return o; } };\nexport const bad: number = "x";\nexport const a = o${calls};\n`;
       const project = { ...unchecked, "deep.ts": deep };
       const flags = ["--type-aware", "-f", "unix", "deep.ts"];
-      const [checked, aware] = await Promise.all([lint(project, ["--type-check", ...flags]), lint(project, flags)]);
-      expect(checked.raw).toContain(
-        "deep.ts:1:1: The code is nested too deeply for the type checker. Type errors in this file may be missing.",
-      );
-      expect(checked.exitCode).toBe(1);
+      const [checked, piped, aware] = await Promise.all([
+        lint(project, ["--type-check", ...flags]),
+        lint(project, ["--type-check", ...flags.slice(0, -1), "--stdin", "--stdin-filename", "deep.ts"], {
+          stdin: deep,
+        }),
+        lint(project, flags),
+      ]);
+      for (const { raw, exitCode } of [checked, piped]) {
+        expect(raw).toContain(
+          "deep.ts:1:1: The code is nested too deeply for the type checker. Type errors in this file may be missing.",
+        );
+        expect(exitCode).toBe(1);
+      }
       expect(aware.stderr).toContain("warn: The code is nested too deeply for the type checker in deep.ts\n");
       expect(aware.exitCode).toBe(0);
     });
@@ -10381,7 +10390,6 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
-    // `\` is a separator on Windows.
     test.concurrent("a rule that looks at several files keeps that error", async () => {
       const deep = `import "./b";\nconst o = { f() { return o; } };\nexport const a = o${calls};\n`;
       const project = {
@@ -10395,10 +10403,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         "b.ts": `import "./a";\nexport const b = 1;\n`,
       };
       const { raw, exitCode } = await lint(project, ["--type-aware", "--type-check", "-f", "unix"]);
-      expect(raw).toContain("The code is nested too deeply for the type checker.");
+      expect(raw).toContain("a.ts:1:1: The code is nested too deeply for the type checker.");
+      expect(raw).toMatch(/a\.ts:1:\d+: .*import\(no-cycle\)/);
       expect(exitCode).toBe(1);
     });
 
+    // `\` is a separator on Windows.
     test.concurrent.skipIf(isWindows)("--type-check checks a file with a backslash in its name", async () => {
       const project = { ...unchecked, "a\\b.ts": `export const x: number = "s";\n` };
       const flags = ["--type-aware", "--type-check", "-f", "unix", "a\\b.ts"];

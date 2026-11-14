@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, autoInstallTempDir as tempDir } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TestRegistry } from "registry";

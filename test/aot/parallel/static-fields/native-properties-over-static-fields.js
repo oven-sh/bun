@@ -1,3 +1,4 @@
+// Error.captureStackTrace(C) lays `stack` on C in native code: what compiled code kept of a static field of that name in a variable is no longer the value.
 class A {
   static stack = "mine";
   static other = 1;

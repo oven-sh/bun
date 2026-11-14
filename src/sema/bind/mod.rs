@@ -1931,6 +1931,19 @@ impl<S: Storage> BoundIn<S> {
         parent.unwrap_or_default().get()
     }
 
+    /// True if `s` is the initializer of a `for` statement, or the left side of a `for`-`in` or `for`-`of` statement.
+    pub fn is_head_of_for(&self, hir: &File, s: StmtId) -> bool {
+        let Parent::Stmt(above) = self.parent_of_stmt(s) else {
+            return false;
+        };
+        matches!(
+            hir[above].kind,
+            StmtKind::For { init: head, .. }
+                | StmtKind::ForIn { left: head, .. }
+                | StmtKind::ForOf { left: head, .. } if head == s
+        )
+    }
+
     /// Returns the statement that holds `e` if only expressions and a declarator are between them.
     pub fn statement_of_expr(&self, mut e: ExprId) -> Option<StmtId> {
         loop {

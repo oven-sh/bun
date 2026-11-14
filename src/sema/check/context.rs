@@ -2709,7 +2709,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `IsNodeDescendantOf`
     fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = Parent::Expr(e);
+        loop {
+            at = match at {
+                Parent::Expr(above) if above == ancestor => return true,
+                // A node is created after its children.
+                Parent::Expr(above) if above.0 > ancestor.0 => return false,
+                Parent::Expr(above) => bound.parent_of_expr(above),
+                Parent::Stmt(above) if above.is_some() => bound.parent_of_stmt(above),
+                Parent::VarInit(declaration) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+                Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+                Parent::Prop(property) => Parent::Expr(bound.prop_owner[property.idx()]),
+                Parent::FnBody(function) => match bound.fns[function.idx()].owner {
+                    FnOwner::Expr(written) => Parent::Expr(written),
+                    FnOwner::Stmt(written) => Parent::Stmt(written),
+                    _ => break,
+                },
+                Parent::File => return false,
+                _ => break,
+            };
+        }
         let ancestor = hir.node(ancestor);
         hir.find_ancestor(hir.node(e), |n| n == ancestor).is_some()
     }

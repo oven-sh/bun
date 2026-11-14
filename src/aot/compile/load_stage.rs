@@ -887,6 +887,7 @@ impl<'a> Build<'a> {
             shared.runtime_modules,
             self.platform,
             further,
+            &in_parallel,
         );
         self.stays_in_compiled_files = stays_beside_imports && !roots.imports_uncompiled_code;
         let session = shared.sessions.runtime;

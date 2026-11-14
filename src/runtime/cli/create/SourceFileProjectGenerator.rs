@@ -189,7 +189,7 @@ fn run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

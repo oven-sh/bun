@@ -5109,12 +5109,22 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             unsafe { program.files.free_tree(file) };
         }
     };
+    let times_files = request.plan_options.times_files;
+    let times_of_files: Guarded<Vec<(FileId, Duration)>> = Guarded::new(Vec::new());
+    let note_time = |file: FileId, began: Option<Instant>| {
+        if let Some(began) = began {
+            let took = began.elapsed();
+            times_of_files.lock().push((file, took));
+        }
+    };
     // Checks files outside the queue. Whatever the checker stores is dropped with it.
     let check_chunk = |files: &[FileId], expected: Requested| {
         let mut checker = new_checker(expected, None);
         let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
         for &file in files {
+            let check_began = times_files.then(Instant::now);
             checked.push((file, checker.check_file(file)));
+            note_time(file, check_began);
             if let Some(after_file) = request.after_file
                 && expected == wanted
             {
@@ -5195,14 +5205,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         _ => threads,
     };
     let tasks_run = AtomicUsize::new(0);
-    let times_files = request.plan_options.times_files;
-    let times_of_files: Guarded<Vec<(FileId, Duration)>> = Guarded::new(Vec::new());
-    let note_time = |file: FileId, began: Option<Instant>| {
-        if let Some(began) = began {
-            let took = began.elapsed();
-            times_of_files.lock().push((file, took));
-        }
-    };
     #[cfg(test)]
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.

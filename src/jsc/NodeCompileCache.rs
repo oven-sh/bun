@@ -289,21 +289,25 @@ fn portable_from_env() -> bool {
 pub fn init_from_env_once() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
+        // A standalone app can enable the cache before its first external load.
+        if is_enabled() {
+            return;
+        }
         init_logging();
         if let Some(dir) = env_var::NODE_COMPILE_CACHE::get_not_empty() {
             if env_var::NODE_DISABLE_COMPILE_CACHE::get().is_some() {
                 cclog!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.\n");
-                ENABLED.store(1, Ordering::Relaxed);
+                let _ = ENABLED.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
                 return;
             }
             if crate::virtual_machine::standalone_module_graph().is_some() {
                 cclog!("[compile cache] Disabled in standalone executables.\n");
-                ENABLED.store(1, Ordering::Relaxed);
+                let _ = ENABLED.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
                 return;
             }
             let _ = enable_with_dir(dir, portable_from_env());
         } else {
-            ENABLED.store(1, Ordering::Relaxed);
+            let _ = ENABLED.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
         }
     });
 }

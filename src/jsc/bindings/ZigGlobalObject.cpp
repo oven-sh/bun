@@ -1033,6 +1033,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
     }
 #endif
+    // While the records are still in the registry.
+    StringBuilder notes;
+    Bun::appendNotesOnFactoriesThatLoadWhatWaitsForTheirMock(globalObject, notes);
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -1046,7 +1049,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
 
     constexpr size_t maxNotes = 5;
     size_t count = 0;
-    StringBuilder notes;
     for (auto& [order, specifier] : awaiting) {
         if (count++ < maxNotes) {
             notes.append("\nnote: unsettled top-level await in "_s);

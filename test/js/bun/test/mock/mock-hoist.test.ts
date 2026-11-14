@@ -1090,6 +1090,55 @@ describe.concurrent("errors", () => {
       }),
     ).toEqual([["shared"]]);
   });
+
+  // helper.ts hoists, so it awaits its import of ./mod. The factory for ./mod runs then, and awaits helper.ts.
+  test("a factory that awaits a module which waits for the factory's mock is named in the error", async () => {
+    const { stderr, exitCode } = await run({
+      "helper.ts": `
+        import { value } from "./mod";
+        vi.mock("./unrelated", () => ({}));
+        export const helper = () => value;
+      `,
+      "hoist.test.ts": `
+        import { helper } from "./helper";
+        vi.mock("./mod", async () => {
+          const { helper } = await import("./helper");
+          return { value: "mocked", helper };
+        });
+        test("unreachable", () => { helper(); });
+      `,
+    });
+    expect(stderr).toMatch(/error: ".*hoist\.test\.ts" never finished loading/);
+    expect(stderr).toMatch(
+      /note: the mock\.module\(\) factory for ".*mod\.ts" loaded ".*helper\.ts", which waits for that mock/,
+    );
+    expect(stderr).toContain("note: a factory that awaits such a module never settles: don't await it in the factory");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a factory that does not await the module which waits for its mock lets both finish", async () => {
+    expect(
+      await events({
+        "helper.ts": `
+          import { value } from "./mod";
+          vi.mock("./unrelated", () => ({}));
+          export const helper = () => value;
+        `,
+        "hoist.test.ts": `
+          import { helper } from "./helper";
+          vi.mock("./mod", () => {
+            const loading = import("./helper");
+            return { value: "mocked", fromFactory: async () => (await loading).helper() };
+          });
+          test("reads the module that the factory loaded", async () => {
+            const mod = await import("./mod");
+            (globalThis.events ??= []).push(helper(), await mod.fromFactory());
+          });
+          ${print}
+        `,
+      }),
+    ).toEqual([["mocked", "mocked"]]);
+  });
 });
 
 describe.concurrent("source locations", () => {

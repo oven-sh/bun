@@ -1352,7 +1352,7 @@ Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` conditio
 warn: the .aot.ts files that --aot compiles a package from are left out: they do not support --minify-identifiers yet
 ```
 
-- **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, dead code is removed, and `--minify-syntax` skips a few rewrites, so that `index.aot.ts` type checks like your sources.
+- **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, dead code is removed, and `--minify-syntax` skips a few rewrites, so that `index.aot.ts` type checks like your sources. Bun also keeps `const a = o.x, b = o.y` as two declarations. Without `dts`, Bun writes `const { x: a, y: b } = o`.
 
 ### features
 

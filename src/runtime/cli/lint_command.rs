@@ -226,7 +226,7 @@ fn run_to_end(
         stderr: SyncStdio::Buffer,
         stdin: SyncStdio::Pipe(read_end.handle()),
         cwd: Box::<[u8]>::from(cwd),
-        envp: Some(envp.as_ptr()),
+        envp: Some(envp.as_list()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(

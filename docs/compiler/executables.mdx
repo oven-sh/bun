@@ -1024,7 +1024,7 @@ for (const blob of embeddedFiles) {
 Each item in `Bun.embeddedFiles` is a `Blob` with a `name` property:
 
 ```ts
-embeddedFiles: ReadonlyArray<Blob>;
+declare const embeddedFiles: ReadonlyArray<Blob & { readonly name: string }>;
 ```
 
 Use it to serve every embedded asset through static routes:

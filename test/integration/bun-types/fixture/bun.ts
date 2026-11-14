@@ -35,6 +35,14 @@ import * as tsd from "./utilities";
   tsd.expectType<FileBlob>(f);
 }
 {
+  for (const file of Bun.embeddedFiles) {
+    tsd.expectType(file.name).is<string>();
+    tsd.expectType(file).extends<Blob>();
+  }
+  // @ts-expect-error - a Blob that is not an embedded file has no name
+  const notEmbedded: (typeof Bun.embeddedFiles)[number] = new Blob([]);
+}
+{
   Bun.spawn(["anything"], {
     env: process.env,
   });

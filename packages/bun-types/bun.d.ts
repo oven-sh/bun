@@ -5198,9 +5198,11 @@ declare module "bun" {
   /**
    * A list of files embedded into the standalone executable, lexicographically sorted by name.
    *
+   * The `name` of each file is its name in the executable, such as `"icon-a1b2c3d4.png"`.
+   *
    * If the process is not a standalone executable, this array is empty.
    */
-  const embeddedFiles: ReadonlyArray<Blob>;
+  const embeddedFiles: ReadonlyArray<Blob & { readonly name: string }>;
 
   /**
    * `true` when the current process is a standalone executable produced by

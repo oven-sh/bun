@@ -49,7 +49,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 struct RefCountedString(BackRef<RefString>);
 
 impl RefCountedString {
-    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
+    fn new(vm: &VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
         let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
         // The cache adds no ref on a hit.
         string.ref_();
@@ -96,11 +96,12 @@ fn load_router(
     config: RouteConfig,
     load: Load,
 ) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
+    let transpiler = &VirtualMachine::get().transpiler;
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
     let _restore_log = unsafe {
         Resolver::scoped_log(
-            core::ptr::addr_of_mut!((*VirtualMachine::get_mut_ptr()).transpiler.resolver),
+            &raw mut (*transpiler.as_ptr()).resolver,
             core::ptr::NonNull::from(&mut log),
         )
     };
@@ -110,8 +111,7 @@ fn load_router(
         );
     }
 
-    let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
-    let root_dir_info = match resolver.read_dir_info(&config.dir) {
+    let root_dir_info = match transpiler.with_mut(|t| t.resolver.read_dir_info(&config.dir)) {
         Ok(Some(info)) => info,
         Ok(None) => return Ok(None),
         Err(_) => {
@@ -122,12 +122,14 @@ fn load_router(
 
     let mut router = Router::Router::init(config).expect("unreachable");
     let config_dir = router.config.dir.clone();
-    let loaded = router.load_routes(
-        &mut log,
-        &root_dir_info,
-        &mut RouterResolver(resolver),
-        &config_dir,
-    );
+    let loaded = transpiler.with_mut(|t| {
+        router.load_routes(
+            &mut log,
+            &root_dir_info,
+            &mut RouterResolver(&mut t.resolver),
+            &config_dir,
+        )
+    });
     if loaded.is_err() || (load == Load::Cached && log.errors + log.warnings > 0) {
         let error = log.to_js(global, format_args!("loading routes"))?;
         return Err(global.throw_value(error));
@@ -137,7 +139,6 @@ fn load_router(
 
 impl FileSystemRouter {
     fn bust_dir_cache_recursive(input_path: &[u8]) {
-        // `vm.as_mut()` at each use: the recursive call makes its own, which ends one held across it.
         let vm = VirtualMachine::get();
         #[cfg(not(windows))]
         let path = input_path;
@@ -154,7 +155,7 @@ impl FileSystemRouter {
             path = normalized.as_slice();
         }
 
-        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
+        let root_dir_info = match vm.transpiler.with_mut(|t| t.resolver.read_dir_info(path)) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -191,16 +192,18 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
+                        let _ = vm.transpiler.with_mut(|t| {
+                            t.resolver.bust_dir_cache(
+                                strings::paths::without_trailing_slash_windows_path(&full_path),
+                            )
+                        });
                         Self::bust_dir_cache_recursive(&full_path);
                     }
                 }
             }
         }
 
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
+        let _ = vm.transpiler.with_mut(|t| t.resolver.bust_dir_cache(path));
     }
 }
 
@@ -273,8 +276,8 @@ impl FileSystemRouter {
             root_dir_info.abs_path
         };
 
-        let vm = global.bun_vm().as_mut();
-        let mut ref_counted = |bytes: &[u8]| {
+        let vm = global.bun_vm();
+        let ref_counted = |bytes: &[u8]| {
             RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
         };
         let base_dir = ref_counted(base_dir_str)?;
@@ -284,13 +287,13 @@ impl FileSystemRouter {
             origin: options
                 .origin
                 .filter(not_empty)
-                .map(&mut ref_counted)
+                .map(ref_counted)
                 .transpose()?,
             base_dir,
             asset_prefix: options
                 .asset_prefix
                 .filter(not_empty)
-                .map(&mut ref_counted)
+                .map(ref_counted)
                 .transpose()?,
             router: JsCell::new(router),
         })

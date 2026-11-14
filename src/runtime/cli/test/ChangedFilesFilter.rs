@@ -64,7 +64,7 @@ pub(crate) struct Result<'a> {
 #[optimize(size)]
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
@@ -133,7 +133,7 @@ pub(crate) fn filter<'a>(
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -164,12 +164,12 @@ pub(crate) fn filter<'a>(
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
-    let mut event_loop = bun_event_loop::AnyEventLoop::init();
+    let event_loop = bun_event_loop::AnyEventLoop::init();
 
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
-        Some(core::ptr::NonNull::from(&mut event_loop)),
+        Some(core::ptr::NonNull::from(&event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,

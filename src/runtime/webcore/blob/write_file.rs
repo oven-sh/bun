@@ -693,7 +693,7 @@ mod windows_impl {
                         (*write_file).fd = 'brk: {
                             // `RareData::std{out,err,in}_store` is type-erased
                             // `Option<NonNull<c_void>>` — compare on raw pointer identity.
-                            if let Some(rare) = event_loop.vm_ref().rare_data.as_ref() {
+                            if let Some(rare) = event_loop.vm_ref().rare_data.get() {
                                 let store_ptr = (*write_file)
                                     .file_blob
                                     .store
@@ -702,11 +702,15 @@ mod windows_impl {
                                     .unwrap()
                                     .as_ptr()
                                     .cast::<c_void>();
-                                if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
                                     break 'brk 1;
-                                } else if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                } else if rare.stderr_store.get().map(|p| p.as_ptr())
+                                    == Some(store_ptr)
+                                {
                                     break 'brk 2;
-                                } else if rare.stdin_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                } else if rare.stdin_store.get().map(|p| p.as_ptr())
+                                    == Some(store_ptr)
+                                {
                                     break 'brk 0;
                                 }
                             }

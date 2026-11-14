@@ -1351,11 +1351,7 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                // The close error is discarded — the renameat immediately
-                // below surfaces a usable error if the temp file is in a
-                // bad state, and on POSIX the close cannot fail for a
-                // regular-file fd we just wrote.
-                let _ = file.close();
+                drop(file);
                 bun_sys::renameat(
                     Fd::cwd(),
                     path_to_use_for_opening_file,

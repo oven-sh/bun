@@ -14,7 +14,6 @@ use bstr::BStr;
 use crate::bake;
 use crate::bake::router::PatternBuffer;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
-use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
@@ -110,40 +109,23 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
-    let mut arena = Arena::new();
-
-    let vm_ptr = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        // arena: arena — dropped per §Allocators (global mimalloc)
+    let vm = VirtualMachine::init_bake(jsc::virtual_machine::Options {
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
+        argv: ctx.passthrough.clone().leak(),
         smol: ctx.runtime_options.smol,
         ..Default::default()
     })?;
-    // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
-    // unique access for the rest of this function.
-    let vm = unsafe { &mut *vm_ptr };
-    // Note: pass `vm_ptr` by value into the guard so the drop closure does
-    // not borrow the local (`defer!` would capture `&vm_ptr`, which under
-    // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
-    let _vm_guard = scopeguard::guard(vm_ptr, |p| {
-        // SAFETY: p is the unique live VM on this thread; its loop is alive, so
-        // queued work is released here rather than by a thread teardown.
-        unsafe {
-            (*p).release_queued_work();
-            (*p).destroy()
-        };
-    });
+    scopeguard::defer! {
+        // Its loop is alive, so queued work is released here rather than by a thread teardown.
+        vm.release_queued_work();
+        // SAFETY: what borrows from the VM is declared below, so it has been dropped.
+        unsafe { VirtualMachine::destroy(VirtualMachine::get_mut_ptr()) };
+    }
 
     vm.event_loop().ensure_waker();
-    {
-        let b = &mut vm.transpiler;
-        // preload/argv are `Vec<Box<[u8]>>`; clone because the VM owns its
-        // fields. Startup-only, so the copies are not hot.
-        vm.preload.clone_from(&ctx.preloads);
-        vm.argv.clone_from(&ctx.passthrough);
-        vm.arena = NonNull::new(&raw mut arena);
-        // vm.allocator = arena.arena() — dropped per §Allocators
+    vm.preload.set(ctx.preloads.clone());
+    vm.transpiler.with_mut(|b| {
         // `BundleOptions.install` is `Option<NonNull<_>>`, so no
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(NonNull::from);
@@ -170,11 +152,11 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         // `minify_identifiers`/`minify_whitespace` fields; resolver.opts does
         // not carry them (the resolver never reads them).
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
-    }
+    });
     vm.event_loop().ensure_waker();
     match &ctx.debug.macros {
         MacroOptions::Disable => {
-            vm.transpiler.options.no_macros = true;
+            vm.transpiler.with_mut(|t| t.options.no_macros = true);
         }
         MacroOptions::Map(macros) => {
             // Note: the two map types are nominally
@@ -189,49 +171,37 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
                 }
                 remap.insert(pkg.as_ref(), entry);
             }
-            vm.transpiler.options.macro_remap = remap;
+            vm.transpiler.with_mut(|t| t.options.macro_remap = remap);
         }
         MacroOptions::Unspecified => {}
     }
-    if vm.transpiler.configure_defines().is_err() {
+    if vm.transpiler.with_mut(|t| t.configure_defines()).is_err() {
         fail_with_build_error(vm);
     }
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
     vm.load_extra_env_and_source_code_printer();
-    vm.is_main_thread = true;
+    vm.is_main_thread.set(true);
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::init_bake`;
-    // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
-    // borrow `vm` (the VirtualMachine) and the body below can keep using it.
-    //
     // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
     // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
     // releases the lock.
-    let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
+    let _api_lock = vm.jsc_vm().get_api_lock();
 
     // Note: `PerThread` owns its data. Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
     // LIFO order — under the API lock, before the VM is destroyed.
-    let mut pt = PerThread::placeholder(vm_ptr);
+    let mut pt = PerThread::placeholder(vm);
 
     match build_with_vm(ctx, &cwd, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
-            let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
-            if vm.exit_handler.exit_code == 0 {
-                vm.exit_handler.exit_code = 1;
+            let err_value = vm.global().take_exception(jsc::JsError::Thrown);
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
+            if vm.exit_handler.exit_code.get() == 0 {
+                vm.exit_handler.exit_code.set(1);
             }
             vm.on_exit();
             vm.global_exit();
@@ -246,7 +216,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 /// fixes via fn-ptr hooks — move/port the code instead).
 #[cold]
 #[inline(never)]
-fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
+fn fail_with_build_error(vm: &VirtualMachine) -> ! {
     // `vm.log` is the process-lifetime ctx.log set in build_command;
     // `log_ref()` is the safe accessor encapsulating the NonNull deref.
     if let Some(log) = vm.log_ref() {
@@ -282,11 +252,7 @@ fn write_sourcemap_to_disk(
 }
 
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
-    // SAFETY: `pt.vm` is the live per-thread VM set in `build_command`;
-    // exclusive access on this thread for the duration of the call.
-    let vm = unsafe { &mut *pt.vm.as_ptr() };
-    // Load and evaluate the configuration module. `global()` returns
-    // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
+    let vm = pt.vm;
     let global = vm.global();
     // allocator = bun.default_allocator — dropped per §Allocators
 
@@ -304,11 +270,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         unresolved_config_entry_point = prefixed;
     }
 
-    let config_entry_point = match vm.transpiler.resolver.resolve(
-        cwd,
-        &unresolved_config_entry_point,
-        bun_ast::ImportKind::EntryPointBuild,
-    ) {
+    let config_entry_point = match vm.transpiler.with_mut(|t| {
+        t.resolver.resolve(
+            cwd,
+            &unresolved_config_entry_point,
+            bun_ast::ImportKind::EntryPointBuild,
+        )
+    }) {
         Ok(r) => r,
         Err(err) => {
             if err == bun_resolver::Error::ModuleNotFound {
@@ -340,7 +308,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)
+        JSModuleLoader::load_and_evaluate_module_ptr(global, &config_entry_point_string)
     else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);
@@ -352,7 +320,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
     vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
         .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
-    let jsc_vm = vm.jsc_vm_mut();
+    let jsc_vm = vm.jsc_vm();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
         .unwrap(jsc_vm, UnwrapMode::MarkHandled)
@@ -613,7 +581,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop_ptr());
+        let any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop_ptr());
 
         // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -629,7 +597,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 plugins: options.bundler_options.plugin,
             },
             &options.arena,
-            Some(NonNull::from(&mut any_loop)),
+            Some(NonNull::from(&any_loop)),
         )?
     };
     if bundled_outputs_list.is_empty() {
@@ -1154,13 +1122,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         )
     };
     render_promise.set_handled();
-    // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
-    // above accessed the same allocation through `pt.vm`, invalidating the
-    // earlier `&mut` under Stacked Borrows.
-    let vm = VirtualMachine::get().as_mut();
     vm.wait_for_promise(AnyPromise::Normal(render_promise))
         .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
-    let jsc_vm = vm.jsc_vm_mut();
+    let jsc_vm = vm.jsc_vm();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {

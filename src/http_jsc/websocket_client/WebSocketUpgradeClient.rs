@@ -212,7 +212,7 @@ pub struct HTTPClient<const SSL: bool> {
     hostname: JsCell<ZBox>,
     /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
     context: bun_jsc::ContextId,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
 
@@ -290,9 +290,9 @@ where
         // Out param, only set when returning `None`: the errno name for `error.code`, if known.
         connect_error_code: &mut BunString,
     ) -> Option<*mut Self> {
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
-        debug_assert!(vm.event_loop_handle.is_some());
+        debug_assert!(vm.event_loop_handle.get().is_some());
 
         let server_name_of = |config: Option<&SSLConfig>| -> Option<Box<[u8]>> {
             config
@@ -390,7 +390,7 @@ where
         };
         let connect_port = if using_proxy { proxy_port } else { port };
 
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.r#ref(vm.loop_ctx());
 
         log!(
@@ -404,7 +404,6 @@ where
         let context = websocket.context();
         let group = global
             .bun_vm()
-            .as_mut()
             .client_socket_groups_in(context)
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
@@ -474,7 +473,7 @@ where
             response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
             context: context.id(),
-            poll_ref: JsCell::new(poll_ref),
+            poll_ref,
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
             ssl_config: JsCell::new(ssl_config),
@@ -1060,13 +1059,11 @@ where
         let tcp = this.tcp.get();
         if paused {
             tcp.set_timeout(0);
-            this.poll_ref
-                .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+            this.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
             tcp.pause_stream();
         } else {
             tcp.set_timeout(handshake_timeout_seconds());
-            this.poll_ref
-                .with_mut(|p| p.r#ref(VirtualMachineRef::get().loop_ctx()));
+            this.poll_ref.r#ref(VirtualMachineRef::get().loop_ctx());
             tcp.resume_stream();
         }
     }
@@ -1482,8 +1479,7 @@ where
                 // so free it now.
                 this.body.set(Vec::new());
                 // The connected client holds its own.
-                this.poll_ref
-                    .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+                this.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
                 // Create the WebSocket client with the tunnel
                 ws.did_connect_with_tunnel(tunnel, overflow(), deflate_params.as_ref());
@@ -1639,8 +1635,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub(crate) fn clear_data(&self) {
-        self.poll_ref
-            .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+        self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
         self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();
@@ -1724,7 +1719,7 @@ struct BuildRequestResult {
 
 #[allow(clippy::too_many_arguments)]
 fn build_request_body(
-    vm: &mut VirtualMachineRef,
+    vm: &VirtualMachineRef,
     pathname: &[u8],
     is_https: bool,
     host: &[u8],
@@ -1749,7 +1744,7 @@ fn build_request_body(
         // RFC 6455 §4.1: base64 of a randomly selected 16-byte value.
         B64_STD
             .encoder
-            .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))
+            .encode(&mut encoded_buf, &vm.rare_data().entropy::<16>())
     };
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:

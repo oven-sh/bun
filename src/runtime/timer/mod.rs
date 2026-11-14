@@ -3,6 +3,7 @@
 
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
+use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
@@ -130,7 +131,7 @@ macro_rules! impl_timer_object {
                         js_value, cx, id, kind, interval, callback, arguments, clock,
                     );
                 }
-                if cx.vm().as_mut().is_inspector_enabled() {
+                if cx.vm().is_inspector_enabled() {
                     ::bun_jsc::Debugger::did_schedule_async_call(
                         cx.global(),
                         ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
@@ -172,7 +173,7 @@ macro_rules! impl_timer_object {
             }
 
             pub(crate) fn dispose(this: &Self, cx: &mut ::bun_jsc::bindgen::JsScope<'_>) {
-                this.internals.cancel(cx.global().bun_vm_ptr());
+                this.internals.cancel(cx.global().bun_vm());
             }
         }
     };
@@ -345,9 +346,9 @@ impl Default for DateHeaderTimer {
 impl DateHeaderTimer {
     /// Refresh the cached `Date:` header and
     /// reschedule for 1s later iff there are active connections.
-    pub(crate) fn run(&self, vm: &bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn run(&self, vm: &VirtualMachine) {
         self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-        let loop_ = vm.uws_loop_ref();
+        let loop_ = vm.uws_loop();
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.
@@ -409,7 +410,7 @@ impl EventLoopDelayMonitor {
         self.schedule();
     }
 
-    pub(crate) fn on_fire(&self, now: &Timespec, vm: &bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn on_fire(&self, now: &Timespec, vm: &VirtualMachine) {
         self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         let mut allocated = 0;
         // SAFETY: as `enable`.
@@ -660,8 +661,7 @@ impl All {
         let uv_timer = unsafe { &mut *self.uv_timer.get() };
         if uv_timer.data.is_null() {
             uv_timer.init(uv::Loop::get());
-            uv_timer.data =
-                bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
+            uv_timer.data = VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             uv_timer.unref();
         }
         debug_assert!(
@@ -726,7 +726,7 @@ impl All {
         // recover the containing `All` via container_of. It is live for the VM lifetime.
         let all = unsafe { &*bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
         // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null).
-        let vm: *mut () = unsafe { (*uv_timer_t).data.cast() };
+        let vm = unsafe { &*(*uv_timer_t).data.cast::<VirtualMachine>() };
         all.drain_timers(vm);
         all.ensure_uv_timer();
     }
@@ -799,10 +799,10 @@ impl All {
         }
     }
 
-    unsafe fn drain_due_wtf_timers(
+    fn drain_due_wtf_timers(
         &self,
         maybe_now: &mut Option<Timespec>,
-        vm: *mut (),
+        vm: &VirtualMachine,
     ) -> Option<Timespec> {
         loop {
             let min = {
@@ -826,12 +826,11 @@ impl All {
                 nsec: now.nsec,
             };
             // SAFETY: `min` is live; the guard is not held here.
-            let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            let fired = unsafe { crate::dispatch::fire_timer(min, &el_now, vm) };
             // WTF timers run JSC-internal work, not user JS; a stop found here
             // is the loop's to act on at its next gate, and the heap's next
             // deadline is still reported to the poll.
-            // SAFETY: `vm` is the erased per-thread VM per fn contract.
-            let _ = unsafe { fold_timer(vm, fired) };
+            let _ = fold_timer(vm, fired);
         }
     }
 
@@ -846,21 +845,12 @@ impl All {
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
-    ///
-    /// Note (b2): `vm` is erased per §Dispatch (the caller is in
-    /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
-    /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
-    /// passed in pre-computed until the cycle is broken.
-    ///
-    /// # Safety
-    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
-    /// must remain live across any `EventLoopTimer::fire` re-entry.
     pub(crate) fn get_timeout(
         &self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
         quic_next_tick_us: Option<i64>,
-        vm: *mut (), /* erased *mut VirtualMachine, forwarded to fire() */
+        vm: &VirtualMachine,
         now_out: &mut Option<Timespec>,
     ) -> bool {
         #[cfg(unix)]
@@ -873,8 +863,7 @@ impl All {
 
         let maybe_now: &mut Option<Timespec> = now_out;
 
-        // SAFETY: `vm` per fn contract.
-        let wtf_next = unsafe { self.drain_due_wtf_timers(maybe_now, vm) };
+        let wtf_next = self.drain_due_wtf_timers(maybe_now, vm);
 
         let reg_next = self.timers.peek().map(|min| {
             // SAFETY: `peek` returns a live heap node.
@@ -948,13 +937,9 @@ impl All {
         self.timers.delete_min()
     }
 
-    /// # Safety
-    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
-    /// must remain live across any `EventLoopTimer::fire` re-entry.
-    pub(crate) fn drain_timers(&self, vm: *mut () /* erased *mut VirtualMachine */) {
+    pub(crate) fn drain_timers(&self, vm: &VirtualMachine) {
         let mut wtf_now: Option<Timespec> = None;
-        // SAFETY: `vm` per fn contract.
-        let _ = unsafe { self.drain_due_wtf_timers(&mut wtf_now, vm) };
+        let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
@@ -966,9 +951,8 @@ impl All {
                 nsec: now.nsec,
             };
             // SAFETY: `t` was just popped from the intrusive heap and is live.
-            let fired = unsafe { EventLoopTimer::fire(t, &el_now, vm) };
-            // SAFETY: `vm` per fn contract.
-            if unsafe { fold_timer(vm, fired) }.is_err() {
+            let fired = unsafe { crate::dispatch::fire_timer(t, &el_now, vm) };
+            if fold_timer(vm, fired).is_err() {
                 break;
             }
         }
@@ -994,8 +978,7 @@ impl All {
                     uv_idle.init(uv::Loop::get());
                     // Note: `data` is only used as a
                     // non-null "initialized" sentinel — never dereferenced.
-                    uv_idle.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
-                        .cast::<core::ffi::c_void>();
+                    uv_idle.data = VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
                 }
                 uv_idle.start(Some(Self::on_uv_idle_noop));
             }
@@ -1089,30 +1072,13 @@ impl All {
     /// every `AbortSignal.timeout()` timer through its signal so the signal
     /// stops reporting an active timer.
     ///
-    /// # Safety
-    /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
-    /// the live per-thread VM. Must run BEFORE JSC teardown
-    /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
-    /// BEFORE `runtime_state` is nulled — the GC sweep frees the
-    /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
-    /// alias, and the `AbortSignal`s that own the `AbortSignalTimeout` boxes.
-    pub(crate) unsafe fn cancel_all_timeout_objects(
-        &self,
-        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
-    ) {
-        // SAFETY: same contract.
-        unsafe { self.cancel_timeout_objects(vm, None) };
+    /// Releases `Strong`s, so it runs while the JSC heap is alive.
+    pub(crate) fn cancel_all_timeout_objects(&self, vm: &VirtualMachine) {
+        self.cancel_timeout_objects(vm, None);
     }
 
     /// [`Self::cancel_all_timeout_objects`], limited to `hot_run` if given.
-    ///
-    /// # Safety
-    /// See [`Self::cancel_all_timeout_objects`].
-    pub(crate) unsafe fn cancel_timeout_objects(
-        &self,
-        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
-        hot_run: Option<&HotRun>,
-    ) {
+    pub(crate) fn cancel_timeout_objects(&self, vm: &VirtualMachine, hot_run: Option<&HotRun>) {
         let first_id = self.first_id_of_hot_run.get();
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
@@ -1244,24 +1210,18 @@ const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
 
 /// The timer drain's fold: report what a fired timer's handler left pending
 /// as uncaught, or — if it is the VM's termination — tell the drain to stop.
-///
-/// # Safety
-/// `vm` is the erased per-thread `*mut VirtualMachine`.
 #[inline]
-unsafe fn fold_timer(
-    vm: *mut (),
+fn fold_timer(
+    vm: &VirtualMachine,
     fired: bun_event_loop::JsResult<()>,
 ) -> Result<(), bun_jsc::Stopped> {
     #[cold]
     #[inline(never)]
-    unsafe fn report(vm: *mut (), err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
-        // SAFETY: fn contract.
-        let global = unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
-        bun_jsc::task::report_error_or_terminate(global, err)
+    fn report(vm: &VirtualMachine, err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
+        bun_jsc::task::report_error_or_terminate(vm.global(), err)
     }
     match fired {
         Ok(()) => Ok(()),
-        // SAFETY: fn contract.
-        Err(err) => unsafe { report(vm, err) },
+        Err(err) => report(vm, err),
     }
 }

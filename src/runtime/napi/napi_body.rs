@@ -2057,7 +2057,7 @@ impl napi_async_work {
         // Note: the "this" value here may already be freed by the user in `complete`
         // Note: KeepAlive is not `Copy`, so move it out (the original slot may
         // be freed under us by `complete`).
-        let mut poll_ref = core::mem::take(&mut self.poll_ref);
+        let poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
@@ -2470,7 +2470,7 @@ extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
-    env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
+    env.to_js().bun_vm().rare_data().push_cleanup_hook(
         env.to_js(),
         env.as_mut_ptr().cast::<c_void>(),
         Bun__napi_register_cleanup_callback,
@@ -2484,7 +2484,6 @@ extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
     }
     env.to_js()
         .bun_vm()
-        .as_mut()
         .rare_data()
         .push_cleanup_hook_after_teardown_wait(
             env.to_js(),
@@ -2634,7 +2633,7 @@ pub(crate) struct ThreadSafeFunction {
 
 bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live, and this is the JS thread.
-    unsafe { &mut *this }.unref()
+    unsafe { &*this }.unref()
 });
 
 pub(crate) enum TsfnCallback {
@@ -3213,7 +3212,7 @@ impl ThreadSafeFunction {
     }
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
-    pub(crate) fn ref_(&mut self) {
+    pub(crate) fn ref_(&self) {
         let caller = VirtualMachine::get().context_of_caller();
         // Nothing of a context that has stopped holds the loop: not the function's own call_js
         // once its maker has stopped (that is where it runs), not a disposed graph's leftover
@@ -3225,7 +3224,7 @@ impl ThreadSafeFunction {
     }
 
     /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
-    pub(crate) fn unref(&mut self) {
+    pub(crate) fn unref(&self) {
         self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
@@ -3345,7 +3344,7 @@ extern "C" fn napi_create_threadsafe_function(
         return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
     }
 
-    let vm = env.to_js().bun_vm().as_mut();
+    let vm = env.to_js().bun_vm();
     let callback = if let Some(c) = call_js_cb {
         TsfnCallback::C {
             napi_threadsafe_function_call_js: c,
@@ -3478,7 +3477,7 @@ extern "C" fn napi_unref_threadsafe_function(
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    // SAFETY: `func` was null-checked above, and this is the JS thread.
     unsafe { (*func).unref() };
     NapiStatus::ok as napi_status
 }
@@ -3502,7 +3501,7 @@ extern "C" fn napi_ref_threadsafe_function(
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    // SAFETY: `func` was null-checked above, and this is the JS thread.
     unsafe { (*func).ref_() };
     NapiStatus::ok as napi_status
 }
@@ -5424,7 +5423,7 @@ impl NapiFinalizerTask {
 
     pub(crate) fn schedule(self: Box<Self>) {
         // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
-        if VirtualMachine::get_or_null().is_none() {
+        if !VirtualMachine::is_loaded() {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
             // already torn down the finalizer can never run; free the task but
@@ -5463,7 +5462,7 @@ impl NapiFinalizerTask {
             }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             let this = bun_core::heap::into_raw(self);
-            vm.as_mut().rare_data().push_cleanup_hook(
+            vm.rare_data().push_cleanup_hook(
                 vm.global(),
                 this.cast::<c_void>(),
                 Self::run_as_cleanup_hook,

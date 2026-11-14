@@ -21,6 +21,31 @@ describe.concurrent("run-shell", () => {
     expect(stdout).toEqual("wah\n");
   });
 
+  test("then, else and fi directly after a compound command", async () => {
+    using dir = tempDir("run-shell-if-compound", {
+      "script.sh": [
+        "if true; then if true; then echo nested; fi fi",
+        "if true; then (echo subshell) fi",
+        "if (true) then echo then-branch; fi",
+        "if false; then (echo a) else echo else-branch; fi",
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "script.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "nested\nsubshell\nthen-branch\nelse-branch\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("invalid syntax reports the error correctly", async () => {
     const dir = tmpdirSync("bun-shell-test-error");
     mkdirSync(dir, { recursive: true });

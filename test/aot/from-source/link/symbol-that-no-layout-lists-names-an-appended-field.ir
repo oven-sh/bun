@@ -1,0 +1,21 @@
+# -- source: symbol-that-no-layout-lists-names-an-appended-field.ts
+# declare function report(value: unknown): void;
+# const kRequest = Symbol("request");
+# interface Tagged { [kRequest]: object | undefined; }
+# class Socket { id = 1; }
+# function attach(socket: Socket, request: object) { (socket as unknown as Tagged)[kRequest] = request; }
+# function requestOf(socket: Socket) { return (socket as unknown as Tagged)[kRequest]; }
+# const made = new Socket();
+# attach(made, { n: 1 });
+# report((requestOf(made) as any).n);
+# -- end of source
+# `socket[kRequest] = request`, where all that kRequest can be is one symbol that is made once: the access goes by the key of the symbol, and a name that is stored on the objects of a layout that does not list it is a field that Link appends, whether it is a text or a symbol.
+# Until then such a store made an extra property of each object: six names a request on the socket and the response of node:http.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.1 symbol("request")@m0:0 appended
+# RUN(STORE): walk f1 mechanisms=all-Inlining
+# STORE-LABEL: code f1:Body
+# STORE: PutSlotOrAdd {{*}}key=symbol("request")@m0:0 receivers=[L0]
+# RUN(READ): walk f2 mechanisms=all-Inlining
+# READ-LABEL: code f2:Body
+# READ: = GetSlot{{*}}key=symbol("request")@m0:0

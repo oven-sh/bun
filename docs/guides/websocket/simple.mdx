@@ -22,9 +22,6 @@ const server = Bun.serve({
     return new Response("Hello world!");
   },
   websocket: {
-    // TypeScript: specify the type of ws.data like this
-    data: {} as { authToken: string },
-
     // this is called when a message is received
     async message(ws, message) {
       console.log(`Received ${message}`);

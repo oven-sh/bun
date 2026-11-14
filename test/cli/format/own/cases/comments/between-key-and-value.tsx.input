@@ -1,0 +1,12 @@
+x = {
+  a:
+    // comment
+    "value",
+  b: (
+    // comment
+    <div>a</div>
+  ),
+  c:
+    // comment
+    f(x),
+};

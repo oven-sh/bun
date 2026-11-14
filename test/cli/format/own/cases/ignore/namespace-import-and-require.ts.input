@@ -1,0 +1,8 @@
+import /* prettier-ignore */ *  /* comment */ as a from "a";
+import b =
+// prettier-ignore
+require /**
+ * comment
+ */ ('b');
+import c = /* prettier-ignore */ require('c');
+import d from /* prettier-ignore */ 'd';

@@ -19,7 +19,7 @@ pub struct Stream {
     pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
     // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
     pub(crate) client: Option<NonNull<HttpClient<'static>>>,
-    // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
+    // FFI handle into lsquic; bound in `callbacks.onStreamOpen`, reset in `ClientSession::detach`.
     pub(crate) qstream: Option<NonNull<quic::Stream>>,
 
     /// Slices into the lsquic-owned hset buffer; valid only for the duration
@@ -38,6 +38,9 @@ pub struct Stream {
     pub(crate) is_streaming_body: bool,
     pub(crate) headers_delivered: bool,
     pub(crate) read_paused: bool,
+    /// The origin did not process the request. It ended the stream with
+    /// H3_REQUEST_REJECTED, or the stream is above the id in its GOAWAY.
+    pub(crate) peer_rejected: bool,
 }
 
 impl Stream {
@@ -58,6 +61,7 @@ impl Stream {
             is_streaming_body: false,
             headers_delivered: false,
             read_paused: false,
+            peer_rejected: false,
         }))
     }
 
@@ -88,12 +92,6 @@ impl Stream {
         // Route through the shared `client_session::session_mut` accessor
         // (one centralised unsafe); see INVARIANT above.
         super::client_session::session_mut(self.session.as_ptr())
-    }
-
-    pub(crate) fn abort(&mut self) {
-        if let Some(qs) = self.qstream_mut() {
-            qs.close();
-        }
     }
 }
 

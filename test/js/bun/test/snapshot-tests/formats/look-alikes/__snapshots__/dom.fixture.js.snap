@@ -1,0 +1,1476 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`DOM comment: data > array 1`] = `
+"Comment {
+  "data": [
+    1,
+    "two",
+  ],
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > bigint 1`] = `
+"Comment {
+  "data": 10n,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > empty array 1`] = `
+"Comment {
+  "data": [],
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > empty string 1`] = `"<!---->"`;
+
+exports[`DOM comment: data > false 1`] = `
+"Comment {
+  "data": false,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > function 1`] = `
+"Comment {
+  "data": [Function],
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > null 1`] = `
+"Comment {
+  "data": null,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > number 1`] = `
+"Comment {
+  "data": 5,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > object 1`] = `
+"Comment {
+  "data": {
+    "a": 1,
+  },
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > proxy 1`] = `
+"Comment {
+  "data": {
+    "a": 1,
+  },
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > proxy of an array 1`] = `
+"Comment {
+  "data": [
+    1,
+  ],
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM comment: data > string 1`] = `"<!--abc-->"`;
+
+exports[`DOM comment: data > symbol 1`] = `
+"Comment {
+  "data": Symbol(s),
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > throwing getters 1`] = `"throws"`;
+
+exports[`DOM comment: data > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM comment: data > true 1`] = `
+"Comment {
+  "data": true,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > undefined 1`] = `
+"Comment {
+  "data": undefined,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM comment: data > zero 1`] = `
+"Comment {
+  "data": 0,
+  "nodeType": 8,
+}"
+`;
+
+exports[`DOM element: a child > array 1`] = `
+"<div>
+  [
+    1,
+    "two",
+  ]
+</div>"
+`;
+
+exports[`DOM element: a child > bigint 1`] = `
+"<div>
+  10n
+</div>"
+`;
+
+exports[`DOM element: a child > empty array 1`] = `
+"<div>
+  []
+</div>"
+`;
+
+exports[`DOM element: a child > empty string 1`] = `
+"<div>
+  
+</div>"
+`;
+
+exports[`DOM element: a child > false 1`] = `
+"<div>
+  false
+</div>"
+`;
+
+exports[`DOM element: a child > function 1`] = `
+"<div>
+  [Function]
+</div>"
+`;
+
+exports[`DOM element: a child > null 1`] = `
+"<div>
+  null
+</div>"
+`;
+
+exports[`DOM element: a child > number 1`] = `
+"<div>
+  5
+</div>"
+`;
+
+exports[`DOM element: a child > object 1`] = `
+"<div>
+  {
+    "a": 1,
+  }
+</div>"
+`;
+
+exports[`DOM element: a child > proxy 1`] = `
+"<div>
+  {
+    "a": 1,
+  }
+</div>"
+`;
+
+exports[`DOM element: a child > proxy of an array 1`] = `
+"<div>
+  [
+    1,
+  ]
+</div>"
+`;
+
+exports[`DOM element: a child > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: a child > string 1`] = `
+"<div>
+  abc
+</div>"
+`;
+
+exports[`DOM element: a child > symbol 1`] = `
+"<div>
+  Symbol(s)
+</div>"
+`;
+
+exports[`DOM element: a child > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: a child > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: a child > true 1`] = `
+"<div>
+  true
+</div>"
+`;
+
+exports[`DOM element: a child > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: a child > zero 1`] = `
+"<div>
+  0
+</div>"
+`;
+
+exports[`DOM element: an attribute > array 1`] = `
+"<div
+  undefined={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > empty array 1`] = `
+"<div
+  undefined={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > false 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > function 1`] = `
+"<div
+  f={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > null 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > number 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > object 1`] = `
+"<div
+  undefined={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > proxy 1`] = `
+"<div
+  undefined={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > proxy of an array 1`] = `
+"<div
+  undefined={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: an attribute > string 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > throwing getters 1`] = `
+"<div
+  undefined={undefined}
+/>"
+`;
+
+exports[`DOM element: an attribute > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: an attribute > true 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: an attribute > zero 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > array 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > empty array 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > false 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > function 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > null 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > number 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > object 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > proxy 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > proxy of an array 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: attributes > string 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: attributes > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: attributes > true 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: attributes > zero 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > array 1`] = `
+"<div>
+  1
+  two
+</div>"
+`;
+
+exports[`DOM element: childNodes > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > empty array 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > false 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > function 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > null 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > number 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > object 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > proxy 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > proxy of an array 1`] = `
+"<div>
+  1
+</div>"
+`;
+
+exports[`DOM element: childNodes > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: childNodes > string 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: childNodes > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: childNodes > true 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: childNodes > zero 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > array 1`] = `
+"<div>
+  #shadow-root
+    1
+    "two"
+</div>"
+`;
+
+exports[`DOM element: children of its shadowRoot > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > empty array 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > false 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > function 1`] = `
+"<div>
+  #shadow-root
+    undefined
+    undefined
+</div>"
+`;
+
+exports[`DOM element: children of its shadowRoot > null 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > number 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > object 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > proxy 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > proxy of an array 1`] = `
+"<div>
+  #shadow-root
+    1
+</div>"
+`;
+
+exports[`DOM element: children of its shadowRoot > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: children of its shadowRoot > string 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: children of its shadowRoot > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: children of its shadowRoot > true 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: children of its shadowRoot > zero 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > array 1`] = `
+"<div>
+  1
+  two
+</div>"
+`;
+
+exports[`DOM element: children, without childNodes > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > empty array 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > false 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > function 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > null 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > number 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > object 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > proxy 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > proxy of an array 1`] = `
+"<div>
+  1
+</div>"
+`;
+
+exports[`DOM element: children, without childNodes > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: children, without childNodes > string 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: children, without childNodes > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: children, without childNodes > true 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: children, without childNodes > zero 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > array 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > empty array 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > false 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > function 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > null 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > number 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > object 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > proxy 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > proxy of an array 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > revoked proxy 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > string 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > throwing getters 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > throwing proxy 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > true 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: hasAttribute > zero 1`] = `"<div />"`;
+
+exports[`DOM element: name of an attribute > array 1`] = `
+"<div
+  1,two="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > bigint 1`] = `
+"<div
+  10="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > empty array 1`] = `
+"<div
+  ="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > empty string 1`] = `
+"<div
+  ="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > false 1`] = `
+"<div
+  false="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > function 1`] = `
+"<div
+  function f(a, b) {}="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > null 1`] = `
+"<div
+  null="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > number 1`] = `
+"<div
+  5="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > object 1`] = `
+"<div
+  [object Object]="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > proxy 1`] = `
+"<div
+  [object Object]="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > proxy of an array 1`] = `
+"<div
+  1="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: name of an attribute > string 1`] = `
+"<div
+  abc="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > symbol 1`] = `"throws"`;
+
+exports[`DOM element: name of an attribute > throwing getters 1`] = `
+"<div
+  [object Object]="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: name of an attribute > true 1`] = `
+"<div
+  true="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > undefined 1`] = `
+"<div
+  undefined="v"
+/>"
+`;
+
+exports[`DOM element: name of an attribute > zero 1`] = `
+"<div
+  0="v"
+/>"
+`;
+
+exports[`DOM element: nodeType > array 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": [
+    1,
+    "two",
+  ],
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > bigint 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 10n,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > empty array 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": [],
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > empty string 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": "",
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > false 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": false,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > function 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": [Function],
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > null 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": null,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > number 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 5,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > object 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": {
+    "a": 1,
+  },
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > proxy 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": {
+    "a": 1,
+  },
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > proxy of an array 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": [
+    1,
+  ],
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: nodeType > string 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": "abc",
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > symbol 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": Symbol(s),
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: nodeType > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: nodeType > true 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": true,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > undefined 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": undefined,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: nodeType > zero 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 0,
+  "tagName": "DIV",
+}"
+`;
+
+exports[`DOM element: shadowRoot > array 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > bigint 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > empty array 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > empty string 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > false 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > function 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > null 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > number 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > object 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > proxy 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > proxy of an array 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: shadowRoot > string 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > symbol 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > throwing getters 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: shadowRoot > true 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > undefined 1`] = `"<div />"`;
+
+exports[`DOM element: shadowRoot > zero 1`] = `"<div />"`;
+
+exports[`DOM element: tagName > array 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`DOM element: tagName > bigint 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": 10n,
+}"
+`;
+
+exports[`DOM element: tagName > empty array 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": [],
+}"
+`;
+
+exports[`DOM element: tagName > empty string 1`] = `"< />"`;
+
+exports[`DOM element: tagName > false 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": false,
+}"
+`;
+
+exports[`DOM element: tagName > function 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": [Function],
+}"
+`;
+
+exports[`DOM element: tagName > null 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": null,
+}"
+`;
+
+exports[`DOM element: tagName > number 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": 5,
+}"
+`;
+
+exports[`DOM element: tagName > object 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`DOM element: tagName > proxy 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`DOM element: tagName > proxy of an array 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": [
+    1,
+  ],
+}"
+`;
+
+exports[`DOM element: tagName > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: tagName > string 1`] = `"<abc />"`;
+
+exports[`DOM element: tagName > symbol 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": Symbol(s),
+}"
+`;
+
+exports[`DOM element: tagName > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: tagName > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: tagName > true 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": true,
+}"
+`;
+
+exports[`DOM element: tagName > undefined 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": undefined,
+}"
+`;
+
+exports[`DOM element: tagName > zero 1`] = `
+"HTMLDivElement {
+  "attributes": [],
+  "childNodes": [],
+  "nodeType": 1,
+  "tagName": 0,
+}"
+`;
+
+exports[`DOM element: value of an attribute > array 1`] = `
+"<div
+  n={
+    [
+      1,
+      "two",
+    ]
+  }
+/>"
+`;
+
+exports[`DOM element: value of an attribute > bigint 1`] = `
+"<div
+  n={10n}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > empty array 1`] = `
+"<div
+  n={[]}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > empty string 1`] = `
+"<div
+  n=""
+/>"
+`;
+
+exports[`DOM element: value of an attribute > false 1`] = `
+"<div
+  n={false}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > function 1`] = `
+"<div
+  n={[Function]}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > null 1`] = `
+"<div
+  n={null}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > number 1`] = `
+"<div
+  n={5}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > object 1`] = `
+"<div
+  n={
+    {
+      "a": 1,
+    }
+  }
+/>"
+`;
+
+exports[`DOM element: value of an attribute > proxy 1`] = `
+"<div
+  n={
+    {
+      "a": 1,
+    }
+  }
+/>"
+`;
+
+exports[`DOM element: value of an attribute > proxy of an array 1`] = `
+"<div
+  n={
+    [
+      1,
+    ]
+  }
+/>"
+`;
+
+exports[`DOM element: value of an attribute > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM element: value of an attribute > string 1`] = `
+"<div
+  n="abc"
+/>"
+`;
+
+exports[`DOM element: value of an attribute > symbol 1`] = `
+"<div
+  n={Symbol(s)}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > throwing getters 1`] = `"throws"`;
+
+exports[`DOM element: value of an attribute > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM element: value of an attribute > true 1`] = `
+"<div
+  n={true}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > undefined 1`] = `
+"<div
+  n={undefined}
+/>"
+`;
+
+exports[`DOM element: value of an attribute > zero 1`] = `
+"<div
+  n={0}
+/>"
+`;
+
+exports[`DOM fragment: childNodes > array 1`] = `
+"<DocumentFragment>
+  1
+  two
+</DocumentFragment>"
+`;
+
+exports[`DOM fragment: childNodes > bigint 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > empty array 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > empty string 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > false 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > function 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > null 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > number 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > object 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > proxy 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > proxy of an array 1`] = `
+"<DocumentFragment>
+  1
+</DocumentFragment>"
+`;
+
+exports[`DOM fragment: childNodes > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM fragment: childNodes > string 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > symbol 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > throwing getters 1`] = `"throws"`;
+
+exports[`DOM fragment: childNodes > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM fragment: childNodes > true 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > undefined 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM fragment: childNodes > zero 1`] = `"<DocumentFragment />"`;
+
+exports[`DOM text: data > array 1`] = `
+"Text {
+  "data": [
+    1,
+    "two",
+  ],
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > bigint 1`] = `
+"Text {
+  "data": 10n,
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > empty array 1`] = `
+"Text {
+  "data": [],
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > empty string 1`] = `""`;
+
+exports[`DOM text: data > false 1`] = `
+"Text {
+  "data": false,
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > function 1`] = `
+"Text {
+  "data": [Function],
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > null 1`] = `
+"Text {
+  "data": null,
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > number 1`] = `
+"Text {
+  "data": 5,
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > object 1`] = `
+"Text {
+  "data": {
+    "a": 1,
+  },
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > proxy 1`] = `
+"Text {
+  "data": {
+    "a": 1,
+  },
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > proxy of an array 1`] = `
+"Text {
+  "data": [
+    1,
+  ],
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > revoked proxy 1`] = `"throws"`;
+
+exports[`DOM text: data > string 1`] = `"abc"`;
+
+exports[`DOM text: data > symbol 1`] = `
+"Text {
+  "data": Symbol(s),
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > throwing getters 1`] = `"throws"`;
+
+exports[`DOM text: data > throwing proxy 1`] = `"throws"`;
+
+exports[`DOM text: data > true 1`] = `
+"Text {
+  "data": true,
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > undefined 1`] = `
+"Text {
+  "data": undefined,
+  "nodeType": 3,
+}"
+`;
+
+exports[`DOM text: data > zero 1`] = `
+"Text {
+  "data": 0,
+  "nodeType": 3,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > array 1`] = `
+"NamedNodeMap {
+  "undefined": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > bigint 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > empty array 1`] = `
+"NamedNodeMap {
+  "undefined": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > empty string 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > false 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > function 1`] = `
+"NamedNodeMap {
+  "f": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > null 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > number 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > object 1`] = `
+"NamedNodeMap {
+  "undefined": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > proxy 1`] = `
+"NamedNodeMap {
+  "undefined": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > proxy of an array 1`] = `
+"NamedNodeMap {
+  "undefined": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > revoked proxy 1`] = `"throws"`;
+
+exports[`NamedNodeMap: an attribute > string 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > symbol 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > throwing getters 1`] = `
+"NamedNodeMap {
+  "undefined": undefined,
+}"
+`;
+
+exports[`NamedNodeMap: an attribute > throwing proxy 1`] = `"throws"`;
+
+exports[`NamedNodeMap: an attribute > true 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > undefined 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: an attribute > zero 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > array 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > bigint 1`] = `
+"NamedNodeMap {
+  "n": "v",
+}"
+`;
+
+exports[`NamedNodeMap: length > empty array 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > empty string 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > false 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > function 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > null 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > number 1`] = `
+"NamedNodeMap {
+  "n": "v",
+}"
+`;
+
+exports[`NamedNodeMap: length > object 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > proxy 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > proxy of an array 1`] = `
+"NamedNodeMap {
+  "n": "v",
+}"
+`;
+
+exports[`NamedNodeMap: length > revoked proxy 1`] = `"throws"`;
+
+exports[`NamedNodeMap: length > string 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > symbol 1`] = `"throws"`;
+
+exports[`NamedNodeMap: length > throwing getters 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > throwing proxy 1`] = `"throws"`;
+
+exports[`NamedNodeMap: length > true 1`] = `
+"NamedNodeMap {
+  "n": "v",
+}"
+`;
+
+exports[`NamedNodeMap: length > undefined 1`] = `"NamedNodeMap {}"`;
+
+exports[`NamedNodeMap: length > zero 1`] = `"NamedNodeMap {}"`;
+
+exports[`NodeList: Symbol.iterator > array 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > bigint 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > empty array 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > empty string 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > false 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > function 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > null 1`] = `
+"NodeList [
+  "a",
+]"
+`;
+
+exports[`NodeList: Symbol.iterator > number 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > object 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > proxy 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > proxy of an array 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > revoked proxy 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > string 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > symbol 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > throwing getters 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > throwing proxy 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > true 1`] = `"throws"`;
+
+exports[`NodeList: Symbol.iterator > undefined 1`] = `
+"NodeList [
+  "a",
+]"
+`;
+
+exports[`NodeList: Symbol.iterator > zero 1`] = `"throws"`;
+
+exports[`NodeList: length > array 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > bigint 1`] = `
+"NodeList [
+  "a",
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+]"
+`;
+
+exports[`NodeList: length > empty array 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > empty string 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > false 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > function 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > null 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > number 1`] = `
+"NodeList [
+  "a",
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+]"
+`;
+
+exports[`NodeList: length > object 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > proxy 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > proxy of an array 1`] = `
+"NodeList [
+  "a",
+]"
+`;
+
+exports[`NodeList: length > revoked proxy 1`] = `"throws"`;
+
+exports[`NodeList: length > string 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > symbol 1`] = `"throws"`;
+
+exports[`NodeList: length > throwing getters 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > throwing proxy 1`] = `"throws"`;
+
+exports[`NodeList: length > true 1`] = `
+"NodeList [
+  "a",
+]"
+`;
+
+exports[`NodeList: length > undefined 1`] = `"NodeList []"`;
+
+exports[`NodeList: length > zero 1`] = `"NodeList []"`;

@@ -1,5 +1,4 @@
 //! Core AST node payload types and arena-slice helpers.
-#![allow(non_snake_case)]
 
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -73,11 +72,7 @@ impl<T> StoreRef<T> {
     /// constants). Mutation through the resulting `StoreRef` is UB.
     #[inline]
     pub const fn from_static(r: &'static T) -> Self {
-        // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
-        // reference. Provenance is shared/read-only: the pointee is *never*
-        // written through — `DerefMut` on a `StoreRef` produced here is UB and
-        // callers must not do so (audited: only `Deref`/`get()` reads occur).
-        StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
+        StoreRef(NonNull::from_ref(r))
     }
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]
@@ -186,10 +181,8 @@ impl StoreStr {
     #[inline]
     pub const fn new(s: &[u8]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        // SAFETY: `&[u8]` always has a non-null data pointer.
-        let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         StoreStr {
-            ptr,
+            ptr: NonNull::from_ref(s).cast(),
             len: s.len() as u32,
         }
     }
@@ -363,10 +356,8 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub const fn new(s: &[T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        // SAFETY: `&[T]` always has a non-null data pointer.
-        let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         StoreSlice {
-            ptr,
+            ptr: NonNull::from_ref(s).cast(),
             len: s.len() as u32,
         }
     }
@@ -377,17 +368,10 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub fn new_mut(s: &mut [T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        // SAFETY: `&mut [T]` always has a non-null data pointer.
-        let ptr = unsafe { NonNull::new_unchecked(s.as_mut_ptr()) };
         StoreSlice {
-            ptr,
+            ptr: NonNull::from_mut(s).cast(),
             len: s.len() as u32,
         }
-    }
-
-    #[inline]
-    pub const fn as_ptr(self) -> *const T {
-        self.ptr.as_ptr()
     }
 
     /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
@@ -570,6 +554,7 @@ impl Default for LocRef {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ClauseItem {
     /// The local alias used for the imported/exported symbol in the current module.
     /// For imports: `import { foo as bar }` - "bar" is the alias
@@ -662,25 +647,6 @@ impl NameMinifier {
         }
         Ok(())
     }
-
-    pub fn default_number_to_minified_name(
-        i_: isize,
-    ) -> core::result::Result<Vec<u8>, bun_alloc::AllocError> {
-        let mut i = i_;
-        let mut j = usize::try_from(i.rem_euclid(54)).expect("int cast");
-        let mut name: Vec<u8> = Vec::new();
-        name.extend_from_slice(&Self::DEFAULT_HEAD[j..j + 1]);
-        i = i.div_euclid(54);
-
-        while i > 0 {
-            i -= 1;
-            j = usize::try_from(i.rem_euclid(CHAR_FREQ_COUNT as isize)).expect("int cast");
-            name.extend_from_slice(&Self::DEFAULT_TAIL[j..j + 1]);
-            i = i.div_euclid(CHAR_FREQ_COUNT as isize);
-        }
-
-        Ok(name)
-    }
 }
 
 #[repr(u8)]
@@ -718,6 +684,7 @@ pub struct Catch {
 pub struct Finally {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
+    pub body_loc: crate::Loc,
 }
 
 pub struct Case {
@@ -878,9 +845,6 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
-
-    // `to_module_type()` lives in `bun_options_types` as
-    // `impl From<ExportsKind> for ModuleType` (would cycle here).
 }
 
 #[derive(Copy, Clone)]
@@ -1021,15 +985,6 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            source_index: Index::INVALID,
-            part_index: 0,
-        }
-    }
-}
-
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
@@ -1102,10 +1057,18 @@ pub enum PartTag {
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
     AutoContext,
     bun_alloc::AstAlloc,
 >;
+
+/// The reads of one `X.name` in `Part::import_symbol_property_uses`.
+#[derive(Default, Clone, Copy)]
+pub struct PropertyUse {
+    pub count_estimate: u32,
+    /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
+    pub is_call_target: bool,
+}
 
 impl Default for Part {
     fn default() -> Self {
@@ -1187,20 +1150,6 @@ pub struct NamedImport {
     pub is_exported: bool,
 }
 
-impl Default for NamedImport {
-    fn default() -> Self {
-        Self {
-            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-            alias: None,
-            alias_loc: crate::Loc::EMPTY,
-            namespace_ref: Ref::NONE,
-            import_record_index: 0,
-            alias_is_star: false,
-            is_exported: false,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct NamedExport {
     pub ref_: Ref,
@@ -1225,7 +1174,6 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
 }

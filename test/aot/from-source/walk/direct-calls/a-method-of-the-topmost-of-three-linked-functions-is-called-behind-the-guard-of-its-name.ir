@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Top(x) { this.x = x; }
+# Top.prototype.sum = function () { var total = 0; for (var i = 0; i <= this.x; i++) total += i; return total; };
+# function Mid(x) { this.x = x; }
+# Object.setPrototypeOf(Mid.prototype, Top.prototype);
+# function Low(x) { this.x = x; }
+# Object.setPrototypeOf(Low.prototype, Mid.prototype);
+# Low.prototype.twice = function () { return this.sum() + this.sum(); };
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += new Low(i & 3).twice(); return total; }
+# print(publish(run)(8));
+# -- end of source
+# Three constructor functions stand in a row by statements that link their prototype objects. The method lies on the prototype object of the topmost and is called on `this` in a method of the lowest. The lookup climbs the row by the bases that are written: no layout on the way lists the name, the topmost does, so the call goes to that function behind the guard of the name for the class of the receiver. f4 = run, f5 = sum, f6 = twice; L0 = Top, L1 = Mid, L2 = Low
+# RUN(ROW): walk f6 mechanisms=all
+# ROW-LABEL: code f6:Body
+# ROW: AreMembersUnchanged conditions=[{layout=L2 key="sum"}]
+# ROW: CallDirect {{*}}function=f5
+# RUN(ANSWERS): run-in-shell globalThis.publish = (given) => given;
+# ANSWERS: 40
+# ANSWERS-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = (given) => given;
+# CHECKED: 40
+# CHECKED-NEXT: exited with 0

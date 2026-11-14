@@ -2,7 +2,7 @@
 #
 # The analysis targets the shipped surface: a release-profile compile of the
 # workspace for each of the 11 targets Bun ships, unioned so an item used on
-# any platform is treated as live. `bun_bin` is analyzed through a throwaway
+# any platform is treated as live. `bun_runtime` is analyzed through a throwaway
 # `bun_hawk_root` bin (see tools/hawk/); the real reachability roots are the
 # #[no_mangle] exports, which Hawk pins automatically.
 
@@ -33,7 +33,7 @@ cargo-profile = "release"
 package = "bun_semver"
 
 [[production]]
-package = "bun_bin"
+package = "bun_runtime"
 bin = "bun_hawk_root"
 reason = "throwaway analysis root; real roots are the #[no_mangle] exports"
 
@@ -603,107 +603,3 @@ item = "webcore::bake_response::SSRKind::Regular"
 kind = "enum_variant"
 level = "expect"
 reason = "external code table: SSR kind tag consumed by generated code"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_IN_TRANS"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_AUTOCOMMIT"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_NO_GOOD_INDEX_USED"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_NO_INDEX_USED"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_CURSOR_EXISTS"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_LAST_ROW_SENT"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_DB_DROPPED"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_NO_BACKSLASH_ESCAPES"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_METADATA_CHANGED"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_QUERY_WAS_SLOW"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_PS_OUT_PARAMS"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_STATUS_IN_TRANS_READONLY"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_sql"
-item = "mysql::status_flags::StatusFlag::SERVER_SESSION_STATE_CHANGED"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: MySQL protocol status flag bits"

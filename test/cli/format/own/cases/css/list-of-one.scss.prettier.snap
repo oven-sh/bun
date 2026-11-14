@@ -1,0 +1,49 @@
+------------------
+{ printWidth: 80 }
+------------------
+$test: 1;
+$colors: hotpink deepskyblue firebrick;
+$list: (a);
+$l2: (a);
+$l3: ("Helvetica", "Arial");
+$l5: a, b;
+$l6: (a b);
+$l7: (
+  k: v,
+);
+$l9: f(a);
+$map: (
+  k: ("a"),
+);
+.x {
+  a: 1;
+  b: f((a));
+  @include m((a));
+  @include n(a);
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+$test: 1;
+$colors: hotpink deepskyblue firebrick;
+$list: (a);
+$l2: (a);
+$l3: ("Helvetica", "Arial");
+$l5: a, b;
+$l6: (a b);
+$l7: (
+  k: v,
+);
+$l9: f(a);
+$map: (
+  k: ("a"),
+);
+.x {
+  a: 1;
+  b: f((a));
+  @include m((a));
+  @include n(a);
+}
+
+===================== End =====================

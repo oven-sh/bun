@@ -291,8 +291,10 @@ interface BunFile {
   stream(): ReadableStream;
   arrayBuffer(): Promise<ArrayBuffer>;
   json(): Promise<any>;
-  writer(params: { highWaterMark?: number }): FileSink;
+  bytes(): Promise<Uint8Array>;
+  writer(params?: { highWaterMark?: number }): FileSink;
   exists(): Promise<boolean>;
+  delete(): Promise<void>;
 }
 
 export interface FileSink {

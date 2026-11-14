@@ -19,6 +19,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
+use css_values::ident::is_reserved_custom_ident;
 use css_values::length::{LengthPercentage, LengthValue};
 use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
@@ -42,12 +43,12 @@ pub enum FontWeight {
 impl FontWeight {
     // Tries the payload variant first, then matches the remaining keywords
     // against `expect_ident`.
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(v) = input.try_parse(AbsoluteFontWeight::parse) {
             return Ok(FontWeight::Absolute(v));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"bolder" => Ok(FontWeight::Bolder),
             b"lighter" => Ok(FontWeight::Lighter),
@@ -94,12 +95,12 @@ pub enum AbsoluteFontWeight {
 
 impl AbsoluteFontWeight {
     // Payload (`CSSNumber`) first, then keyword variants.
-    fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(AbsoluteFontWeight::Weight(n));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"normal" => Ok(AbsoluteFontWeight::Normal),
             b"bold" => Ok(AbsoluteFontWeight::Bold),
@@ -225,7 +226,7 @@ pub enum FontStretch {
 
 impl FontStretch {
     // Two payload variants tried in declaration order.
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
             return Ok(FontStretch::Keyword(kw));
         }
@@ -316,24 +317,17 @@ impl FontStretchKeyword {
 }
 
 /// A value for the [font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop) property.
-pub enum FontFamily {
+#[derive(Clone, PartialEq, Eq)]
+pub enum FontFamily<'bump> {
     /// A generic family name.
     Generic(GenericFontFamily),
     /// A custom family name.
-    // Arena-backed slice: the pointer targets bytes owned by the parser arena and is
-    // only valid while that arena is alive (becomes `&'bump [u8]` once the 'bump
-    // lifetime is threaded through these types). With `*const [u8]`, derived
-    // PartialEq/Eq/Hash would compare by pointer; the manual impls below
-    // hash/compare by content (Wyhash over bytes).
-    FamilyName(*const [u8]),
+    FamilyName(&'bump [u8]),
 }
 
-type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
-
-impl FontFamily {
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) = input.try_parse(|p| p.expect_string().map(std::ptr::from_ref::<[u8]>)) {
-            // arena-owned: parser slice lives for 'bump
+impl<'bump> FontFamily<'bump> {
+    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+        if let Ok(value) = input.try_parse(|p| p.expect_string()) {
             return Ok(FontFamily::FamilyName(value));
         }
 
@@ -341,30 +335,28 @@ impl FontFamily {
             return Ok(FontFamily::Generic(value));
         }
 
-        // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-        let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
+        let value = input.expect_ident()?;
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
-        {
+        while let Ok(ident) = input.try_parse(|p| p.expect_ident()) {
             if string.is_none() {
-                let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(value) });
+                let mut s = bun_alloc::ArenaVec::<u8>::new_in(input.arena());
+                s.extend_from_slice(value);
                 string = Some(s);
             }
 
             if let Some(s) = string.as_mut() {
                 s.push(b' ');
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(ident) });
+                s.extend_from_slice(ident);
             }
         }
 
-        let final_value: *const [u8] = match string {
-            Some(s) => std::ptr::from_ref::<[u8]>(s.into_bump_slice()),
+        let final_value = match string {
+            Some(s) => s.into_bump_slice(),
+            // On its own, a css-wide keyword is the whole declaration's value, not a name.
+            None if is_reserved_custom_ident(value) => {
+                return Err(input.new_custom_error(ParserError::invalid_value));
+            }
             None => value,
         };
 
@@ -374,25 +366,25 @@ impl FontFamily {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontFamily::Generic(val) => val.to_css(dest),
-            FontFamily::FamilyName(val_ptr) => {
-                // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FontFamily)
-                let val: &[u8] = unsafe { crate::arena_str(*val_ptr) };
+            FontFamily::FamilyName(val) => {
                 // Generic family names such as sans-serif must be quoted if parsed as a string.
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
-                if !val.is_empty()
-                    && !css::parse_utility::parse_string::<GenericFontFamily>(
-                        dest.arena,
-                        val,
-                        GenericFontFamily::parse,
-                    )
-                    .is_ok()
+                // Browsers read a leading generic name as the keyword, whatever follows it.
+                let word = bun_core::strings::split(val, b" ").next().unwrap_or(val);
+                if !is_reserved_custom_ident(val)
+                    && <GenericFontFamily as css::EnumProperty>::from_ascii_case_insensitive(word)
+                        .is_none()
                 {
                     // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
                     let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
                     let mut first = true;
                     for slice in bun_core::strings::split(val, b" ") {
+                        // Without quotes, a run of blanks reads back as one.
+                        if slice.is_empty() {
+                            return dest.serialize_string(val);
+                        }
                         if first {
                             first = false;
                         } else {
@@ -417,51 +409,8 @@ impl FontFamily {
         }
     }
 
-    // eql / hash / deepClone — `PartialEq`/`Clone` hand-impls below; bridged to
+    // eql / deepClone: `PartialEq`/`Clone`, bridged to
     // `CssEql`/`DeepClone` via `bridge_clone_partialeq!` in `generics.rs`.
-}
-
-// With `*const [u8]`, derived `PartialEq`/`Hash` would compare pointers;
-// hand-roll to compare/hash the bytes by *content*.
-impl PartialEq for FontFamily {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (FontFamily::Generic(a), FontFamily::Generic(b)) => a == b,
-            (FontFamily::FamilyName(a), FontFamily::FamilyName(b)) => {
-                // SAFETY: arena-owned slices valid for the parse session.
-                unsafe { (&**a).eq(&**b) }
-            }
-            _ => false,
-        }
-    }
-}
-impl Eq for FontFamily {}
-
-impl core::hash::Hash for FontFamily {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // Hash the active tag then the payload bytes. With `*const [u8]` a
-        // derived Hash would hash the pointer address, breaking
-        // FontFamilyHashMap dedupe semantics.
-        core::mem::discriminant(self).hash(state);
-        match self {
-            FontFamily::Generic(g) => g.hash(state),
-            FontFamily::FamilyName(p) => {
-                // SAFETY: arena-owned slice valid for the parse session.
-                unsafe { (&**p).hash(state) }
-            }
-        }
-    }
-}
-
-impl Clone for FontFamily {
-    fn clone(&self) -> Self {
-        // shallow — arena slice pointers are `Copy`.
-        // `deepClone` would re-alloc the slice in 'bump.
-        match self {
-            FontFamily::Generic(g) => FontFamily::Generic(*g),
-            FontFamily::FamilyName(n) => FontFamily::FamilyName(*n),
-        }
-    }
 }
 
 /// A [generic font family](https://www.w3.org/TR/css-fonts-4/#generic-font-families) name,
@@ -483,21 +432,6 @@ pub enum GenericFontFamily {
     UiSansSerif,
     UiMonospace,
     UiRounded,
-
-    // CSS wide keywords. These must be parsed as identifiers so they
-    // don't get serialized as strings.
-    // https://www.w3.org/TR/css-values-4/#common-keywords
-    Initial,
-    Inherit,
-    Unset,
-    // Default is also reserved by the <custom-ident> type.
-    // https://www.w3.org/TR/css-values-4/#custom-idents
-    Default,
-
-    // CSS defaulting keywords
-    // https://drafts.csswg.org/css-cascade-5/#defaulting-keywords
-    Revert,
-    RevertLayer,
 }
 
 impl GenericFontFamily {
@@ -529,9 +463,9 @@ impl FontStyle {
         FontStyle::Normal
     }
 
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, FontStyle> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"normal" => Ok(FontStyle::Normal),
             b"italic" => Ok(FontStyle::Italic),
@@ -609,7 +543,7 @@ impl FontVariantCaps {
         matches!(self, FontVariantCaps::Normal | FontVariantCaps::SmallCaps)
     }
 
-    fn parse_css2(input: &mut css::Parser) -> CssResult<FontVariantCaps> {
+    fn parse_css2<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, FontVariantCaps> {
         let value = FontVariantCaps::parse(input)?;
         if !value.is_css2() {
             return Err(input.new_custom_error(ParserError::invalid_value));
@@ -635,7 +569,7 @@ pub enum LineHeight {
 
 impl LineHeight {
     // Keyword variant first (`normal`), then payload variants in declaration order.
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|p| p.expect_ident_matching(b"normal"))
             .is_ok()
@@ -675,9 +609,9 @@ impl LineHeight {
 // Field-wise `#[derive(DeepClone, CssEql)]` — every field type carries the
 // trait via the blankets/bridges in `generics.rs`.
 #[derive(DeepClone, CssEql)]
-pub struct Font {
+pub struct Font<'bump> {
     /// The font family.
-    pub(crate) family: Vec<FontFamily>,
+    pub(crate) family: Vec<FontFamily<'bump>>,
     /// The font size.
     pub(crate) size: FontSize,
     /// The font style.
@@ -692,10 +626,10 @@ pub struct Font {
     pub(crate) variant_caps: FontVariantCaps,
 }
 
-impl Font {
+impl<'bump> Font<'bump> {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Font> {
+    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Font<'bump>> {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
         let mut stretch: Option<FontStretch> = None;
@@ -729,8 +663,7 @@ impl Font {
                 }
             }
 
-            if variant_caps.is_some() {
-                // Intentionally checks `is_some()` to match upstream lightningcss (likely a bug there; should be `is_none()`)
+            if variant_caps.is_none() {
                 if let Ok(value) = input.try_parse(FontVariantCaps::parse_css2) {
                     variant_caps = Some(value);
                     count += 1;
@@ -791,8 +724,11 @@ impl Font {
             dest.write_char(b' ')?;
         }
 
-        if self.stretch != FontStretch::default() {
-            self.stretch.to_css(dest)?;
+        // `font` takes no percentage, which is what `FontStretch::to_css` minifies a keyword to.
+        if let FontStretch::Keyword(stretch) = self.stretch
+            && stretch != FontStretchKeyword::default()
+        {
+            stretch.to_css(dest)?;
             dest.write_char(b' ')?;
         }
 
@@ -854,8 +790,8 @@ impl FontProperty {
 }
 
 #[derive(Default)]
-pub struct FontHandler {
-    family: Option<Vec<FontFamily>>,
+pub struct FontHandler<'bump> {
+    family: Option<Vec<FontFamily<'bump>>>,
     size: Option<FontSize>,
     style: Option<FontStyle>,
     weight: Option<FontWeight>,
@@ -863,15 +799,17 @@ pub struct FontHandler {
     line_height: Option<LineHeight>,
     variant_caps: Option<FontVariantCaps>,
     flushed_properties: FontProperty,
+    /// `flush` writes `font` only if the rule did: it also resets longhands with no field here.
+    has_shorthand: bool,
     has_any: bool,
 }
 
-impl FontHandler {
+impl<'bump> FontHandler<'bump> {
     pub(crate) fn handle_property(
         &mut self,
-        property: &crate::properties::Property,
-        dest: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
+        property: &crate::properties::Property<'bump>,
+        dest: &mut crate::DeclarationList<'bump>,
+        context: &mut crate::PropertyHandlerContext,
     ) -> bool {
         use crate::properties::Property;
         // `arena` field dropped from PropertyHandlerContext; the
@@ -927,6 +865,7 @@ impl FontHandler {
                 self.stretch = Some(val.stretch);
                 self.line_height = Some(val.line_height.clone());
                 self.variant_caps = Some(val.variant_caps);
+                self.has_shorthand = true;
                 self.has_any = true;
                 // TODO: reset other properties
             }
@@ -940,6 +879,18 @@ impl FontHandler {
                     return false;
                 }
             }
+            Property::Custom(val) => {
+                // `font` resets `font-kerning` and the like, so they stay behind a buffered `font`.
+                if self.has_shorthand
+                    && bun_core::strings::starts_with_case_insensitive_ascii(
+                        crate::VendorPrefix::strip_from(val.name.as_str()).1,
+                        b"font-",
+                    )
+                {
+                    self.flush(dest, context);
+                }
+                return false;
+            }
             _ => return false,
         }
 
@@ -948,8 +899,8 @@ impl FontHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        decls: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
+        decls: &mut crate::DeclarationList<'bump>,
+        context: &mut crate::PropertyHandlerContext,
     ) {
         self.flush(decls, context);
         self.flushed_properties = FontProperty::empty();
@@ -957,8 +908,8 @@ impl FontHandler {
 
     fn flush(
         &mut self,
-        decls: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
+        decls: &mut crate::DeclarationList<'bump>,
+        context: &mut crate::PropertyHandlerContext,
     ) {
         use crate::properties::Property;
 
@@ -978,6 +929,7 @@ impl FontHandler {
         }
 
         self.has_any = false;
+        let has_shorthand = core::mem::take(&mut self.has_shorthand);
 
         let mut family: Option<Vec<FontFamily>> = self.family.take();
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
@@ -996,27 +948,6 @@ impl FontHandler {
         let line_height: Option<LineHeight> = self.line_height.take();
         let variant_caps: Option<FontVariantCaps> = self.variant_caps.take();
 
-        if let Some(f) = family.as_mut() {
-            if f.len() > 1 {
-                // Dedupe
-                let mut seen: FontFamilyHashMap<()> = Default::default();
-
-                let mut i: usize = 0;
-                while i < f.len() {
-                    use bun_collections::array_hash_map::MapEntry;
-                    match seen.entry(f.at(i).clone()) {
-                        MapEntry::Occupied(_) => {
-                            let _ = f.ordered_remove(i);
-                        }
-                        MapEntry::Vacant(v) => {
-                            v.insert(());
-                            i += 1;
-                        }
-                    }
-                }
-            }
-        }
-
         if let (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_), Some(variant_caps_v)) = (
             family.as_ref(),
             size.as_ref(),
@@ -1025,8 +956,11 @@ impl FontHandler {
             stretch.as_ref(),
             line_height.as_ref(),
             variant_caps.as_ref(),
-        ) {
+        ) && has_shorthand
+        {
             let caps = *variant_caps_v;
+            let stretch = stretch.unwrap();
+            let is_keyword = matches!(stretch, FontStretch::Keyword(_));
             push_prop!(
                 Font,
                 Font {
@@ -1034,7 +968,11 @@ impl FontHandler {
                     size: size.unwrap(),
                     style: style.unwrap(),
                     weight: weight.unwrap(),
-                    stretch: stretch.unwrap(),
+                    stretch: if is_keyword {
+                        stretch
+                    } else {
+                        FontStretch::default()
+                    },
                     line_height: line_height.unwrap(),
                     variant_caps: if caps.is_css2() {
                         caps
@@ -1048,6 +986,11 @@ impl FontHandler {
             // If we have a CSS 3+ value, we need to add a separate property.
             if !caps.is_css2() {
                 push_prop!(FontVariantCaps, FONT_VARIANT_CAPS, caps);
+            }
+
+            // Nor does it accept a percentage for font-stretch.
+            if !is_keyword {
+                push_prop!(FontStretch, FONT_STRETCH, stretch);
             }
         } else {
             if let Some(val) = family {
@@ -1081,8 +1024,6 @@ impl FontHandler {
     }
 }
 
-// Matched against the Generic variant directly instead of a const
-// (FontFamily holds a raw pointer).
 fn is_system_ui(f: &FontFamily) -> bool {
     matches!(f, FontFamily::Generic(GenericFontFamily::SystemUi))
 }
@@ -1102,9 +1043,9 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
 
 #[inline]
 fn compatible_font_family(
-    _family: Option<Vec<FontFamily>>,
+    _family: Option<Vec<FontFamily<'_>>>,
     is_supported: bool,
-) -> Option<Vec<FontFamily>> {
+) -> Option<Vec<FontFamily<'_>>> {
     let mut family = _family;
     if is_supported {
         return family;
@@ -1117,11 +1058,19 @@ fn compatible_font_family(
         // Capture the system-ui index first, drop the borrow, then
         // perform the inserts using the captured index.
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
-            for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                families.insert(
-                    i + j + 1,
-                    FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)),
-                );
+            let mut at = i + 1;
+            for name in DEFAULT_SYSTEM_FONTS {
+                let fallback = FontFamily::FamilyName(*name);
+                // A fallback the list already names is not added a second time.
+                match families.slice_const().iter().position(|f| *f == fallback) {
+                    Some(j) if j < i => continue,
+                    Some(j) => {
+                        let _ = families.ordered_remove(j);
+                    }
+                    None => {}
+                }
+                families.insert(at, fallback);
+                at += 1;
             }
         }
     }

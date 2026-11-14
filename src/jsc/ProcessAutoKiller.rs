@@ -1,7 +1,10 @@
 use bun_collections::ArrayHashMap;
 use bun_spawn::Process;
 use bun_sys::SignalCode;
+use core::cell::Cell;
 use core::ptr::NonNull;
+
+use crate::JsCell;
 
 bun_core::declare_scope!(AutoKiller, hidden);
 
@@ -9,30 +12,30 @@ bun_core::declare_scope!(AutoKiller, hidden);
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
     /// on remove/drop). Stored as raw ptr for identity-hash semantics.
-    pub(crate) processes: ArrayHashMap<*mut Process, ()>,
-    pub enabled: bool,
-    pub(crate) ever_enabled: bool,
+    processes: JsCell<ArrayHashMap<*mut Process, ()>>,
+    pub enabled: Cell<bool>,
+    ever_enabled: Cell<bool>,
 }
 
 impl ProcessAutoKiller {
-    pub fn enable(&mut self) {
-        self.enabled = true;
-        self.ever_enabled = true;
+    pub fn enable(&self) {
+        self.enabled.set(true);
+        self.ever_enabled.set(true);
     }
 
-    pub fn disable(&mut self) {
-        self.enabled = false;
+    pub fn disable(&self) {
+        self.enabled.set(false);
     }
 
-    pub fn kill(&mut self) -> Result {
+    pub fn kill(&self) -> Result {
         Result {
             processes: self.kill_processes(),
         }
     }
 
-    fn kill_processes(&mut self) -> u32 {
+    fn kill_processes(&self) -> u32 {
         let mut count: u32 = 0;
-        while let Some(entry) = self.processes.pop() {
+        while let Some(entry) = self.processes.with_mut(ArrayHashMap::pop) {
             {
                 // SAFETY: every key in `processes` was ref()'d on insert and is
                 // live until the matching deref() below; popped entry is
@@ -49,27 +52,32 @@ impl ProcessAutoKiller {
         count
     }
 
-    pub fn clear(&mut self) {
-        for process in self.processes.keys() {
+    pub fn clear(&self) {
+        for process in self.processes.get().keys() {
             // SAFETY: see kill_processes — key is live until deref().
             unsafe { Process::deref(*process) };
         }
 
-        if self.processes.capacity() > 256 {
-            self.processes.clear_and_free();
-        }
-
-        self.processes.clear();
+        self.processes.with_mut(|processes| {
+            if processes.capacity() > 256 {
+                processes.clear_and_free();
+            }
+            processes.clear();
+        });
     }
 
     /// Registers a freshly spawned subprocess for auto-kill tracking.
     /// Takes a raw `*mut Process` (not `&Process`) to preserve pointer
     /// identity semantics for the map key without a const→mut provenance cast.
-    pub(crate) fn on_subprocess_spawn(&mut self, process: NonNull<Process>) {
-        if self.enabled {
+    pub(crate) fn on_subprocess_spawn(&self, process: NonNull<Process>) {
+        if self.enabled.get() {
             // Alloc failure means we never took
             // a ref, so just bail. `put` here is fallible only on OOM.
-            if self.processes.put(process.as_ptr(), ()).is_err() {
+            if self
+                .processes
+                .with_mut(|p| p.put(process.as_ptr(), ()))
+                .is_err()
+            {
                 return;
             }
             // SAFETY: caller passes a live Process; we take a ref to extend its
@@ -80,9 +88,12 @@ impl ProcessAutoKiller {
 
     /// Removes an exited subprocess from auto-kill tracking, releasing the
     /// ref taken at spawn.
-    pub(crate) fn on_subprocess_exit(&mut self, process: NonNull<Process>) {
-        if self.ever_enabled {
-            if self.processes.swap_remove(&process.as_ptr()) {
+    pub(crate) fn on_subprocess_exit(&self, process: NonNull<Process>) {
+        if self.ever_enabled.get() {
+            if self
+                .processes
+                .with_mut(|p| p.swap_remove(&process.as_ptr()))
+            {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
                 // is live until this deref() releases it.
                 unsafe { Process::deref(process.as_ptr()) };
@@ -98,7 +109,7 @@ pub struct Result {
 
 impl Drop for ProcessAutoKiller {
     fn drop(&mut self) {
-        for process in self.processes.keys() {
+        for process in self.processes.get().keys() {
             // SAFETY: see kill_processes — key is live until deref().
             unsafe { Process::deref(*process) };
         }

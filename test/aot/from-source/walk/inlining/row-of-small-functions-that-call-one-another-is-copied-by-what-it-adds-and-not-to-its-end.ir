@@ -1,0 +1,34 @@
+# -- source: row-of-small-functions-that-call-one-another-is-copied-by-what-it-adds-and-not-to-its-end.js
+# function a0(x) { return x + 1; }
+# function a1(x) { return a0(x) + 1; }
+# function a2(x) { return a1(x) + 1; }
+# function a3(x) { return a2(x) + 1; }
+# function a4(x) { return a3(x) + 1; }
+# function a5(x) { return a4(x) + 1; }
+# function a6(x) { return a5(x) + 1; }
+# function a7(x) { return a6(x) + 1; }
+# function a8(x) { return a7(x) + 1; }
+# function a9(x) { return a8(x) + 1; }
+# function a10(x) { return a9(x) + 1; }
+# function a11(x) { return a10(x) + 1; }
+# function a12(x) { return a11(x) + 1; }
+# function a13(x) { return a12(x) + 1; }
+# function a14(x) { return a13(x) + 1; }
+# function a15(x) { return a14(x) + 1; }
+# function a16(x) { return a15(x) + 1; }
+# function a17(x) { return a16(x) + 1; }
+# function a18(x) { return a17(x) + 1; }
+# function a19(x) { return a18(x) + 1; }
+# function a20(x) { return a19(x) + 1; }
+# print(a20(1));
+# -- end of source
+# If a callee in a copy were judged by its own operations, with the call that it writes counted as one of them, each function of a row would hold a copy of every function above it: N bodies of N levels
+# what copies in copies add is counted at the call that the unit's own body writes, and together they get what one callee in a loop gets. Behind that the next function of the row is called
+# RUN: walk f21 mechanisms=all
+# CHECK: frame 1 callee=f20
+# CHECK: frame 2 callee=f19
+# CHECK: = CallDirect
+# RUN(NEVER): walk f21 mechanisms=all
+# NEVER-NOT: callee=f1 {{*}}
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

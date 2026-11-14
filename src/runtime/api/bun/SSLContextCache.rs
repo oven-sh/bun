@@ -23,8 +23,9 @@ use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
-use bun_threading::Mutex;
+use bun_threading::Guarded;
 use bun_uws as uws;
 use bun_uws::create_bun_socket_error_t;
 
@@ -32,13 +33,17 @@ use bun_uws::create_bun_socket_error_t;
 use crate::api::server::server_config::SSLConfig;
 
 #[derive(Default)]
-pub struct SSLContextCache {
+pub(crate) struct SSLContextCache {
+    entries: Guarded<Entries>,
+}
+
+#[derive(Default)]
+struct Entries {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
-    mutex: Mutex,
     ops_since_compact: u32,
 }
 
-pub type Digest = [u8; 32];
+pub(crate) type Digest = [u8; 32];
 
 /// SHA-256 output is uniformly distributed, so the first 4 bytes are a perfect
 /// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
@@ -58,7 +63,7 @@ impl ArrayHashContext<Digest> for DigestContext {
     }
 }
 
-pub struct Entry {
+pub(crate) struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
@@ -70,12 +75,12 @@ pub struct Entry {
 }
 
 impl SSLContextCache {
-    /// Returns +1 ref; caller must `SSL_CTX_free`. The map itself holds no ref.
+    /// The map itself holds no ref.
     pub(crate) fn get_or_create(
-        &mut self,
+        &self,
         config: &SSLConfig,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<OwnedSslCtx> {
         let opts = config.as_usockets();
         self.get_or_create_digest(&opts, opts.digest(), err)
     }
@@ -83,10 +88,10 @@ impl SSLContextCache {
     /// Variant for callers that already projected to `BunSocketContextOptions`
     /// (e.g. via `as_usockets_for_client_verification()`).
     pub(crate) fn get_or_create_opts(
-        &mut self,
+        &self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<OwnedSslCtx> {
         self.get_or_create_digest(opts, opts.digest(), err)
     }
 
@@ -94,22 +99,25 @@ impl SSLContextCache {
     /// threads its WeakGCMap key through here so the SHA-256 runs once total
     /// instead of three times on a miss.
     pub(crate) fn get_or_create_digest(
-        &mut self,
+        &self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<OwnedSslCtx> {
         {
-            let _guard = self.mutex.lock_guard();
-            if let Some(entry) = self.map.get(&d) {
+            let entries = self.entries.lock();
+            if let Some(entry) = entries.map.get(&d) {
                 // SAFETY: map values are live heap Entries (heap::alloc below); freed only
-                // via compact_locked / Drop, both of which hold this mutex.
+                // via compact / Drop, both of which hold this mutex.
                 let entry = unsafe { &**entry };
                 if !entry.ctx.is_null() {
                     let ctx = entry.ctx;
-                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex.
-                    unsafe { boringssl::SSL_CTX_up_ref(ctx) };
-                    return Some(ctx);
+                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex;
+                    // the up_ref is the +1 `from_raw` takes.
+                    return unsafe {
+                        boringssl::SSL_CTX_up_ref(ctx);
+                        OwnedSslCtx::from_raw(ctx)
+                    };
                 }
             }
         }
@@ -118,29 +126,23 @@ impl SSLContextCache {
         // file I/O / cert parsing and on Windows the system-CA load — none of
         // which has a reason to serialize, and holding a non-reentrant SRWLock
         // across an SSL_CTX_free that *did* tombstone would self-deadlock.
-        let ctx = opts.create_ssl_context(err)?;
+        let ctx = opts.create_ssl_context_with_digest(&d, err)?;
 
-        let _guard = self.mutex.lock_guard();
-
-        // Capture the backref before the mutable borrow of `self.map` so the
-        // borrow checker doesn't see an overlapping immutable borrow at the
-        // `Entry { owner: ... }` site below.
-        let owner_ptr = bun_ptr::BackRef::new(&*self);
+        let mut entries = self.entries.lock();
 
         // Re-check: another caller may have inserted while we were building.
         // Prefer the already-cached one and drop ours so callers converge.
-        let gop = bun_core::handle_oom(self.map.get_or_put(d));
+        let gop = bun_core::handle_oom(entries.map.get_or_put(d));
         if gop.found_existing {
             // SAFETY: existing map value is a live heap Entry (see above).
             let entry = unsafe { &mut **gop.value_ptr };
             if !entry.ctx.is_null() {
                 let existing = entry.ctx;
-                // SAFETY: existing non-null; ctx is the fresh CTX we just built and own.
-                unsafe {
+                // SAFETY: existing non-null; the up_ref is the +1 `from_raw` takes.
+                return unsafe {
                     boringssl::SSL_CTX_up_ref(existing);
-                    boringssl::SSL_CTX_free(ctx);
-                }
-                return Some(existing);
+                    OwnedSslCtx::from_raw(existing)
+                };
             }
             // Tombstone — adopt the rebuilt CTX into the existing slot.
             // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
@@ -149,7 +151,7 @@ impl SSLContextCache {
             // SAFETY: ctx is a valid SSL_CTX*; entry is a valid heap pointer.
             if unsafe {
                 boringssl::SSL_CTX_set_ex_data(
-                    ctx,
+                    ctx.as_ptr(),
                     c::us_ssl_ctx_cache_ex_idx(),
                     std::ptr::from_mut::<Entry>(entry).cast::<c_void>(),
                 )
@@ -157,40 +159,42 @@ impl SSLContextCache {
             {
                 return Some(ctx);
             }
-            entry.ctx = ctx;
+            entry.ctx = ctx.as_ptr();
             return Some(ctx);
         }
 
         let entry = bun_core::heap::into_raw(Box::new(Entry {
-            ctx,
-            owner: owner_ptr,
+            ctx: ctx.as_ptr(),
+            owner: bun_ptr::BackRef::new(self),
         }));
         *gop.value_ptr = entry;
         // SAFETY: ctx is a valid SSL_CTX*; entry is a fresh non-null heap pointer.
         if unsafe {
             boringssl::SSL_CTX_set_ex_data(
-                ctx,
+                ctx.as_ptr(),
                 c::us_ssl_ctx_cache_ex_idx(),
                 entry.cast::<c_void>(),
             )
         } != 1
         {
-            self.map.swap_remove(&d);
+            entries.map.swap_remove(&d);
             // SAFETY: entry was just heap-allocated above and not yet published to ex_data.
             drop(unsafe { bun_core::heap::take(entry) });
             return Some(ctx);
         }
 
-        self.ops_since_compact += 1;
-        if self.ops_since_compact > 16 {
-            self.ops_since_compact = 0;
-            self.compact_locked();
+        entries.ops_since_compact += 1;
+        if entries.ops_since_compact > 16 {
+            entries.ops_since_compact = 0;
+            entries.compact();
         }
         Some(ctx)
     }
+}
 
-    /// Reclaim tombstoned entries. Locked variant — callers hold `self.mutex`.
-    fn compact_locked(&mut self) {
+impl Entries {
+    /// Reclaim tombstoned entries.
+    fn compact(&mut self) {
         let mut i: usize = 0;
         while i < self.map.count() {
             let entry = self.map.values()[i];
@@ -213,10 +217,7 @@ impl SSLContextCache {
 /// whichever `SSL_CTX_free` took the refcount to zero, on that caller's
 /// thread; for the per-VM cache that's always the JS thread.
 // `ptr` is the ex_data slot value: null (CTX never went through the cache) or
-// a live `*Entry`; the deref is null-guarded. The C `CRYPTO_EX_free` ABI fixes
-// the parameter as `void*`, so the function cannot be marked `unsafe` or take a
-// reference — not_unsafe_ptr_arg_deref is a false positive here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+// a live `*Entry`; the deref is null-guarded.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
     parent: *mut c_void,
@@ -237,7 +238,7 @@ pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
     let entry: &mut Entry = unsafe { bun_ptr::callback_ctx::<Entry>(ptr) };
-    let _guard = entry.owner.mutex.lock_guard();
+    let _guard = entry.owner.entries.lock();
     entry.ctx = ptr::null_mut();
 }
 
@@ -247,8 +248,8 @@ impl Drop for SSLContextCache {
     /// dereference the freed `Entry`/map. Map itself holds no refs, so no
     /// `SSL_CTX_free` here.
     fn drop(&mut self) {
-        let _guard = self.mutex.lock_guard();
-        for &entry in self.map.values() {
+        let entries = self.entries.lock();
+        for &entry in entries.map.values() {
             // SAFETY: map values are live heap Entries; we hold the mutex.
             let e = unsafe { &*entry };
             if !e.ctx.is_null() {
@@ -269,11 +270,11 @@ impl Drop for SSLContextCache {
     }
 }
 
-pub mod c {
+pub(crate) mod c {
     use core::ffi::c_int;
     unsafe extern "C" {
         /// Registered alongside the other usockets ex_data slots in
         /// `us_ex_idx_init` (pthread_once-guarded).
-        pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
+        pub(crate) safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
     }
 }

@@ -1,0 +1,17 @@
+for ((let
+// comment
+) of a);
+for ((b
+/* comment */
+) in c) d;
+for ((e as f
+// comment
+) of g);
+for (([h]
+// comment
+);;);
+for ((let
+/* comment */
+) of i /**
+ * comment
+ */);

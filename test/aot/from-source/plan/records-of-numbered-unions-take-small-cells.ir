@@ -1,0 +1,15 @@
+# The records of a union that a number tells apart hold their fields in four bytes where that makes the cell a size smaller. One of them lies beside the hidden word.
+# -- source: mappers.ts
+# class Item { id: number; constructor(id: number) { this.id = id; } }
+# enum Kind { Simple, Composite }
+# type Mapper = { kind: Kind.Simple; source: Item; target: Item } | { kind: Kind.Composite; mapper1: Mapper; mapper2: Mapper };
+# declare function sink(...values: unknown[]): void;
+# function makeSimple(source: Item, target: Item): Mapper { return { kind: Kind.Simple, source, target }; }
+# function makeComposite(mapper1: Mapper, mapper2: Mapper): Mapper { return { kind: Kind.Composite, mapper1, mapper2 }; }
+# function get(item: Item, mapper: Mapper): Item { return mapper.kind === Kind.Simple ? (item === mapper.source ? mapper.target : item) : get(get(item, mapper.mapper1), mapper.mapper2); }
+# sink(makeSimple, makeComposite, get, Item);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "kind" OptionalInt32 Inline offset=20
+# CHECK: "kind" OptionalInt32 Inline offset=20
+

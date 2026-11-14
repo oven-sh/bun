@@ -1,0 +1,33 @@
+A mock that came ahead of the load of a module ends with its test file. Nothing of the module has run: the next file loads it, links it and runs its body; a third mocks what has loaded.
+#### a.test.js
+import { test, mock } from "bun:test";
+const say = (...words) => console.error("| CASE a " + words.join(" "));
+test("mocks ahead of the load", async () => {
+  mock.module("./src/m.js", () => ({ v: "mocked v", extra: 1 }));
+  mock.module("./src/c.cjs", () => ({ c: () => "mocked c" }));
+  const m = await import("./src/m.js"), barrel = await import("./src/barrel.js"), c = await import("./src/c.cjs");
+  say(m.v, Object.keys(m).join(), barrel.v, Object.keys(barrel).join(), c.c(), require("./src/c.cjs").c());
+});
+#### b.test.js
+import { test } from "bun:test";
+const say = (...words) => console.error("| CASE b " + words.join(" "));
+test("has the real modules", async () => {
+  const m = await import("./src/m.js"), barrel = await import("./src/barrel.js"), c = await import("./src/c.cjs");
+  say(m.v, Object.keys(m).join(), barrel.v, Object.keys(barrel).join(), c.c(), require("./src/c.cjs").c());
+});
+#### c.test.js
+import { test, mock } from "bun:test";
+const say = (...words) => console.error("| CASE c " + words.join(" "));
+test("mocks what has loaded", async () => {
+  mock.module("./src/m.js", () => ({ v: "mocked again" }));
+  const m = await import("./src/m.js"), barrel = await import("./src/barrel.js"), c = await import("./src/c.cjs");
+  say(m.v, Object.keys(m).join(), barrel.v, Object.keys(barrel).join(), c.c(), require("./src/c.cjs").c());
+});
+#### package.json
+{ "name": "mock-ends-next-file" }
+#### src/barrel.js
+export * from "./m.js"; export const own = 1;
+#### src/c.cjs
+console.error("| CASE the body of c runs"); exports.c = () => "real c";
+#### src/m.js
+console.error("| CASE the body of m runs"); export const v = "real v"; export function f() {}

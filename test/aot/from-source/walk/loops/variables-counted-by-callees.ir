@@ -1,0 +1,18 @@
+# f2 = repeat
+# -- source: main.ts
+# let c = 0; function f(x: number): number { try { return x; } finally { c++; } }
+# function repeat(turns: number): number { let n = 0; for (let k = 0; k < turns; k++) n += f(k & 7) + (c & 1); return n; }
+# print(repeat(1000), repeat(0), repeat(3), c);
+# -- end of source
+# The copy of the callee steps the variable in every turn, and the next turn read it out of memory again. It comes round in a parameter of the head: an integer, of which only whether it has been written is asked, in front of the loop.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetModuleVariable
+# CHECK: = Increment {{*}} form=CheckedIntegers
+# CHECK-NOT: = GetModuleVariable
+# CHECK: PutModuleVariable
+# CHECK-NOT: = GetModuleVariable
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4000 0 5 1003

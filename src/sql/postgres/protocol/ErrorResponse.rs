@@ -1,5 +1,3 @@
-use core::fmt;
-
 use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::field_message::FieldMessage;
 use crate::postgres::protocol::new_reader::NewReader;
@@ -7,15 +5,6 @@ use crate::postgres::protocol::new_reader::NewReader;
 #[derive(Default)]
 pub struct ErrorResponse {
     pub messages: Vec<FieldMessage>,
-}
-
-impl fmt::Display for ErrorResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for message in &self.messages {
-            writeln!(f, "{}", message)?;
-        }
-        Ok(())
-    }
 }
 
 impl ErrorResponse {
@@ -29,6 +18,33 @@ impl ErrorResponse {
             });
         }
         Ok(Self::default())
+    }
+
+    fn has_code(&self, sqlstate: &[u8]) -> bool {
+        self.messages
+            .iter()
+            .any(|field| matches!(field, FieldMessage::Code(code) if code.eq_ascii(sqlstate)))
+    }
+
+    pub fn is_fatal(&self) -> bool {
+        self.messages.iter().any(|field| {
+            matches!(field, FieldMessage::Severity(severity)
+                if severity.eq_ascii(b"FATAL") || severity.eq_ascii(b"PANIC"))
+        })
+    }
+
+    pub fn is_query_canceled(&self) -> bool {
+        self.has_code(b"57014")
+    }
+
+    /// 26000: the server lost the statement. 0A000 from this routine: its result columns changed.
+    pub fn invalidates_prepared_statement(&self) -> bool {
+        self.has_code(b"26000")
+            || (self.has_code(b"0A000")
+                && self.messages.iter().any(|field| {
+                    matches!(field, FieldMessage::Routine(routine)
+                        if routine.eq_ascii(b"RevalidateCachedQuery"))
+                }))
     }
 }
 

@@ -1,13 +1,7 @@
 use bun_ast::ExprData;
 use bun_ast::Ref;
-use bun_collections::StringHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-
-use crate::defines_table::{
-    GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
-    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
-};
 
 // ══════════════════════════════════════════════════════════════════════════
 // B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Flags` / `Options` /
@@ -55,8 +49,9 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // instead of leaking a `Box` per env var. Copy the value because
+    // `Bun__setEnvValue` frees the env-map entry it points into.
+    let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));
@@ -115,15 +110,7 @@ pub(crate) fn copy_env_for_define(
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Extension surface for the canonical `Define` (which lives in `bun_js_parser`).
-/// Separate trait so the table-dependent `init` / `insert_global` stay in this
-/// crate without an orphan-rule violation.
 pub trait DefineExt: Sized {
-    fn insert_global(
-        &mut self,
-        global: &[&[u8]],
-        value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError>;
-
     fn init(
         user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
@@ -133,71 +120,14 @@ pub trait DefineExt: Sized {
 }
 
 impl DefineExt for Define {
-    fn insert_global(
-        &mut self,
-        global: &[&[u8]],
-        value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let key = global[global.len() - 1];
-        let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        if let Some(existing) = self.dots.get_mut(key) {
-            existing.push(DotDefine {
-                parts,
-                data: value_define.clone(),
-            });
-        } else {
-            self.dots.put_assume_capacity(
-                key,
-                vec![DotDefine {
-                    parts,
-                    data: value_define.clone(),
-                }],
-            );
-        }
-        Ok(())
-    }
-
     fn init(
         _user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
-        let mut define = Box::new(Define {
-            identifiers: StringHashMap::default(),
-            dots: StringHashMap::default(),
-            drop_debugger,
-        });
-        define.dots.reserve(124);
-
-        let value_define = DefineData::init(Options {
-            value: ExprData::EUndefined(bun_ast::E::Undefined),
-            valueless: true,
-            can_be_removed_if_unused: true,
-            ..Default::default()
-        });
         // Step 1. Load the globals into the hash tables
-        for global in global_no_side_effect_property_accesses.iter() {
-            define.insert_global(global, &value_define)?;
-        }
-
-        let to_string_safe = DefineData::init(Options {
-            value: ExprData::EUndefined(bun_ast::E::Undefined),
-            valueless: true,
-            can_be_removed_if_unused: true,
-            call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
-            ..Default::default()
-        });
-
-        if omit_unused_global_calls {
-            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
-                define.insert_global(global, &to_string_safe)?;
-            }
-        } else {
-            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
-                define.insert_global(global, &value_define)?;
-            }
-        }
+        let mut define = Define::with_pure_globals(drop_debugger, omit_unused_global_calls);
 
         // Step 3. Load user data into hash tables
         // At this stage, user data has already been validated.
@@ -281,6 +211,29 @@ pub trait DefineDataExt: Sized {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error>;
+}
+
+/// The positions are in the text of the define, and the printer takes them for ones in the file.
+fn clear_locs(expr: &mut bun_ast::Expr) {
+    expr.loc = bun_ast::Loc::EMPTY;
+    match expr.data {
+        ExprData::EObject(mut object) => {
+            object.close_brace_loc = bun_ast::Loc::EMPTY;
+            for property in object.properties.iter_mut() {
+                if let Some(key) = &mut property.key {
+                    clear_locs(key);
+                }
+                if let Some(value) = &mut property.value {
+                    clear_locs(value);
+                }
+            }
+        }
+        ExprData::EArray(mut array) => {
+            array.close_bracket_loc = bun_ast::Loc::EMPTY;
+            array.items.iter_mut().for_each(clear_locs);
+        }
+        _ => {}
+    }
 }
 
 impl DefineDataExt for DefineData {
@@ -422,12 +375,7 @@ impl DefineDataExt for DefineData {
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
-            // `Source.contents` is typed `&'static [u8]` as a stand-in for an
-            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
-            // which the caller (`Define::init`) owns for the lifetime of the
-            // `Define` table — i.e. as long as any `ExprData` produced here is
-            // reachable. Route through `StoreStr` for the lifetime erasure.
-            contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
+            contents: std::borrow::Cow::Borrowed(arena_value),
             path: defines_path(),
             ..Default::default()
         };
@@ -440,7 +388,9 @@ impl DefineDataExt for DefineData {
         // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
         // is identity, so without `deep_clone` the `DefineData.value` dangles
         // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let data: ExprData = expr.data.deep_clone(bump)?;
+        let mut expr = bun_parsers::json_parser::clone_out_of_store(&expr, &source, log, bump)?;
+        clear_locs(&mut expr);
+        let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

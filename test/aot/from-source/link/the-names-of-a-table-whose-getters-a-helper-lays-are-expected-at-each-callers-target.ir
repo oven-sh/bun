@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# var lay = Object.defineProperty;
+# var fill = (target, all) => { for (var name in all) lay(target, name, { get: all[name], enumerable: true, configurable: true }); };
+# var space = {}, other = {};
+# fill(space, { low: () => low, add: () => add });
+# fill(other, { low: () => add });
+# function add(a, b) { return a + b | 0; }
+# function low(a) { return a & 15; }
+# function f(t) { let s = t & 1; for (let i = 0; i < t; i++) s = s + space.add(i, t) + space.low(i) + other.low(i, 1) | 0; return s; }
+# function once(t) { return space.add(t, 1); }
+# sink(f(5) + " " + f(40) + " " + once(5));
+# -- end of source
+# A helper lays getters on its first parameter under the names of a table, its second: `get: all[name]` in a loop over `all`. Nothing is proven of it. At each caller the names that the table lists are noted
+# with the one function that each field holds, for that caller's target alone. The walk tests for the getter at every read, and what a table gives is heard in loops alone.
+# RUN: link held mechanisms=all
+# CHECK-COUNT-4: expects getter {{*}} in-loops-alone
+# RUN(LOOP): walk f3:Body mechanisms=all
+# LOOP-COUNT-3: = GetCachedGetter
+# RUN(ONCE): walk f4:Body mechanisms=all
+# ONCE-NOT: GetCachedGetter
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 61 3468 6

@@ -1,0 +1,12 @@
+{
+  "name": "orders",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "aot": "./index.aot.ts",
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  }
+}

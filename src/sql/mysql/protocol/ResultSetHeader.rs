@@ -1,5 +1,5 @@
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::new_reader::{NewReader, ReaderContext};
+use super::stack_reader::PacketReader;
 
 #[derive(Default)]
 pub struct ResultSetHeader {
@@ -7,10 +7,7 @@ pub struct ResultSetHeader {
 }
 
 impl ResultSetHeader {
-    pub fn decode_internal<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
+    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         // Field count (length encoded integer)
         self.field_count = reader.encoded_len_int()?;
         Ok(())

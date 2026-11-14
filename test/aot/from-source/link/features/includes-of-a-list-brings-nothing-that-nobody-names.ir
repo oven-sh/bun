@@ -1,0 +1,10 @@
+# what is searched may be NaN: the helper of the prelude that looks for NaN reads the list under a number
+# -- source: includes-of-a-list-brings-nothing-that-nobody-names.ts
+# const list = [1, 2];
+# console.log(list.includes(JSON.parse("1")));
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: unnamed

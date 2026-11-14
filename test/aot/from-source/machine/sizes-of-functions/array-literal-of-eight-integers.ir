@@ -1,0 +1,15 @@
+# f1 = eight
+# -- source: array-literal-of-eight-integers.ts
+# function eight(i: number): number[] {
+#   return [i & 1, i & 2, (i >> 1) & 3, i & 4, i & 5, i & 6, i & 7, i & 8];
+# }
+# declare const input: any;
+# (globalThis as any).answer = eight(input | 0);
+# -- end of source
+# The compiler before this one: 40 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 41, patches 1, moves 18, unlikely or rare 6.
+# Since the list is born with storage for int32, as the engine bears it, and no longer with boxed values: one step more.
+# RUN(X64): steps most:60 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 60

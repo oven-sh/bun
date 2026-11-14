@@ -44,6 +44,47 @@ describe("FormData", () => {
     expect(formData.get("foo2").name).toBe("foo.txt");
   });
 
+  // Same as Node and browsers.
+  describe("reading a file entry", () => {
+    it("returns the same File that was appended or set", () => {
+      const file = new File(["a"], "a.txt");
+      const form = new FormData();
+      form.append("appended", file);
+      form.set("set", file);
+      expect(form.get("appended")).toBe(file);
+      expect(form.get("set")).toBe(file);
+      expect(form.getAll("appended")).toEqual([file]);
+      expect(form.getAll("appended")[0]).toBe(file);
+      expect([...form.values()].every(value => value === file)).toBe(true);
+      expect([...form.entries()].every(([, value]) => value === file)).toBe(true);
+      const seen: unknown[] = [];
+      form.forEach(value => seen.push(value));
+      expect(seen.every(value => value === file)).toBe(true);
+    });
+
+    it("returns the same new File every time for a Blob", () => {
+      const blob = new Blob(["a"]);
+      const form = new FormData();
+      form.append("blob", blob);
+      const entry = form.get("blob");
+      expect(entry).toBeInstanceOf(File);
+      expect(entry).not.toBe(blob);
+      expect(form.get("blob")).toBe(entry);
+      expect(form.getAll("blob")[0]).toBe(entry);
+    });
+
+    it("returns the same new File every time when a filename is given", async () => {
+      const file = new File(["a"], "a.txt", { type: "text/plain" });
+      const form = new FormData();
+      form.append("renamed", file, "other.txt");
+      const entry = form.get("renamed") as File;
+      expect(entry).not.toBe(file);
+      expect(form.get("renamed")).toBe(entry);
+      expect([entry.name, entry.type, await entry.text()]).toEqual(["other.txt", "text/plain", "a"]);
+      expect(file.name).toBe("a.txt");
+    });
+  });
+
   it("should use the correct filenames", async () => {
     const blob = new Blob(["bar"]) as any;
     const form = new FormData();
@@ -196,7 +237,7 @@ describe("FormData", () => {
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
 
-        const request = await new Response(formData).formData();
+        const request = await new Response(formData as FormData).formData();
         expect(request instanceof FormData).toBe(true);
 
         const aKeys = Array.from(formData.keys());
@@ -233,7 +274,7 @@ describe("FormData", () => {
               expect(b instanceof Blob).toBe(true);
               expect(await c.text()).toBe(await (b as Blob).text());
             } else {
-              expect(c).toBe(b);
+              expect(c).toBe(b as string);
             }
           }
         }
@@ -379,6 +420,65 @@ describe("FormData", () => {
     }
   });
 
+  it("rejects a URL-encoded name that is too long to decode", async () => {
+    const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+    const body = Buffer.alloc(600_000, "é");
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(body);
+        controller.close();
+      },
+    });
+    // With a 1 MiB limit the decoder is capped at 524288 UTF-8 bytes.
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      // @ts-expect-error - FormData.from is a Bun extension
+      expect(() => FormData.from(body)).toThrow("Out of memory");
+      await expect(new Response(body, { headers }).formData()).rejects.toThrow("Out of memory");
+      await expect(new Response(stream, { headers }).formData()).rejects.toThrow("Out of memory");
+      await expect(new Blob([body], { type: headers["content-type"] }).formData()).rejects.toThrow("Out of memory");
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+  });
+
+  it("throws when the entry list can't grow", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // With a 64 KiB limit the list is capped at 2730 entries.
+          const form = FormData.from(Buffer.alloc(5460, "a&").toString());
+          const part = '--b\\r\\nContent-Disposition: form-data; name="a"\\r\\n\\r\\n\\r\\n';
+          const multipart = Buffer.from(part.repeat(2731) + "--b--\\r\\n");
+          for (const grow of [
+            () => form.append("a", ""),
+            () => form.set("b", new Blob([])),
+            () => FormData.from(multipart, "b"),
+          ]) {
+            try {
+              grow();
+              console.log("no error");
+            } catch (e) {
+              console.log(e.name, e.message);
+            }
+          }
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "RangeError Out of memory\n".repeat(3),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {
@@ -417,7 +517,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(server.url, {
+    const reqBody = new Request(server.url as any, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -436,11 +536,11 @@ describe("FormData", () => {
       development: false,
       async fetch(req) {
         const formData = await req.formData();
-        return new Response(formData);
+        return new Response(formData as FormData);
       },
     });
 
-    const reqBody = new Request(server.url, {
+    const reqBody = new Request(server.url as any, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -481,7 +581,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -512,7 +612,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -547,7 +647,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -744,8 +844,8 @@ describe("FormData", () => {
       let formData = new FormData();
       formData.append("foo", file);
       formData.get("foo");
-      formData.get("foo")!.name;
-      formData.get("foo")!.type;
+      (formData.get("foo") as File).name;
+      (formData.get("foo") as File).type;
       return formData;
     }
     // Release needs 100k iterations so the freed name string's memory is actually
@@ -798,7 +898,7 @@ describe("Content-Type header propagation", () => {
           return new Response("Missing multipart/form-data content-type", { status: 400 });
         }
         const body = await req.formData();
-        expect(body.get("foo")!.size).toBe(3);
+        expect((body.get("foo") as File).size).toBe(3);
         return new Response("Success", { status: 200 });
       },
     });
@@ -807,7 +907,7 @@ describe("Content-Type header propagation", () => {
   // Custom Request subclass for testing inheritance
   class CustomRequest extends Request {
     constructor(input: string | URL | Request, init?: RequestInit) {
-      super(input, init);
+      super(input as any, init);
     }
   }
 

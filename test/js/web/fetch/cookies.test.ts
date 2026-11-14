@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 test("Can receive set-cookie headers from a server using fetch - issue #1262", async () => {
   await using server = createServer((req, res) => {
@@ -12,11 +13,11 @@ test("Can receive set-cookie headers from a server using fetch - issue #1262", a
 
   await once(server, "listening");
 
-  const response = await fetch(`http://localhost:${server.address().port}`);
+  const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
 
   expect(response.headers.get("set-cookie")).toBe("name=value; Domain=example.com");
 
-  const response2 = await fetch(`http://localhost:${server.address().port}`, {
+  const response2 = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`, {
     credentials: "include",
   });
 
@@ -34,7 +35,7 @@ test("Can send cookies to a server with fetch - issue #1463", async () => {
   const headersInit = [new Headers([["cookie", "value"]]), { cookie: "value" }, [["cookie", "value"]]];
 
   for (const headers of headersInit) {
-    await fetch(`http://localhost:${server.address().port}`, { headers });
+    await fetch(`http://localhost:${(server.address() as AddressInfo).port}`, { headers });
   }
 });
 
@@ -46,7 +47,7 @@ test("Cookie header is delimited with a semicolon rather than a comma - issue #1
 
   await once(server, "listening");
 
-  await fetch(`http://localhost:${server.address().port}`, {
+  await fetch(`http://localhost:${(server.address() as AddressInfo).port}`, {
     headers: [
       ["cookie", "FOO=lorem-ipsum-dolor-sit-amet"],
       ["cookie", "BAR=the-quick-brown-fox"],

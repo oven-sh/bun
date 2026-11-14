@@ -26,7 +26,7 @@ await $`cat < ${response} | wc -c`; // 1256
 - **Template literals**: Template literals execute shell commands and interpolate variables and expressions.
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
-- **Shell scripting**: Bun Shell runs shell scripts (`.bun.sh` files).
+- **Shell scripting**: Bun Shell runs shell scripts (`.sh` files).
 - **Custom interpreter**: Bun Shell is a small programming language with its own lexer, parser, and interpreter, written in Rust.
 
 ---
@@ -264,7 +264,7 @@ import { $ } from "bun";
 
 await $`
   REV=$(git rev-parse HEAD)
-  docker built -t myapp:$REV
+  docker build -t myapp:$REV .
   echo Done building docker image "myapp:$REV"
 `;
 ```
@@ -363,8 +363,10 @@ $.env({ FOO: "bar" });
 // the globally-set $FOO
 await $`echo $FOO`; // bar
 
-// the locally-set $FOO
-await $`echo $FOO`.env(undefined); // ""
+$.env();
+
+// the default $FOO
+await $`echo $FOO`; // ""
 ```
 
 ### Changing the working directory
@@ -429,7 +431,7 @@ for await (let line of $`echo "Hello World!"`.lines()) {
 }
 ```
 
-You can also use `.lines()` on a completed command:
+You can also use `.lines()` on a piped command:
 
 ```js
 import { $ } from "bun";
@@ -477,10 +479,6 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 - `seq`
 - `dirname`
 - `basename`
-
-**Partially** implemented:
-
-- `mv`: move files and directories (missing cross-device support)
 
 **Not** implemented yet, but planned:
 

@@ -1,0 +1,10 @@
+# getReader() is found by its name; its second row prints a wrong options.mode; the call passes no operand
+# -- source: a-reader-of-the-body-of-a-request-brings-no-other-feature.ts
+# Bun.serve({ port: 0, async fetch(request) { const reader = request.body!.getReader(); const { done } = await reader.read(); reader.releaseLock(); return new Response(String(done)); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by ReadableStreamPrototype
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

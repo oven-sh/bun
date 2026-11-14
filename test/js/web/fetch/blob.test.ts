@@ -93,7 +93,67 @@ for (const info of [
     expect(await blob.slice(-3, 4).slice(-2, 3).text()).toBe("F");
     expect(await blob.slice(-blob.size, 4).slice(-blob.size, 3).text()).toBe("Bun");
   });
+
+  // https://w3c.github.io/FileAPI/#dfn-slice: start and end are `[Clamp] long long`,
+  // so a fractional offset rounds to the nearest integer (ties to even) rather than
+  // truncating toward zero.
+  test(`${info.name} converts offsets as [Clamp] long long`, async () => {
+    const blob = info.blob;
+    expect(blob.size).toBe(6); // "BunFoo"
+    const cases: Record<string, [number[], string]> = {
+      "2.5, 5.5": [[2.5, 5.5], "nFoo"],
+      "1.7, 3.2": [[1.7, 3.2], "n"],
+      "1.5": [[1.5], "nFoo"],
+      "-1.5": [[-1.5], "oo"],
+      "0.99999": [[0.99999], "unFoo"],
+      "5.5, 6": [[5.5, 6], ""],
+      "3.5": [[3.5], "oo"],
+      "0, 2.5": [[0, 2.5], "Bu"],
+      "-0.5": [[-0.5], "BunFoo"],
+      "-0.6": [[-0.6], "o"],
+      "0.5, -2.5": [[0.5, -2.5], "BunF"],
+      "1, Infinity": [[1, Infinity], "unFoo"],
+      "-Infinity, 2": [[-Infinity, 2], "Bu"],
+      "MAX_VALUE, 3": [[Number.MAX_VALUE, 3], ""],
+      "-MAX_VALUE, 3": [[-Number.MAX_VALUE, 3], "Bun"],
+      "NaN, NaN": [[NaN, NaN], ""],
+      "0, 2 ** 31": [[0, 2 ** 31], "BunFoo"],
+      "2 ** 31": [[2 ** 31], ""],
+    };
+    const actual: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [label, [args, text]] of Object.entries(cases)) {
+      actual[label] = await blob.slice(...args).text();
+      expected[label] = text;
+    }
+    expect(actual).toEqual(expected);
+  });
 }
+
+test("Blob.slice(begin, contentType) rounds begin", async () => {
+  const slice = (new Blob(["BunFoo"]) as Bun.BunFile).slice(1.5, "a/b");
+  expect({ text: await slice.text(), type: slice.type }).toEqual({ text: "nFoo", type: "a/b" });
+});
+
+test("Bun.file().slice rounds offsets before the size of the file is known", async () => {
+  const file = Bun.file(path.join(import.meta.dir, "fixtures", "slice.txt"));
+  expect(await file.slice(1.5, 4.5).text()).toBe("nF");
+});
+
+test("BuildArtifact.slice rounds offsets as Blob.slice does", async () => {
+  using dir = tempDir("blob-slice-build-artifact", { "index.js": `console.log("BunFoo");` });
+  const build = await Bun.build({ entrypoints: [path.join(String(dir), "index.js")] });
+  const [artifact] = build.outputs;
+  const bytes = Buffer.from(await artifact.arrayBuffer());
+  expect(bytes.length).toBeGreaterThan(4);
+  expect({
+    "1.5": await artifact.slice(1.5).text(),
+    "0, 3.5": await artifact.slice(0, 3.5).text(),
+  }).toEqual({
+    "1.5": bytes.subarray(2).toString(),
+    "0, 3.5": bytes.subarray(0, 4).toString(),
+  });
+});
 
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });

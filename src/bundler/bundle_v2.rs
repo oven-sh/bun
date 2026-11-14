@@ -3311,7 +3311,10 @@ pub mod bv2_impl {
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
                 if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
-                    let target = self.transpiler.options.target;
+                    let target = match file_map_result.path_const() {
+                        Some(path) => self.target_of_entry_point(path),
+                        None => self.transpiler.options.target,
+                    };
                     return self.enqueue_entry_point_module(&file_map_result, target);
                 }
             }

@@ -954,4 +954,18 @@ describe("bundler files option", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  test("an html entry point in files of a server build is a page for the browser", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/page.html"],
+      files: {
+        "/app/page.html": `<!doctype html><script type="module" src="./client.js"></script>`,
+        "/app/client.js": `console.log(typeof window);`,
+      },
+      target: "bun",
+    });
+    expect(result.success).toBe(true);
+    const script = result.outputs.find(output => output.path.endsWith(".js"))!;
+    expect(await script.text()).not.toContain("// @bun");
+  });
 });

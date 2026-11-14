@@ -1585,6 +1585,36 @@ devTest("server: text that JavaScriptCore refuses does not abort the dev server"
   },
 });
 
+// The other files of the save are loaded without the one that is refused.
+devTest("server: the files that come with text that JavaScriptCore refuses are loaded", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `export default () => new Response("v1");`,
+    "routes/other.ts": `import { other } from "../other"; export default () => new Response(other);`,
+    "other.ts": `export const other = "other 1";`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    await dev.fetch("/other").equals("other 1");
+    {
+      await using _batch = await dev.batchChanges();
+      // New, and imported by the refused file alone.
+      await dev.write("helper.ts", `export const helper = "helper";`);
+      await dev.write("other.ts", `export const other = "other 2";`);
+      await dev.write(
+        "routes/index.ts",
+        `import { helper } from "../helper"; const r = /(/; export default () => new Response(helper + r);`,
+      );
+    }
+    await dev.fetch("/other").equals("other 2");
+    await dev.write(
+      "routes/index.ts",
+      `import { helper } from "../helper"; export default () => new Response("v3 " + helper);`,
+    );
+    await dev.fetch("/").equals("v3 helper");
+  },
+});
+
 // Pins a known cost. The first request for /other makes a build in which the barrel has one more
 // re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
 // counter.ts runs again at that request, which imports it, and its count starts over.

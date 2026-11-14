@@ -85,8 +85,6 @@ impl Readable {
         max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let mut stdio = stdio;
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
@@ -94,15 +92,12 @@ impl Readable {
             }
         }
 
-        match &stdio {
+        match stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => Readable::Fd(*fd),
+            Stdio::Fd(fd) => Readable::Fd(fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Stdio::Memfd(_) => {
-                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
-                Readable::Memfd(stdio.take_memfd().unwrap())
-            }
+            Stdio::Memfd(memfd) => Readable::Memfd(memfd.into_raw()),
             Stdio::Dup2(dup2) => {
                 #[cfg(unix)]
                 {
@@ -118,7 +113,7 @@ impl Readable {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
-            Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
+            Stdio::Capture => panic!("TODO: implement capture support in Stdio readable"),
             Stdio::ReadableStream(..) => {
                 // Nothing reads it, but closing it would fail the child's writes.
                 #[cfg(unix)]

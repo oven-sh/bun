@@ -64,14 +64,24 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The origin that `uncaughtException` listeners get for the error that fails a load of the entry point.
+#[repr(u8)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum EntryPointErrorOrigin {
+    /// `unhandledRejection`, unless the ahead-of-time engine ran a CommonJS entry point.
+    #[default]
+    Undecided,
+    /// Node runs the code that threw synchronously.
+    UncaughtException,
+    /// Node takes the error from a promise.
+    UnhandledRejection,
+}
+
 #[derive(Default)]
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// True when the entry module evaluated as CommonJS: Node reports a CJS
-    /// entry's top-level throw with origin `uncaughtException` but an ESM
-    /// entry rejection with `unhandledRejection`; the run command consults this.
-    pub evaluated_as_cjs: bool,
+    pub error_origin: EntryPointErrorOrigin,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -312,6 +322,8 @@ pub struct VirtualMachine {
     /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
     pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
+    /// The command line has an `--import`.
+    pub has_import_flag: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
@@ -3653,10 +3665,16 @@ impl VirtualMachine {
         self.main_hash = path.map_or(0, bun_watcher::Watcher::get_hash);
     }
 
-    pub fn entry_point_is_commonjs(&self) -> bool {
-        self.entry_point_result.evaluated_as_cjs
-            || (self.main_entry_point == MainEntryPoint::Compiled
-                && crate::compiled_program::entry_point_is_commonjs(self.global()))
+    /// Whether the error that failed this load of the entry point has the origin `unhandledRejection`.
+    pub fn entry_point_error_is_rejection(&self) -> bool {
+        match self.entry_point_result.error_origin {
+            EntryPointErrorOrigin::UncaughtException => false,
+            EntryPointErrorOrigin::UnhandledRejection => true,
+            EntryPointErrorOrigin::Undecided => {
+                self.main_entry_point != MainEntryPoint::Compiled
+                    || !crate::compiled_program::entry_point_is_commonjs(self.global())
+            }
+        }
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -3710,6 +3728,12 @@ impl VirtualMachine {
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();
+        // After `--import` Node loads the entry point through its ES module loader: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L62-L63
+        self.entry_point_result.error_origin = if self.has_import_flag {
+            EntryPointErrorOrigin::UnhandledRejection
+        } else {
+            EntryPointErrorOrigin::Undecided
+        };
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -3798,6 +3822,9 @@ impl VirtualMachine {
                     // SAFETY: hook contract.
                     let p = unsafe { (hooks.load_preloads)(self) }?;
                     if !p.is_null() {
+                        // The promise is a preload's, also when the preload ran the entry point.
+                        self.entry_point_result.error_origin =
+                            EntryPointErrorOrigin::UnhandledRejection;
                         self.set_pending_internal_promise(Some(p));
                         return Ok(p);
                     }
@@ -3825,6 +3852,11 @@ impl VirtualMachine {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
                         }) {
                             Ok(ret) => {
+                                // An override that returned a promise ran the entry point in it, or runs it later.
+                                if ret.as_any_promise().is_some() {
+                                    self.entry_point_result.error_origin =
+                                        EntryPointErrorOrigin::UnhandledRejection;
+                                }
                                 // If the override stored a promise itself, use that; otherwise
                                 // wrap its return value.
                                 if let Some(stored) = self.pending_internal_promise() {
@@ -3849,6 +3881,9 @@ impl VirtualMachine {
                                 // Whoever loads the entry point reports its promise, so, like the
                                 // loader's, it is not for the rejection tracker as well.
                                 rejected.set_handled();
+                                // Node calls `Module.runMain` synchronously: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/run_main_module.js#L33
+                                self.entry_point_result.error_origin =
+                                    EntryPointErrorOrigin::UncaughtException;
                                 core::ptr::from_mut(rejected).cast()
                             }
                         };
@@ -6541,7 +6576,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
-        self.entry_point_result.evaluated_as_cjs = false;
+        self.entry_point_result.error_origin = EntryPointErrorOrigin::Undecided;
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
         self.set_main(None);

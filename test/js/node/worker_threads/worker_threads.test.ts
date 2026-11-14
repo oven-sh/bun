@@ -2718,6 +2718,47 @@ parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.
   await w.terminate();
 });
 
+// Node runs a CommonJS worker file synchronously: what it throws at the top level has the origin "uncaughtException".
+describe("the origin of what a CommonJS worker entry point throws at the top level", () => {
+  test.concurrent.each([
+    ["a file", false, false],
+    ["a file after a CommonJS preload", false, true],
+    ["eval source", true, false],
+    ["eval source after a CommonJS preload", true, true],
+  ])("%s: uncaughtException", async (_, evalSource, preload) => {
+    using dir = tempDir("worker-throw-origin", {
+      "entry.cjs": `
+        process.on("uncaughtException", (error, origin) => console.log(origin));
+        module.exports = {};
+        throw new Error("thrown at the top level");
+      `,
+      "preload.cjs": `module.exports = {};`,
+      "main.cjs": `
+        const { Worker } = require("node:worker_threads");
+        const { readFileSync } = require("node:fs");
+        const { join } = require("node:path");
+        const [evalSource, preload] = JSON.parse(process.argv[2]);
+        const entry = join(__dirname, "entry.cjs");
+        const worker = new Worker(evalSource ? readFileSync(entry, "utf8") : entry, {
+          eval: evalSource,
+          preload: preload ? [join(__dirname, "preload.cjs")] : [],
+        });
+        worker.on("error", error => console.log("error: " + error.message));
+        worker.on("exit", code => console.log("exit " + code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs", JSON.stringify([evalSource, preload])],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // Releasing the last keep-alive from an immediate (after the tick, before the
 // poll) must be noticed before the loop parks.
 test("closing the only ref'd port from setImmediate lets the process exit", async () => {

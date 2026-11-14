@@ -18,7 +18,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{EntryPointErrorOrigin, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
@@ -140,24 +140,11 @@ pub(crate) fn overridden_main(this: &mut VirtualMachine) -> JSValue {
     this.overridden_main.get().unwrap_or_default()
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
-// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs {
-        return;
-    }
-    let Some(main) = this.main() else {
-        return;
-    };
-    let global = this.global();
-    // A failed conversion just skips the note; must never panic at an FFI
-    // boundary.
-    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
-        return;
-    };
-    if specifier_str.eql_utf8(main) {
-        this.entry_point_result.evaluated_as_cjs = true;
+/// The module loader is about to run the entry point as a CommonJS module, which Node runs synchronously.
+// HOST_EXPORT(Bun__VM__noteCommonJSEntryPoint, c)
+pub(crate) fn note_commonjs_entry_point(this: &mut VirtualMachine) {
+    if this.entry_point_result.error_origin == EntryPointErrorOrigin::Undecided {
+        this.entry_point_result.error_origin = EntryPointErrorOrigin::UncaughtException;
     }
 }
 

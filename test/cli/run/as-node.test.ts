@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { symlinkSync } from "fs";
 import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
 
@@ -137,6 +138,22 @@ describe("fake node cli", () => {
     });
     expect(fakeNodeRun(temp, ["-r", "./preload.cjs", "."]).stdout).toBe("1,false,false 1,false,false");
   });
+  // Node runs a CommonJS entry point synchronously, however the command line names it.
+  test.each(["index.js", ".", "index", "link.js", "-r ./preload.cjs index.js", "-r ./preload.cjs ."])(
+    "what the entry point of `node %s` throws at the top level has the origin uncaughtException",
+    args => {
+      using temp = tempDir("fake-node", {
+        "index.js": `
+          process.on("uncaughtException", (error, origin) => console.log(origin));
+          module.exports = {};
+          throw new Error("thrown at the top level");
+        `,
+        "preload.cjs": "module.exports = {};",
+      });
+      symlinkSync("index.js", join(String(temp), "link.js"), "file");
+      expect(fakeNodeRun(temp, args.split(" ")).stdout).toBe("uncaughtException");
+    },
+  );
 
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default

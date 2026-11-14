@@ -1534,6 +1534,46 @@ console.log("survived", require("./late.js"));`,
       expect(await run(preload, true, main)).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
     });
 
+    // Node calls Module.runMain synchronously and drops what it returns. What the entry point throws in a promise of the
+    // override has the origin "unhandledRejection".
+    describe("the origin of what the entry point throws", () => {
+      const originOf = override => `
+        const Module = require("module");
+        const runMain = Module.runMain;
+        process.on("uncaughtException", (error, origin) => console.log(origin + ": " + error.message));
+        Module.runMain = ${override};
+      `;
+      const main = `module.exports = {};\nthrow new Error("from main");`;
+
+      test.each([
+        ["calls the original", "uncaughtException", `(...args) => runMain(...args)`],
+        ["calls the original with the path", "uncaughtException", `() => runMain(process.argv[1])`],
+        ["requires the entry point", "uncaughtException", `() => void require(process.argv[1])`],
+        [
+          "compiles the entry point as a new module",
+          "uncaughtException",
+          `() => new Module()._compile(require("fs").readFileSync(process.argv[1], "utf8"), process.argv[1])`,
+        ],
+        ["is async and requires the entry point", "unhandledRejection", `async () => void require(process.argv[1])`],
+        ["is async and calls the original", "unhandledRejection", `async (...args) => runMain(...args)`],
+      ])("to a function that %s: %s", async (_, origin, override) => {
+        expect(await run(originOf(override), false, main)).toEqual({
+          stdout: `${origin}: from main\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // Bun also reports these rejections a second time, and exits with 1 (#44352).
+      test.each([
+        ["requires the entry point after an await", `async () => (await null, require(process.argv[1]))`],
+        ["requires the entry point in a promise", `() => Promise.resolve().then(() => require(process.argv[1]))`],
+        ["imports the entry point", `() => import(process.argv[1])`],
+      ])("to a function that %s: unhandledRejection", async (_, override) => {
+        expect((await run(originOf(override), false, main)).stdout).toBe("unhandledRejection: from main\n");
+      });
+    });
+
     test.each([
       ["is not a function", "{}", "Object is not a function"],
       ["throws", `() => { throw new Error("thrown"); }`, "thrown"],

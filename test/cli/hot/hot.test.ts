@@ -1411,3 +1411,28 @@ it("--hot leaves no main module when the reloaded entry point is an ES module", 
   expect(await stdout("run 2 undefined,undefined")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+it("--hot gives what an ES module entry point throws the origin unhandledRejection after a CommonJS first load", async () => {
+  // The first text writes the second text and keeps its own load going, so that the reload starts before the process
+  // looks at the first load. Nothing tells the first text that the watcher saw the write, so it waits a fixed time. A
+  // reload that starts later reports to the unhandledRejection listener, which prints the same line.
+  using dir = tempDir("hot-entry-error-origin", {
+    "main.js": `
+      process.on("uncaughtException", (error, origin) => (console.log(origin), process.exit(0)));
+      process.on("unhandledRejection", () => (console.log("unhandledRejection"), process.exit(0)));
+      require("fs").writeFileSync(__filename, 'import "node:fs";\\nthrow new Error("thrown by the second text");\\n');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+      module.exports = {};
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([runner.stdout.text(), runner.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "unhandledRejection\n", exitCode: 0 });
+});

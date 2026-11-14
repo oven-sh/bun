@@ -1447,6 +1447,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");
             let preloads3 = args.options(b"--import");
+            ctx.has_import_flag = !preloads3.is_empty();
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
             if may_refuse_options && preload4.is_some() {
                 startup_options::reject_unusable_inspect_preload();

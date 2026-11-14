@@ -1215,6 +1215,357 @@ describe("util.isDeepStrictEqual", () => {
   });
 });
 
+// node's objEquiv lists the keys of both objects once and reads each value when it compares that pair. So what a getter
+// or a Proxy trap below an earlier key does to either object is seen at every later key, however the two objects were
+// made. Every expectation is what Node 26 answers.
+describe("a value is read when its pair is compared", () => {
+  const symbol = Symbol("symbol");
+  class Record {
+    a: unknown;
+    b = 5;
+    c = 6;
+    constructor(a: unknown) {
+      this.a = a;
+    }
+  }
+  const literal = (a: unknown): any => ({ a, b: 5, c: 6 });
+  const makes: { [name: string]: (a: unknown) => any } = {
+    "a literal": literal,
+    "Object.fromEntries": a =>
+      Object.fromEntries([
+        ["a", a],
+        ["b", 5],
+        ["c", 6],
+      ]),
+    "JSON.parse": a => Object.assign(JSON.parse('{"a":null,"b":5,"c":6}'), { a }),
+    "an instance": a => new Record(a),
+    "an object without a prototype": a => Object.assign(Object.create(null), { a, b: 5, c: 6 }),
+    "a literal with a symbol key": a => ({ [symbol]: 1, a, b: 5, c: 6 }),
+    "a literal with 20 more keys": a => {
+      const object = literal(a);
+      for (let i = 0; i < 20; i++) object["k" + i] = i;
+      return object;
+    },
+  };
+  const pairs = [
+    ["a literal", "a literal"],
+    ["an instance", "an instance"],
+    ["an object without a prototype", "an object without a prototype"],
+    ["a literal with a symbol key", "a literal with a symbol key"],
+    ["a literal with 20 more keys", "a literal with 20 more keys"],
+    ["Object.fromEntries", "Object.fromEntries"],
+    ["a literal", "Object.fromEntries"],
+    ["Object.fromEntries", "a literal"],
+    ["a literal", "JSON.parse"],
+  ];
+  type Operands = { first: any; second: any };
+  const effects: [name: string, effect: (operands: Operands) => void, equal: boolean][] = [
+    ["stores another value under a later key", ({ first }) => void (first.b = 99), false],
+    ["stores another value under a later key of the second", ({ second }) => void (second.b = 99), false],
+    [
+      "stores another value under a later key of both",
+      ({ first, second }) => void ((first.c = 99), (second.c = 99)),
+      true,
+    ],
+    ["stores the same value under a later key", ({ first }) => void (first.b = 5), true],
+    ["deletes a later key", ({ first }) => void delete first.b, false],
+    ["deletes a later key of the second", ({ second }) => void delete second.b, false],
+    ["deletes a later key of both", ({ first, second }) => void (delete first.b, delete second.b), true],
+    ["deletes a later key and stores it again", ({ first }) => void (delete first.b, (first.b = 5)), true],
+    [
+      "deletes a later key of the second above a prototype that has it",
+      ({ second }) => void (delete second.c, Object.setPrototypeOf(second, { c: 6 })),
+      true,
+    ],
+    ["adds a key", ({ first }) => void (first.d = 7), true],
+    [
+      "adds 100 keys to both",
+      ({ first, second }) => {
+        for (let i = 0; i < 100; i++) first["n" + i] = second["n" + i] = i;
+      },
+      true,
+    ],
+    [
+      "makes a later key a getter of the same value",
+      ({ first }) => void Object.defineProperty(first, "b", { get: () => 5, enumerable: true, configurable: true }),
+      true,
+    ],
+    [
+      "makes a later key of the second a getter of another value",
+      ({ second }) => void Object.defineProperty(second, "b", { get: () => 99, enumerable: true, configurable: true }),
+      false,
+    ],
+    [
+      "makes a later key a getter that stores under the last key of the second",
+      ({ first, second }) =>
+        void Object.defineProperty(first, "b", {
+          get: () => ((second.c = 99), 5),
+          enumerable: true,
+          configurable: true,
+        }),
+      false,
+    ],
+    ["hides a later key", ({ first }) => void Object.defineProperty(first, "b", { enumerable: false }), true],
+    [
+      "hides a later key of the second",
+      ({ second }) => void Object.defineProperty(second, "b", { enumerable: false }),
+      true,
+    ],
+    ["swaps two later keys", ({ first }) => void ([first.b, first.c] = [first.c, first.b]), false],
+  ];
+  // The value below `a` that runs the effect the first time its `v` is read.
+  const carriers: [name: string, operand: "first" | "second", make: (run: () => void) => object][] = [
+    [
+      "a getter below the first",
+      "first",
+      run => ({
+        get v() {
+          return (run(), 1);
+        },
+      }),
+    ],
+    [
+      "a getter below the second",
+      "second",
+      run => ({
+        get v() {
+          return (run(), 1);
+        },
+      }),
+    ],
+    [
+      "a Proxy trap below the first",
+      "first",
+      run =>
+        new Proxy(
+          { v: 1 },
+          { get: (target, key, receiver) => (key === "v" && run(), Reflect.get(target, key, receiver)) },
+        ),
+    ],
+  ];
+
+  for (const [firstMake, secondMake] of pairs) {
+    describe(`${firstMake} and ${secondMake}`, () => {
+      for (const [effectName, effect, equal] of effects) {
+        for (const [carrierName, carrierIn, makeCarrier] of carriers) {
+          test(`${carrierName} ${effectName}: ${equal ? "equal" : "not equal"}`, () => {
+            const operands = () => {
+              const made = {} as Operands;
+              let ran = false;
+              const carrier = makeCarrier(() => {
+                if (ran) return;
+                ran = true;
+                effect(made);
+              });
+              made.first = makes[firstMake](carrierIn === "first" ? carrier : { v: 1 });
+              made.second = makes[secondMake](carrierIn === "second" ? carrier : { v: 1 });
+              return [made.first, made.second] as const;
+            };
+            expect({
+              isDeepStrictEqual: util.isDeepStrictEqual(...operands()),
+              withoutPrototypes: util.isDeepStrictEqual(...operands(), true as any),
+              deepStrictEqual: caught(() => assert.deepStrictEqual(...operands()))?.code ?? "passes",
+              notDeepStrictEqual: caught(() => assert.notDeepStrictEqual(...operands()))?.code ?? "passes",
+            }).toEqual({
+              isDeepStrictEqual: equal,
+              withoutPrototypes: equal,
+              deepStrictEqual: equal ? "passes" : "ERR_ASSERTION",
+              notDeepStrictEqual: equal ? "ERR_ASSERTION" : "passes",
+            });
+          });
+        }
+      }
+    });
+  }
+
+  // Two values under one key are compared alike wherever the walk meets them: before and behind a pair of objects, in two
+  // objects of one make and of two.
+  describe("every kind of value under a key", () => {
+    const joined = (a: string, b: string) => a + b;
+    const equal: [name: string, left: () => unknown, right: () => unknown][] = [
+      ["a number", () => 5, () => 5],
+      ["a fraction", () => 1.5, () => 3 / 2],
+      ["a number beyond 32 bits", () => 2 ** 40, () => 2 ** 40],
+      ["NaN", () => NaN, () => 0 / 0],
+      ["a string", () => "text", () => "text"],
+      ["a string made at run time", () => joined("te", "xt"), () => joined("t", "ext")],
+      [
+        "a long joined string",
+        () => joined("a long string of the first part, ", "and the second"),
+        () => joined("a long string of the first ", "part, and the second"),
+      ],
+      ["a bigint", () => 10n ** 20n, () => 10n ** 20n],
+      ["a registered symbol", () => Symbol.for("registered"), () => Symbol.for("registered")],
+      ["true", () => true, () => true],
+      ["undefined", () => undefined, () => undefined],
+      ["null", () => null, () => null],
+      ["an object", () => ({ n: 1 }), () => ({ n: 1 })],
+      ["an array", () => [1], () => [1]],
+      ["a Date", () => new Date(0), () => new Date(0)],
+    ];
+    const unequal: [name: string, left: () => unknown, right: () => unknown][] = [
+      ["zero and minus zero", () => 0, () => -0],
+      ["a bigint and a number", () => 1n, () => 1],
+      ["a string and a number", () => "1", () => 1],
+      ["null and undefined", () => null, () => undefined],
+      ["two symbols", () => Symbol("own"), () => Symbol("own")],
+      ["two strings", () => joined("te", "xt"), () => joined("te", "st")],
+      [
+        "two long joined strings",
+        () => joined("a long string of the first part, ", "and the second"),
+        () => joined("a long string of the first part, ", "and the third"),
+      ],
+      ["two bigints", () => 10n ** 20n, () => 10n ** 20n + 1n],
+      ["two objects", () => ({ n: 1 }), () => ({ n: 2 })],
+      ["a number and an object", () => 1, () => ({ n: 1 })],
+    ];
+    const shapes: [name: string, first: (value: unknown) => object, second: (value: unknown) => object][] = [
+      ["alone", value => ({ value }), value => ({ value })],
+      ["behind two objects", value => ({ object: {}, value }), value => ({ object: {}, value })],
+      ["before two objects", value => ({ value, object: {} }), value => ({ value, object: {} })],
+      ["in objects of two makes", value => ({ value }), value => Object.fromEntries([["value", value]])],
+      [
+        "behind two objects in objects of two makes",
+        value => ({ object: {}, value }),
+        value =>
+          Object.fromEntries([
+            ["object", {}],
+            ["value", value],
+          ]),
+      ],
+    ];
+    for (const [expected, kinds] of [
+      [true, equal],
+      [false, unequal],
+    ] as const) {
+      test.each(kinds)(`%s: ${expected ? "equal" : "not equal"}`, (_name, left, right) => {
+        expect(
+          shapes.map(([shape, first, second]) => [shape, util.isDeepStrictEqual(first(left()), second(right()))]),
+        ).toEqual(shapes.map(([shape]) => [shape, expected]));
+      });
+    }
+  });
+
+  test("a getter repairs a later key that differed", () => {
+    const first: any = {
+      a: {
+        get v() {
+          return ((first.b = 5), 1);
+        },
+      },
+      b: 7,
+    };
+    expect(util.isDeepStrictEqual(first, { a: { v: 1 }, b: 5 })).toBe(true);
+  });
+
+  test("a key that a getter adds is not compared, and one that it deletes is read as undefined", () => {
+    const first: any = {
+      a: {
+        get v() {
+          return ((first.d = 1), delete first.b, 1);
+        },
+      },
+      b: undefined,
+    };
+    expect(util.isDeepStrictEqual(first, { a: { v: 1 }, b: undefined })).toBe(true);
+  });
+
+  test("a getter that an object gains under a key of the other object is called, however many keys it has", () => {
+    const getter = (object: any, key: string, value: number, called: string[], enumerable = true) =>
+      Object.defineProperty(object, key, { get: () => (called.push(key), value), enumerable, configurable: true });
+    const changes: Record<string, (first: any, second: any, called: string[]) => void> = {
+      "the second gains a getter, the first gains a value": (first, second, called) => {
+        getter(second, "a", 1, called);
+        first.b = 1;
+      },
+      "each gains a getter": (first, second, called) => {
+        getter(second, "a", 1, called);
+        getter(first, "b", 1, called);
+      },
+      "each gains a value": (first, second) => {
+        second.a = 1;
+        first.b = 1;
+      },
+      "the second gains a getter that answers another value": (first, second, called) => {
+        getter(second, "a", 2, called);
+        first.b = 1;
+      },
+      "the second gains a getter that is not enumerable": (first, second, called) => {
+        getter(second, "a", 1, called, false);
+        first.b = 1;
+      },
+      "the second gains a getter": (_first, second, called) => {
+        getter(second, "a", 1, called);
+      },
+      "the first gains a getter": (first, _second, called) => {
+        getter(first, "b", 1, called);
+      },
+    };
+    // The keys of the two objects differ by one name: the first ends in `a`, the second in `b`.
+    const make = (count: number, last: string, k: object) => {
+      const object: any = {};
+      for (let i = 0; i < count; i++) object["t" + i] = i;
+      object.k = k;
+      object[last] = 1;
+      return object;
+    };
+    const answers = (count: number) =>
+      Object.entries(changes).flatMap(([name, change]) =>
+        ["first", "second"].map(getterIn => {
+          const called: string[] = [];
+          let calls = 0;
+          const withGetter = {
+            get v() {
+              if (!calls++) change(first, second, called);
+              return 1;
+            },
+          };
+          const first = make(count, "a", getterIn === "first" ? withGetter : { v: 1 });
+          const second = make(count, "b", getterIn === "second" ? withGetter : { v: 1 });
+          return { name, getterIn, equal: util.isDeepStrictEqual(first, second), called };
+        }),
+      );
+    const small = answers(0);
+    // An object of 200 keys gains a key and stays as it was made. An object of two keys does not.
+    expect(answers(200)).toEqual(small);
+    expect(small.slice(0, 6).map(row => row.equal)).toEqual([true, true, true, true, true, true]);
+  });
+
+  test("string keys are compared before symbol keys, whichever was created first", () => {
+    const order: string[] = [];
+    const says = (name: string) => ({
+      get v() {
+        return (order.push(name), 1);
+      },
+    });
+    const make = () => ({ [symbol]: says("symbol"), b: says("b"), a: says("a") });
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(order).toEqual(["b", "b", "a", "a", "symbol", "symbol"]);
+  });
+
+  test("an object in the validation of assert.throws", () => {
+    const thrown: any = {
+      info: {
+        a: {
+          get v() {
+            return ((thrown.info.b = 99), 1);
+          },
+        },
+        b: 5,
+      },
+    };
+    const error = caught(() =>
+      assert.throws(
+        () => {
+          throw thrown;
+        },
+        { info: { a: { v: 1 }, b: 5 } },
+      ),
+    );
+    expect(error?.code).toBe("ERR_ASSERTION");
+  });
+});
+
 describe("detached ArrayBuffer", () => {
   function detached() {
     const buf = new ArrayBuffer(4);

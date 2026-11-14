@@ -139,6 +139,7 @@
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "BunCompiledObjectEquality.h"
+#include "NodeStrictOwnProperties.h"
 #include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/AOTMembersLeftOut.h"
 #include "DOMURL.h"
@@ -1340,14 +1341,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
+    if constexpr (checkPrototypes) {
+        static_assert(isStrict, "the reader of node's mode compares two values that are no objects with SameValue");
+        // node reads each value when it compares it. The walks below read every value of an object before they compare the first.
+        return Bun::NodeStrictOwnProperties::areEqual(globalObject, scope, o1, o2, gcBuffer, [&](JSValue left, JSValue right) {
+            return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+        });
+    }
+
     JSC::Structure* o1Structure = o1->structure();
     if (!o1Structure->hasNonReifiedStaticProperties() && o1Structure->canPerformFastPropertyEnumeration()) {
         JSC::Structure* o2Structure = o2->structure();
-        // The mixed-structure fast path resolves properties with getDirect(),
-        // which also finds non-enumerable ones node ignores; the node entry
-        // point only takes the fast path when the structures match.
-        if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()
-            && (!checkPrototypes || o2Structure->id() == o1Structure->id())) {
+        if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
@@ -1480,7 +1485,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
 #if ENABLE(AOT)
     if (JSC::AOT::PropertyWalk::isCompiledObject(o1) || JSC::AOT::PropertyWalk::isCompiledObject(o2)) {
-        static_assert(!checkPrototypes || isStrict);
         bool sameIsEqual = true;
         if constexpr (enableAsymmetricMatchers)
             sameIsEqual = !hasEqualityTesters(globalObject);
@@ -1495,19 +1499,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    if constexpr (checkPrototypes) {
-        // node compares own enumerable properties only; getPropertyNames also
-        // collects enumerable properties from the prototype chain.
-        o1->methodTable()->getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
-        o2->methodTable()->getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
-    } else {
-        o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
-        o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
+    o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
 
     const size_t propertyArrayLength1 = a1.size();
     const size_t propertyArrayLength2 = a2.size();
@@ -1530,22 +1525,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        JSValue prop2;
-        if constexpr (checkPrototypes) {
-            // node only matches own enumerable properties; getIfPropertyExists
-            // would also find non-enumerable or inherited ones.
-            PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool has = o2->methodTable()->getOwnPropertySlot(o2, globalObject, propertyName1, slot2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!has || (slot2.attributes() & PropertyAttribute::DontEnum)) {
-                return false;
-            }
-            prop2 = slot2.getValue(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-        } else {
-            prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
+        RETURN_IF_EXCEPTION(scope, false);
 
         if constexpr (!isStrict) {
             if (prop1.isUndefined() && prop2.isEmpty()) {

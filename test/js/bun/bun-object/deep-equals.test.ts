@@ -362,4 +362,88 @@ describe.skipIf(!isASAN)("object mutated from a getter during comparison", () =>
     expect(stderr).not.toContain("ERROR: AddressSanitizer");
     expect(exitCode).toBe(0);
   });
+
+  // node's strict mode reads each value when it compares it: from the slot that the Structure named while the object
+  // keeps that Structure, by name once it has left it. The answers are Node's.
+  it("node's strict mode reads no slot of a Structure that the object has left", async () => {
+    const fixture = `
+      const assert = require('node:assert');
+      const util = require('node:util');
+
+      // Two objects of one Structure (two dictionaries from 200 keys on). A getter below "a" changes them while they are compared.
+      function build(count, a) {
+        const object = {};
+        for (let i = 0; i < count; i++) object['k' + i] = i;
+        object.a = a;
+        for (let i = 0; i < 30; i++) object['s' + i] = { v: i };
+        object.z = 1;
+        return object;
+      }
+      function make(count, mutate) {
+        let fired = 0;
+        const p1 = build(count, { get x() { if (!fired++) mutate(p1, p2); return 1; } });
+        const p2 = build(count, { get x() { return 1; } });
+        return [p1, p2];
+      }
+      const addMany = object => { for (let i = 0; i < 256; i++) object['n' + i] = i; };
+      const deleteLater = object => { for (let i = 0; i < 30; i += 3) delete object['s' + i]; };
+      const collect = () => {
+        const junk = [];
+        for (let i = 0; i < 200; i++) { const o = {}; for (let j = 0; j < 20; j++) o['q' + j] = j; junk.push(o); }
+        Bun.gc(true);
+      };
+      const effects = {
+        'adds keys to the first': p1 => addMany(p1),
+        'adds keys to the second': (p1, p2) => addMany(p2),
+        'adds keys to both and collects': (p1, p2) => { addMany(p1); addMany(p2); collect(); },
+        'deletes earlier keys and collects': p1 => { for (let i = 0; i < 8; i++) delete p1['k' + i]; collect(); },
+        'deletes later keys of the first': p1 => deleteLater(p1),
+        'deletes later keys of the second and collects': (p1, p2) => { deleteLater(p2); collect(); },
+        'deletes later keys of both and collects': (p1, p2) => { deleteLater(p1); deleteLater(p2); collect(); },
+        'stores other objects under later keys and collects': p1 => { for (let i = 0; i < 30; i++) p1['s' + i] = { v: i }; collect(); },
+        'stores another value under the last key': p1 => { p1.z = 2; },
+        'makes a later key a getter and collects': p1 => { Object.defineProperty(p1, 's7', { get() { return { v: 7 }; }, enumerable: true }); collect(); },
+      };
+      for (const count of [8, 200]) {
+        for (const [name, effect] of Object.entries(effects)) {
+          const answers = [util.isDeepStrictEqual(...make(count, effect)), util.isDeepStrictEqual(...make(count, effect), true)];
+          try {
+            assert.deepStrictEqual(...make(count, effect));
+            answers.push('passes');
+          } catch (error) {
+            answers.push(error.code);
+          }
+          console.log(count + ' keys, ' + name + ': ' + answers.join(' '));
+        }
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const rows = [
+      "adds keys to the first: true true passes",
+      "adds keys to the second: true true passes",
+      "adds keys to both and collects: true true passes",
+      "deletes earlier keys and collects: true true passes",
+      "deletes later keys of the first: false false ERR_ASSERTION",
+      "deletes later keys of the second and collects: false false ERR_ASSERTION",
+      "deletes later keys of both and collects: true true passes",
+      "stores other objects under later keys and collects: true true passes",
+      "stores another value under the last key: false false ERR_ASSERTION",
+      "makes a later key a getter and collects: true true passes",
+    ];
+    expect(stdout).toBe([...rows.map(row => "8 keys, " + row), ...rows.map(row => "200 keys, " + row), ""].join("\n"));
+    expect(stderr).not.toContain("ERROR: AddressSanitizer");
+    expect(exitCode).toBe(0);
+  });
 });

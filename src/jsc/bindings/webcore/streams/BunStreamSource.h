@@ -2,7 +2,7 @@
 // NativeReadableStreamSource JS class. Its .cpp also owns materializeNativeSource and the
 // SourceKind::Native pull/cancel/start algorithm arms.
 //
-// Internal cell: no prototype, no constructor, never exposed to JS.
+// Internal cell: no prototype, no constructor, never exposed to user JS (native-readable.ts holds one under a private name).
 #pragma once
 
 #include "root.h"
@@ -83,6 +83,8 @@ public:
     bool m_closed : 1 { false };
     // Body.textStream(): each pulled byte span is UTF-8-decoded before enqueue.
     bool m_textMode : 1 { false };
+    // The adapter of a node:stream Readable (nativeSourcePullForNodeReadable): a handle and a slab only, and its slabs and chunks are Buffers.
+    bool m_forNodeReadable : 1 { false };
     Bun::WebStreams::StreamingUTF8DecodeState m_textState;
 
 private:

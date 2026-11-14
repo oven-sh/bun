@@ -32,6 +32,8 @@ function receiverOf(prototypePath: string, method: string, provoke: () => unknow
 function sourceOf(className: string, createStream: () => ReadableStream | Promise<ReadableStream>): Open {
   return receiverOf(`%${className}InternalReadableStreamSource%.prototype`, "start", async () => {
     Readable.fromWeb((await createStream()) as any).read();
+    // node:stream starts the source on the tick that read() queued.
+    await new Promise(resolve => process.nextTick(resolve));
   });
 }
 

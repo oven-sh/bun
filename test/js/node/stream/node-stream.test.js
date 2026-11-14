@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
-import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { afterAll, describe, expect, it, jest } from "bun:test";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, nodeExeAtLeast, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -651,8 +651,89 @@ it.each(["before the first read", "after a chunk"])(
   },
 );
 
-// A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
-// buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
+// Reads exactly `size` bytes with the 'readable' + read(n) pattern, where n never exceeds what is buffered, so read()
+// never returns null. A native source used to push its pull result synchronously from inside `_read()`. A read(n) that
+// drains the buffer calls `_read()` while `needReadable` is false, so that push emitted no 'readable', and when it left
+// more than highWaterMark buffered nothing ever read again (#48514). Node's native sources push from a later turn.
+function readExactly(stream, size) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let missing = size;
+  for (const event of ["end", "close", "error"]) {
+    stream.on(event, err => reject(new Error(`'${event}' with ${missing} bytes missing`, { cause: err })));
+  }
+  stream.on("readable", function onReadable() {
+    if (stream.readableLength === 0) return;
+    missing -= stream.read(Math.min(missing, stream.readableLength)).length;
+    if (missing === 0) {
+      stream.off("readable", onReadable);
+      resolve();
+    }
+  });
+  return promise;
+}
+
+// Bun.file() is the pipe reader's source (FileReader): a pull can return a
+// number of bytes read into the view, or a chunk larger than the view.
+const readExactlyDir = tempDir("fromweb-readable-exact", { "big.bin": Buffer.alloc(1024 * 1024, "x") });
+afterAll(() => readExactlyDir[Symbol.dispose]());
+describe.each([
+  ["Blob.stream()", size => new Blob([Buffer.alloc(size, "x")]).stream()],
+  ["Response.body", size => new Response(Buffer.alloc(size, "x")).body],
+  ["Bun.file().stream()", () => Bun.file(join(String(readExactlyDir), "big.bin")).stream()],
+])("Readable.fromWeb(%s): 'readable' keeps firing when read(n) drains the buffer", (_, makeWeb) => {
+  it.each([
+    [100_000, undefined],
+    [300_000, undefined],
+    [300_000, 16384],
+  ])("reads %d bytes of a 1 MiB body (highWaterMark %s)", async (size, highWaterMark) => {
+    const r = Readable.fromWeb(makeWeb(1024 * 1024), { highWaterMark });
+    await readExactly(r, size);
+    expect(r.readableLength).toBeGreaterThan(0);
+  });
+
+  it("reads the whole body and gets one 'end'", async () => {
+    const r = Readable.fromWeb(makeWeb(1024 * 1024));
+    let bytes = 0;
+    let ends = 0;
+    r.on("end", () => ends++);
+    const ended = new Promise(resolve => r.on("close", resolve));
+    r.on("readable", () => {
+      // At EOF the buffer is empty and read() returns null, which ends the stream.
+      const chunk = r.read(r.readableLength || undefined);
+      if (chunk !== null) bytes += chunk.length;
+    });
+    await ended;
+    expect({ bytes, ends }).toEqual({ bytes: 1024 * 1024, ends: 1 });
+  });
+});
+
+// A 'data' listener that pauses, asks for more with read(0) and gives the chunk back with unshift() fills the buffer
+// past highWaterMark while a pull is pending. That pull must not pause the native reader: nothing else would resume it,
+// and the stream would never end.
+it("Readable.fromWeb(Bun.file().stream()): pause(), read(0) and unshift() inside 'data', then resume(), reads to the end", async () => {
+  const r = Readable.fromWeb(Bun.file(join(String(readExactlyDir), "big.bin")).stream(), { highWaterMark: 16384 });
+  let bytes = 0;
+  let first = true;
+  const ended = new Promise((resolve, reject) => {
+    r.on("end", resolve);
+    r.on("error", reject);
+  });
+  r.on("data", chunk => {
+    bytes += chunk.length;
+    if (!first) return;
+    first = false;
+    r.pause();
+    r.read(0);
+    bytes -= chunk.length;
+    r.unshift(chunk);
+    process.nextTick(() => r.resume());
+  });
+  await ended;
+  expect(bytes).toBe(1024 * 1024);
+});
+
+// A native-backed Readable pushed its pull results synchronously, so while it flowed Readable had the next chunk
+// buffered when a 'data' listener ran, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
 // emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so
 // nothing is buffered or due at that point, and it emits only 'close'.
 describe.each([
@@ -694,7 +775,9 @@ it("Readable.fromWeb: destroy() on a paused stream keeps the buffered chunk for 
 // would let 'end' follow data that never arrived.
 it("Readable.fromWeb: a stream that ended while paused still delivers every byte after destroy(), as in Node", async () => {
   const size = 16384 + 100;
-  const r = Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream());
+  // The source must end while the stream is paused. A paused stream stops pulling at highWaterMark, and the first
+  // chunk alone fills Windows' default of 16 KiB.
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream(), { highWaterMark: 64 * 1024 });
   let bytes = 0;
   r.on("data", chunk => {
     bytes += chunk.length;
@@ -2020,6 +2103,85 @@ it("stream/consumers do not read Blob and TextDecoder from globalThis", async ()
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual([2, "12", "12", 12, "12"]);
   expect(exitCode).toBe(0);
+});
+
+// A Readable over a native stream read into one buffer again and again, and each 'data' chunk was a view of it: the
+// chunks that waited in the stream and the chunks that a listener kept lay in one ArrayBuffer.
+describe.concurrent("Readable.fromWeb over a native stream: each 'data' chunk is a Buffer of its own", () => {
+  const blocks = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"];
+  // Each block is a chunk whose ArrayBuffer is as long as the chunk.
+  const own = blocks.map(block => block + " 0/8");
+  // What each group of cases in the fixture prints.
+  const expected = {
+    fetch: {
+      "fetch body": own,
+      "fetch body, objectMode": own,
+      "Duplex.from(fetch body)": own,
+      "fetch body, blocks of 3000 bytes": { runs: "a3000 b3000 c3000 d3000", own: true },
+      "fetch body, blocks longer than the buffer": { runs: "a8 b6096 c4596", own: true },
+      "fetch body, highWaterMark 0": { runs: "a600 b600 c600", own: true },
+      "fetch body, objectMode, blocks of 1000 bytes": { runs: "a1000 b1000 c1000", own: true },
+      "setEncoding('utf8')": ["a", "€b"],
+    },
+    listeners: {
+      // These three streams used to stop: no 'end', no 'close', no 'error'.
+      "a listener moves its chunk out while others wait": blocks.join(" ") + " end close",
+      "a byte stream enqueues the chunks": blocks.join(" ") + " closed",
+      "a listener moves its chunk out while the next read waits": "aaaaaaaa bbbbbbbb cccccccc end",
+      // The next read used to write over a chunk that the listener kept.
+      "a listener keeps the chunks and reads again": blocks.join(" "),
+      // It used to be an unhandled rejection when the stream does not destroy itself.
+      "an 'error' listener throws": "uncaughtException",
+      "a listener keeps a chunk that fills the buffer and reads again": Array.from(
+        "abcdefghijkl",
+        run => run + 1024,
+      ).join(" "),
+    },
+    bun: {
+      "Bun.serve request body": own,
+      Blob: {
+        runs: "a16384 b65536 c65536 d1000",
+        chunks: ["16384@0/16384", "65536@0/65536", "65536@0/65536", "1000@0/1000"],
+      },
+      "Blob, highWaterMark 0": { runs: "a16384 b1000", chunks: ["16384@0/16384", "512@0/512", "488@0/488"] },
+      "Bun.file": { runs: "a65536 b34464", own: true },
+      "Bun.file, highWaterMark 0": { runs: "a1500 b1500", own: true },
+    },
+    // Each stream used to keep its buffer of 64 KiB for as long as the program kept the stream.
+    kept: { "streams that are kept": "no buffers" },
+  };
+
+  // The cases of every group in `groups`, run in one process.
+  async function casesOf(exe, groups) {
+    using dir = tempDir("native-readable-chunks", {});
+    await using proc = Bun.spawn({
+      cmd: [exe, join(import.meta.dir, "native-readable-chunks-fixture.mjs"), ...groups],
+      env: { ...bunEnv, FIXTURE_DIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const cases = Object.fromEntries(
+      stdout
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+    );
+    return { cases, stderr, exitCode };
+  }
+  const expectedOf = groups => Object.assign({}, ...groups.map(group => expected[group]));
+
+  // The count of buffers needs a process of its own.
+  it.each([[["fetch", "listeners", "bun"]], [["kept"]]])("%j", async groups => {
+    expect(await casesOf(bunExe(), groups)).toEqual({ cases: expectedOf(groups), stderr: "", exitCode: 0 });
+  });
+
+  const node = nodeExeAtLeast("22.0.0");
+  it.skipIf(!node)("Node.js prints the same for the cases that need no Bun API", async () => {
+    const groups = ["fetch", "listeners"];
+    const { cases, exitCode } = await casesOf(node, groups);
+    expect({ cases, exitCode }).toEqual({ cases: expectedOf(groups), exitCode: 0 });
+  });
 });
 
 it("Readable.fromWeb's native source accepts pull(view) without the flags array", async () => {

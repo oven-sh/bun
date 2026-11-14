@@ -349,6 +349,32 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // The cell that a node:stream Readable pulls a native source through (src/js/internal/streams/native-readable.ts), or undefined for what is no native source.
+  b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionNativeReadableAdapter"), {
+    args: { source: b.any.optional },
+    returns: b.any,
+    capability: "heap",
+    uses: { source: [b.retained] },
+    implementation: b.hostCall,
+  }),
+  // One pull() of the source of that cell, into a buffer that the cell keeps: the source stores into `closeState` that it has ended, and can run the listeners of an end or of an error.
+  b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionNativeReadablePull"), {
+    args: { adapter: b.any.optional, size: b.any.optional, closeState: b.any.optional },
+    returns: b.any,
+    capability: "js",
+    throws: true,
+    uses: { adapter: b.inspected, size: b.inspected, closeState: [b.retained, b.writesContents()] },
+    implementation: b.hostCall,
+  }),
+  // What that promise settled with, as the same kinds of answer. A number is the count of bytes in the buffer of the cell: anything else is handed back.
+  b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionNativeReadablePullSettled"), {
+    args: { adapter: b.any.optional, result: b.any.optional },
+    returns: b.any,
+    capability: "heap",
+    throws: true,
+    uses: { adapter: b.inspected, result: [b.returned] },
+    implementation: b.hostCall,
+  }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
   // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and

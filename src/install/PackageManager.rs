@@ -240,10 +240,9 @@ pub use directories::{
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
     enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
-    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
+    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_network_task,
+    enqueue_package_for_cache, enqueue_parse_npm_package, enqueue_patch_task,
+    enqueue_patch_task_pre,
 };
 
 pub use self::progress_strings::ProgressStrings;

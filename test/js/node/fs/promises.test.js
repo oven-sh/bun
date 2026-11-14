@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -84,6 +84,323 @@ it("should exist", () => {
 
 it("should be enumerable", () => {
   assert.strictEqual(Object.prototype.propertyIsEnumerable.call(fs, "promises"), true);
+});
+
+describe("the shape of each function", () => {
+  // node -p 'require("fs/promises").<name>.length', v26.12.1
+  const nodeLengths = {
+    access: 1,
+    appendFile: 3,
+    chmod: 2,
+    chown: 3,
+    copyFile: 3,
+    cp: 3,
+    glob: 2,
+    lchmod: 2,
+    lchown: 3,
+    link: 2,
+    lstat: 1,
+    lutimes: 3,
+    mkdir: 2,
+    mkdtemp: 2,
+    mkdtempDisposable: 2,
+    open: 3,
+    opendir: 3,
+    readFile: 2,
+    readdir: 2,
+    readlink: 2,
+    realpath: 2,
+    rename: 2,
+    rm: 2,
+    rmdir: 2,
+    stat: 1,
+    statfs: 1,
+    symlink: 3,
+    truncate: 1,
+    unlink: 1,
+    utimes: 3,
+    watch: 1,
+    writeFile: 3,
+  };
+  // Node's fs/promises has none of these. They are as they were: seven still count the callback of the callback form.
+  const bunOnlyLengths = {
+    close: 1,
+    exists: 0,
+    fchmod: 3,
+    fchown: 4,
+    fdatasync: 2,
+    fstat: 1,
+    fsync: 2,
+    ftruncate: 1,
+    futimes: 4,
+    read: 6,
+    readv: 3,
+    write: 6,
+    writev: 3,
+  };
+  const nodeNames = Object.keys(nodeLengths);
+  const lengthsOf = (object, names) => Object.fromEntries(names.map(name => [name, object[name]?.length]));
+  const printLengths = /* js */ `
+    const fsPromises = require("node:fs/promises");
+    const lengths = {};
+    for (const key in fsPromises) if (typeof fsPromises[key] === "function") lengths[key] = fsPromises[key].length;
+    console.log(JSON.stringify(lengths));
+  `;
+
+  it("functions have Node's length", async () => {
+    expect(lengthsOf(fsPromises, nodeNames)).toEqual(nodeLengths);
+    expect(lengthsOf(await import("node:fs/promises"), nodeNames)).toEqual(nodeLengths);
+  });
+
+  const node = nodeExeAtLeast("26.3.0");
+  it.skipIf(!node)("Node has the lengths of that table", async () => {
+    await using proc = Bun.spawn({ cmd: [node, "-e", printLengths], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lengths = JSON.parse(stdout || "{}");
+    expect({ lengths: Object.fromEntries(nodeNames.map(name => [name, lengths[name]])), exitCode }, stderr).toEqual({
+      lengths: nodeLengths,
+      exitCode: 0,
+    });
+  });
+
+  it("functions that Node does not have keep their length", () => {
+    const others = Object.keys(fsPromises).filter(
+      key => typeof fsPromises[key] === "function" && !(key in nodeLengths),
+    );
+    expect(lengthsOf(fsPromises, others)).toEqual(bunOnlyLengths);
+  });
+
+  it("FileHandle methods have Node's length", async () => {
+    // Each method of Object.getOwnPropertyNames(Object.getPrototypeOf(await fsPromises.open(path))), v26.12.1
+    const nodeFileHandleLengths = {
+      appendFile: 2,
+      chmod: 1,
+      chown: 2,
+      createReadStream: 0,
+      createWriteStream: 0,
+      datasync: 0,
+      getAsyncId: 0,
+      read: 4,
+      readFile: 1,
+      readLines: 0,
+      readableWebStream: 0,
+      readv: 2,
+      stat: 1,
+      sync: 0,
+      truncate: 0,
+      utimes: 2,
+      write: 4,
+      writeFile: 2,
+      writev: 2,
+    };
+    await using handle = await fsPromises.open(import.meta.path);
+    expect(lengthsOf(Object.getPrototypeOf(handle), Object.keys(nodeFileHandleLengths))).toEqual(nodeFileHandleLengths);
+  });
+
+  it("functions keep their name, their kind and the attributes of name and length", () => {
+    const attributes = { writable: false, enumerable: false, configurable: true };
+    const actual = {};
+    const expected = {};
+    // Not glob, watch and opendir: their kind or their name is not Node's.
+    for (const name of nodeNames.filter(name => !["glob", "watch", "opendir"].includes(name))) {
+      const fn = fsPromises[name];
+      const { length, name: nameDescriptor } = Object.getOwnPropertyDescriptors(fn);
+      actual[name] = {
+        kind: fn.constructor.name,
+        keys: Reflect.ownKeys(fn),
+        length: { ...length, value: undefined },
+        name: nameDescriptor,
+      };
+      expected[name] = {
+        kind: "AsyncFunction",
+        keys: ["length", "name"],
+        length: { value: undefined, ...attributes },
+        name: { value: name, ...attributes },
+      };
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  // Neither a node.fs trace category nor a replaced Object.defineProperty may change a length.
+  it.concurrent.each([
+    ["--trace-event-categories node.fs", ["--trace-event-categories", "node.fs"], ""],
+    [
+      "Object.defineProperty replaced before the first require",
+      [],
+      /* js */ `
+        const defineProperty = Object.defineProperty;
+        Object.defineProperty = function (target, key, descriptor) {
+          return typeof target === "function" ? target : defineProperty(target, key, descriptor);
+        };
+      `,
+    ],
+  ])("in a process with %s", async (_, flags, before) => {
+    // The trace log goes to the working directory.
+    using dir = tempDir("fs-promises-lengths", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", before + printLengths],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lengths: JSON.parse(stdout || "{}"), exitCode }, stderr).toEqual({
+      lengths: { ...nodeLengths, ...bunOnlyLengths },
+      exitCode: 0,
+    });
+  });
+});
+
+describe("arguments", () => {
+  // Every call gets a directory of its own: { file, other, dir/, symlink -> file }.
+  let count = 0;
+  function fixture(root) {
+    const dir = join(String(root), String(count++));
+    fs.mkdirSync(join(dir, "dir"), { recursive: true });
+    fs.writeFileSync(join(dir, "file"), "hello");
+    fs.writeFileSync(join(dir, "other"), "other file");
+    fs.symlinkSync("file", join(dir, "symlink"));
+    return dir;
+  }
+  const clean = (text, dir) => text.replaceAll(dir, "<dir>").replace(/tmp-\w{6}/g, "tmp-<random>");
+
+  function describeValue(value, dir) {
+    if (typeof value === "string") return clean(value, dir);
+    if (Buffer.isBuffer(value)) return `Buffer ${clean(value.toString(), dir)}`;
+    if (Array.isArray(value)) return value.map(item => describeValue(item, dir)).sort();
+    if (value === null || typeof value !== "object") return typeof value === "bigint" ? `${value}n` : value;
+    const link = typeof value.isSymbolicLink === "function" ? ` link:${value.isSymbolicLink()}` : "";
+    const name = typeof value.name === "string" ? ` ${value.name}` : "";
+    return `${value.constructor.name}${name}${link} ${Object.keys(value).map(key => typeof value[key])}`;
+  }
+
+  // What the call answers or fails with, and what the directory holds afterwards.
+  async function outcomeOf(call, dir) {
+    let outcome;
+    try {
+      outcome = { value: describeValue(await call(), dir) };
+    } catch (error) {
+      outcome = { error: [error.code, clean(error.message, dir)] };
+    }
+    outcome.left = fs.readdirSync(dir).map(name => {
+      const stats = fs.lstatSync(join(dir, name));
+      const kind = stats.isSymbolicLink() ? `->${fs.readlinkSync(join(dir, name))}` : stats.isFile() ? stats.size : "/";
+      return clean(`${name} ${kind} ${(stats.mode & 0o777).toString(8)} ${stats.nlink}`, dir);
+    });
+    outcome.left.sort();
+    return outcome;
+  }
+
+  const owner = [process.getuid?.() ?? 0, process.getgid?.() ?? 0];
+  // The last argument of a list is one whose effect shows.
+  const lists = {
+    access: dir => [join(dir, "file"), 8],
+    appendFile: dir => [join(dir, "file"), "6162", { encoding: "hex" }],
+    chmod: dir => [join(dir, "file"), 0o600],
+    chown: dir => [join(dir, "file"), ...owner],
+    copyFile: dir => [join(dir, "file"), join(dir, "other"), fs.constants.COPYFILE_EXCL],
+    lchown: dir => [join(dir, "symlink"), ...owner],
+    link: dir => [join(dir, "file"), join(dir, "hard")],
+    lstat: dir => [join(dir, "symlink"), { bigint: true }],
+    lutimes: dir => [join(dir, "symlink"), 1, 2],
+    mkdir: dir => [join(dir, "made", "deep"), { recursive: true }],
+    mkdtemp: dir => [join(dir, "tmp-"), { encoding: "buffer" }],
+    readFile: dir => [join(dir, "file"), { encoding: "hex" }],
+    readdir: dir => [dir, { withFileTypes: true }],
+    readlink: dir => [join(dir, "symlink"), { encoding: "buffer" }],
+    realpath: dir => [join(dir, "symlink"), { encoding: "buffer" }],
+    rename: dir => [join(dir, "file"), join(dir, "renamed")],
+    stat: dir => [join(dir, "symlink"), { bigint: true }],
+    statfs: dir => [dir, { bigint: true }],
+    symlink: dir => [join(dir, "file"), join(dir, "made"), "bogus"],
+    truncate: dir => [join(dir, "file"), 2],
+    unlink: dir => [join(dir, "file")],
+    utimes: dir => [join(dir, "file"), 1, 2],
+    writeFile: dir => [join(dir, "file"), "6162", { encoding: "hex" }],
+  };
+  // Only macOS has lchmod.
+  if (fs.constants.O_SYMLINK !== undefined) lists.lchmod = dir => [join(dir, "symlink"), 0o600];
+  const syncFormOf = name => (name === "realpath" ? fs.realpathSync.native : fs[`${name}Sync`]);
+
+  // The sync form gets the caller's list as it is, so a promise form that drops, adds or swaps an argument differs.
+  it.each(Object.keys(lists))("%s settles as its sync form returns or throws, for the same arguments", async name => {
+    using root = tempDir("fs-promises-arguments", {});
+    const { length } = lists[name]("");
+    const changes = { "two more": args => [...args, "more", () => {}] };
+    for (let given = 0; given <= length; given++) {
+      changes[`${given} given`] = args => args.slice(0, given);
+      changes[`${given} given, then undefined`] = args =>
+        Array.from({ length: length + 1 }, (_, i) => (i < given ? args[i] : undefined));
+    }
+    const actual = {};
+    const expected = {};
+    for (const [label, change] of Object.entries(changes)) {
+      let dir = fixture(root);
+      const given = change(lists[name](dir));
+      actual[label] = await outcomeOf(() => fsPromises[name](...given), dir);
+      dir = fixture(root);
+      const same = change(lists[name](dir));
+      expected[label] = await outcomeOf(() => syncFormOf(name)(...same), dir);
+    }
+    expect(actual).toEqual(expected);
+    // A list is one that its function reads to the end: with all of it the outcome is not that of a shorter one.
+    expect(expected[`${length} given`]).not.toEqual(expected[`${length - 1} given`]);
+  });
+});
+
+describe.concurrent("node.fs.async trace events", () => {
+  async function eventsOf(flags, script) {
+    // The trace log goes to the working directory.
+    using dir = tempDir("fs-promises-trace", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: "done\n", exitCode: 0 });
+    return JSON.parse(fs.readFileSync(join(String(dir), "node_trace.1.log"), "utf8"))
+      .traceEvents.filter(event => event.ph === "b" && event.cat.includes("node.fs.async"))
+      .map(event => event.name);
+  }
+  const calls = last => /* js */ `
+    (async () => {
+      fs.mkdirSync("made");
+      await fsPromises.access("made");
+      await fsPromises.stat("made");
+      await fsPromises.lstat("made");
+      await fsPromises.readdir("made");
+      await fsPromises.rename("made", "moved");
+      await fsPromises.chmod("moved", 0o755);
+      ${last}
+      console.log("done");
+    })();
+  `;
+  // What Node v26.12.1 writes for these calls.
+  const events = ["access", "stat", "lstat", "scandir", "rename", "chmod"];
+
+  it("with a category of the command line", async () => {
+    const script = `
+      const fs = require("node:fs");
+      const fsPromises = require("node:fs/promises");
+      ${calls(`await fsPromises.utimes("moved", 1, 2);`)}
+    `;
+    expect(await eventsOf(["--trace-event-categories", "node.fs.async"], script)).toEqual([...events, "utime"]);
+  });
+
+  // A call by name reads the operation each time, so tracing that starts after the module loaded sees it.
+  it("with tracing enabled after the first require", async () => {
+    const script = `
+      const fs = require("node:fs");
+      const fsPromises = require("node:fs/promises");
+      require("node:trace_events").createTracing({ categories: ["node.fs.async"] }).enable();
+      ${calls("// Not utimes: it keeps the operation that it found when the module loaded, and Node traces it here.")}
+    `;
+    expect(await eventsOf([], script)).toEqual(events);
+  });
 });
 
 describe("access", () => {

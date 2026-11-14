@@ -463,9 +463,8 @@ function idleOrTimeout(scope: Scope, ms: number): Promise<void> | undefined {
     return;
   }
   const { promise, resolve } = Promise.withResolvers<void>();
-  const timer: NodeJS.Timeout = setTimeout(resolve, ms);
-  timer.unref();
-  scope.whenIdle = stopWaiting.bind(null, timer, resolve);
+  // Ref'd on purpose: a child scope that is open and idle holds no loop ref, so this timer keeps the process alive.
+  scope.whenIdle = stopWaiting.bind(null, setTimeout(resolve, ms), resolve);
   return promise;
 }
 

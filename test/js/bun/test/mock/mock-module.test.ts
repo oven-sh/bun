@@ -3030,8 +3030,18 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
           test("no file of them ran", () => expect(globalThis.loaded).toBeUndefined());
         `,
+        // Runs after lookup.test.js, whose last test expects that no file has run.
+        "original.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          test("jest.createMockFromModule() of a mock of vi.doMock() is made of the ES module", () => {
+            vi.doMock("dual", () => ({ which: "mock" }));
+            const created = jest.createMockFromModule("dual");
+            expect([created.which, created.fn()]).toEqual(["real esm", undefined]);
+            expect(globalThis.loaded).toEqual(["dual esm"]);
+          });
+        `,
       },
-      3,
+      4,
     );
   });
 

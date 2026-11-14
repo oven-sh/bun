@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { spawn as cpSpawn } from "child_process";
-import { chmodSync } from "fs";
+import { spawn as cpSpawn, spawnSync as cpSpawnSync, execFile } from "child_process";
+import { chmodSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
@@ -105,5 +105,99 @@ describe.skipIf(isWindows)("spawn resolves relative PATH entries against the cwd
     expect(result.stderr).toBe("");
     expect(result.stdout.trim()).toBe("RAN");
     expect(result.code).toBe(0);
+  });
+});
+
+// POSIX execute permission bits and directory candidates do not apply on Windows.
+describe.skipIf(isWindows)("spawn retains permission errors from PATH", () => {
+  test.concurrent.each([
+    ["tool", "ENOENT"],
+    ["sub/tool", "EACCES"],
+  ])("probes the child's relative cwd when %s is denied", async (deniedFile, expectedCode) => {
+    using dir = tempDir("spawn-path-relative-error", { "sub/.keep": "", [deniedFile]: "not executable" });
+    chmodSync(path.join(String(dir), deniedFile), 0o600);
+    await using child = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        `let code;
+        try { Bun.spawnSync(["tool"], { cwd: "sub", env: { ...process.env, PATH: "." } }); }
+        catch (error) { code = error.code; }
+        process.stdout.write(code ?? "unexpected success");`,
+      ],
+      { cwd: String(dir), env: bunEnv, stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expectedCode, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("preserves executable selection with a relative cwd", async () => {
+    using dir = tempDir("spawn-path-relative-cwd", { "sub/.keep": "" });
+    symlinkSync(bunExe(), path.join(String(dir), "tool"));
+    symlinkSync(bunExe(), path.join(String(dir), "sub/tool"));
+    await using child = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        `const result = Bun.spawnSync(["tool", "-e", 'process.stdout.write("OK")'], {
+          cwd: "sub", env: { ...process.env, PATH: "." }
+        });
+        process.stdout.write(result.stdout);
+        process.stderr.write(result.stderr);
+        process.exit(result.exitCode);`,
+      ],
+      { cwd: String(dir), env: bunEnv, stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent.each([
+    ["denied", false],
+    ["denied", true],
+    ["directory", false],
+    ["directory", true],
+  ] as const)("candidate=%s, relative=%s", async (candidate, relative) => {
+    using dir = tempDir("spawn-path-permission", {
+      "denied/tool": "not executable",
+      "directory/tool/.keep": "",
+      "allowed/.keep": "",
+    });
+    chmodSync(path.join(String(dir), "denied/tool"), 0o600);
+    symlinkSync(bunExe(), path.join(String(dir), "allowed/tool"));
+    const entry = (name: string) => (relative ? name : path.join(String(dir), name));
+    const options = {
+      cwd: String(dir),
+      env: { ...bunEnv, PATH: [entry(candidate), entry("missing")].join(path.delimiter) },
+    };
+    const expectedError = { code: "EACCES", path: "tool" };
+
+    expect(() => Bun.spawn(["tool"], options)).toThrow(expect.objectContaining(expectedError));
+    expect(() => Bun.spawnSync(["tool"], options)).toThrow(expect.objectContaining(expectedError));
+    expect(cpSpawnSync("tool", [], options).error).toMatchObject(expectedError);
+
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const child = cpSpawn("tool", [], { ...options, stdio: "ignore" });
+    child.once("error", resolve);
+    child.once("close", () => reject(new Error("Expected spawn error")));
+    expect(await promise).toMatchObject(expectedError);
+
+    const error = await new Promise<Error | null>(resolve => execFile("tool", [], options, resolve));
+    expect(error).toMatchObject(expectedError);
+    expect(cpSpawnSync("absent-tool", [], options).error).toMatchObject({ code: "ENOENT" });
+    expect(Bun.which("tool", { cwd: options.cwd, path: options.env.PATH })).toBeNull();
+
+    const success = await new Promise(resolve =>
+      execFile(
+        "tool",
+        ["-e", 'process.stdout.write("OK")'],
+        {
+          ...options,
+          env: { ...options.env, PATH: [entry(candidate), entry("missing"), entry("allowed")].join(path.delimiter) },
+        },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr }),
+      ),
+    );
+    expect(success).toEqual({ error: null, stdout: "OK", stderr: "" });
   });
 });

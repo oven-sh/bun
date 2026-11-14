@@ -1335,11 +1335,7 @@ where
             self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
-            // This end can run uncorked (e.g. render_production_error from a
-            // rejection microtask), where no cork or parser gate runs the
-            // close check for Connection: close or a graceful-stop mark. The
-            // shim no-ops when the socket is corked (the cork wrapper's own
-            // gate runs later) or already closed.
+            // Sends and gates now: the drain below can let another socket take this response's cork slot, and then cork() skips its gate.
             resp.close_if_done_and_marked();
             // end_request_streaming_and_drain() must run after the last
             // `resp` access: its drain_microtasks() can re-enter lsquic (H3)

@@ -1581,6 +1581,198 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 });
 
+// A response that ends without a body (a 304, a HEAD, the bodyless errors) has to close a connection that is
+// marked to close, like a response with a body. Every request here is a POST whose body never arrives, answered
+// 304 by an async handler. Completing that response rejects the body, and the microtasks that run then can
+// take the cork slot the response was written into before the server looks at the connection again.
+describe.concurrent("a response without a body closes a connection that is marked to close", () => {
+  const upload = (requestLine: string, headers = "") =>
+    `${requestLine}\r\nHost: x\r\n${headers}Content-Length: 10\r\n\r\n`;
+  const statusLine = (reply: string) => reply.slice(0, reply.indexOf("\r\n"));
+
+  // `reply` resolves with what the server sent once the server ends the connection. The client never ends it
+  // first and idleTimeout: 0 turns the idle sweep off, so nothing else ends a connection the server leaves open.
+  function untilServerCloses(port: number, request: string, useTls = false) {
+    const { promise: reply, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    const socket = Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: useTls ? { rejectUnauthorized: false } : undefined,
+      socket: {
+        open(socket) {
+          socket.write(request);
+        },
+        data(_socket, chunk) {
+          received += chunk.toString("latin1");
+        },
+        end() {
+          resolve(received);
+        },
+        error(_socket, error) {
+          reject(error);
+        },
+        connectError(_socket, error) {
+          reject(error);
+        },
+      },
+    });
+    return { reply, [Symbol.dispose]: () => void socket.then(socket => socket.end(), reject) };
+  }
+
+  // The four responses complete in one microtask drain, each inside the completion of the one before it:
+  // every body is rejected while all four requests are still pending. The first two responses lose their cork
+  // slot to the last two.
+  test.each([
+    { mark: "Connection: close on the request", request: upload("POST / HTTP/1.1", "Connection: close\r\n") },
+    { mark: "an HTTP/1.0 request", request: upload("POST / HTTP/1.0") },
+    {
+      mark: "Connection: close on the response",
+      request: upload("POST / HTTP/1.1"),
+      headers: { Connection: "close" },
+    },
+    { mark: "server.stop() while the requests are in flight", request: upload("POST / HTTP/1.1"), stop: true },
+    {
+      mark: "Connection: close on the request, over TLS",
+      request: upload("POST / HTTP/1.1", "Connection: close\r\n"),
+      useTls: true,
+    },
+  ])("$mark", async ({ request, headers, stop, useTls }) => {
+    const concurrent = 4;
+    const allStarted = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const pendingWhenBodyRejected: number[] = [];
+    let started = 0;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      tls: useTls ? tls : undefined,
+      async fetch(req, server) {
+        req.text().catch(() => void pendingWhenBodyRejected.push(server.pendingRequests));
+        if (++started === concurrent) allStarted.resolve();
+        await release.promise;
+        return new Response(null, { status: 304, headers });
+      },
+    });
+    using clients = new DisposableStack();
+    const replies = Array.from(
+      { length: concurrent },
+      () => clients.use(untilServerCloses(server.port, request, useTls)).reply,
+    );
+    await Promise.race([allStarted.promise, ...replies]);
+    // Leaves the read that delivered the last request. A response that completes in that read does not nest.
+    await new Promise(resolve => setImmediate(resolve));
+    const stopped = stop ? server.stop() : undefined;
+    release.resolve();
+
+    expect({ status: (await Promise.all(replies)).map(statusLine), pendingWhenBodyRejected }).toEqual({
+      status: Array.from({ length: concurrent }, () => "HTTP/1.1 304 Not Modified"),
+      pendingWhenBodyRejected: Array.from({ length: concurrent }, () => concurrent),
+    });
+    await stopped;
+  });
+
+  test("after two corked WebSockets took its cork slot", async () => {
+    const webSockets: ServerWebSocket<unknown>[] = [];
+    const bothOpen = Promise.withResolvers<void>();
+    let pendingWhenCorked = -1;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      websocket: {
+        open(ws) {
+          if (webSockets.push(ws) === 2) bothOpen.resolve();
+        },
+        message() {},
+      },
+      async fetch(req, server) {
+        if (new URL(req.url).pathname === "/ws") {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 400 });
+        }
+        const [first, second] = webSockets;
+        req.text().catch(() => {
+          // Still 1: this runs while the response completes, before the server looks at its connection again.
+          pendingWhenCorked = server.pendingRequests;
+          first.cork(() => {
+            first.send("a");
+            // If the response still holds a cork slot, both slots hold data now, and this cork() sends the
+            // least recently used one: the response's.
+            second.cork(() => second.send("b"));
+          });
+        });
+        // Leaves the read that delivered the request, so that the response gets a cork slot of its own.
+        await new Promise(resolve => setImmediate(resolve));
+        return new Response(null, { status: 304 });
+      },
+    });
+    using clients = new DisposableStack();
+    for (let i = 0; i < 2; i++) {
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+      clients.defer(() => ws.close());
+      ws.onerror = event => bothOpen.reject(new Error(`WebSocket ${event.type}`));
+    }
+    await bothOpen.promise;
+
+    const request = clients.use(untilServerCloses(server.port, upload("POST / HTTP/1.1", "Connection: close\r\n")));
+    expect({ status: statusLine(await request.reply), pendingWhenCorked }).toEqual({
+      status: "HTTP/1.1 304 Not Modified",
+      pendingWhenCorked: 1,
+    });
+  });
+
+  test("after two streaming responses took its cork slot", async () => {
+    const streams: ReadableStreamDirectController[] = [];
+    const bothStreaming = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    let pendingWhenCorked = -1;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      async fetch(req, server) {
+        if (new URL(req.url).pathname === "/stream") {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                if (streams.push(controller) === 2) bothStreaming.resolve();
+                await finish.promise;
+              },
+            }),
+          );
+        }
+        req.text().catch(() => {
+          // Still 3, the two streams and this request: this runs while the response completes.
+          pendingWhenCorked = server.pendingRequests;
+          // A write smaller than the cork buffer corks its socket until the event loop flushes it.
+          for (const stream of streams) {
+            stream.write("x");
+            stream.flush();
+          }
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        return new Response(null, { status: 304 });
+      },
+    });
+    using clients = new DisposableStack();
+    clients.defer(() => finish.resolve());
+    for (let i = 0; i < 2; i++) {
+      // These end when `finish` resolves, after the assertion.
+      clients.use(untilServerCloses(server.port, "GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")).reply.catch(() => {});
+    }
+    await bothStreaming.promise;
+
+    const request = clients.use(untilServerCloses(server.port, upload("POST / HTTP/1.1", "Connection: close\r\n")));
+    expect({ status: statusLine(await request.reply), pendingWhenCorked }).toEqual({
+      status: "HTTP/1.1 304 Not Modified",
+      pendingWhenCorked: 3,
+    });
+  });
+});
+
 test("should be able to await server.stop(true) with keep alive", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const ready = Promise.withResolvers();

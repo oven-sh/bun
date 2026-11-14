@@ -653,6 +653,7 @@ impl Route {
                     resp.write_status(b"500 Build Failed");
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
+                    resp.close_if_done_and_marked();
                 }
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);

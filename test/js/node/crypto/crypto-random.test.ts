@@ -144,8 +144,8 @@ describe.concurrent("randomBytes aliases (DEP0115)", () => {
   // The outer environment must not decide whether the warning fires.
   const env = {
     ...bunEnv,
+    BUN_OPTIONS: undefined,
     NODE_NO_WARNINGS: undefined,
-    NODE_OPTIONS: undefined,
     NODE_PENDING_DEPRECATION: undefined,
   };
 

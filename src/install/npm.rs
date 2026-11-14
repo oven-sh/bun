@@ -2055,18 +2055,15 @@ impl PackageManifest {
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
+        use crate::dependency::Value;
         let literal = version.literal.slice(buf);
-        if version.tag == crate::dependency::Tag::Npm {
-            if is_any_version_range(literal) {
-                return self.find_any_version(minimum_release_age_ms, exclusions);
+        let dist_tag = match &version.value {
+            Value::Npm(npm) => {
+                return self.find_for_range(literal, npm, buf, minimum_release_age_ms, exclusions);
             }
-            return self.find_best_version_with_filter(
-                &version.npm().version,
-                buf,
-                minimum_release_age_ms,
-                exclusions,
-            );
-        }
+            Value::DistTag(dist_tag) => dist_tag,
+            _ => return FindVersionResult::Err(FindVersionError::NotFound),
+        };
         // Nobody wrote `latest` explicitly (`bun add pkg`), so like npm, don't follow the tag to a
         // deprecated version.
         if literal.is_empty()
@@ -2076,10 +2073,24 @@ impl PackageManifest {
             return self.find_any_version(minimum_release_age_ms, exclusions);
         }
         self.find_by_dist_tag_with_filter(
-            version.dist_tag().tag.slice(buf),
+            dist_tag.tag.slice(buf),
             minimum_release_age_ms,
             exclusions,
         )
+    }
+
+    pub(crate) fn find_for_range(
+        &self,
+        literal: &[u8],
+        npm: &crate::dependency::NpmInfo,
+        buf: &[u8],
+        minimum_release_age_ms: Option<f64>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> FindVersionResult<'_> {
+        if is_any_version_range(literal) {
+            return self.find_any_version(minimum_release_age_ms, exclusions);
+        }
+        self.find_best_version_with_filter(&npm.version, buf, minimum_release_age_ms, exclusions)
     }
 
     /// Resolves npm's `*`: `latest`, even if it's a prerelease, unless it's deprecated. Otherwise

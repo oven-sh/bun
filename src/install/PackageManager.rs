@@ -3000,7 +3000,7 @@ fn init_with_runtime_once(
             {
                 use crate::dependency::version::Tag as Declared;
                 use crate::resolution::Tag;
-                if matches!(row.version.tag, Declared::Npm | Declared::DistTag)
+                if matches!(row.version.tag(), Declared::Npm | Declared::DistTag)
                     && resolved_as
                         .get(*package_id as usize)
                         .is_some_and(|it| !matches!(it.tag, Tag::Npm | Tag::Workspace | Tag::Root))

@@ -19,7 +19,6 @@ using v8::Object;
 using v8::Value;
 
 using JSC::JSObject;
-using JSC::JSValue;
 
 #if !OS(WINDOWS)
 extern "C" struct uv_loop_s* Bun__VirtualMachine__uvLoop(void* bunVM);
@@ -114,7 +113,7 @@ void node_module_register(void* opaque_mod)
     globalObject->napiModuleRegisterCallCount++;
 }
 
-void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSObject* object)
+void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSObject* moduleObject, JSObject* exportsObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -133,22 +132,12 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
         return;
     }
 
-    JSValue exportsValue = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
-    RETURN_IF_EXCEPTION(scope, void());
-
-    // Like Node, convert exports to an object. null and undefined throw, and a primitive gets a wrapper object.
-    JSObject* exportsObject = exportsValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-
-    ASSERT(exportsObject);
-    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exportsObject };
-
     auto* isolate = globalObject->V8GlobalInternals()->isolate();
     HandleScope hs(isolate);
 
     // exports, module
-    Local<Object> exports = hs.createLocal<Object>(vm, *strongExportsObject);
-    Local<Value> module = hs.createLocal<Value>(vm, object);
+    Local<Object> exports = hs.createLocal<Object>(vm, exportsObject);
+    Local<Value> module = hs.createLocal<Value>(vm, moduleObject);
     Local<Context> context = isolate->GetCurrentContext();
     if (mod->nm_context_register_func) {
         mod->nm_context_register_func(exports, module, context, mod->nm_priv);

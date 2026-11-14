@@ -84,6 +84,271 @@ describe("ReadStream.prototype.setRawMode", () => {
     });
   });
 
+  // Runs `cmd` on a terminal of its own and lets `drive` type on it. `until` resolves when the child has printed a
+  // marker. The child reports between "GOT " and " END", and then exits.
+  async function reportOf(
+    cmd: string[],
+    drive: (io: { until(marker: string): Promise<void>; type(text: string): void }) => Promise<void>,
+    env: Record<string, string | undefined> = bunEnv,
+  ) {
+    const decoder = new TextDecoder();
+    let output = "";
+    let check = () => {};
+    const eof = Promise.withResolvers<void>();
+    // ConPTY puts escape sequences and line ends around what the child prints.
+    const printed = () => Bun.stripANSI(output).replace(/[\r\n]/g, "");
+
+    const proc = Bun.spawn({
+      cmd,
+      env,
+      terminal: {
+        // Wide enough that ConPTY does not hard-wrap a report.
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          check();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await drive({
+      // Resolves without the marker when the child is gone. The report is then missing, and the error below shows
+      // what the child did print.
+      until(marker) {
+        const seen = Promise.withResolvers<void>();
+        check = () => {
+          if (printed().includes(marker)) seen.resolve();
+        };
+        check();
+        return Promise.race([seen.promise, eof.promise]);
+      },
+      type(text) {
+        if (!proc.terminal!.closed) proc.terminal!.write(text);
+      },
+    });
+
+    // The terminal reports its end after it has delivered all of the child's output.
+    const exitCode = await proc.exited;
+    await eof.promise;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    const report = printed().match(/GOT (.+?) END/);
+    if (!report) {
+      throw new Error(
+        `child exited with code ${exitCode} and no report; terminal output was: ${JSON.stringify(output)}`,
+      );
+    }
+    return { report: JSON.parse(report[1]), exitCode };
+  }
+
+  // A child that reads raw, runs `turn` in one turn of the loop outside a stdin callback, and then reports the lines
+  // that it reads in cooked mode.
+  const cookedLinesAfter = (turn: string) => `
+    let cooked = false;
+    let typed = "";
+    process.stdin.setRawMode(true);
+    // Starts the raw read that is pending during the turn.
+    process.stdin.on("data", chunk => {
+      if (!cooked) return;
+      typed += chunk;
+      if (!typed.includes("two")) return;
+      process.stdout.write("GOT " + JSON.stringify(typed.split(/\\r?\\n/).filter(Boolean)) + " END");
+      process.exit(0);
+    });
+    const ready = () => {
+      cooked = true;
+      process.stdout.write("READY");
+    };
+    setImmediate(() => {
+      ${turn}
+    });
+  `;
+
+  // A terminal app leaves raw mode when it unmounts a view or closes a prompt, and enters it again for the next one.
+  // On Windows the first line typed after that was lost when the mode changed twice in one turn of the loop. libuv
+  // chose how to cancel the console read from the new mode, not from the read that was pending, and marked a line
+  // read as cancelled when there was none. readline's close() reaches the same state with pause().
+  test.each([
+    [
+      "three setRawMode calls in one turn",
+      `process.stdin.setRawMode(false);
+       process.stdin.setRawMode(true);
+       process.stdin.setRawMode(false);
+       ready();`,
+    ],
+    [
+      "pause() and setRawMode(false) in one turn",
+      `process.stdin.pause();
+       process.stdin.setRawMode(false);
+       setImmediate(() => {
+         process.stdin.resume();
+         ready();
+       });`,
+    ],
+  ])("delivers the first line typed after %s", async (_, turn) => {
+    const result = await reportOf([bunExe(), "-e", cookedLinesAfter(turn)], async ({ until, type }) => {
+      await until("READY");
+      type("one\r");
+      type("two\r");
+    });
+    expect(result).toEqual({ report: ["one", "two"], exitCode: 0 });
+  });
+
+  // The same mark kept setRawMode(true) from ending a line read that was in progress. The console went on editing
+  // a line: it echoed the keys and held them back until Enter, and libuv then dropped the line.
+  test.each([
+    ["", ""],
+    [" after two mode changes in one turn", "process.stdin.setRawMode(false); process.stdin.setRawMode(true);"],
+  ])("setRawMode(true) ends a line read in progress%s", async (_, before) => {
+    const echoed = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        await echoed.promise;
+        return new Response();
+      },
+    });
+
+    const { report, exitCode } = await reportOf(
+      [
+        bunExe(),
+        "-e",
+        `
+          let raw = false;
+          let keys = "";
+          process.stdin.setRawMode(true);
+          process.stdin.on("data", chunk => {
+            if (!raw) return;
+            keys += chunk;
+            if (!keys.includes("z")) return;
+            process.stdout.write("GOT " + JSON.stringify(keys) + " END");
+            process.exit(0);
+          });
+          setImmediate(async () => {
+            ${before}
+            process.stdin.setRawMode(false);
+            process.stdout.write("COOKED");
+            // Answered when the terminal has echoed a character. A console echoes from the line read itself, so
+            // that read is then in progress.
+            await fetch(process.env.LINE_READ_IN_PROGRESS);
+            process.stdin.setRawMode(true);
+            raw = true;
+            process.stdout.write("RAW");
+          });
+        `,
+      ],
+      async ({ until, type }) => {
+        await until("COOKED");
+        type("#");
+        await until("COOKED#");
+        echoed.resolve();
+        await until("RAW");
+        type("x\rz");
+      },
+      { ...bunEnv, LINE_READ_IN_PROGRESS: `http://127.0.0.1:${server.port}/` },
+    );
+    // A POSIX terminal hands the "#" over when the mode changes. A console drops it with the line read.
+    expect({ keys: String(report).replace(/^#/, ""), exitCode }).toEqual({ keys: "x\rz", exitCode: 0 });
+  });
+
+  // A prompt that pauses stdin leaves the terminal to the child that it starts. The same mark kept pause() from
+  // ending the parent's line read, and that read took the first line typed for the child.
+  test("pause() leaves the next line to a child on the same terminal", async () => {
+    const result = await reportOf(
+      [
+        bunExe(),
+        "-e",
+        `
+          process.stdin.setRawMode(true);
+          process.stdin.once("data", () => {
+            process.stdin.setRawMode(false);
+            process.stdin.pause();
+            require("node:child_process")
+              .spawn(process.execPath, ["-e", process.env.CHILD_SCRIPT], { stdio: "inherit" })
+              .on("exit", code => process.exit(code ?? 1));
+          });
+          setImmediate(() => {
+            process.stdin.setRawMode(false);
+            process.stdin.setRawMode(true);
+            process.stdout.write("PARENT");
+          });
+        `,
+      ],
+      async ({ until, type }) => {
+        await until("PARENT");
+        type("k");
+        await until("CHILD");
+        type("one\r");
+        type("two\r");
+      },
+      {
+        ...bunEnv,
+        CHILD_SCRIPT: `
+          let typed = "";
+          process.stdin.on("data", chunk => {
+            typed += chunk;
+            if (!typed.includes("two")) return;
+            process.stdout.write("GOT " + JSON.stringify(typed.split(/\\r?\\n/).filter(Boolean)) + " END");
+            process.exit(0);
+          });
+          process.stdout.write("CHILD");
+        `,
+      },
+    );
+    expect(result).toEqual({ report: ["one", "two"], exitCode: 0 });
+  });
+
+  // A 'data' listener runs inside libuv's read callback. When it started a read and stopped it again there, libuv
+  // forgot the stop as the callback returned. The empty line that a console makes up to end a line read then arrived
+  // as data.
+  test("delivers nothing from a line read that a 'data' listener started and stopped", async () => {
+    const result = await reportOf(
+      [
+        bunExe(),
+        "-e",
+        `
+          let first = true;
+          let typed = "";
+          process.stdin.on("data", chunk => {
+            typed += chunk;
+            if (first) {
+              first = false;
+              process.stdin.pause();
+              process.nextTick(() => {
+                process.stdin.resume();
+                // Time for the console to start the read. A stop that comes before that ends the read with nothing
+                // made up, and then the test passes with or without the fix.
+                Bun.sleepSync(100);
+                process.stdin.pause();
+                setImmediate(() => {
+                  process.stdin.resume();
+                  process.stdout.write("AGAIN");
+                });
+              });
+              return;
+            }
+            if (!/two\\r?\\n/.test(typed)) return;
+            process.stdout.write("GOT " + JSON.stringify(typed.split(/\\r?\\n/).slice(0, -1)) + " END");
+            process.exit(0);
+          });
+          process.stdout.write("READY");
+        `,
+      ],
+      async ({ until, type }) => {
+        await until("READY");
+        type("one\r");
+        await until("AGAIN");
+        type("two\r");
+      },
+    );
+    expect(result).toEqual({ report: ["one", "two"], exitCode: 0 });
+  });
+
   // Raw mode is per-stream in libuv (each uv_tty_t holds its own mode and its
   // own saved termios), so a second tty.ReadStream on the same fd must not be
   // able to restore the terminal out from under the stream that raw'd it.
@@ -191,82 +456,6 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
-  });
-
-  // On Windows, libuv cancels the console read that is pending when the mode
-  // changes. It used to choose the cancel from the current mode, not from the
-  // read that was pending. A second change in the same turn then marked a line
-  // read as cancelled when no line read existed, and the mark made libuv
-  // discard the next line that the user typed.
-  test("delivers the first line typed after three setRawMode calls in one turn", async () => {
-    let output = "";
-    const decoder = new TextDecoder();
-    const ready = Promise.withResolvers<void>();
-    const eof = Promise.withResolvers<void>();
-
-    const proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          let cooked = false;
-          let typed = "";
-          process.stdin.setRawMode(true);
-          // Starts the raw read that is pending during the three calls.
-          process.stdin.on("data", chunk => {
-            if (!cooked) return;
-            typed += chunk;
-            if (!typed.includes("two")) return;
-            process.stdout.write("GOT " + JSON.stringify(typed.split(/\\r?\\n/).filter(Boolean)) + " END");
-            process.exit(0);
-          });
-          setImmediate(() => {
-            process.stdin.setRawMode(false);
-            process.stdin.setRawMode(true);
-            process.stdin.setRawMode(false);
-            cooked = true;
-            process.stdout.write("READY");
-          });
-        `,
-      ],
-      env: bunEnv,
-      terminal: {
-        // Wide enough that ConPTY does not hard-wrap the GOT line.
-        cols: 200,
-        rows: 24,
-        data(_t, chunk: Uint8Array) {
-          output += decoder.decode(chunk, { stream: true });
-          if (output.includes("READY")) ready.resolve();
-        },
-        exit() {
-          eof.resolve();
-        },
-      },
-    });
-
-    await Promise.race([ready.promise, eof.promise]);
-    if (!proc.terminal!.closed) {
-      proc.terminal!.write("one\r");
-      proc.terminal!.write("two\r");
-    }
-
-    // The child exits when it has the second line. The terminal reports its end
-    // after it has delivered all of the child's output.
-    const exitCode = await proc.exited;
-    await eof.promise;
-    proc.terminal?.close();
-    output += decoder.decode();
-
-    const report = Bun.stripANSI(output)
-      .replace(/[\r\n]/g, "")
-      .match(/GOT (\[[^\]]*\]) END/);
-    if (!report) {
-      throw new Error(
-        `child exited with code ${exitCode} and no report; terminal output was: ${JSON.stringify(output)}`,
-      );
-    }
-    expect(JSON.parse(report[1])).toEqual(["one", "two"]);
-    expect(exitCode).toBe(0);
   });
 });
 

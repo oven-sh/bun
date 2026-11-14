@@ -7,7 +7,6 @@
 //! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
-use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -327,7 +326,7 @@ impl ThreadPool {
                 thread: NonNull::new(ThreadPoolLib::Thread::current())
                     .map(bun_ptr::ParentRef::from),
                 data: None,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                ast_memory_store: bun_ast::ASTMemoryAllocator::default(),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
@@ -405,7 +404,7 @@ pub struct Worker {
     /// post-`has_created`.
     pub(crate) data: Option<WorkerData>,
 
-    pub(crate) ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
+    pub(crate) ast_memory_store: bun_ast::ASTMemoryAllocator,
     pub(crate) has_created: bool,
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
@@ -508,10 +507,7 @@ impl Worker {
     /// # Safety
     /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
     pub(crate) unsafe fn deinit(this: *mut Worker) {
-        // SAFETY: caller contract — reclaim the Box; dropping it at scope end
-        // runs the remaining field drop glue (`Option` fields are `None`,
-        // `ast_memory_store` is `ManuallyDrop`), defending against future
-        // `Drop`-carrying fields.
+        // SAFETY: caller contract.
         let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
@@ -521,15 +517,8 @@ impl Worker {
             worker.temporary_arena = None;
             worker.stmt_list = None;
         }
-        // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` —
-        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`,
-        // and `create()` may overwrite it
-        // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
-        // the `has_created` guard so the default-constructed arena is freed
-        // even when `create()` never ran.
-        // Ordered before `heap = None` in case `ASTMemoryAllocator::new`
-        // ever threads `arena_ref` (= `&self.heap`) through.
-        unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
+        // Before `heap`, which it borrows.
+        drop(worker.ast_memory_store);
         if worker.has_created {
             worker.heap = None;
         }
@@ -575,7 +564,7 @@ impl Worker {
         // One mi_heap for the AST stores, `AstAlloc` spills and the parser's
         // arena: allocations alternate between them per node, and mimalloc
         // caches only the last heap a thread touched.
-        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
+        self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

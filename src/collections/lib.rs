@@ -13,7 +13,7 @@
 
 pub mod hive_array;
 pub mod index_sort;
-pub mod multi_array_list;
+mod multi_array_list;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
 // `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).

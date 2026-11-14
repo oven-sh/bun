@@ -514,7 +514,7 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
       process.on("SIGTERM", () => {});
       console.log("iter first");
       // The busy loop never yields to the event loop, so the posted
-      // WatchReloadTask cannot run and the watcher-thread fallback must
+      // HotReloadTask cannot run and the watcher-thread fallback must
       // fire. Self-limiting: it spins far past the 500ms fallback window
       // but exits on its own, so a leaked watch pair cannot burn CPU
       // forever if the test dies before killing it.

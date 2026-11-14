@@ -130,7 +130,7 @@ impl ScanOpts {
 /// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
     use bun_core::ZStr;
-    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
+    use bun_glob::walk::{Accessor, AccessorDirIter, AccessorHandle, DirEntry};
     use bun_paths::{PathBuffer, Platform, platform, resolve_path};
     use bun_standalone_graph::Graph;
     use bun_sys::{E, Error as SysError, FileKind, Result as Maybe, Stat, Tag};
@@ -184,37 +184,28 @@ pub(crate) mod standalone_accessor {
         }
     }
 
-    pub(crate) struct StandaloneDirEntry {
-        name: Box<[u8]>,
-        is_dir: bool,
-    }
-
-    impl AccessorDirEntry for StandaloneDirEntry {
-        fn name_slice(&self) -> &[u8] {
-            &self.name
-        }
-        fn kind(&self) -> FileKind {
-            if self.is_dir {
-                FileKind::Directory
-            } else {
-                FileKind::File
-            }
-        }
-    }
-
     pub(crate) struct StandaloneDirIter {
         entries: std::vec::IntoIter<(Box<[u8]>, bool)>,
+        name: Box<[u8]>,
     }
 
     impl AccessorDirIter for StandaloneDirIter {
         type Handle = StandaloneHandle;
-        type Entry = StandaloneDirEntry;
 
-        fn next(&mut self) -> Maybe<Option<StandaloneDirEntry>> {
-            Ok(self
-                .entries
-                .next()
-                .map(|(name, is_dir)| StandaloneDirEntry { name, is_dir }))
+        fn next(&mut self) -> Maybe<Option<DirEntry<'_>>> {
+            let Some((name, is_dir)) = self.entries.next() else {
+                return Ok(None);
+            };
+            self.name = name;
+            Ok(Some(DirEntry {
+                name: &self.name,
+                kind: if is_dir {
+                    FileKind::Directory
+                } else {
+                    FileKind::File
+                },
+                symlink_target: None,
+            }))
         }
 
         fn iterate(dir: StandaloneHandle) -> Self {
@@ -226,6 +217,7 @@ pub(crate) mod standalone_accessor {
                 .unwrap_or_default();
             StandaloneDirIter {
                 entries: entries.into_iter(),
+                name: Box::default(),
             }
         }
     }

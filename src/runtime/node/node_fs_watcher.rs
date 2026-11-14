@@ -14,7 +14,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
@@ -59,7 +59,7 @@ pub(crate) struct FSWatcher {
     mutex: Mutex,
     signal: JsCell<Option<AbortSignalRef>>,
     persistent: Cell<bool>,
-    path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
+    path_watcher: Cell<Option<path_watcher::Handle>>,
     poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
@@ -191,6 +191,7 @@ impl FSWatchTaskPosix {
             let emitted = match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
+                #[cfg(not(target_os = "macos"))]
                 Event::Error { err, close } => {
                     self.ctx().emit_error(err, *close);
                     Ok(())
@@ -311,6 +312,7 @@ impl WatchEventKind {
 pub(crate) enum Event {
     Rename(EventPathString),
     Change(EventPathString),
+    #[cfg(not(target_os = "macos"))]
     Error {
         err: bun_sys::Error,
         close: bool,
@@ -812,7 +814,9 @@ impl FSWatcher {
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
     /// observes a re-entrant `watcher.close()` from inside the listener.
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn emit_error(&self, err: &bun_sys::Error, close: bool) {
+        use bun_jsc::SysErrorJsc as _;
         if self.closed.get() {
             return;
         }
@@ -1000,10 +1004,6 @@ impl FSWatcher {
         self.abort_handle.leave();
 
         if let Some(watcher) = self.path_watcher.take() {
-            // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
-            // (it self-destroys via `heap::take` on the last handler, so it cannot
-            // soundly take `&mut self`). `watcher` is the live pointer returned by
-            // `path_watcher::watch`.
             path_watcher::PathWatcher::detach(watcher, ctx_ptr);
         }
 
@@ -1087,21 +1087,7 @@ impl FSWatcher {
         ctx_ref
             .path_watcher
             .set(if args.signal.is_none_or(|s| !s.aborted()) {
-                // The two backends take different arities (the Windows
-                // backend dropped the callback parameters — only one valid
-                // value each), so the call is cfg-split.
-                #[cfg(windows)]
-                let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
-                #[cfg(not(windows))]
-                let r = path_watcher::watch(
-                    vm_ref,
-                    file_path,
-                    args.recursive,
-                    FSWatcher::ON_PATH_UPDATE,
-                    FSWatcher::on_update_end,
-                    ctx.cast::<c_void>(),
-                );
-                match r {
+                match path_watcher::watch(vm_ref, file_path, args.recursive, ctx.cast()) {
                     Ok(r) => Some(r),
                     Err(err) => {
                         ctx_ref.detach();

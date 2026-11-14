@@ -100,6 +100,11 @@ bun add <package> <@version>
   Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
+<ParamField path="--ignore-engines" type="boolean">
+  Do not warn when <code>packageManager</code> in package.json pins another bun version. Also set by
+  <code>BUN_CONFIG_IGNORE_ENGINES=1</code> in the environment
+</ParamField>
+
 <ParamField path="--analyze" type="boolean">
   Recursively analyze &amp; install dependencies of files passed as arguments (using Bun's bundler). Alias:{" "}
   <code>-a</code>

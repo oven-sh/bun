@@ -558,7 +558,6 @@ impl TrustCommand {
                 let output_in_foreground = false;
                 let optional = false;
                 pm.spawn_package_lifecycle_scripts(
-                    &mut *ctx,
                     info.scripts_list.clone(),
                     optional,
                     output_in_foreground,

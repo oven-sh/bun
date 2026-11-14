@@ -11,7 +11,6 @@ use bun_sys::{Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::NodeId;
 
@@ -81,7 +80,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) destination_dir_subpath_buf: PathBuffer,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
-    pub(crate) command_ctx: Command::Context<'a>,
     pub(crate) current_tree_id: lockfile::tree::Id,
     /// Trees that live under a self-contained workspace: packages there are copied
     /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
@@ -1032,7 +1030,6 @@ impl<'a> PackageInstaller<'a> {
             );
         }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
-            self.command_ctx,
             entry.list,
             entry.optional,
             output_in_foreground,
@@ -1270,40 +1267,6 @@ impl<'a> PackageInstaller<'a> {
             open.scope.extend_from_slice(scope);
         }
         Ok(open.dir.fd())
-    }
-
-    /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
-    fn cache_entry_name(
-        &self,
-        package_id: PackageID,
-        pkg_name: String,
-        resolution: &Resolution,
-        patch_contents_hash: Option<u64>,
-    ) -> &'static ZStr {
-        match resolution.tag {
-            resolution::Tag::Npm => package_manager::cached_npm_package_folder_name(
-                self.manager(),
-                pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice()),
-                resolution.npm().version,
-                patch_contents_hash,
-            ),
-            resolution::Tag::Git => package_manager::cached_git_folder_name(
-                self.manager(),
-                resolution.git(),
-                patch_contents_hash,
-            ),
-            resolution::Tag::Github => package_manager::cached_github_folder_name(
-                self.manager(),
-                resolution.github(),
-                patch_contents_hash,
-            ),
-            _ => package_manager::cached_tarball_folder_name(
-                self.manager(),
-                &self.metas[package_id as usize].integrity,
-                resolution,
-                patch_contents_hash,
-            ),
-        }
     }
 
     /// Returns true if the thread pool can link this package's files. The package is in the current
@@ -1892,8 +1855,39 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::Github
             | resolution::Tag::LocalTarball
             | resolution::Tag::RemoteTarball => {
-                installer.cache_dir_subpath =
-                    self.cache_entry_name(package_id, pkg_name, resolution, patch_contents_hash);
+                let (manager, buf) = (self.manager(), self.folder_path_buf.as_mut_slice());
+                let len = match resolution.tag {
+                    resolution::Tag::Npm => package_manager::cached_npm_package_folder_name_print(
+                        manager,
+                        buf,
+                        pkg_name.slice(string_buf!()),
+                        resolution.npm().version,
+                        patch_contents_hash,
+                    ),
+                    resolution::Tag::Git => package_manager::cached_git_folder_name(
+                        manager,
+                        buf,
+                        resolution.git(),
+                        patch_contents_hash,
+                    ),
+                    resolution::Tag::Github => package_manager::cached_github_folder_name(
+                        manager,
+                        buf,
+                        resolution.github(),
+                        patch_contents_hash,
+                    ),
+                    _ => package_manager::cached_tarball_folder_name(
+                        manager,
+                        buf,
+                        &self.metas[package_id as usize].integrity,
+                        resolution,
+                        patch_contents_hash,
+                    ),
+                }
+                .len();
+                if len > 0 {
+                    installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
+                }
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {

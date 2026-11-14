@@ -361,6 +361,47 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
   });
 });
 
+// null is not in the declared type of CookieInit, but get() returns it for a cookie that does not exist.
+describe.each([undefined, null] as any[])("set(init) with a name or value of %p", notGiven => {
+  const stateOf = (map: Bun.CookieMap) => ({
+    headers: map.toSetCookieHeaders(),
+    value: map.get("a"),
+    has: map.has("a"),
+    size: map.size,
+  });
+
+  test("value: same map as after set({ name })", () => {
+    const map = new Bun.CookieMap("a=1");
+    map.set({ name: "a", value: notGiven });
+    expect(map.toSetCookieHeaders()).toEqual(["a=; Path=/; SameSite=Lax"]);
+
+    const withoutValue = new Bun.CookieMap("a=1");
+    withoutValue.set({ name: "a" });
+    expect(stateOf(map)).toEqual(stateOf(withoutValue));
+  });
+
+  test("name: same error as set({ value }), and the map does not change", () => {
+    const map = new Bun.CookieMap("a=1");
+    let error: unknown;
+    try {
+      map.set({ name: notGiven, value: "b" });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toEqual(new TypeError("name is required"));
+    expect(stateOf(map)).toEqual({ headers: [], value: "1", has: true, size: 1 });
+  });
+});
+
+test("set(init) with the null that get() returns for a cookie that does not exist", () => {
+  const map = new Bun.CookieMap();
+  const missing = map.get("missing");
+  expect(missing).toBeNull();
+  // @ts-expect-error
+  map.set({ name: "copy", value: missing });
+  expect(map.toSetCookieHeaders()).toEqual(["copy=; Path=/; SameSite=Lax"]);
+});
+
 describe("Cookie name field is immutable", () => {
   test("can create a Cookie", () => {
     const cookie = new Bun.Cookie("name", "value");

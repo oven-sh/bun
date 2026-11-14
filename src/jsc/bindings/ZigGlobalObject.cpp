@@ -169,6 +169,7 @@
 #include "streams/JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
 #include "ModuleLoader.h"
+#include "RunnerLoadFetcher.h"
 #include "BunCompiledModules.h"
 #include "DLHandleMap.h"
 #include "napi_external.h"
@@ -4420,7 +4421,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 
 JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key, const WTF::String& referrer,
-    RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
+    RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -4506,12 +4507,18 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return promise->status() == JSC::JSPromise::Status::Pending ? promise : JSC::JSPromise::create(vm, globalObject->promiseStructure());
     };
 
+    Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
+    // Only `bun test` loads with a fetcher: a test file or preload and its static imports. The key is noted before the fetch, which can make the source of a CommonJS module in this call.
+    if (fetcher) [[unlikely]] {
+        if (auto* runnerLoad = Bun::liveRunnerLoad(static_cast<Zig::GlobalObject*>(globalObject), graph); runnerLoad == fetcher.get())
+            runnerLoad->noteFetch(moduleKey);
+    }
+
     // require(esm) needs the entire dependency graph to load without yielding
     // to microtasks. The async fetch path goes through the transpiler thread
     // pool; route to the synchronous fetch instead so the returned promise is
     // already fulfilled and the loader keeps draining its private queue (see
     // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
-    Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
     if (vm.synchronousModuleQueue()) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),

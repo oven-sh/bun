@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
+import { join } from "node:path";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -397,6 +398,261 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
          console.log(head.length + " " + result.length + " " + result.equals(input));`,
       ),
     ).toEqual({ stdout: "2 1024 true", exitCode: 0 });
+  });
+});
+
+// `_handle.init()` can run again on a handle that zlib.ts already initialized.
+// zlib does not free the state that an init finds in its stream, so each second
+// init() used to leak the state of the one before it.
+describe.concurrent("zlib native handle: a second init()", () => {
+  const prelude = /* js */ `
+    const zlib = require("node:zlib");
+    const { Z_NO_FLUSH, Z_SYNC_FLUSH, Z_FINISH } = zlib.constants;
+    const { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP } = zlib.constants;
+    const modes = { Deflate: DEFLATE, Inflate: INFLATE, Gzip: GZIP, Gunzip: GUNZIP, DeflateRaw: DEFLATERAW, InflateRaw: INFLATERAW, Unzip: UNZIP };
+    const Handle = zlib.createDeflate()._handle.constructor;
+    const errors = [];
+
+    function init(handle, windowBits = 15, level = 6, dictionary) {
+      handle.init(windowBits, level, 8, 0, handle.state, () => {}, dictionary);
+    }
+    // A handle after its first init(), as the constructors of zlib.ts leave it.
+    function open(mode, windowBits, level, dictionary) {
+      const handle = new Handle(mode);
+      handle.onerror = (message, errno, code) => errors.push(code + ": " + message);
+      handle.state = new Uint32Array(2);
+      init(handle, windowBits, level, dictionary);
+      return handle;
+    }
+    // The bytes that one writeSync() gives, or none when it reports an error.
+    function write(handle, flush, input) {
+      const out = Buffer.alloc(8192);
+      const reported = errors.length;
+      handle.writeSync(flush, input, 0, input.length, out, 0, out.length);
+      if (errors.length > reported) return Buffer.alloc(0);
+      return Buffer.from(out.subarray(0, out.length - handle.state[0]));
+    }
+    // "open", or why the handle refuses a write.
+    function status(handle) {
+      try {
+        handle.writeSync(Z_NO_FLUSH, null, 0, 0, Buffer.alloc(64), 0, 64);
+        return "open";
+      } catch (e) {
+        return e.message;
+      }
+    }
+    const text = Buffer.alloc(1000, "a");
+    const unpack = { [DEFLATE]: zlib.inflateSync, [GZIP]: zlib.gunzipSync, [DEFLATERAW]: zlib.inflateRawSync };
+    const packed = {
+      [INFLATE]: zlib.deflateSync(text),
+      [GUNZIP]: zlib.gzipSync(text),
+      [INFLATERAW]: zlib.deflateRawSync(text),
+      [UNZIP]: zlib.gzipSync(text),
+    };
+  `;
+
+  async function run(body: string, env: NodeJS.Dict<string> = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      // The finalizer of every handle runs at exit, as on the ASAN lanes.
+      env: { ...env, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // What a second init() gives does not change with the fix: these pass without it too.
+  const cases: [name: string, body: string, expected: string][] = [
+    [
+      "before the first use leaves a handle that works, on every mode",
+      /* js */ `
+        const results = Object.values(modes).map(mode => {
+          const handle = open(mode);
+          init(handle);
+          const out = write(handle, Z_FINISH, packed[mode] ?? text);
+          return (mode in packed ? out : unpack[mode](out)).equals(text);
+        });
+        console.log(...results, ...errors);`,
+      "true true true true true true true",
+    ],
+    [
+      "on a stream in use leaves the handle open, on every mode",
+      /* js */ `
+        const results = Object.values(modes).map(mode => {
+          const handle = open(mode);
+          write(handle, Z_NO_FLUSH, (packed[mode] ?? text).subarray(0, 12));
+          init(handle);
+          return status(handle);
+        });
+        console.log(...results, ...errors);`,
+      "open open open open open open open",
+    ],
+    [
+      "before the first use replaces the arguments of the first one",
+      /* js */ `
+        const deflate = open(DEFLATE, 15, 0);
+        init(deflate, 9, 9);
+        const out = write(deflate, Z_FINISH, text);
+        const inflate = open(INFLATE, 9);
+        init(inflate, 15);
+        // 17 bytes: level 9, not the level 0 of the first init(). 18: the header of a 512-byte window.
+        console.log(out.length, out.subarray(0, 1).toString("hex"), write(inflate, Z_FINISH, packed[INFLATE]).length, ...errors);`,
+      "17 18 1000",
+    ],
+    [
+      "gives its dictionary to the next reset()",
+      /* js */ `
+        const dictionary = Buffer.from("hello world dictionary");
+        const added = open(DEFLATE);
+        write(added, Z_SYNC_FLUSH, Buffer.from("x"));
+        init(added, 15, 6, dictionary);
+        added.reset();
+        const withDictionary = write(added, Z_FINISH, Buffer.from("hello world"));
+        const removed = open(DEFLATERAW, 15, 6, dictionary);
+        write(removed, Z_FINISH, Buffer.from("hello world"));
+        init(removed);
+        removed.reset();
+        const withoutDictionary = write(removed, Z_FINISH, Buffer.from("hello world"));
+        console.log(
+          (withDictionary[1] & 0x20) !== 0,
+          zlib.inflateSync(withDictionary, { dictionary }).toString(),
+          zlib.inflateRawSync(withoutDictionary).toString(),
+          ...errors,
+        );`,
+      "true hello world hello world",
+    ],
+    [
+      "that zlib rejects closes the handle",
+      /* js */ `
+        const results = [];
+        for (const mode of [DEFLATE, INFLATE]) {
+          const unused = open(mode);
+          init(unused, 100);
+          const used = open(mode);
+          write(used, Z_NO_FLUSH, (packed[mode] ?? text).subarray(0, 12));
+          init(used, 100);
+          results.push(status(unused), status(used));
+        }
+        console.log(results.join(", "), ...errors);`,
+      Array(4).fill("zlib binding closed").join(", "),
+    ],
+  ];
+
+  for (const [name, body, expected] of cases) {
+    test(name, async () => {
+      const { stdout, exitCode } = await run(body);
+      expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+    });
+  }
+
+  // Every call order that left a state behind: six states for each call.
+  const everyOrder = /* js */ `
+    function everyOrder(mode) {
+      const unused = open(mode);
+      init(unused);
+      init(unused);
+      const used = open(mode);
+      status(used);
+      init(used);
+      init(used);
+      const rejected = open(mode);
+      init(rejected, 100);
+      const rejectedInUse = open(mode);
+      status(rejectedInUse);
+      init(rejectedInUse, 100);
+    }
+  `;
+
+  // LeakSanitizer reports each allocation that nothing frees. Only a build with ASAN has it.
+  test.skipIf(!isASAN)("frees every zlib state (LeakSanitizer)", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      everyOrder +
+        /* js */ `
+        // test/leaksan.supp hides what the evaluation of the entry module allocates.
+        setImmediate(() => {
+          Object.values(modes).forEach(everyOrder);
+          console.log("done");
+        });`,
+      {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+    );
+    const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked in (\d+) allocation/.exec(stderr);
+    expect({
+      stdout,
+      leakedBytes: Number(summary?.[1] ?? 0),
+      leakedStates: Number(summary?.[2] ?? 0),
+      exitCode,
+    }).toEqual({
+      stdout: "done",
+      leakedBytes: 0,
+      leakedStates: 0,
+      exitCode: 0,
+    });
+  });
+
+  // Without ASAN, the resident memory shows the leak: one state of a deflate
+  // mode keeps 209 KB resident, and one of an inflate mode 12 KB. Under ASAN the
+  // test above counts the states, and the resident memory follows ASAN's own
+  // bookkeeping instead.
+  test.skipIf(isASAN)("does not grow the resident memory", async () => {
+    const rounds = 12;
+    const warmupRounds = 2;
+    const callsPerRound = 16;
+    const { stdout, stderr, exitCode } = await run(
+      everyOrder +
+        /* js */ `
+        const { readFileSync } = require("node:fs");
+        // See leak-fixture.ts: on Linux this counter is exact, and the one behind rss() is not.
+        function anonymousBytes() {
+          return Number(/^Anonymous:\\s+(\\d+) kB$/m.exec(readFileSync("/proc/self/smaps_rollup", "utf8"))[1]) * 1024;
+        }
+        let residentBytes = process.memoryUsage.rss;
+        if (process.platform === "linux") {
+          try {
+            anonymousBytes();
+            residentBytes = anonymousBytes;
+          } catch {}
+        }
+        const samples = {};
+        for (const [name, mode] of Object.entries(modes)) {
+          samples[name] = [];
+          for (let round = 0; round < ${rounds}; round++) {
+            for (let i = 0; i < ${callsPerRound}; i++) everyOrder(mode);
+            Bun.gc(true);
+            samples[name].push(residentBytes());
+          }
+        }
+        console.log(JSON.stringify(samples));`,
+      { ...bunEnv, BUN_JSC_useJIT: "0" },
+    );
+    expect(stderr).toBe("");
+    const samples = JSON.parse(stdout) as Record<string, number[]>;
+    // The median slope over every pair of samples, as in leak.test.ts: a stray sample does not move it.
+    const bytesPerCall = Object.entries(samples).map(([name, ofMode]): [string, number] => {
+      expect(ofMode).toHaveLength(rounds);
+      const measured = ofMode.slice(warmupRounds);
+      const slopes: number[] = [];
+      for (let i = 0; i < measured.length; i++) {
+        for (let j = i + 1; j < measured.length; j++) slopes.push((measured[j] - measured[i]) / (j - i));
+      }
+      return [name, Math.round(slopes.sort((a, b) => a - b)[slopes.length >> 1] / callsPerRound)];
+    });
+    expect(bytesPerCall.map(([name]) => name)).toEqual([
+      "Deflate",
+      "Inflate",
+      "Gzip",
+      "Gunzip",
+      "DeflateRaw",
+      "InflateRaw",
+      "Unzip",
+    ]);
+    // One call of everyOrder() left 75 KB or more behind. The bound is a tenth of that.
+    expect(bytesPerCall.filter(([, bytes]) => bytes >= 7_500)).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });
 

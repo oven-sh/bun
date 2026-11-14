@@ -1348,7 +1348,7 @@ impl ServerConfig {
                 Address::Tcp {
                     hostname: Some(hostname),
                     ..
-                } => hostname.as_bytes(),
+                } => bun_core::ip_address::without_ipv6_zone(hostname.as_bytes()),
                 Address::Tcp { hostname: None, .. } | Address::Unix(_) => b"0.0.0.0",
             };
 

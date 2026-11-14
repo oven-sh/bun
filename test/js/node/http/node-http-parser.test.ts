@@ -451,6 +451,40 @@ describe("ConnectionsList", () => {
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
   });
+
+  // expired() takes milliseconds and compares uv_hrtime() nanoseconds. 4,227,858,433 ms is 48.9 days. In 32 bits
+  // its nanosecond count wraps to exactly 1 ms. The expected values are the results of Node v26.3.0.
+  const longTimeout = 4_227_858_433;
+  test.each([
+    [1, 0, ["incomplete"]],
+    [0, 1, ["incomplete", "complete"]],
+    [longTimeout, 0, []],
+    [0, longTimeout, []],
+    [longTimeout, longTimeout, []],
+    // expired() swaps the two timeouts when headersTimeout is above requestTimeout.
+    [longTimeout, 1, ["incomplete"]],
+    [1, longTimeout, ["incomplete"]],
+  ])("expired(%d, %d) reports what Node reports", (headersTimeout, requestTimeout, expired) => {
+    const list = new ConnectionsList();
+    const incomplete = new HTTPParser();
+    incomplete.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    const complete = new HTTPParser();
+    complete.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    complete.execute(Buffer.from("POST / HTTP/1.1\r\nContent-Length: 1\r\n\r\n"));
+    // idle() lists a parser with no message in progress. duration() of such a parser stays 0.
+    expect({
+      headersCompleted: [incomplete.headersCompleted(), complete.headersCompleted()],
+      idle: list.idle(),
+    }).toEqual({ headersCompleted: [false, true], idle: [] });
+    // Both parsers are older than 1 ms.
+    while (incomplete.duration() < 2 || complete.duration() < 2) {}
+
+    const names = new Map([
+      [incomplete, "incomplete"],
+      [complete, "complete"],
+    ]);
+    expect(list.expired(headersTimeout, requestTimeout).map(parser => names.get(parser))).toEqual(expired);
+  });
 });
 
 test("subclasses of HTTPParser and ConnectionsList return instances of the subclass", () => {

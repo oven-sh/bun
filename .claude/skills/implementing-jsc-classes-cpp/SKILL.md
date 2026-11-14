@@ -55,18 +55,15 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSFooPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure) {
-        JSFooPrototype* prototype = new (NotNull, allocateCell<JSFooPrototype>(vm)) JSFooPrototype(vm, structure);
+        JSFooPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSFooPrototype))) JSFooPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
 
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) { return &vm.plainObjectSpace(); }
-
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype) {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -75,13 +72,18 @@ private:
     JSFooPrototype(JSC::VM& vm, JSC::Structure* structure) : Base(vm, structure) {}
     void finishCreation(JSC::VM& vm);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFooPrototype, JSFooPrototype::Base);
 
 void JSFooPrototype::finishCreation(VM& vm) {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSFoo::info(), JSFooPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSFoo::info(), JSFooPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 ```
+
+A prototype class adds no C++ field and no destructor to `JSC::JSNonFinalObject`, so its object fits in the shared `vm.plainObjectSpace()`. `Bun::allocatePlainObjectCell` allocates there and never asks the class for a subspace, so the class has no `subspaceFor` member. `STATIC_ASSERT_ISO_SUBSPACE_SHARABLE` fails the build when the class gains a field or its own `destroy`. Keep the assert at file scope, after the class: the compiler does not evaluate it inside a member template that nothing instantiates.
+
+`Bun::allocatePlainObjectCell`, `Bun::createClassStructure`, `Bun::reifyStaticPropertyTable` and `Bun::putToStringTagWithoutTransition` are declared in `src/jsc/bindings/BunClientData.h`. They are the out-of-line forms of `JSC::allocateCell`, `JSC::Structure::create`, `JSC::reifyStaticProperties` and `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`. Use them so that a new class does not inline its own copy of that once-per-class setup.
 
 ## Getter/Setter/Function Definitions
 
@@ -131,7 +133,7 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) { return &vm.internalFunctionSpace(); }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype) {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:

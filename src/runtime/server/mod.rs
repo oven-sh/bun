@@ -1,6 +1,8 @@
 //! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
+use core::any::Any;
+use core::cell::OnceCell;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
@@ -178,8 +180,6 @@ pub(crate) use server_body::ServePlugins;
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ServerFlags: u8 {
-        /// See [`NewServer::hold_open_ref`].
-        const OPEN_REF_HELD               = 1 << 0;
         const TERMINATED                  = 1 << 1;
     }
 }
@@ -204,8 +204,10 @@ bun_jsc::impl_abort_handle_owner!(
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::schedule_deinit)]
 pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
-    /// The JS wrapper holds one ref, [`Self::hold_open_ref`] another.
+    /// The JS wrapper holds one ref, `open_ref` another.
     ref_count: bun_ptr::RefCount<Self>,
+    /// Held until the server is drained: uWS and in-flight requests hold raw pointers to it.
+    open_ref: JsCell<Option<bun_ptr::RefPtr<Self>>>,
     app: JsCell<Option<uws_sys::app::OwnedApp<SSL>>>,
     listener: JsCell<Option<uws_sys::app::OwnedListenSocket<SSL>>>,
     h3_app: JsCell<Option<uws_sys::h3::OwnedApp<SSL>>>,
@@ -267,14 +269,9 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// The context of the script that started the server: what a request makes before its
     /// handler runs (its `AbortSignal`) belongs to it.
     pub(crate) context: core::cell::Cell<jsc::ContextId>,
-    pub(crate) request_pool:
-        &'static request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
-    /// Null until `listen()` creates an HTTP/2 or HTTP/3 app. Kept as a raw
-    /// nullable pointer rather than a conditional field so the struct stays
-    /// uniform across monomorphizations.
-    pub(crate) mux_request_pool: core::cell::Cell<
-        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
-    >,
+    pub(crate) request_pool: bun_ptr::BackRef<RequestPool<SSL, DEBUG, false>>,
+    /// Null until `listen()` creates an HTTP/2 or HTTP/3 app.
+    pub(crate) mux_request_pool: core::cell::Cell<*const RequestPool<SSL, DEBUG, true>>,
     /// Authoritative GC root for the `server.stop()` promise. Lazily filled by
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not
@@ -381,7 +378,7 @@ pub(crate) enum CreateJsRequest {
 
 /// A `Request` while the uWS callback that lent it a `uws::Request` is on the stack.
 pub(crate) struct DispatchedRequest {
-    /// Owns `native`'s ref.
+    /// The wrapper, which owns `native`'s ref. Zero until there is one.
     pub(crate) js: JSValue,
     pub(crate) native: bun_ptr::ThisPtr<crate::webcore::Request>,
 }
@@ -863,16 +860,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // The `HiveSlot` token is leaked deliberately: the slot is recycled by
-        // `RequestContext::deinit` via `Fallback::put`, never via `HiveSlot::Drop`.
-        let ctx_slot = std::mem::ManuallyDrop::new(self.request_pool.claim())
-            .addr()
-            .as_ptr();
-        // SAFETY: `claim` hands out an uninitialized slot; `create()` fully
-        // initializes it via `MaybeUninit::write`.
-        let ctx_uninit = unsafe {
-            &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
-        };
+        let ctx_slot = self.request_pool.claim();
+        let ctx = ctx_slot.addr().as_ptr();
+        // SAFETY: `claim` hands out an uninitialized slot.
+        let ctx_uninit = unsafe { &mut *ctx.cast::<core::mem::MaybeUninit<_>>() };
         ServerRequestContext::<SSL, DEBUG>::create(
             ctx_uninit,
             self,
@@ -881,9 +872,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             should_deinit_context,
             method,
         );
-        let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         // SAFETY: fully initialized by `create()`.
-        let ctx_ref = unsafe { &*ctx };
+        let ctx_ref = unsafe { ctx_slot.assume_init().as_ref() };
 
         self.vm()
             .jsc_vm()
@@ -1772,25 +1762,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_if_we_can();
     }
 
-    /// Refs the server until it is drained: uWS and in-flight requests hold raw pointers to it.
     fn hold_open_ref(&self) {
-        if self.is_drained() || self.flags.get().contains(ServerFlags::OPEN_REF_HELD) {
-            return;
+        if !self.is_drained() && self.open_ref.get().is_none() {
+            // SAFETY: `self` is the live heap allocation.
+            let open_ref = unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) };
+            self.open_ref.set(Some(open_ref));
         }
-        self.flags
-            .set(self.flags.get() | ServerFlags::OPEN_REF_HELD);
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
-    }
-
-    fn take_open_ref(&self) -> Option<bun_ptr::RefPtr<Self>> {
-        if !self.flags.get().contains(ServerFlags::OPEN_REF_HELD) {
-            return None;
-        }
-        self.flags
-            .set(self.flags.get().difference(ServerFlags::OPEN_REF_HELD));
-        // SAFETY: `OPEN_REF_HELD` witnesses the one ref taken in `hold_open_ref`.
-        Some(unsafe { bun_ptr::RefPtr::from_raw(self.as_ctx_ptr()) })
     }
 
     #[inline]
@@ -1885,7 +1862,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // Under `deinit_running`, so that `schedule_deinit` never frees `self` in this frame.
-            drop(self.take_open_ref());
+            self.open_ref.set(None);
         }
         self.deinit_running.set(false);
     }
@@ -1995,10 +1972,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn init(
         config: &mut ServerConfig,
         global: &JSGlobalObject,
-    ) -> JsResult<bun_ptr::AliasableBox<Self>>
-    where
-        Self: ServerPools<SSL, DEBUG>,
-    {
+    ) -> JsResult<bun_ptr::AliasableBox<Self>> {
         let base_url: Box<[u8]> = bun_core::trim(&config.base_uri, b"/")
             .to_vec()
             .into_boxed_slice();
@@ -2006,6 +1980,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let owner = bun_ptr::AliasableBox::new(Self {
             ref_count: bun_ptr::RefCount::init(),
+            open_ref: JsCell::new(None),
             global_this: std::ptr::from_ref(global),
             // Set below, once the server has its final (stable) heap address.
             any_server_packed: 0,
@@ -2029,10 +2004,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
             context: core::cell::Cell::new(jsc::ContextId::default()),
-            request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
-            // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
-            // ~816 KB mux pool; `listen()` materializes it on demand.
-            mux_request_pool: core::cell::Cell::new(core::ptr::null_mut()),
+            request_pool: crate::jsc_hooks::request_pools(global.bun_vm()).get(),
+            mux_request_pool: core::cell::Cell::new(core::ptr::null()),
             all_closed_promise: JsCell::new(jsc::JSPromiseStrong::default()),
             poll_ref: KeepAlive::default(),
             flags: core::cell::Cell::new(ServerFlags::default()),
@@ -2555,10 +2528,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // ─── listen ──────────────────────────────────────────────────────────────
     /// `config.http2`: attach an HTTP/2 context to `app`. On failure an
     /// exception is pending and `false` returned.
-    fn attach_http2(&self, app: *mut uws_sys::NewApp<SSL>) -> bool
-    where
-        Self: ServerPools<SSL, DEBUG>,
-    {
+    fn attach_http2(&self, app: *mut uws_sys::NewApp<SSL>) -> bool {
         let (http2, is_node_http, http1, idle_timeout, has_dev_server) = {
             let cfg = self.config.get();
             (
@@ -2615,19 +2585,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         bun_opaque::opaque_deref_mut(h2.as_ptr())
             .on_schedule_drain(schedule_h2_drain, h2.as_ptr().cast::<c_void>());
         self.h2_app.set(Some(h2));
-        if self.mux_request_pool.get().is_null() {
-            self.mux_request_pool
-                .set(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool());
-        }
+        self.init_mux_request_pool();
         true
+    }
+
+    fn init_mux_request_pool(&self) {
+        let pool = crate::jsc_hooks::request_pools(self.vm()).get();
+        self.mux_request_pool.set(pool.as_const_ptr());
     }
 
     /// Create the uws `App<SSL>` (and optional H2/H3 apps), register routes via
     /// `set_routes()`, and bind the listen socket. A failure leaves an exception pending.
-    pub(crate) fn listen(owner: &bun_ptr::AliasableBox<Self>) -> JSValue
-    where
-        Self: ServerPools<SSL, DEBUG>,
-    {
+    pub(crate) fn listen(owner: &bun_ptr::AliasableBox<Self>) -> JSValue {
         httplog!("listen");
         let this = owner.as_ptr();
         let this_ref = bun_ptr::BackRef::from(owner.as_non_null());
@@ -2697,9 +2666,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 };
                 this_ref.h3_app.set(h3);
-                this_ref
-                    .mux_request_pool
-                    .set(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool());
+                this_ref.init_mux_request_pool();
             }
             if !this_ref.attach_http2(app) {
                 return JSValue::ZERO;
@@ -3235,62 +3202,44 @@ mod trampoline {
 }
 
 // ─── per-monomorphization request pools ──────────────────────────────────────
-// Rust generics cannot own statics, so
-// declare one `thread_local!` per concrete (SSL, DEBUG, H3) combo via macro and
-// hand the leaked pointer back through a trait.
-//
-// THREAD-SAFETY: this MUST be thread-local, not process-global. `hive_array::
-// Fallback` is `!Sync`: `claim`/`put` mutate through `&self` with no synchronization;
-// a process-static would race when two `Bun.serve` instances run on distinct
-// Worker threads (each Worker has its own event loop and may host a server).
-pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>:
-    ServerLike + Sized + 'static
-{
-    fn request_pool()
-    -> &'static request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
-    fn mux_request_pool()
-    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
+type RequestPool<const SSL: bool, const DEBUG: bool, const MUX: bool> =
+    request_context::RequestContextStackAllocator<NewServer<SSL, DEBUG>, SSL, DEBUG, MUX>;
+
+trait AnyRequestPool: Any {
+    fn is_in_use(&self) -> bool;
 }
 
-macro_rules! impl_server_pools {
-    ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
-        impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
-            fn request_pool() -> &'static request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, false>;
-                thread_local! {
-                    static POOL: core::cell::Cell<Option<&'static Pool>> =
-                        const { core::cell::Cell::new(None) };
-                }
-                POOL.with(|cell| {
-                    cell.get().unwrap_or_else(|| {
-                        // `Box::new(Pool::init())` builds the ~816 KB pool on
-                        // the stack and `memcpy`s it into the heap (no NRVO);
-                        // `new_boxed` writes only the 256 B bitset in place.
-                        let p: &'static Pool = Box::leak(Pool::new_boxed());
-                        cell.set(Some(p));
-                        p
-                    })
-                })
-            }
-            fn mux_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, true>;
-                thread_local! {
-                    static POOL: core::cell::Cell<*mut Pool> =
-                        const { core::cell::Cell::new(core::ptr::null_mut()) };
-                }
-                POOL.with(|cell| {
-                    let mut p = cell.get();
-                    if p.is_null() {
-                        p = Box::into_raw(Pool::new_boxed());
-                        cell.set(p);
-                    }
-                    p
-                })
+impl<T: 'static, const N: usize> AnyRequestPool for bun_collections::hive_array::Fallback<T, N> {
+    fn is_in_use(&self) -> bool {
+        self.hive.used.iter_set().next().is_some()
+    }
+}
+
+/// Shared by a VM's servers, and made when the first of a kind needs it.
+#[derive(Default)]
+pub(crate) struct RequestPools([OnceCell<Box<dyn AnyRequestPool>>; 8]);
+
+impl RequestPools {
+    fn get<const SSL: bool, const DEBUG: bool, const MUX: bool>(
+        &self,
+    ) -> bun_ptr::BackRef<RequestPool<SSL, DEBUG, MUX>> {
+        let index = usize::from(SSL) + 2 * usize::from(DEBUG) + 4 * usize::from(MUX);
+        let pool: &dyn Any =
+            &**self.0[index].get_or_init(|| RequestPool::<SSL, DEBUG, MUX>::new_boxed());
+        bun_ptr::BackRef::new(pool.downcast_ref().expect("one type per index"))
+    }
+}
+
+impl Drop for RequestPools {
+    fn drop(&mut self) {
+        for pool in self.0.iter_mut().filter_map(OnceCell::take) {
+            // A request the VM ended under (`process.exit()` in a handler) can't drop without it.
+            if pool.is_in_use() {
+                Box::leak(pool);
             }
         }
-    )*};
+    }
 }
-impl_server_pools!((false, false), (true, false), (false, true), (true, true));
 
 // ─── FFI ─────────────────────────────────────────────────────────────────────
 mod ffi {
@@ -3368,7 +3317,7 @@ pub(crate) trait ServerLike {
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
     fn terminated(&self) -> bool;
-    /// Return `ctx` to the per-server HiveArray pool for the matching transport.
+    /// Return `ctx` to the pool for the matching transport.
     /// Erased to `*mut c_void` so the trait stays object-safe and doesn't need
     /// to name `RequestContext<Self, ..>` (which would re-introduce the
     /// generic-parameter cycle this trait exists to break).

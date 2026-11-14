@@ -575,6 +575,37 @@ test.skipIf(!isDebug)(
   timeout,
 );
 
+// ASAN builds do not allocate through mimalloc.
+test.skipIf(isASAN)(
+  "a worker's end frees the pool of request contexts its Bun.serve() made",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { once } = require("node:events");
+        const held = () => require("bun:jsc").heapStats().mimalloc.malloc_huge.current / 1024 / 1024;
+        const src = "const s = Bun.serve({ port: 0, fetch: () => new Response('x') }); await fetch(s.url); await s.stop();";
+        await once(new Worker(src, { eval: true }), "exit");
+        const before = held();
+        for (let i = 0; i < 16; i++) await once(new Worker(src, { eval: true }), "exit");
+        console.log(held() - before);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Unfixed: 16 MiB.
+    expect(parseFloat(stdout)).toBeLessThan(8);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 test.skipIf(!isASAN)(
   "terminate() while formData() waits for a fetch() body does not leak its boundary",
   async () => {

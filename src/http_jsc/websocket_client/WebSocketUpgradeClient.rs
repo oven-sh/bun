@@ -290,9 +290,9 @@ where
         // Out param, only set when returning `None`: the errno name for `error.code`, if known.
         connect_error_code: &mut BunString,
     ) -> Option<*mut Self> {
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
-        debug_assert!(vm.event_loop_handle.is_some());
+        debug_assert!(vm.event_loop_handle.get().is_some());
 
         let server_name_of = |config: Option<&SSLConfig>| -> Option<Box<[u8]>> {
             config
@@ -404,7 +404,6 @@ where
         let context = websocket.context();
         let group = global
             .bun_vm()
-            .as_mut()
             .client_socket_groups_in(context)
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
@@ -1724,7 +1723,7 @@ struct BuildRequestResult {
 
 #[allow(clippy::too_many_arguments)]
 fn build_request_body(
-    vm: &mut VirtualMachineRef,
+    vm: &VirtualMachineRef,
     pathname: &[u8],
     is_https: bool,
     host: &[u8],
@@ -1749,7 +1748,7 @@ fn build_request_body(
         // RFC 6455 §4.1: base64 of a randomly selected 16-byte value.
         B64_STD
             .encoder
-            .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))
+            .encode(&mut encoded_buf, &vm.rare_data().entropy::<16>())
     };
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:

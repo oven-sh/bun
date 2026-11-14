@@ -255,7 +255,7 @@ impl Origin {
         Self {
             global: GlobalRef::new(cx.global()),
             context: cx.js_thread().context().id(),
-            generation: VirtualMachine::get().test_isolation_generation,
+            generation: VirtualMachine::get().test_isolation_generation.get(),
         }
     }
 }

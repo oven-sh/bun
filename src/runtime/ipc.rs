@@ -959,11 +959,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance => core::ptr::from_ref(
-                bun_jsc::virtual_machine::VirtualMachine::get()
-                    .as_mut()
-                    .global(),
-            ),
+            SendQueueOwner::Instance => {
+                core::ptr::from_ref(bun_jsc::virtual_machine::VirtualMachine::get().global())
+            }
         }
     }
 

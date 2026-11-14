@@ -853,7 +853,7 @@ impl Subprocess<'_> {
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
         let global_this = global_this.get();
-        let jsc_vm = global_this.bun_vm().as_mut();
+        let jsc_vm = global_this.bun_vm();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage.set(Some(*rusage));
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
@@ -1011,7 +1011,7 @@ impl Subprocess<'_> {
         let event_loop = jsc_vm.event_loop();
 
         // The exit is reported to the script that spawned the child.
-        let _context = (*jsc_vm).enter_context(self.context);
+        let _context = jsc_vm.enter_context(self.context);
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {

@@ -1414,14 +1414,14 @@ pub(crate) extern "C" fn Bun__AOT__hasImmediatesYetToRun(global: &bun_jsc::JSGlo
 pub(crate) extern "C" fn Bun__AOT__transpilerJobsScheduled(
     global: &bun_jsc::JSGlobalObject,
 ) -> u64 {
-    global.bun_vm().transpiler_store.jobs_scheduled
+    global.bun_vm().transpiler_store.jobs_scheduled.get()
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__transpilerJobsCompleted(
     global: &bun_jsc::JSGlobalObject,
 ) -> u64 {
-    global.bun_vm().transpiler_store.jobs_completed
+    global.bun_vm().transpiler_store.jobs_completed.get()
 }
 
 #[unsafe(no_mangle)]

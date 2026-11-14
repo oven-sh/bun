@@ -372,9 +372,7 @@ fn spawn_maybe_sync(
 
     let mut override_env = false;
     let mut env_array: Vec<CStrPtr> = Vec::new();
-    // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
-    // outlives this call frame.
-    let jsc_vm: &mut jsc::VirtualMachineRef = cx.vm().as_mut();
+    let jsc_vm: &jsc::VirtualMachineRef = cx.vm();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut user_specified_cwd = false;
@@ -928,6 +926,7 @@ fn spawn_maybe_sync(
         // single-unsafe deref). `.map` is its `&'a mut Map` slot.
         let envmap = match jsc_vm
             .transpiler
+            .get()
             .env_mut()
             .map
             .create_null_delimited_env_map()
@@ -1038,7 +1037,7 @@ fn spawn_maybe_sync(
         && !stdio[1].is_piped()
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
-        && !jsc_vm.auto_killer.enabled
+        && !jsc_vm.auto_killer.enabled.get()
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()
@@ -1046,19 +1045,8 @@ fn spawn_maybe_sync(
 
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop.
-    //
-    // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
-    // returned `&SpawnSyncEventLoop` keeps that borrow alive for the whole
-    // call. Route through a raw `*mut VirtualMachineRef` instead.
-    let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
     let sync_loop = if is_sync {
-        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
-        // same VM via the raw pointer for its `vm` arg.
-        let Some(sync_loop) = (unsafe {
-            (*jsc_vm_ptr)
-                .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
-        }) else {
+        let Some(sync_loop) = jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm) else {
             // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
             #[cfg(windows)]
             for e in &mut extra_fds {
@@ -1066,7 +1054,7 @@ fn spawn_maybe_sync(
             }
             return Err(throw_spawn_sync_loop_init_failed(cx.global()));
         };
-        Some(sync_loop.prepare(jsc_vm_ptr.cast()))
+        Some(sync_loop.prepare(core::ptr::from_ref(jsc_vm).cast_mut().cast()))
     } else {
         None
     };
@@ -1486,10 +1474,8 @@ fn spawn_maybe_sync(
     #[cfg(unix)]
     if !is_sync {
         if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
-            let vm = unsafe { &mut *jsc_vm_ptr };
-            let loop_ = vm.uws_loop();
-            let raw_socket = vm.rare_data().spawn_ipc_group(loop_).from_fd(
+            let loop_ = jsc_vm.uws_loop();
+            let raw_socket = jsc_vm.rare_data().spawn_ipc_group(loop_).from_fd(
                 bun_uws::SocketKind::SpawnIpc,
                 None,
                 core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
@@ -1600,10 +1586,10 @@ fn spawn_maybe_sync(
             // `Timer::All` lives in `bun_runtime`; reach it via the
             // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
             // forwards to `crate::timer::All::insert`.
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
+            // SAFETY: the timer node is
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
-            unsafe { (*jsc_vm_ptr).timer_insert(&raw const subprocess.event_loop_timer) };
+            unsafe { jsc_vm.timer_insert(&raw const subprocess.event_loop_timer) };
             subprocess.set_event_loop_timer_refd(true);
         }
 
@@ -1723,21 +1709,17 @@ fn spawn_maybe_sync(
 
     let Some(sync_loop) = &sync_loop else {
         if !subprocess.has_exited() {
-            // SAFETY: jsc_vm_ptr points to the live thread VM.
-            // `subprocess_ptr` is live and heap-pinned.
-            unsafe {
-                (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process.as_non_null());
-                if let Some(context) = (*jsc_vm_ptr).as_graph_context(cx.context()) {
-                    bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context);
-                }
-            };
+            jsc_vm.on_subprocess_spawn(subprocess.process.as_non_null());
+            if let Some(context) = jsc_vm.as_graph_context(cx.context()) {
+                // SAFETY: `subprocess_ptr` is live and heap-pinned.
+                unsafe { bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context) };
+            }
         }
         return Ok(out);
     };
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
-        // SAFETY: jsc_vm_ptr is the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }
+        jsc_vm
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
@@ -1770,8 +1752,7 @@ fn spawn_maybe_sync(
     }
 
     if !subprocess.has_exited() {
-        // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process.as_non_null()) };
+        jsc_vm.on_subprocess_spawn(subprocess.process.as_non_null());
     }
 
     let mut did_timeout = false;
@@ -1817,7 +1798,7 @@ fn spawn_maybe_sync(
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if jsc_vm.is_main_thread
+            } else if jsc_vm.is_main_thread.get()
                 && let Some(runner) = crate::test_runner::jest::Jest::runner()
             {
                 // The test runner and its deadlines belong to the main thread.

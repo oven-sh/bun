@@ -397,7 +397,7 @@ impl VmHandle {
             // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
             // `notify_need_termination` is thread-safe (VMTraps). Raw field
             // read, no `&VirtualMachine` formed off-thread.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
+            unsafe { (*(*self.0.hot.vm).jsc_vm.get().cast_const()).notify_need_termination() };
             self.0.loop_of(LoopKind::Regular).wakeup();
         }
     }

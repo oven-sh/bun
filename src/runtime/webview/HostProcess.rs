@@ -161,7 +161,11 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // signal; no argv changes so `ps` shows a normal `bun` invocation.
     // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
     // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
-    let base = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
+    let base = unsafe {
+        (*vm.transpiler.get().env)
+            .map
+            .create_null_delimited_env_map()
+    }?;
     let base_slice = base.as_slice();
     // base_slice already has a trailing None sentinel; drop it, append our
     // var, then re-terminate.

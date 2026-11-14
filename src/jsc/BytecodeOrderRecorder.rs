@@ -79,7 +79,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         let ok = unsafe {
             Bun__BytecodeOrder__digestModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 &module.source,
                 &origin_path,
                 module.is_esm,
@@ -102,7 +102,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: as above.
         let ok = unsafe {
             Bun__BytecodeOrder__digestInternalModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 id,
                 bytecode.cast::<u8>(),
                 bytecode.len(),
@@ -141,7 +141,7 @@ pub(crate) fn init_vm(
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         unsafe {
             Bun__BytecodeOrder__setLinkedPayload(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 payload.cast::<u8>(),
                 payload.len(),
                 region_ends.as_ptr(),
@@ -157,7 +157,7 @@ fn enable_if_requested(vm: &VirtualMachine) {
         return;
     }
     // SAFETY: `jsc_vm` is this thread's live VM.
-    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm) };
+    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm.get()) };
 }
 
 /// Once: a process that outlives the signal it sent itself has written its order file when it really exits.

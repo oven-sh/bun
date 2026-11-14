@@ -29,16 +29,6 @@ pub(crate) mod upgraded_duplex;
 #[path = "FdPipe.rs"]
 pub(crate) mod fd_pipe;
 
-#[cfg(unix)]
-#[path = "PosixPipe.rs"]
-pub(crate) mod posix_pipe;
-
-// Never-constructed ZST that registers `BufferedReaderParentLink[PosixPipe]`
-// so the Windows link resolves (link_interface! variants cannot be cfg'd).
-#[cfg(windows)]
-#[path = "posix_pipe_stub.rs"]
-pub(crate) mod posix_pipe;
-
 #[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub(crate) mod windows_named_pipe;

@@ -188,7 +188,7 @@ export const socketFaultInjectionAvailable = b.fn({
   rustPath: testing("socket_fault_injection_available"),
 });
 export const namedPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("named_pipe_live_count") });
-export const posixPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("posix_pipe_live_count") });
+export const fdPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("fd_pipe_live_count") });
 export const upgradedDuplexLiveCount = b.fn({ returns: b.usize, rustPath: testing("upgraded_duplex_live_count") });
 export const sweepSocketTimers = b.fn({
   ...js,

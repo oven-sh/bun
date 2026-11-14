@@ -331,7 +331,6 @@ const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kConnectReq = Symbol("kConnectReq");
 const kFdIsWriteOnly = Symbol("kFdIsWriteOnly");
-const kFdIsReadablePipe = Symbol("kFdIsReadablePipe");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 // The handle closed behind the peer's EOF: the peer hung up, and the loop closed the descriptor.
@@ -1665,14 +1664,13 @@ function Socket(options?): void {
 
   let stats;
   let fdIsWriteOnly = false;
-  let fdIsReadablePipe = false;
   if (fd !== undefined) {
     // Adopt pipe/character-device fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
     // complete inline, so data survives an immediate process.exit().
     // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
     // e.g. new Socket({ fd: 2, readable: false, writable: true })).
-    // An explicit `readable: true` is how a pipe/FIFO gets read natively.
+    // An explicit `readable: true` is checked the same way before the fd is adopted for reading.
     if (opts.writable === true || opts.readable === true) {
       try {
         stats = require("node:fs").fstatSync(fd);
@@ -1702,12 +1700,10 @@ function Socket(options?): void {
   if (stats !== undefined) {
     // isSocket() covers stdio handed to a child as a socketpair, which is how spawn implements pipes on unix.
     const optionsReadable = opts.readable;
-    if (process.platform !== "win32" && optionsReadable === true && stats.isFIFO()) {
-      // A pipe is read through a native pipe reader; a character device is not adopted for reading.
-      fdIsReadablePipe = true;
-    } else if (
+    if (
       opts.writable === true &&
-      (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true))
+      optionsReadable !== true &&
+      (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket())
     ) {
       fdIsWriteOnly = true;
       // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
@@ -1838,17 +1834,20 @@ function Socket(options?): void {
     // Nothing is read from this handle. Like a socket whose peer sent FIN, it holds the loop only while a write is pending.
     this[kended] = true;
     this._handle.unref();
-  } else if (fdIsReadablePipe) {
-    Socket.prototype.connect.$call(this, {
-      fd,
-      [kFdIsReadablePipe]: true,
-      pauseOnConnect: opts.pauseOnCreate === true,
-    });
-  } else if (process.platform !== "win32" && fd > 2 && opts.readable !== false && !this[bunTlsSymbol]) {
+  } else if (
+    process.platform !== "win32" &&
+    fd !== undefined &&
+    (fd > 2 || opts.readable === true) &&
+    opts.readable !== false &&
+    !this[bunTlsSymbol]
+  ) {
     try {
       stats ??= require("node:fs").fstatSync(fd);
     } catch {}
-    if (stats?.isSocket()) Socket.prototype.connect.$call(this, { fd });
+    // A socket is adopted by uSockets, a pipe or FIFO by a native pipe reader (node: uv_pipe_open). Stdio is adopted only when asked, since other streams share it.
+    if (stats?.isSocket() || stats?.isFIFO()) {
+      Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+    }
   }
 }
 $toClass(Socket, "Socket", Duplex);
@@ -1986,7 +1985,6 @@ Socket.prototype.connect = function connect(...args) {
           pauseOnConnect,
         };
         if (options[kFdIsWriteOnly]) $putByIdDirectPrivate(fdOptions, "fdIsWriteOnly", true);
-        if (options[kFdIsReadablePipe]) $putByIdDirectPrivate(fdOptions, "fdIsReadablePipe", true);
         const errno = kConnectDispatch(this, { oncomplete: afterOpenFd }, fdOptions);
         // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L568-L569
         if (errno !== 0) throw new ErrnoException(errno, "open");

@@ -884,7 +884,6 @@ impl Listener {
         let allow_half_open = socket_config.allow_half_open;
         let pause_on_connect = socket_config.pause_on_connect;
         let fd_is_write_only = socket_config.fd_is_write_only;
-        let fd_is_readable_pipe = socket_config.fd_is_readable_pipe;
         let fd_is_raw_socket = socket_config.fd_is_raw_socket;
         let mut ssl_taken = socket_config.ssl.take();
 
@@ -907,7 +906,6 @@ impl Listener {
                 allow_half_open,
                 pause_on_connect,
                 fd_is_write_only,
-                fd_is_readable_pipe,
                 fd_is_raw_socket,
                 port,
                 promise_value,
@@ -925,7 +923,6 @@ impl Listener {
                 allow_half_open,
                 pause_on_connect,
                 fd_is_write_only,
-                fd_is_readable_pipe,
                 fd_is_raw_socket,
                 port,
                 promise_value,
@@ -1016,7 +1013,6 @@ fn connect_finish<const IS_SSL: bool>(
     allow_half_open: bool,
     pause_on_connect: bool,
     fd_is_write_only: bool,
-    fd_is_readable_pipe: bool,
     fd_is_raw_socket: bool,
     port: Option<u16>,
     promise_value: JSValue,
@@ -1065,7 +1061,6 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::ENDS_ON_PEER_FIN, !allow_half_open);
         f.set(SocketFlags::PAUSE_ON_CONNECT, pause_on_connect);
         f.set(SocketFlags::WRITE_ONLY_FD, fd_is_write_only);
-        f.set(SocketFlags::READABLE_PIPE_FD, fd_is_readable_pipe);
         f.set(SocketFlags::RAW_SOCKET_FD, fd_is_raw_socket);
     });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.

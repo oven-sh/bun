@@ -6,7 +6,7 @@
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
 //! calling a setter twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
-//! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
+//! `toBase64`/`metadata`/`pixels`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
 use core::mem;
@@ -987,6 +987,21 @@ impl Image {
         )
     }
 
+    /// `.pixels()` — `{data, width, height, channels: 4}` with no encode, so
+    /// a chained format setter has no effect.
+    pub(crate) fn pixels<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JsResult<JSValue> {
+        self.schedule(
+            &cx.js_thread(),
+            this_value.to_js(),
+            Kind::Pixels,
+            Deliver::Uint8Array,
+        )
+    }
+
     /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
     /// of hash → ~400-700 bytes of `data:image/png;base64,…` ready for `<img
     /// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
@@ -1197,7 +1212,7 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            TaskResult::Meta { .. } | TaskResult::Pixels { .. } => unreachable!(),
         }
     }
 }
@@ -1469,6 +1484,8 @@ pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
+    /// `.pixels()` — stop after the pipeline; the RGBA8 plane is the output.
+    Pixels,
     /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
     /// → PNG → `data:` URL. The whole chain runs on the worker; the
     /// hash itself never crosses the JS boundary unless we add an
@@ -1487,6 +1504,12 @@ pub(crate) enum TaskResult {
         w: u32,
         h: u32,
         format: codecs::Format,
+    },
+    /// Post-pipeline RGBA8 plane, `rgba.len() == w * h * 4`.
+    Pixels {
+        rgba: Box<[u8]>,
+        w: u32,
+        h: u32,
     },
     Err(codecs::Error),
     IoErr(sys::Error),
@@ -1670,8 +1693,19 @@ impl PipelineTask {
         // "HEIC/AVIF require macOS or Windows" message, which is wrong twice
         // over. Emit PNG instead — it's the lossless, everywhere-supported
         // default Sharp uses for the same case.
-        let Kind::Encode(enc_opt) = &self.kind else {
-            unreachable!()
+        let enc_opt = match &self.kind {
+            Kind::Encode(enc_opt) => enc_opt,
+            // Shrink on the allocating thread: `mi_realloc` keeps a block in
+            // place only for its own heap.
+            Kind::Pixels => {
+                self.result = TaskResult::Pixels {
+                    rgba: mem::take(&mut decoded.rgba).into_boxed_slice(),
+                    w: decoded.width,
+                    h: decoded.height,
+                };
+                return;
+            }
+            Kind::Metadata | Kind::Placeholder => unreachable!(),
         };
         let enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
             format: match src_format {
@@ -1718,11 +1752,13 @@ impl PipelineTask {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
         match &self.result {
-            TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
+            TaskResult::Encoded { w, h, .. }
+            | TaskResult::Meta { w, h, .. }
+            | TaskResult::Pixels { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
-            _ => {}
+            TaskResult::Err(_) | TaskResult::IoErr(_) => {}
         }
         let result = mem::replace(
             &mut self.result,
@@ -1875,6 +1911,19 @@ impl PipelineTask {
                     .to_js(global)
                     .unwrap_or(JSValue::UNDEFINED);
                 obj.put(global, b"format", fmt_js);
+                promise.resolve(global, obj)?;
+            }
+            TaskResult::Pixels { rgba, w, h } => {
+                // Over the ArrayBuffer limit `from_bytes` frees and throws.
+                let data = match jsc::JSUint8Array::from_bytes(global, rgba) {
+                    Ok(v) => v,
+                    Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                };
+                let obj = JSValue::create_empty_object(global, 4);
+                obj.put(global, b"data", data);
+                obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+                obj.put(global, b"height", JSValue::js_number(f64::from(h)));
+                obj.put(global, b"channels", JSValue::js_number(4.0));
                 promise.resolve(global, obj)?;
             }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,

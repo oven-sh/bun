@@ -82,7 +82,7 @@ test("client socket can write Uint8Array (issue #22481)", async () => {
       });
 
       const chunks: Buffer[] = [];
-      client.on("data", chunk => {
+      client.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
       });
 

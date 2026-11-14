@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# function B(n) { this.n = n; this.i = 0; }
+# B.prototype.step = function () { this.i = (this.i + 1) & 1023; return this.i; };
+# B.prototype.get = function () { return this.n; };
+# function D(n) { this.n = n; this.i = 0; }
+# D.prototype = new B(0);
+# D.prototype.own = function () { return this.get(); };
+# const all = [new D(1), new D(2), new D(3), new D(4)];
+# function run(k) { var s = 0; for (var i = 0; i < k; i++) { var d = all[i & 3]; s = (s + d.step() + d.own()) | 0; } return s; }
+# print(run(40));
+# -- end of source
+# The object that only D.prototype names lets neither D nor its objects go.
+# RUN: walk f3:Body mechanisms=all
+# CHECK-NOT: UnseenCode
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 320

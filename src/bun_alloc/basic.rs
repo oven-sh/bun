@@ -9,10 +9,9 @@ use crate::{Alignment, AllocatorVTable, StdAllocator};
 #[inline(always)]
 pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize) {
     if cfg!(debug_assertions) {
-        // SAFETY: `mi_is_in_heap_region` accepts any pointer; remaining calls
-        // are sound by the caller contract above.
+        debug_assert!(mimalloc::mi_is_in_heap_region(ptr));
+        // SAFETY: caller contract above.
         unsafe {
-            debug_assert!(mimalloc::mi_is_in_heap_region(ptr));
             if mimalloc::must_use_aligned_alloc(align) {
                 mimalloc::mi_free_size_aligned(ptr, size, align);
             } else {
@@ -31,84 +30,13 @@ pub(crate) fn default_allocator_free(_: *mut c_void, buf: &mut [u8], _: Alignmen
     unsafe { default_alloc::free(buf.as_mut_ptr().cast()) }
 }
 
-pub(crate) struct MimallocAllocator;
-
-impl MimallocAllocator {
-    fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        let ptr: *mut c_void = default_alloc::malloc_aligned(len, alignment.to_byte_units());
-
-        #[cfg(debug_assertions)]
-        {
-            if !ptr.is_null() {
-                // SAFETY: ptr is non-null and was just returned by the default allocator
-                let usable = unsafe { default_alloc::usable_size(ptr) };
-                if usable < len && !ptr.is_null() {
-                    panic!(
-                        "default allocator: allocated size is too small: {} < {}",
-                        usable, len
-                    );
-                }
-            }
-        }
-
-        ptr.cast::<u8>()
-    }
-
-    fn alloc_with_default_allocator(
-        _: *mut c_void,
-        len: usize,
-        alignment: Alignment,
-        _: usize,
-    ) -> *mut u8 {
-        Self::aligned_alloc(len, alignment)
-    }
-
-    pub(crate) fn resize_with_default_allocator(
-        _: *mut c_void,
-        buf: &mut [u8],
-        _: Alignment,
-        new_len: usize,
-        _: usize,
-    ) -> bool {
-        if cfg!(bun_asan) {
-            return false;
-        }
-        // SAFETY: buf.ptr was allocated by mimalloc (non-ASAN ⇒ default = mimalloc)
-        unsafe { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
-    }
-
-    pub(crate) fn remap_with_default_allocator(
-        _: *mut c_void,
-        buf: &mut [u8],
-        alignment: Alignment,
-        new_len: usize,
-        _: usize,
-    ) -> *mut u8 {
-        // SAFETY: buf.ptr was allocated by the default allocator with this alignment
-        unsafe {
-            default_alloc::realloc_aligned(
-                buf.as_mut_ptr().cast(),
-                new_len,
-                alignment.to_byte_units(),
-            )
-            .cast::<u8>()
-        }
-    }
-
-    const FREE_WITH_DEFAULT_ALLOCATOR: fn(*mut c_void, &mut [u8], Alignment, usize) =
-        default_allocator_free;
-}
-
 pub static C_ALLOCATOR: StdAllocator = StdAllocator {
     // This ptr can be anything. But since it's not nullable, we should set it to something.
     ptr: memory_allocator_tags::DEFAULT_ALLOCATOR_TAG_PTR,
     vtable: C_ALLOCATOR_VTABLE,
 };
 static C_ALLOCATOR_VTABLE: &AllocatorVTable = &AllocatorVTable {
-    alloc: MimallocAllocator::alloc_with_default_allocator,
-    resize: MimallocAllocator::resize_with_default_allocator,
-    remap: MimallocAllocator::remap_with_default_allocator,
-    free: MimallocAllocator::FREE_WITH_DEFAULT_ALLOCATOR,
+    free: default_allocator_free,
 };
 
 mod memory_allocator_tags {

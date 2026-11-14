@@ -1,0 +1,30 @@
+# -- source: field-left-out-is-read-alike-in-a-function-that-a-loop-calls.ts
+# declare function print(...values: unknown[]): void;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# function isFragile(parcel: Parcel): boolean { return parcel.fragile === true; }
+# function hasNoLabel(parcel: Parcel): boolean { return (parcel as any).label === undefined; }
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) { const parcel = new Parcel(i); if (i === 3) parcel.fragile = true; parcels.push(parcel); }
+# (globalThis as any).parcels = parcels;
+# print(isFragile(parcels[3]), isFragile(parcels[0]), hasNoLabel(parcels[3]), hasNoLabel(parcels[0]));
+# function count(list: Parcel[]): number { let found = 0; for (let i = 0; i < list.length; i++) if (isFragile(list[i]) && hasNoLabel(list[i])) found++; return found; }
+# print(count(parcels));
+# -- end of source
+# The program of field-left-out-is-read-alike-in-a-function-that-no-loop-calls.ir and two lines more: somebody else calls the two readers in a loop. Their own bodies are the same code as there: the check lines on them are the same.
+# f1 = isFragile, f2 = hasNoLabel
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlotOrUndefined v0 {{*}}key="fragile" {{*}}level=Expected
+# CHECK: = StrictEq
+# RUN(ALONE): walk f1 mechanisms=all
+# ALONE-NOT: = PropGet
+# ALONE-NOT: = ShapeTest
+# RUN(NAME): walk f2 mechanisms=all
+# NAME-LABEL: code f2:Body
+# NAME: = ShapeTest v0 layouts=[L0] [rejectsMarkedObjects]
+# NAME: = HasNoExtraProperties
+# NAME: = PropGet v0 key="label"
+# NAME: = AreMembersUnchanged
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: true false true true
+# ANSWERS-NEXT: 1

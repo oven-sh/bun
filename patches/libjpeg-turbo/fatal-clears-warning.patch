@@ -1,0 +1,72 @@
+Report TJERR_FATAL when a fatal error follows a libjpeg warning.
+
+my_emit_message() sets jerr.warning on the first libjpeg warning. One fatal
+exit clears it again: my_progress_monitor() sets it to FALSE before its longjmp
+when a scan limit is exceeded. Every other fatal exit keeps it. So
+tj3GetErrorCode() returns TJERR_WARNING ("non-fatal and recoverable") also
+when the call hit a fatal error after the warning (a longjmp from
+my_error_exit(), or a THROW) and left the destination buffer unwritten.
+Example: a progressive JPEG with junk bytes and then an unsupported SOF5 marker
+before the second scan. tj3Decompress8() returns -1, reports TJERR_WARNING, and
+writes no rows.
+
+At the bailout label, retval is non-zero only after a fatal exit, so clear the
+flag there, as my_progress_monitor() does. TJERR_WARNING then means the call
+ran to completion: tj3DecompressHeader() parsed the whole header,
+tj3Decompress8() wrote every row. src/runtime/image/codec_jpeg.rs accepts a
+decode on that signal. It reads the flag through tj3BunCompletedWithWarning(),
+which this patch adds, so a libjpeg-turbo without the patch fails to link.
+
+Upstream has the same sticky flag at 3.2.0 and at main (b33c60b4, 2026-09-18).
+There is no upstream issue for it.
+
+--- a/src/turbojpeg.c
++++ b/src/turbojpeg.c
+@@ -714,6 +714,18 @@
+   return tj3GetErrorCode(handle);
+ }
+ 
++/* bun: whether the last tj3DecompressHeader() or tj3Decompress8() call ran to
++ * completion while libjpeg warned.  The bailout hunks of this patch make the
++ * flag mean that.  src/runtime/image/codec_jpeg.rs calls this instead of
++ * tj3GetErrorCode(), so a build without the patch fails to link. */
++DLLEXPORT int tj3BunCompletedWithWarning(tjhandle handle);
++DLLEXPORT int tj3BunCompletedWithWarning(tjhandle handle)
++{
++  tjinstance *this = (tjinstance *)handle;
++
++  return this && this->jerr.warning;
++}
++
+ 
+ #define SET_PARAM(field, minValue, maxValue) { \
+   if (value < minValue || (maxValue > 0 && value > maxValue)) \
+@@ -1924,7 +1936,10 @@
+     THROW("Invalid data returned in header");
+ 
+ bailout:
+-  if (this->jerr.warning) retval = -1;
++  /* bun: as in tj3Decompress8(), a fatal error after a warning must read as
++   * TJERR_FATAL, so that TJERR_WARNING means the header was fully parsed. */
++  if (retval != 0) this->jerr.warning = FALSE;
++  else if (this->jerr.warning) retval = -1;
+   return retval;
+ }
+ 
+--- a/src/turbojpeg-mp.c
++++ b/src/turbojpeg-mp.c
+@@ -287,7 +287,13 @@
+ bailout:
+   if (dinfo->global_state > DSTATE_START) jpeg_abort_decompress(dinfo);
+   free(row_pointer);
+-  if (this->jerr.warning) retval = -1;
++  /* bun: the warning flag is sticky, so upstream reports TJERR_WARNING
++   * ("non-fatal and recoverable") from tj3GetErrorCode() even when a fatal
++   * error (longjmp or THROW) followed the warning and left rows of dstBuf
++   * unwritten. retval is non-zero here only on those fatal exits. Clear the
++   * flag for them, so that TJERR_WARNING means every row was written. */
++  if (retval != 0) this->jerr.warning = FALSE;
++  else if (this->jerr.warning) retval = -1;
+   return retval;
+ }
+ 

@@ -1,0 +1,14 @@
+# The first element of a view may be undefined. The loop carries the greatest one as an int32, which the preheader checks.
+# LIBRARY: own
+# -- source: main.ts
+# function greatest(list: Int32Array): number { let most = list[0]!; for (let i = 1; i < list.length; i++) if (list[i]! > most) most = list[i]!; return most; }
+# const list = Int32Array.from({ length: 100 }, (_, i) => i * 7 % 31);
+# publish(() => greatest(list));
+# declare function publish(run: () => number): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# CHECK: Greater {{*}}form=Integers
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 30

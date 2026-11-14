@@ -37,6 +37,13 @@ impl Error {
     }
 }
 
+/// Already logged, like every other `SyntaxError`.
+impl From<bun_ast::SourceTooLarge> for Error {
+    fn from(_: bun_ast::SourceTooLarge) -> Self {
+        Error::SyntaxError
+    }
+}
+
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()

@@ -1,0 +1,23 @@
+# -- source: main.ts
+# function make(step: number) {
+#     let total = 0;
+#     const list: Array<() => number> = [];
+#     const sum = () => total;
+#     for (let turn = 0; turn < 3; turn++) {
+#         let own = turn * step;
+#         list.push(() => { own++; total += own; return total; });
+#     }
+#     try { throw list; } catch (thrown) { list.push(() => (thrown as unknown[]).length + sum()); }
+#     return list;
+# }
+# const list = make(10);
+# print(list[0](), list[1](), list[2](), list[0](), list[3](), new Set(list).size);
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# total lies among the variables of the module: `sum`, a closure over it, is held by another closure and is no argument of a call. own belongs to one turn of the loop: its scope is made in each turn, and the closure holds that one word and no other. What was caught is a list: it stays a capture.
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 12 33 35 39 4
+# RUN(MADE): run-in-shell mechanisms=all-PromotedEnvironments
+# MADE: 1 12 33 35 39 4

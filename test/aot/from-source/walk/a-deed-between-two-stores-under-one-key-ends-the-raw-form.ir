@@ -1,0 +1,28 @@
+# -- source: main.js
+# "use strict";
+# const held = { row: null };
+# function plain(t) { const a = [1.5, 2.5]; a.push(3.5); for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; a[i] = a[i] + 1.5; } return a; }
+# function storedOver(t) { const a = []; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) a.length = 10; a[i] = a[i] + 1.5; } return a; }
+# function otherName(t) { const a = []; const b = a; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) b.length = 2; a[i] = a[i] + 1.5; } return a; }
+# function holder(t) { const a = []; held.row = a; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) held.row.length = 2; a[i] = a[i] + 1.5; } return a; }
+# function hole(t) { const a = []; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) delete a[i]; a[i] = a[i] + 1.5; } return a; }
+# print(plain(1).length, storedOver(1).length, otherName(1).length, holder(1).length, hole(1).length);
+# -- end of source
+# f1 = plain, f2 = storedOver, f3 = otherName, f4 = holder, f5 = hole. In plain() the first store's `key < length` is laid on its edges, and the second store under the same key rests on it and asks no more.
+# That rests on the note of the list's length. Today a deed on the list between the two stores ends the raw form of the whole loop: no raw store is built in the four others.
+# The day a typed form of `length =` or `delete` keeps the raw form alive, these lines fail, and whoever turns them asks who ends that note.
+# RUN(PLAIN): walk f1:Body mechanisms=all
+# PLAIN: PutDoubleIndex {{*}}isInBounds
+# PLAIN: PutDoubleIndex {{*}}isInBounds
+# RUN(STOREDOVER): walk f2:Body mechanisms=all
+# STOREDOVER: code f2:Body
+# STOREDOVER-NOT: = Put{{*}}Index
+# RUN(OTHERNAME): walk f3:Body mechanisms=all
+# OTHERNAME: code f3:Body
+# OTHERNAME-NOT: = Put{{*}}Index
+# RUN(HOLDER): walk f4:Body mechanisms=all
+# HOLDER: code f4:Body
+# HOLDER-NOT: = Put{{*}}Index
+# RUN(HOLE): walk f5:Body mechanisms=all
+# HOLE: code f5:Body
+# HOLE-NOT: = Put{{*}}Index

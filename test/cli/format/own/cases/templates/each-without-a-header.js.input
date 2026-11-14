@@ -1,0 +1,9 @@
+it.each`
+    ${undefined}
+    ${[]}
+  `("a $source", ({ source }) => {});
+
+it.each`
+  a | b
+  ${1} | ${22}
+`("a", () => {});

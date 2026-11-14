@@ -147,7 +147,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let (bs, bw) = shift_width(h.b_mask);
     let (as_, aw) = shift_width(h.a_mask);
 
-    let mut out = vec![0u8; h.width as usize * h.height as usize * 4];
+    let mut out: Vec<u8> = Vec::with_capacity(h.width as usize * h.height as usize * 4);
 
     let mut y: u32 = 0;
     while y < h.height {
@@ -157,7 +157,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
             (h.height - 1 - y) as usize
         };
         let row = &bytes[h.pix_off as usize + src_y * stride..];
-        let dst = &mut out[y as usize * h.width as usize * 4..];
         let mut x: u32 = 0;
         while x < h.width {
             let xs = x as usize;
@@ -172,14 +171,17 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
                         .expect("infallible: size matches"),
                 )
             };
-            dst[xs * 4] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
-            dst[xs * 4 + 1] = to8((pix >> gs) & (1u32 << gw).wrapping_sub(1), gw);
-            dst[xs * 4 + 2] = to8((pix >> bs) & (1u32 << bw).wrapping_sub(1), bw);
-            dst[xs * 4 + 3] = if h.a_mask == 0 {
+            let a = if h.a_mask == 0 {
                 0xFF
             } else {
                 to8((pix >> as_) & (1u32 << aw).wrapping_sub(1), aw)
             };
+            out.extend_from_slice(&[
+                to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw),
+                to8((pix >> gs) & (1u32 << gw).wrapping_sub(1), gw),
+                to8((pix >> bs) & (1u32 << bw).wrapping_sub(1), bw),
+                a,
+            ]);
             x += 1;
         }
         y += 1;

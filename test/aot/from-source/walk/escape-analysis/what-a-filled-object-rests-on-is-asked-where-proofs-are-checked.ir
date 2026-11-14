@@ -1,0 +1,28 @@
+# -- source: main.js
+# class Link { constructor(left, id) { this.left = left; this.id = id; this.next = null; } }
+# const leaves = ["a", "b"];
+# let newest = new Link(leaves[0], 0);
+# function push() { const id = newest.id + 1; const link = new Link(leaves[id % 2], id); newest.next = link; newest = link; }
+# function grow(count) { for (let i = 0; i < count; i++) push(); }
+# grow(3);
+# grow(2);
+# print(newest.left + newest.id + newest.next);
+# -- end of source
+# In a build of a program the link is allocated where its constructor ends, with every field. Where proofs are checked the first allocation stays, and what a second would be born with is asked of it: a checked build makes no more links than another.
+# f1 = push, f3 = Link
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f1
+# CHECK-LABEL: code f1:Body
+# CHECK: [[made]]: L0 @Cell = NewObject layout=L0
+# CHECK: = GetSlot [[made]] key="left"
+# CHECK: CheckProof
+# CHECK: = GetSlot [[made]] key="id"
+# CHECK: CheckProof
+# CHECK: = GetSlot [[made]] key="next"
+# CHECK: CheckProof
+# RUN(ONCE): walk f1
+# ONCE-COUNT-1: = NewObject
+# ONCE-NOT: = NewObject
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: b5null
+# ANSWERS-NEXT: exited with 0

@@ -24,7 +24,12 @@ public:
     JSNextTickQueue(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
 
-    bool isEmpty();
+    // Field 0 is the scheduled flag: 1 from process.nextTick(), 0 from processTicksAndRejections when the queue is empty. Another encoding of zero reads as not empty, which only costs a call into JS.
+    bool isEmpty()
+    {
+        JSValue scheduled = internalField(0).get();
+        return !scheduled || scheduled == jsNumber(0);
+    }
     void drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     // Teardown: whatever was queued no longer runs (field 0 = scheduled flag, field 2 = the JS
     // drain function). The queued callbacks go with the heap.

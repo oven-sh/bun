@@ -14,7 +14,7 @@
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Config } from "./config.ts";
+import { webkitVersionName, type Config } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Source } from "./source.ts";
@@ -52,11 +52,9 @@ function computeVersions(cfg: Config): [string, string][] {
     const source = dep.source(cfg);
     const id = sourceIdentifier(source);
     // WebKit special case: prebuilt.identity carries the artifact suffix, but
-    // process.versions wants the version. Strip the autobuild- prefix so tags
-    // report the clean sha and previews report preview-pr-<N>-<sha8>.
+    // process.versions wants the version.
     if (dep.name === "WebKit") {
-      const v = cfg.webkitVersion;
-      versions.push([dep.versionMacro, v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v]);
+      versions.push([dep.versionMacro, webkitVersionName(cfg.webkitVersion)]);
     } else if (id !== undefined) {
       versions.push([dep.versionMacro, id]);
     }
@@ -64,8 +62,6 @@ function computeVersions(cfg: Config): [string, string][] {
   }
 
   // ─── Non-dep versions ───
-  versions.push(["BUN_VERSION", cfg.version]);
-  versions.push(["NODEJS_COMPAT_VERSION", cfg.nodejsVersion]);
   // UWS/USOCKETS are vendored at packages/bun-usockets — the bun commit
   // IS their version.
   versions.push(["UWS", cfg.revision]);
@@ -103,11 +99,8 @@ export function generateDepVersionsHeader(cfg: Config): string {
     'extern "C" {',
     "#endif",
     "",
-    "// Dependency versions",
-    ...versions.map(([name, val]) => `#define BUN_DEP_${name} "${val}"`),
-    "",
     "// C string constants for easy access",
-    ...versions.map(([name, val]) => `static const char* const BUN_VERSION_${name} = "${val}";`),
+    ...versions.map(([name, val]) => `static constexpr const char* BUN_VERSION_${name} = "${val}";`),
     "",
     "#ifdef __cplusplus",
     "}",

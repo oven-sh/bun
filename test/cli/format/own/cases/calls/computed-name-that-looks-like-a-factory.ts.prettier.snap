@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a() {
+  return Promise.all(
+    entries.map((entry) =>
+      registry[CONTEXT_KEY].runInContext(() => prepare(entry, registry)).then(
+        () => entry.commit(target),
+      ),
+    ),
+  );
+}
+registry[contextKey]
+  .runInContext(() => prepare(entry, registry))
+  .then(() => entry.commit(target, more));
+registry.CONTEXT_KEY.runInContext(() => prepare(entry, registry)).then(() =>
+  entry.commit(target, more),
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a() {
+  return Promise.all(
+    entries.map((entry) =>
+      registry[CONTEXT_KEY].runInContext(() => prepare(entry, registry)).then(() =>
+        entry.commit(target),
+      ),
+    ),
+  );
+}
+registry[contextKey]
+  .runInContext(() => prepare(entry, registry))
+  .then(() => entry.commit(target, more));
+registry.CONTEXT_KEY.runInContext(() => prepare(entry, registry)).then(() =>
+  entry.commit(target, more),
+);
+
+===================== End =====================

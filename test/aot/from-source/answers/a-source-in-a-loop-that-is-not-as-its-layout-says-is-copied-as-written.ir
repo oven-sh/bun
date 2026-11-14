@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type State = { a: number; b: number };
+# function widen(state: State, c: number) { const made = { ...state, c }; return Object.keys(made).join() + made.a; }
+# function run(states: State[]) { let text = ""; for (let i = 0; i < 9; i++) text += widen(states[i % 3], i) + " "; return text; }
+# function change(states: any[]) { states[2].extra = 7; delete states[1].a; states[1].a = 8; }
+# const states: State[] = [{ a: 1, b: 2 }, { a: 3, b: 4 }, { a: 5, b: 6 }];
+# print(run(states));
+# change(states);
+# print(run(states));
+# -- end of source
+# In a loop a source that is not in sight is asked for the order of its names and for what lies outside its slots, all tests in front of the run; whichever fails goes to the run as written, which meets the other arm once, behind the last fill.
+# RUN: run-in-shell
+# CHECK: a,b,c1 a,b,c3 a,b,c5 a,b,c1 a,b,c3 a,b,c5 a,b,c1 a,b,c3 a,b,c5
+# CHECK-NEXT: a,b,c1 b,a,c8 a,b,extra,c5 a,b,c1 b,a,c8 a,b,extra,c5 a,b,c1 b,a,c8 a,b,extra,c5
+# CHECK-NEXT: exited with 0

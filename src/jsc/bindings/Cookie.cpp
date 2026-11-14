@@ -2,6 +2,7 @@
 #include "EncodeURIComponent.h"
 #include "JSCookie.h"
 #include "helpers.h"
+#include "StringSizeLimit.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -166,11 +167,13 @@ bool Cookie::isExpired() const
     return currentTime > m_expires;
 }
 
-String Cookie::toString(JSC::VM& vm) const
+ExceptionOr<String> Cookie::toString(JSC::VM& vm) const
 {
-    StringBuilder builder;
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     appendTo(vm, builder);
-    return builder.toString();
+    if (builder.hasOverflowed() || Bun::exceedsStringLimit(builder.length())) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    return String { builder.toString() };
 }
 
 static inline bool isValidCharacterInCookieName(char16_t c)
@@ -258,8 +261,7 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
         builder.append("; Expires="_s);
         // RFC 6265 wants an IMF-fixdate ("Thu, 01 Jan 1970 00:00:00 GMT"). Reuse the
         // Date.prototype.toUTCString() formatter, which emits exactly that.
-        WTF::GregorianDateTime dateTime;
-        vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime, dateTime);
+        auto dateTime = vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime);
         builder.append(JSC::formatDateTime(dateTime, JSC::DateTimeFormat::DateAndTime, /* asUTCVariant */ true, vm.dateCache));
     }
 

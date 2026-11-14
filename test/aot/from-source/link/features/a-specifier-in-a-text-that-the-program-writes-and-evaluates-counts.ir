@@ -1,0 +1,10 @@
+# the text is a constant of the program and names the module between quotes: what the module brings is no name from run time
+# -- source: a-specifier-in-a-text-that-the-program-writes-and-evaluates-counts.ts
+# const found: any = await new Function("return import('bun:sqlite')")();
+# new found.Database(":memory:");
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: CreateJSSQLStatementConstructor named
+# RUN(NEVER): features
+# NEVER-NOT: CreateJSSQLStatementConstructor named-at-run-time

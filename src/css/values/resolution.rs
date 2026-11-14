@@ -27,10 +27,10 @@ impl Resolution {
     // css.implementHash / css.implementEql — provided by
     // `#[derive(CssHash, CssEql)]` above (f32-payload enum).
 
-    pub(crate) fn parse(input: &mut Parser) -> Result<Resolution> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Resolution> {
         // TODO: calc?
         let location = input.current_source_location();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         if let Token::Dimension(dim) = &tok {
             let value = dim.num.value;
             let unit = dim.unit;

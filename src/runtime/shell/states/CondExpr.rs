@@ -1,5 +1,6 @@
 //! https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
 
+use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
@@ -8,7 +9,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
-pub struct CondExpr {
+pub(crate) struct CondExpr {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::CondExpr>,
     pub(crate) io: IO,
@@ -65,8 +66,8 @@ impl CondExpr {
                     if (idx as usize) >= n.args.len() {
                         return Self::command_impl_start(interp, this, n.op);
                     }
-                    let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let atom = n.args.get_const(idx as usize);
+                    let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
@@ -192,15 +193,20 @@ impl CondExpr {
         path: &[u8],
     ) {
         // Evaluate `op` against the stat result.
-        let _ = path;
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
             CondExprState::WaitingStat
         ));
         let op = interp.as_condexpr(this).node.op;
-        let exit = match stat {
-            Err(_) => 1,
-            Ok(st) => {
+        let cwd = interp.as_condexpr(this).base.shell().cwd();
+        let operand = path.strip_suffix(b"\0").unwrap_or(path);
+        let embedded = match stat {
+            Err(_) => stat_embedded_shell_operand(cwd, operand),
+            Ok(_) => None,
+        };
+        let exit = match stat.as_ref().ok().or(embedded.as_ref()) {
+            None => 1,
+            Some(st) => {
                 let mode = st.st_mode as _;
                 let ok = match op {
                     ast::CondExprOp::DashF => bun_sys::S::ISREG(mode),
@@ -235,7 +241,7 @@ impl CondExpr {
                 return Self::write_failing_error(interp, this, format_args!("{}\n", err));
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
-            debug_assert!(false, "Expansion child failed without an error");
+            debug_assert!(interp.failed(), "Expansion child failed without an error");
             let parent = interp.as_condexpr(this).base.parent;
             return interp.child_done(parent, this, 1);
         }
@@ -327,7 +333,6 @@ impl CondExpr {
         log!("CondExpr {} deinit", this);
         let me = interp.as_condexpr_mut(this);
         me.args.clear();
-        me.base.end_scope();
     }
 }
 
@@ -343,6 +348,10 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprSta
             (*this).task.task.unref_unrun();
             drop(bun_core::heap::take(this));
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

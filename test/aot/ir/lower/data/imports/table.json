@@ -1,0 +1,1 @@
+{ "name": "table", "size": 2, "nested": { "ok": true }, "list": [1, "two", null] }

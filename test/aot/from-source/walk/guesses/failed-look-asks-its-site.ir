@@ -1,0 +1,21 @@
+# -- source: failed-look-asks-its-site.ts
+# declare function print(value: unknown): void;
+# type Item = { type: "open" | "close"; value: string } | { type: "number"; value: number; unit: string } | { type: "space" };
+# const items: Item[] = [{ type: "open", value: "(" }, { type: "number", value: 5, unit: "px" }, { type: "space" }, { type: "close", value: ")" }];
+# (globalThis as unknown as { kept: unknown }).kept = items;
+# function isOpen(item: Item | undefined): boolean { return item !== undefined && item.type === "open" && item.value === "("; }
+# function isClose(item: Item | undefined): boolean { return item !== undefined && item.type === "close" && item.value === ")"; }
+# function stops(): number {
+#   let count = 0, at = 0;
+#   for (let item = items[at]; item !== undefined; item = items[++at]) {
+#     if (isOpen(item) || isClose(item)) count++;
+#     if (item.type === "number") count += 2;
+#     if (item.type === "space") count += 4;
+#   }
+#   return count;
+# }
+# print(stops());
+# -- end of source
+# A read by name in the arm of a failed look asks its site while the turn may begin again: what is known in front of the arm is known behind it.
+# RUN: walk f3:Body mechanisms=all
+# CHECK: GetValueAtSiteOrAbsent

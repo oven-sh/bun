@@ -1,0 +1,34 @@
+# LIBRARY: own
+# `XS.some(x => x > 2)`, `XS.forEach(x => { .. })` in a loop, and nothing is known of XS (it comes out of a parse or out of the host): lists, views and iterators all answer such a name, forEach maps and sets too,
+# so no one built-in class is told by it: the read and the call went by name, the library's method was entered and called the arrow by value at every element.
+# A function written in place for the call, under a name that lists answer, where lists answer every name that is asked of the value and no layout of the program has one of them: a list is expected.
+# It is a guess: the receiver is tested; whatever else arrives runs as written.
+# f1 = sum
+# -- source: main.cjs
+# "use strict";
+# const XS = outside();
+# function sum(t) { let s = 0; for (let i = 0; i < t; i++) { XS.forEach(x => { s += x; }); s += XS.some(x => x > 2) ? 100 : 0; } return s; }
+# function attempt(t) { try { return sum(t); } catch (error) { return error.constructor.name; } }
+# print(attempt(2), attempt(0));
+# -- end of source
+# RUN(SUM): walk f1 mechanisms=all
+# SUM: = TypeTest {{*}}testedType=Array
+# The shell itself hands over, out of sight of Link: a list . one with a hole . an empty one . a view . a set (it has no some) . an object with methods of those names . an heir of Array that overrides forEach . a list with a forEach of its own . undefined.
+# RUN(LIST): run-in-shell outside = function () { return [1, 2, 3]; };
+# LIST: 212 0
+# RUN(HOLE): run-in-shell outside = function () { return [1, , 3]; };
+# HOLE: 208 0
+# RUN(EMPTY): run-in-shell outside = function () { return []; };
+# EMPTY: 0 0
+# RUN(VIEW): run-in-shell outside = function () { return new Uint8Array([1, 2, 3]); };
+# VIEW: 212 0
+# RUN(SET): run-in-shell outside = function () { return new Set([1, 2, 3]); };
+# SET: TypeError 0
+# RUN(LIKE): run-in-shell outside = function () { return { forEach(g) { g(10); }, some(g) { return g(1); } }; };
+# LIKE: 20 0
+# RUN(HEIR): run-in-shell outside = function () { class Heir extends Array { forEach(g) { g(50); } } return Heir.from([1, 2, 3]); };
+# HEIR: 300 0
+# RUN(OWN): run-in-shell outside = function () { const own = [1, 2, 3]; own.forEach = function (g) { g(7); }; return own; };
+# OWN: 214 0
+# RUN(NOTHING): run-in-shell outside = function () { };
+# NOTHING: TypeError 0

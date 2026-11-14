@@ -1,0 +1,7 @@
+# Link finds the method on the number and tells the built-in alone: the record has the place where the program reads the name
+# -- source: a-method-of-a-number-that-the-program-names-has-the-place-of-the-read.ts
+# const price = 1234.5;
+# console.log(price.toLocaleString("de"));
+# -- end of source
+# RUN: features
+# CHECK: by NumberPrototypeToLocaleString named at f0 v

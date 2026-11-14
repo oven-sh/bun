@@ -218,6 +218,9 @@ impl Expect {
     #[optimize(size)]
     fn add_to_expect_call_counter(&self, count: i32) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
+        if parent.expect_call_counted.get() {
+            return;
+        }
         let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
         if let Some(sequence) = parent.phase.sequence(buntest) {
@@ -696,22 +699,31 @@ impl Expect {
         message: JSValue,
         state: Option<bun_test::RefDataValue>,
     ) -> JsResult<JSValue> {
+        // Before `message` is read, which can throw: that is when Vitest counts the call.
+        let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
+            let buntest_strong = buntest_strong_;
+            let buntest = buntest_strong.get();
+            let (state, sequence) = match state {
+                Some(state) => (state, state.sequence(buntest)),
+                None => buntest.current_state_data_and_sequence(),
+            };
+            let counted = sequence.is_some_and(|sequence| {
+                if sequence.counts_expect_calls {
+                    sequence.expect_call_count = sequence.expect_call_count.saturating_add(1);
+                }
+                sequence.counts_expect_calls
+            });
+            let parent = bun_test::BunTest::ref_(&buntest_strong, state);
+            parent.expect_call_counted.set(counted);
+            Some(parent)
+        } else {
+            None
+        };
 
         let mut custom_label = bun_core::String::EMPTY;
         if message.is_string() || message.implements_to_string(global_this)? {
             custom_label = message.to_bun_string(global_this)?;
         }
-
-        let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
-            let buntest_strong = buntest_strong_;
-            let state = state.unwrap_or_else(|| buntest_strong.get().get_current_state_data());
-            Some(bun_test::BunTest::ref_(&buntest_strong, state))
-        } else {
-            None
-        };
-        // The ref moves into `Expect` below and `to_js()` is infallible, so
-        // there is no error path between ref creation and the wrapper taking
-        // ownership.
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
@@ -763,9 +775,6 @@ impl Expect {
         options: JSValue,
         state: Option<bun_test::RefDataValue>,
     ) -> JsResult<JSValue> {
-        if !function.is_callable() {
-            return Err(global_this.throw_invalid_argument_type_value("fn", "function", function));
-        }
         let (interval, timeout, message) = if options.is_object() {
             (
                 options.get(global_this, "interval")?,
@@ -788,6 +797,10 @@ impl Expect {
             state,
             Flags::PROMISE_MASK,
         )?;
+        // Vitest reads `options`, counts the call, and only then finds that `fn` is not a function.
+        if !function.is_callable() {
+            return Err(global_this.throw_invalid_argument_type_value("fn", "function", function));
+        }
         super::expect::js::result_value_set_cached(
             expect_js_value,
             global_this,

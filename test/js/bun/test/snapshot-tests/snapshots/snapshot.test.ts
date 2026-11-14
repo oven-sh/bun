@@ -1390,6 +1390,71 @@ describe.concurrent("the fixtures and snapshot files that another runner wrote",
   });
 });
 
+// Bun 1.4.4 wrote formats/bun-1.4.4/thrown.fixture.js, both its .snap file and its inline snapshots.
+// To add a case, run it under that version. Never update the folder with a later Bun.
+describe.concurrent("the snapshots that Bun 1.4.4 wrote for what a function throws", () => {
+  const fixture = "thrown.fixture.js";
+  const snap = join("__snapshots__", fixture + ".snap");
+  // 1.4.4 stored `undefined` for these, whatever the message.
+  const nowTheMessage: Record<string, string> = {
+    "a plain object": '"not found"',
+    "an instance of a class": '"not found"',
+    "an object with a null prototype": '"not found"',
+    "a DOMException": '"not found"',
+    "an object that inherits Error.prototype": '"not found"',
+    "an object with a name": '"not found"',
+    "a rejected promise": '"not found"',
+    "an object with the message 0": "0",
+  };
+
+  function copy() {
+    const dir = tempDir("snapshot-formats-bun-1.4.4", {});
+    cpSync(join(import.meta.dir, "..", "formats", "bun-1.4.4"), String(dir), { recursive: true });
+    return dir;
+  }
+  const contentsOf = (dir: string) =>
+    Object.fromEntries([fixture, snap].map(name => [name, readFileSync(join(dir, name), "utf8")]));
+  const run = (dir: string, CI: string, ...args: string[]) => runTests(dir, { CI }, ...args, "./" + fixture);
+
+  test("pass, and are left alone", async () => {
+    using dir = copy();
+    const before = contentsOf(String(dir));
+    for (const CI of ["true", "false"]) {
+      const { stderr, exitCode, pass, fail } = await run(String(dir), CI);
+      expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 16, stderr: "" });
+      expect(contentsOf(String(dir))).toEqual(before);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("--update-snapshots rewrites them once", async () => {
+    using dir = copy();
+    const before = contentsOf(String(dir));
+    const first = await run(String(dir), "true", "--update-snapshots");
+    const updated = contentsOf(String(dir));
+    const second = await run(String(dir), "true", "--update-snapshots");
+    const read = await run(String(dir), "true");
+    expect(contentsOf(String(dir))).toEqual(updated);
+    expect([first, second, read].map(({ pass, fail, exitCode }) => ({ pass, fail, exitCode }))).toEqual(
+      Array.from({ length: 3 }, () => ({ pass: 16, fail: 0, exitCode: 0 })),
+    );
+
+    // 1.4.4 also printed `[native code]` for the getter in the message of one Error.
+    const getter = (text: string) => text.replace('"total": [native code],', '"total": 1,');
+    expect(updated).toEqual({
+      [fixture]: getter(before[fixture]).replace(
+        /^(test\("([^"]+)".*InlineSnapshot\()`undefined`/gm,
+        (line, start, name) => (name in nowTheMessage ? start + "`" + nowTheMessage[name] + "`" : line),
+      ),
+      [snap]: Object.entries(nowTheMessage).reduce(
+        (text, [name, message]) =>
+          text.replace(`exports[\`${name} 1\`] = \`undefined\`;`, () => `exports[\`${name} 1\`] = \`${message}\`;`),
+        getter(before[snap]),
+      ),
+    });
+  });
+});
+
 describe.concurrent("the first line of a snapshot file says whose format it has", () => {
   const snap = (dir: unknown, name = "a.test.js") =>
     readFileSync(join(String(dir), "__snapshots__", name + ".snap"), "utf8");
@@ -2660,6 +2725,221 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     const message = "expect(received).toThrowErrorMatchingInlineSnapshot(expected)";
     expect(log).toEqual([`${message} 1`, `${message} 101`]);
     expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent("the snapshot of a thrown object that no Error constructor made", () => {
+  const read = (dir: unknown, name: string) => readFileSync(join(String(dir), name), "utf8");
+  const snap = (dir: unknown, name = "a.test.js") => read(dir, join("__snapshots__", name + ".snap"));
+
+  // Each has M for its message. MATCH is where the call of the matcher goes.
+  const thrown = {
+    "a plain object": "expect(thrower({ message: M, code: 4 })).MATCH;",
+    "an instance of a class": "expect(thrower(new (class Failure { constructor(m) { this.message = m; } })(M))).MATCH;",
+    "an object with a null prototype": "expect(thrower(Object.assign(Object.create(null), { message: M }))).MATCH;",
+    "a DOMException": 'expect(thrower(new DOMException(M, "NotFoundError"))).MATCH;',
+    "an object that inherits Error.prototype":
+      "expect(thrower(Object.assign(Object.create(Error.prototype), { message: M }))).MATCH;",
+    "an object with a name": 'expect(thrower({ name: "HttpError", message: M })).MATCH;',
+    "a Proxy of an Error": "expect(thrower(new Proxy(new Error(M), {}))).MATCH;",
+    "a getter, called once":
+      "let reads = 0; expect(thrower({ get message() { reads++; return M; } })).MATCH; expect(reads).toBe(1);",
+    "a rejected promise": "await expect(Promise.reject({ message: M })).rejects.MATCH;",
+    "a promise that rejects later":
+      "await expect(new Promise((_, reject) => setImmediate(reject, { message: M }))).rejects.MATCH;",
+    "a fulfilled promise, with .resolves": "await expect(Promise.resolve({ message: M })).resolves.MATCH;",
+    "an async function": "await expect(async () => { throw { message: M }; }).MATCH;",
+    "expect.soft()": "expect.soft(thrower({ message: M })).MATCH;",
+  };
+  const names = Object.keys(thrown);
+  const tests = (match: string, message: string) =>
+    `import { test, expect } from "bun:test";\n` +
+    `const M = ${JSON.stringify(message)};\n` +
+    `const thrower = value => () => { throw value; };\n` +
+    Object.entries(thrown)
+      .map(([name, body]) => `test(${JSON.stringify(name)}, async () => { ${body.replace("MATCH", () => match)} });\n`)
+      .join("");
+
+  test("is its message in a file, which fails once the message is another", async () => {
+    using dir = tempDir("snapshot-thrown-object", {
+      "a.test.js": tests("toThrowErrorMatchingSnapshot()", "not found"),
+    });
+    const first = await runTests(String(dir), { CI: "false" });
+    const stored = headers.bun + names.map(name => `\nexports[\`${name} 1\`] = \`"not found"\`;\n`).join("");
+    expect(snap(dir)).toBe(stored);
+    expect({ pass: first.pass, stderr: first.exitCode ? first.stderr : "" }).toEqual({
+      pass: names.length,
+      stderr: "",
+    });
+
+    writeFileSync(join(String(dir), "a.test.js"), tests("toThrowErrorMatchingSnapshot()", "quota exceeded"));
+    const second = await runTests(String(dir), { CI: "true" });
+    expect({ pass: second.pass, fail: second.fail }).toEqual({ pass: 0, fail: names.length });
+    expect(second.stderr).toContain('Expected: "not found"\nReceived: "quota exceeded"\n');
+    expect(snap(dir)).toBe(stored);
+    expect([first.exitCode, second.exitCode]).toEqual([0, 1]);
+  });
+
+  test("is its message inline, which fails once the message is another", async () => {
+    const stored = 'toThrowErrorMatchingInlineSnapshot(`"not found"`)';
+    using dir = tempDir("snapshot-thrown-object-inline", {
+      "a.test.js": tests("toThrowErrorMatchingInlineSnapshot()", "not found"),
+    });
+    const first = await runTests(String(dir), { CI: "false" });
+    expect(read(dir, "a.test.js")).toBe(tests(stored, "not found"));
+    expect({ pass: first.pass, stderr: first.exitCode ? first.stderr : "" }).toEqual({
+      pass: names.length,
+      stderr: "",
+    });
+
+    writeFileSync(join(String(dir), "a.test.js"), tests(stored, "quota exceeded"));
+    const second = await runTests(String(dir), { CI: "true" });
+    expect({ pass: second.pass, fail: second.fail }).toEqual({ pass: 0, fail: names.length });
+    expect(read(dir, "a.test.js")).toBe(tests(stored, "quota exceeded"));
+    expect([first.exitCode, second.exitCode]).toEqual([0, 1]);
+  });
+
+  test("is what `message` holds, and `undefined` where it holds nothing, as for an Error", async () => {
+    const stored = {
+      "an Error": ['new Error("not found")', '"not found"'],
+      "an Error with a cause": ['new Error("outer", { cause: new Error("inner") })', '"outer"'],
+      "an Error with the message 0": ['Object.assign(new Error("x"), { message: 0 })', "0"],
+      "an object with the message 0": ["{ message: 0 }", "0"],
+      "an Error with an empty message": ['new Error("")', "undefined"],
+      "an object with an empty message": ['{ message: "" }', "undefined"],
+      "an object with the message null": ["{ message: null }", "undefined"],
+      "an object with no message": ["{ code: 4 }", "undefined"],
+      "a string": ['"not found"', "undefined"],
+    };
+    const saved =
+      headers.bun +
+      Object.entries(stored)
+        .map(([name, [, text]]) => `\nexports[\`${name} 1\`] = \`${text}\`;\n`)
+        .join("");
+    using dir = tempDir("snapshot-thrown-message", {
+      "a.test.js": Object.entries(stored)
+        .map(
+          ([name, [value]]) =>
+            `test(${JSON.stringify(name)}, () => { expect(() => { throw ${value}; }).toThrowErrorMatchingSnapshot(); });\n`,
+        )
+        .join(""),
+      "__snapshots__/a.test.js.snap": saved,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "true" });
+    expect({ pass, stderr: exitCode ? stderr : "" }).toEqual({ pass: 9, stderr: "" });
+    expect(snap(dir)).toBe(saved);
+    expect(exitCode).toBe(0);
+  });
+
+  test("what the read of `message` throws is what the matcher throws, as in Jest", async () => {
+    const throwing = `
+      const thrower = value => () => { throw value; };
+      test("a getter that throws", () => {
+        let reads = 0;
+        const value = { get message() { reads++; throw new RangeError("from getter"); } };
+        expect(() => expect(thrower(value)).toThrowErrorMatchingSnapshot()).toThrow(new RangeError("from getter"));
+        expect(() => expect(thrower(value)).toThrowErrorMatchingInlineSnapshot()).toThrow(new RangeError("from getter"));
+        expect(reads).toBe(2);
+      });
+      test("a revoked Proxy", () => {
+        const { proxy, revoke } = Proxy.revocable({}, {});
+        revoke();
+        expect(() => expect(thrower(proxy)).toThrowErrorMatchingSnapshot()).toThrow(TypeError);
+      });
+    `;
+    // The mismatch is what fails here: the other formats that are tried for it keep what their reads throw to themselves.
+    const later = `
+      test("a getter that throws the second time", () => {
+        let reads = 0;
+        const fail = () => { throw { get message() { if (++reads > 1) throw new RangeError("from getter"); return "m"; } }; };
+        expect(() => expect(fail).toThrowErrorMatchingInlineSnapshot(\`"other"\`)).toThrow("toThrowErrorMatchingInlineSnapshot(expected)");
+        expect(reads).toBe(3);
+      });
+    `;
+    using dir = tempDir("snapshot-thrown-message-throws", { "a.test.js": throwing, "b.test.js": later });
+    const read1 = await runTests(String(dir), { CI: "true" });
+    const update = await runTests(String(dir), { CI: "true" }, "--update-snapshots", "./a.test.js");
+    expect({ pass: read1.pass, stderr: read1.exitCode ? read1.stderr : "" }).toEqual({ pass: 3, stderr: "" });
+    expect({ pass: update.pass, stderr: update.exitCode ? update.stderr : "" }).toEqual({ pass: 2, stderr: "" });
+    expect(readdirSync(String(dir)).sort()).toEqual(["a.test.js", "b.test.js"]);
+    expect([read(dir, "a.test.js"), read(dir, "b.test.js")]).toEqual([throwing, later]);
+  });
+
+  test("the `undefined` that an older Bun stored for it passes in a file of Jest or Vitest and in a test of vitest, until --update-snapshots", async () => {
+    const file = (module: string, inline: string) =>
+      `import { test, expect } from ${JSON.stringify(module)};\n` +
+      `const fail = () => { throw { message: "not found" }; };\n` +
+      `test("second", () => { expect(fail).toThrowErrorMatchingSnapshot(); });\n` +
+      `test("first", () => { expect(fail).toThrowErrorMatchingSnapshot(); });\n` +
+      `test("inline", () => { expect(fail).toThrowErrorMatchingInlineSnapshot(${inline}); });\n`;
+    const entries = (order: string[], text: string) =>
+      order.map(name => `\nexports[\`${name} 1\`] = \`${text}\`;\n`).join("");
+    // Jest and Vitest keep the keys of a file in order. Out of order, some of them may be an older Bun's.
+    const outOfOrder = entries(["second", "first"], "undefined");
+    const older = {
+      "jest.test.js": file("bun:test", "`undefined`"),
+      "vitest.test.js": file("vitest", "`undefined`"),
+      "__snapshots__/jest.test.js.snap": headers.jest + outOfOrder,
+      "__snapshots__/vitest.test.js.snap": headers.vitest + outOfOrder,
+    };
+    using dir = tempDir("snapshot-thrown-older-bun", older);
+    const contents = () => Object.fromEntries(Object.keys(older).map(name => [name, read(dir, name)]));
+
+    const stale = await runTests(String(dir), { CI: "true" });
+    expect({ pass: stale.pass, stderr: stale.exitCode ? stale.stderr : "" }).toEqual({ pass: 6, stderr: "" });
+    expect(contents()).toEqual(older);
+
+    const update = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
+    const message = '"not found"';
+    const object = '{\n  "message": "not found",\n}';
+    expect(contents()).toEqual({
+      "jest.test.js": file("bun:test", "`" + message + "`"),
+      "vitest.test.js": file("vitest", "`\n" + object.replaceAll(/^/gm, "  ") + "\n`"),
+      "__snapshots__/jest.test.js.snap": headers.jest + entries(["first", "second"], message),
+      "__snapshots__/vitest.test.js.snap": headers.vitest + entries(["first", "second"], "\n" + object + "\n"),
+    });
+
+    const updated = await runTests(String(dir), { CI: "true" });
+    expect({ pass: updated.pass, fail: updated.fail }).toEqual({ pass: 6, fail: 0 });
+    expect([stale.exitCode, update.exitCode, updated.exitCode]).toEqual([0, 0, 0]);
+  });
+
+  test("no other stored `undefined` passes so", async () => {
+    using dir = tempDir("snapshot-thrown-not-older-bun", {
+      "bun.test.js": `
+        const error = () => { throw new Error("not found"); };
+        test("an Error", () => {
+          expect(error).toThrowErrorMatchingSnapshot();
+        });
+        test("inline: an Error", () => {
+          expect(error).toThrowErrorMatchingInlineSnapshot(\`undefined\`);
+        });
+        test("not thrown", () => {
+          expect({ message: "not found" }).toMatchSnapshot();
+        });
+      `,
+      // The keys of this file are in order, so all of it is Jest's, which stores `undefined` for an object with no message.
+      "jest.test.js": `
+        test("an object that had no message", () => {
+          expect(() => { throw { message: "not found" }; }).toThrowErrorMatchingSnapshot();
+        });
+      `,
+      "__snapshots__/bun.test.js.snap":
+        headers.bun + "\nexports[`an Error 1`] = `undefined`;\n" + "\nexports[`not thrown 1`] = `undefined`;\n",
+      "__snapshots__/jest.test.js.snap": headers.jest + "\nexports[`an object that had no message 1`] = `undefined`;\n",
+    });
+    const { exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ pass, fail }).toEqual({ pass: 0, fail: 4 });
+    expect(exitCode).toBe(1);
+  });
+
+  test("--update-snapshots leaves an inline snapshot that holds its message, as Jest writes it", async () => {
+    const file = `test("t", () => { expect(() => { throw { message: "boom" }; }).toThrowErrorMatchingInlineSnapshot(\`"boom"\`); });\n`;
+    using dir = tempDir("snapshot-thrown-inline-kept", { "a.test.js": file });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
+    expect(read(dir, "a.test.js")).toBe(file);
+    expect({ pass, stderr: exitCode ? stderr : "" }).toEqual({ pass: 1, stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });
 

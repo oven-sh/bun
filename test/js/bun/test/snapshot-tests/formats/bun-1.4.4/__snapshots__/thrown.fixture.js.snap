@@ -1,0 +1,37 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`an Error 1`] = `"not found"`;
+
+exports[`an instance of a class that extends Error 1`] = `"not found"`;
+
+exports[`an Error with a cause 1`] = `"outer"`;
+
+exports[`an Error with an empty message 1`] = `undefined`;
+
+exports[`an Error whose message has a getter 1`] = `
+{
+  "total": [native code],
+}
+`;
+
+exports[`a plain object 1`] = `undefined`;
+
+exports[`an instance of a class 1`] = `undefined`;
+
+exports[`an object with a null prototype 1`] = `undefined`;
+
+exports[`a DOMException 1`] = `undefined`;
+
+exports[`an object that inherits Error.prototype 1`] = `undefined`;
+
+exports[`an object with a name 1`] = `undefined`;
+
+exports[`a rejected promise 1`] = `undefined`;
+
+exports[`an object with the message 0 1`] = `undefined`;
+
+exports[`an object with an empty message 1`] = `undefined`;
+
+exports[`an object with no message 1`] = `undefined`;
+
+exports[`a string 1`] = `undefined`;

@@ -505,18 +505,6 @@ impl JSGlobalObject {
         Ok(str)
     }
 
-    pub fn throw_incompatible_option_pair(&self, opt1: &[u8], opt2: &[u8]) -> JsError {
-        self.err(
-            JscError::INCOMPATIBLE_OPTION_PAIR,
-            format_args!(
-                "Option \"{}\" cannot be used in combination with option \"{}\"",
-                bstr::BStr::new(opt1),
-                bstr::BStr::new(opt2)
-            ),
-        )
-        .throw()
-    }
-
     pub fn throw_invalid_scrypt_params(&self) -> JsError {
         let err = bun_boringssl::c::ERR_peek_last_error();
         bun_boringssl::c::ERR_clear_error();

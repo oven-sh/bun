@@ -11,8 +11,9 @@
 // few seconds rather than the 5-minute default.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import * as net from "node:net";
+import { join } from "node:path";
 
 // Accepts connections and never writes a byte.
 async function silentServer() {
@@ -105,6 +106,102 @@ describe.concurrent("a retry after a timeout is announced immediately", () => {
     const { messages } = await install(`http://127.0.0.1:${silent.port}/`, { "any-pkg": "1.0.0" }, "--silent");
     expect(messages.filter(line => line.startsWith("warn:"))).toEqual([]);
   }, 60_000);
+});
+
+// What a registry looks like when it drops the first packets of one connection: that connection stays silent, and
+// the next one is answered at once. `bunEnv` sets BUN_CONFIG_HTTP_IDLE_TIMEOUT so that the installs of tests get
+// through this.
+test.concurrent(
+  "bun install finishes on a new connection when the first one never answers the TLS handshake",
+  async () => {
+    const requests: string[] = [];
+    let origin = "";
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        requests.push(pathname);
+        if (pathname === "/BaR-0.0.2.tgz") return new Response(Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        return Response.json({
+          name: "BaR",
+          "dist-tags": { latest: "0.0.2" },
+          versions: { "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${origin}/BaR-0.0.2.tgz` } } },
+        });
+      },
+    });
+
+    // Takes the ClientHello of the first connection and never answers it. Every later connection is piped to the
+    // registry.
+    let connects = 0;
+    let unanswered = 0;
+    const sockets = new Set<net.Socket>();
+    const track = (socket: net.Socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    };
+    const front = net.createServer(socket => {
+      track(socket);
+      socket.on("error", () => {});
+      if (++connects === 1) {
+        socket.on("data", chunk => (unanswered += chunk.length));
+        return;
+      }
+      const upstream = net.connect(registry.port!, "127.0.0.1");
+      track(upstream);
+      upstream.on("error", () => socket.destroy());
+      socket.pipe(upstream).pipe(socket);
+    });
+    await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
+    origin = `https://127.0.0.1:${(front.address() as net.AddressInfo).port}`;
+
+    try {
+      using dir = tempDir("install-handshake-stall-once", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { BaR: "0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: `${origin}/` } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        // The certificate of the harness is self-signed.
+        env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1", NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(unanswered).toBeGreaterThan(0);
+      expect({
+        messages: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
+        requests,
+        installed: stdout.split("\n").filter(line => line.startsWith("+ ")),
+        exitCode,
+      }).toEqual({
+        messages: ["warn: registry requests failed, retrying"],
+        requests: ["/BaR", "/BaR-0.0.2.tgz"],
+        installed: ["+ BaR@0.0.2"],
+        exitCode: 0,
+      });
+      expect(await Bun.file(join(String(dir), "node_modules", "BaR", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+    } finally {
+      for (const s of sockets) s.destroy();
+      await new Promise<void>(resolve => front.close(() => resolve()));
+    }
+  },
+  // One second is the shortest idle timeout, and the timer wheel fires it 4 to 8 seconds later. That is more than the
+  // 5 seconds a test gets by default.
+  60_000,
+);
+
+// The test above sets 1 second to be short. The installs of the other tests get the value of `bunEnv`, which has to
+// stay below the timeout of the shortest test that installs from the public registry: 100 seconds, in
+// dev-server-ssr-100.test.ts.
+test.concurrent("bunEnv closes a silent connection before such a test times out", () => {
+  expect(Number(bunEnv.BUN_CONFIG_HTTP_IDLE_TIMEOUT)).toBeWithin(1, 100);
 });
 
 test.concurrent(

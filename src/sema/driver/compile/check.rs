@@ -250,7 +250,9 @@ fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: us
 }
 
 fn cut_into_passes(files: &Files<'_>, mut to_check: Vec<FileId>, count: usize) -> Vec<Vec<FileId>> {
-    if count < 2 || to_check.len() < 2 {
+    // No more passes than files.
+    let count = count.min(to_check.len());
+    if count < 2 {
         return vec![to_check];
     }
     let cost_of = |file: FileId| cost_of_file(files, file);

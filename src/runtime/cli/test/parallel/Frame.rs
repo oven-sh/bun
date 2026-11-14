@@ -14,7 +14,7 @@ pub(crate) enum Kind {
     /// then, only when the worker runs with `--reporter`, the structured
     /// result (`runner::encode_test_case`): u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
-    /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
+    /// u32 scope_line, u32 scope_run, u64 scope_address}, u32 has_failure, u32 earlier_failures, (earlier_failures + has_failure) × {str name, str message, str body, u32 uncaught}
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
     /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
@@ -89,10 +89,10 @@ impl Frame {
         // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
         // as a corrupt-channel signal and closes, which would surface as a spurious
         // worker crash. Truncate the string in place instead. Leave headroom
-        // so the fixed-size tail of the frame (u32s, short paths, and the
+        // so the fixed-size tail of the frame (u32s and u64s, short paths, and the
         // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
-        const HEADROOM: usize = 4096;
+        const HEADROOM: usize = 8192;
         let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
         let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
         let (keep, marker): (usize, &[u8]) = if s.len() <= room {

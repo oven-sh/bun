@@ -8,7 +8,7 @@ use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult};
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -567,7 +567,7 @@ pub(crate) fn writable_stream(
 pub(crate) struct S3UploadStreamWrapper {
     pub(crate) ref_count: core::cell::Cell<u32>,
 
-    pub sink: Option<NonNull<NetworkSink>>,
+    pub sink: Option<AliasableBox<NetworkSink>>,
     pub task: RefPtr<MultiPartUpload>,
     pub(crate) end_promise: bun_jsc::JSPromiseStrong,
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
@@ -582,12 +582,9 @@ pub(crate) struct S3UploadStreamWrapper {
 impl S3UploadStreamWrapper {
     fn detach_sink(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
-        if let Some(sink_ptr) = self.sink.take() {
-            // SAFETY: allocated via `Box::leak` in `upload_stream`; consumed once here.
-            let mut sink = unsafe { bun_core::heap::take(sink_ptr.as_ptr()) };
-            sink.source.detach(&self.global);
-            // releases NetworkSink's counted ref on the MultiPartUpload
-            sink.finalize();
+        if let Some(sink) = self.sink.take() {
+            // SAFETY: live until `sink` drops.
+            unsafe { (*sink.as_ptr()).source.detach(&self.global) };
         }
     }
 
@@ -596,7 +593,7 @@ impl S3UploadStreamWrapper {
     #[inline]
     fn sink_mut(&mut self) -> Option<&mut NetworkSink> {
         // SAFETY: sink is a live Box allocation owned by this wrapper.
-        self.sink.map(|p| unsafe { &mut *p.as_ptr() })
+        self.sink.as_ref().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
     pub(crate) fn on_writable(task: &MultiPartUpload, self_: &mut Self, flushed: u64) {
@@ -936,14 +933,15 @@ pub(crate) fn upload_stream(
     // controller created by `assign_to_stream` detaches via
     // `controller.end()/close()` before GC so its `Drop` never calls
     // `finalize` on this allocation.
-    let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
-        // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
+    let sink = AliasableBox::new(NetworkSink {
+        // SAFETY: `task_ptr` is live.
         task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
         global_this: Some(bun_ptr::BackRef::new(cx.global())),
         ..Default::default()
-    }));
+    });
+    // SAFETY: live until `detach_sink`.
+    let sink = unsafe { &mut *ctx.sink.insert(sink).as_ptr() };
     let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new_mut(sink));
-    ctx.sink = Some(NonNull::from(&mut *sink));
 
     // Captured before `assign_to_stream`: a synchronously-draining stream may
     // resolve + clear `ctx.end_promise` before control returns here.

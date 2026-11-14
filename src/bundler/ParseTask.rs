@@ -834,9 +834,14 @@ pub mod parse_worker {
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
                 opts.macro_remap = Some(&topts.macro_remap);
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-                {
+                return if let Some(res) = (crate::cache::JavaScript {}).parse(
+                    bump,
+                    opts,
+                    &topts.define,
+                    log,
+                    source,
+                    None,
+                )? {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {

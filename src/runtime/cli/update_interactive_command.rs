@@ -684,11 +684,13 @@ impl UpdateInteractiveCommand {
                 b""
             };
 
-            let is_catalog = dep.version.tag == dependency::Tag::Catalog;
-            let catalog_name: Option<Box<[u8]>> = is_catalog
-                .then(|| dep.version.catalog().slice(json_buf))
-                .filter(|name| !name.is_empty())
-                .map(Box::from);
+            let is_catalog = dep.version.tag() == dependency::Tag::Catalog;
+            let catalog_name: Option<Box<[u8]>> = match &dep.version.value {
+                dependency::Value::Catalog(name) => Some(name.slice(json_buf))
+                    .filter(|name| !name.is_empty())
+                    .map(Box::from),
+                _ => None,
+            };
 
             outdated_packages.push(OutdatedPackage {
                 name: Box::from(name_slice),

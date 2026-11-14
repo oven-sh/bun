@@ -1521,6 +1521,24 @@ impl FFI {
     }
 }
 
+/// `ERR_DLOPEN_FAILED` for a failed loader call, with the `dlerror()` text appended.
+fn dlopen_failed(
+    global: &JSGlobalObject,
+    syscall: &'static [u8],
+    what: core::fmt::Arguments<'_>,
+) -> JSValue {
+    let dlerror_msg = get_dl_error();
+    let mut msg = Vec::new();
+    let _ = write!(&mut msg, "{}: {}", what, BStr::new(&dlerror_msg));
+    let system_error = SystemError {
+        code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
+        message: bun_core::String::clone_utf8(&msg),
+        syscall: bun_core::String::clone_utf8(syscall),
+        ..Default::default()
+    };
+    system_error.to_error_instance(global)
+}
+
 /// Creates an Exception object indicating that options object is invalid.
 /// The exception is not thrown on the VM.
 fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
@@ -1612,22 +1630,11 @@ impl FFI {
                         Some(Ok(d)) => break 'brk d,
                         Some(Err(_)) | None => {
                             // Then, if that fails, report an error with the library name and system error
-                            let dlerror_msg = get_dl_error();
-
-                            let mut msg = Vec::new();
-                            let _ = write!(
-                                &mut msg,
-                                "Failed to open library \"{}\": {}",
-                                BStr::new(name),
-                                BStr::new(&dlerror_msg)
-                            );
-                            let system_error = SystemError {
-                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
-                                message: bun_core::String::clone_utf8(&msg),
-                                syscall: bun_core::String::clone_utf8(b"dlopen"),
-                                ..Default::default()
-                            };
-                            return Ok(system_error.to_error_instance(global));
+                            return Ok(dlopen_failed(
+                                global,
+                                b"dlopen",
+                                format_args!("Failed to open library \"{}\"", BStr::new(name)),
+                            ));
                         }
                     }
                 }
@@ -1654,11 +1661,15 @@ impl FFI {
             // optional if the user passed "ptr"
             if function.symbol_from_dynamic_library.is_none() {
                 let Some(resolved_symbol) = dylib.lookup::<*mut c_void>(&function_name) else {
-                    let ret = global.to_invalid_arguments(format_args!(
-                        "Symbol \"{}\" not found in \"{}\"",
-                        BStr::new(function_name.as_bytes()),
-                        BStr::new(name)
-                    ));
+                    let ret = dlopen_failed(
+                        global,
+                        b"dlsym",
+                        format_args!(
+                            "Symbol \"{}\" not found in \"{}\"",
+                            BStr::new(function_name.as_bytes()),
+                            BStr::new(name)
+                        ),
+                    );
                     dylib.close();
                     lib.do_close();
                     return Ok(ret);

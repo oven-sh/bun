@@ -46,7 +46,7 @@ impl DevServer {
     pub(crate) fn replace_asset_path(
         &mut self,
         abs_path: &[u8],
-        mut contents: AnyBlob,
+        contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
@@ -137,8 +137,6 @@ impl DevServer {
             MapEntry::Occupied(occupied) => {
                 let file_index = occupied.index();
                 assets.refs[file_index] += 1;
-                // Release the owned blob on the duplicate-content path.
-                contents.detach();
                 file_index
             }
         };

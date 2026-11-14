@@ -562,17 +562,6 @@ impl ShellSubprocess {
             };
         let _ = &inherited_env_storage;
 
-        // Until ownership transfers into Writable/Readable, deinit any caller-provided
-        // stdio resources (memfd, Blob) on early return so they aren't leaked
-        // (`redirect_stdout`/`redirect_stderr` drop with `spawn_args`). Defused via
-        // `ScopeGuard::into_inner` once consumed.
-        let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
-            for s in stdio.iter_mut() {
-                // Stdio's Drop impl handles resource teardown.
-                *s = Stdio::Ignore;
-            }
-        });
-
         #[cfg(unix)]
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
             !iowriter.is_socket()
@@ -584,14 +573,14 @@ impl ShellSubprocess {
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
         // `mut` only for the Windows-only `.deinit()` rollback below.
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut stdin_opt = match stdio_guard[0].as_spawn_option(0) {
+        let mut stdin_opt = match spawn_args.stdio[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut stdout_opt = match stdio_guard[1].as_spawn_option(1) {
+        let mut stdout_opt = match spawn_args.stdio[1].as_spawn_option(1) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
@@ -599,7 +588,7 @@ impl ShellSubprocess {
                 return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
-        let stderr_opt = match stdio_guard[2].as_spawn_option(2) {
+        let stderr_opt = match spawn_args.stdio[2].as_spawn_option(2) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
@@ -693,9 +682,9 @@ impl ShellSubprocess {
         let mut spawn_result = spawn_result;
 
         // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
-        let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
-        let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
-        let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
+        let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
+        let stdio1 = core::mem::replace(&mut spawn_args.stdio[1], Stdio::Ignore);
+        let stdio2 = core::mem::replace(&mut spawn_args.stdio[2], Stdio::Ignore);
 
         // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
@@ -772,7 +761,6 @@ impl ShellSubprocess {
                 bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess),
             );
         }
-        let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
         if let Some(id) = cmd_parent.interp.context.get() {
             // Freed already (the graph was collected): `interrupted()` ends the script.
             if let Some(context) = jsc::virtual_machine::VirtualMachine::get().graph_context(id) {
@@ -1977,10 +1965,6 @@ impl PipeReader {
         }
 
         panic!("We should be either stdout or stderr");
-    }
-
-    pub(crate) fn take_buffer(&mut self) -> Vec<u8> {
-        self.reader.take_buffer()
     }
 
     pub(crate) fn slice(&self) -> &[u8] {

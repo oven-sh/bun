@@ -219,10 +219,6 @@ impl Process {
         self.exit_handler.set(None);
     }
 
-    pub fn has_exit_handler(&self) -> bool {
-        self.exit_handler.get().is_some()
-    }
-
     /// `None` while it runs.
     pub fn status(&self) -> Option<&Status> {
         self.status.get()

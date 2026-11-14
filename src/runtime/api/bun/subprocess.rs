@@ -195,16 +195,6 @@ impl<'a> Subprocess<'a> {
         let this = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
         self.stdin_sink_ref.set(Some(this));
     }
-
-    /// Intrusive `deref()`.
-    /// May free `self`; do not use `self` after calling.
-    #[inline]
-    pub fn deref(&self) {
-        // SAFETY: `&self` → live `*const Self`; destructor handles the Box.
-        // R-2: `&self` so callers can deref at scope exit without holding a
-        // unique borrow across re-entrant JS.
-        unsafe { RefCount::<Self>::deref(self.as_ctx_ptr()) }
-    }
 }
 
 bitflags::bitflags! {
@@ -267,7 +257,8 @@ bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, caus
 
 bun_spawn::link_impl_ProcessExit! {
     Subprocess for Subprocess<'static> => |this| {
-        on_process_exit(status, rusage) => (*this).on_process_exit(&status, rusage),
+        // The ref outlasts a wrapper that script lets go of while the exit is reported.
+        on_process_exit(status, rusage) => RefPtr::init_ref(this).on_process_exit(&status, rusage),
     }
 }
 
@@ -794,10 +785,6 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        // `close_after_exit()` and `deref()` run at the tail of this body.
-        // R-2: now that both take `&self`, scopeguard would no longer alias —
-        // kept explicit at the tail for now (no early returns in this body).
-
         if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         }
@@ -1023,7 +1010,6 @@ impl Subprocess<'_> {
         if let Some(ipc_data) = self.ipc() {
             ipc_data.close_after_exit();
         }
-        self.deref();
     }
 
     fn close_io(&self, io: StdioKind) {
@@ -1146,11 +1132,7 @@ impl Subprocess<'_> {
             self.stdin_sink_ref.set(None);
         }
 
-        let exit_handler_pending = self.process().has_exit_handler();
         self.process().detach();
-        if exit_handler_pending {
-            self.deref();
-        }
         if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         }

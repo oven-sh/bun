@@ -2610,7 +2610,7 @@ where
         let body_value = response.get_body_value();
         match body_value {
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
+                let blob = body_value.use_as_any_blob_allow_non_utf8_string();
                 let size = blob.size();
                 this.render_metadata();
 
@@ -2620,7 +2620,6 @@ where
                     resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
-                blob.detach();
             }
 
             Body::Value::Blob(blob) => {

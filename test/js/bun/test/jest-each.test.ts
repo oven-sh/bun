@@ -283,6 +283,81 @@ describe.concurrent("titles", () => {
     });
   });
 
+  // An inspect.custom hook prints a URL. A native printer prints a Response, a File and the File in a FormData.
+  const url = `URL { href: 'http://example.com/a?b=1', origin: 'http://example.com', protocol: 'http:', username: '', password: '', host: 'example.com', hostname: 'example.com', port: '', pathname: '/a', search: '?b=1', searchParams: URLSearchParams { 'b' => '1' }, hash: '' }`;
+  const response = `Response (1 bytes) { ok: true, url: "", status: 200, statusText: "", headers: Headers {}, redirected: false, bodyUsed: false, Blob (1 bytes) }`;
+  const file = `File (1 bytes) { name: "f.txt", lastModified: 1 }`;
+  const valuesWithTheirOwnPrinter = `
+    const url = () => new URL("http://example.com/a?b=1");
+    const file = () => new File(["x"], "f.txt", { lastModified: 1 });
+    const form = new FormData();
+    form.append("f", file());
+    class SeesItsOptions {
+      [Symbol.for("nodejs.util.inspect.custom")](depth, options) {
+        return "options: " + Object.keys(options);
+      }
+    }`;
+
+  it("a value with an inspect.custom hook or a native printer prints on one line too", async () => {
+    expect(
+      await titlesOf(
+        [
+          ["%p|%o|%O", `[url(), new Response("x"), file()].map(value => [value, value, value])`],
+          ["%s", `[[url()], [new Response("x")]]`],
+          ["$x and $y.z", `[{ x: url(), y: { z: file() } }]`],
+          ["%p", `[[{ in: file() }], [[file()]], [form], [new SeesItsOptions()]]`],
+        ],
+        valuesWithTheirOwnPrinter,
+      ),
+    ).toEqual({
+      titles: [
+        `${url}|${url}|${url}`,
+        `${response}|${response}|${response}`,
+        `${file}|${file}|${file}`,
+        "http://example.com/a?b=1",
+        response,
+        `${url} and ${file}`,
+        `{ in: ${file} }`,
+        `[ ${file} ]`,
+        `FormData { "f": ${file} }`,
+        "options: stylize,depth,colors,breakLength,compact",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // The title is the key of a stored snapshot. A CI run adds no snapshot, so a key that is not found fails the test.
+  it("a snapshot of a row with such a value is found under the one-line title", async () => {
+    using dir = tempDir("jest-each-snapshot-key", {
+      "each.test.ts": `
+        import { expect, test } from "bun:test";
+        ${valuesWithTheirOwnPrinter}
+        test.each([[url()], [file()]])("row %p", () => {
+          expect("kept").toMatchSnapshot();
+        });
+      `,
+      "__snapshots__/each.test.ts.snap": [
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots",
+        "",
+        `exports[\`row ${url} 1\`] = \`"kept"\`;`,
+        "",
+        `exports[\`row ${file} 1\`] = \`"kept"\`;`,
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "each.test.ts"],
+      env: { ...bunEnv, GITHUB_ACTIONS: "1" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Snapshot creation is disabled");
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   it("%#, %$ and %% take no value, and anything else after a % is kept", async () => {
     expect(
       await titlesOf([
@@ -389,6 +464,9 @@ describe.concurrent("titles", () => {
         describe.each([{ n: 0 }])("$n is row $#", () => {
           test("inner", () => {});
         });
+        describe.each([[new File(["x"], "f.txt", { lastModified: 1 })]])("%p", () => {
+          test("inner", () => {});
+        });
       `,
     });
     await using proc = Bun.spawn({
@@ -406,7 +484,12 @@ describe.concurrent("titles", () => {
         .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
       exitCode,
     }).toEqual({
-      titles: ['(pass) 1 and {"a":1} (0) > inner', "(pass) null and [2] (1) > inner", "(pass) 0 is row 0 > inner"],
+      titles: [
+        '(pass) 1 and {"a":1} (0) > inner',
+        "(pass) null and [2] (1) > inner",
+        "(pass) 0 is row 0 > inner",
+        `(pass) ${file} > inner`,
+      ],
       exitCode: 0,
     });
   });

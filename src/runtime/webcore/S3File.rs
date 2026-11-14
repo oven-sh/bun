@@ -65,9 +65,8 @@ where
     }
 
     if !content_type.is_empty() {
-        writer.write_str("\n")?;
         let mut formatter = formatter.indented();
-        formatter.write_indent(writer)?;
+        formatter.write_break(writer)?;
         bun_core::write_pretty!(
             writer,
             ENABLE_ANSI_COLORS,
@@ -76,14 +75,16 @@ where
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        if offset > 0 {
-            writer.write_str("\n")?;
-        }
     }
 
     if offset > 0 {
         let mut formatter = formatter.indented();
-        formatter.write_indent(writer)?;
+        // The default text has no line feed before an `offset` that is the first member.
+        if content_type.is_empty() && !formatter.single_line() {
+            formatter.write_indent(writer)?;
+        } else {
+            formatter.write_break(writer)?;
+        }
 
         bun_core::write_pretty!(
             writer,
@@ -101,7 +102,7 @@ where
         formatter,
         writer,
     )?;
-    formatter.write_indent(writer)?;
+    formatter.write_break(writer)?;
     writer.write_str("}")?;
     formatter.reset_line();
     Ok(())

@@ -389,25 +389,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let mut headers: Option<Headers> = None;
 
-    let vm_verbose_fetch = vm.get_verbose_fetch();
-
     let mut disable_timeout = false;
     let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
     let mut compress: Option<compress_body::CompressOption> = None;
     let mut max_redirects: Option<u8> = None;
-    let mut verbose: http::HTTPVerboseLevel = if vm
-        .log_ref()
-        .is_some_and(|l| l.level.at_least(bun_ast::Level::Debug))
-    {
-        http::HTTPVerboseLevel::Headers
-    } else {
-        http::HTTPVerboseLevel::None
-    };
-    if verbose == http::HTTPVerboseLevel::None {
-        verbose = vm_verbose_fetch;
-    }
+    let mut verbose: http::HTTPVerboseLevel = vm.get_verbose_fetch();
 
     let mut proxy: Option<ZigURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;

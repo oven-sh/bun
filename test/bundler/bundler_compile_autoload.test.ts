@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Not describe.concurrent: the backend:"cli" cases each spawn a full
@@ -148,6 +148,48 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "PRELOAD\nENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test that logLevel in bunfig.toml applies: at "debug" bun prints how long it took to read .env
+  itBundled("compile/AutoloadBunfigLogLevel", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+      setCwd: true,
+      validate({ stderr }) {
+        expect(stderr).toContain(`] ".env"\n`);
+      },
+    },
+  });
+
+  // Test that logLevel in bunfig.toml does not apply with autoloadBunfig: false
+  itBundled("compile/AutoloadBunfigDisabledLogLevel", {
+    compile: {
+      autoloadBunfig: false,
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+      stderr: "",
       setCwd: true,
     },
   });
@@ -566,6 +608,59 @@ console.log("PRELOAD");
     run: {
       stdout: "PRELOAD\nENTRY",
       setCwd: true,
+    },
+  });
+
+  // Test that logLevel in bunfig.toml applies with execArgv: that executable reads bunfig.toml while it reads its
+  // arguments, and not after that as one without execArgv does
+  itBundled("compile/AutoloadBunfigLogLevelWithExecArgv", {
+    compile: {
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+      setCwd: true,
+      validate({ stderr }) {
+        expect(stderr).toContain(`] ".env"\n`);
+      },
+    },
+  });
+
+  // With execArgv an executable reads bunfig.toml while it reads its arguments, so `logLevel` applies to it. A log
+  // level does not make fetch() print its headers.
+  itBundled("compile/AutoloadBunfigLogLevelPrintsNoFetchHeadersWithExecArgv", {
+    compile: {
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const response = await fetch(server.url, { headers: { "x-probe": "1" } });
+        console.log(await response.text());
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "ok",
+      setCwd: true,
+      env: { BUN_CONFIG_VERBOSE_FETCH: "" },
+      validate({ stderr }) {
+        // At "debug" bun prints how long it took to read .env: the level reached the executable.
+        expect(stderr).toContain(`] ".env"\n`);
+        expect(stderr.split("\n").filter(line => line.endsWith("x-probe: 1"))).toEqual([]);
+      },
     },
   });
 

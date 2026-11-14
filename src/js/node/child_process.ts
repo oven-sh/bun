@@ -69,26 +69,39 @@ interface SpawnSyncResult {
 
 const kFromNode = Symbol("kFromNode");
 
-const setStdioBlocking: (fd: number, blocking: boolean) => boolean = $bindgen("subprocess.bind.ts", "setStdioBlocking");
+const setStdioBlocking: (fd: number, blocking: boolean) => number = $bindgen("node_process.bind.ts", "setStdioBlocking");
 
-// Stand-in for Node's `Pipe` handle on piped child stdio: consumers read
-// `stream._handle.fd` and call `setBlocking` for synchronous fd-based IPC
-// with readSync/writeSync. The native stream owns the fd.
+// Stand-in for Node's `Pipe` handle on piped child stdio, shaped like
+// `process.stdout._handle`: consumers read `fd` and call `setBlocking` for
+// synchronous fd-based IPC with readSync/writeSync. The native stream owns
+// the fd.
 class StdioPipeHandle {
-  #getFd;
-  constructor(getFd) {
+  #getFd: () => number | undefined;
+  constructor(getFd: () => number | undefined) {
     this.#getFd = getFd;
   }
-  get fd() {
+  get fd(): number {
     const fd = this.#getFd();
     return typeof fd === "number" ? fd : -1;
   }
-  setBlocking(blocking) {
-    const fd = this.fd;
-    if (fd < 0) return false;
-    return setStdioBlocking(fd, !!blocking);
+  /** Like Node: 0 on success, a negative errno otherwise. */
+  setBlocking(blocking: boolean): number {
+    return setStdioBlocking(this.fd, !!blocking);
   }
 }
+
+/** A piped child stdio stream: `_handle` carries the parent-end fd. */
+interface ChildStdioStream {
+  _handle?: StdioPipeHandle;
+}
+
+interface ChildStdinStream extends $Node.Writable, ChildStdioStream {
+  ref(): this;
+  unref(): this;
+}
+
+type ChildStdoutStream = ReturnType<$BunModules["internal/streams/native-readable"]["constructNativeReadable"]> &
+  ChildStdioStream;
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -1287,7 +1300,9 @@ class ChildProcess extends EventEmitter {
               stream.destroy();
               return stream;
             }
-            const result = require("internal/fs/streams").writableFromFileSink(stdin as $Node.FileSink);
+            const result = require("internal/fs/streams").writableFromFileSink(
+              stdin as $Node.FileSink,
+            ) as unknown as ChildStdinStream;
             result.readable = false;
             result._handle = new StdioPipeHandle(() => stdin._getFd());
             // Node's child.stdin is a net.Socket: forward ref/unref to the
@@ -1346,7 +1361,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(
+            const pipe: ChildStdoutStream = require("internal/streams/native-readable").constructNativeReadable(
               value as ReadableStream,
               {},
             );
@@ -1826,9 +1841,11 @@ function streamFdOf(item): number | undefined {
     throw $ERR_INVALID_ARG_VALUE("stdio", require("internal/util/inspect").inspect(item, { depth: -1 }));
   }
 
+  // A piped child stdio stream keeps its own native reader on the fd, so
+  // handing that fd to another child would split the bytes between them.
   const handle = item._handle;
-  const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
+  const handleFd = handle && !(handle instanceof StdioPipeHandle) ? handle.fd : undefined;
+  if (typeof handleFd === "number") return handleFd;
 
   if (item.destroyed) return undefined;
 

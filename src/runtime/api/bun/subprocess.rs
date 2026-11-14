@@ -1416,25 +1416,6 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
 pub(crate) mod testing_apis {
     use super::*;
 
-    /// `child_process` `stream._handle.setBlocking(fd, blocking)`: spawn sets the
-    /// parent-end pipe fd nonblocking, so blocking `fs.readSync` IPC needs
-    /// `O_NONBLOCK` cleared. Returns whether the flag was applied (`false` on
-    /// Windows: no CRT fd, like Node).
-    pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> bool {
-        #[cfg(windows)]
-        {
-            let _ = (fd, blocking);
-            false
-        }
-        #[cfg(not(windows))]
-        {
-            if fd < 0 {
-                return false;
-            }
-            bun_sys::update_nonblocking(bun_sys::Fd::from_native(fd), !blocking).is_ok()
-        }
-    }
-
     /// Inject a synthetic read error into a subprocess's stdout/stderr
     /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
     /// callback (Windows) had failed with EBADF. Used by tests to exercise

@@ -79,4 +79,3 @@ export const injectStdioReadError = b.fn({
   throws: true,
 });
 export const closeStdinWriter = b.fn({ args: { subprocess: Subprocess }, returns: b.bool, capability: "js" });
-export const setStdioBlocking = b.fn({ args: { fd: b.i32, blocking: b.bool }, returns: b.bool });

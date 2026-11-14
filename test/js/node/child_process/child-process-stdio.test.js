@@ -222,7 +222,7 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
   });
 });
 
-describe("stdio _handle", () => {
+describe.concurrent("stdio _handle", () => {
   it("piped stdio streams carry a _handle with a numeric fd", async () => {
     const child = spawn(bunExe(), ["-e", "setTimeout(() => {}, 100_000)"], {
       env: bunEnv,
@@ -263,7 +263,9 @@ describe("stdio _handle", () => {
     await once(child, "exit");
   });
 
-  it("child.stdin.unref releases the stdin writer keep-alive", async () => {
+  // Windows: the 1 MB write is one in-flight uv_write request, and an active
+  // request keeps the loop alive however the pipe is unref'd (as in Node).
+  it.skipIf(isWindows)("child.stdin.unref releases the stdin writer keep-alive", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -301,8 +303,8 @@ describe("stdio _handle", () => {
     try {
       const readFd = child.stdout._handle.fd;
       const writeFd = child.stdin._handle.fd;
-      expect(child.stdout._handle.setBlocking(true)).toBe(true);
-      expect(child.stdin._handle.setBlocking(true)).toBe(true);
+      expect(child.stdout._handle.setBlocking(true)).toBe(0);
+      expect(child.stdin._handle.setBlocking(true)).toBe(0);
       child.stdout.pause();
       child.stdout.unref();
       child.stdin.unref();

@@ -17,7 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
+use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
@@ -887,9 +887,7 @@ impl RewriterPipe {
         let Some(out) = self.output.get() else {
             return self.buffered_consumer.get();
         };
-        if out.sink.get().is_some()
-            || out.buffer_action.get().is_some()
-            || out.pending.get().state == streams::PendingState::Pending
+        if out.sink.get().is_some() || out.buffer_action.get().is_some() || out.pending.is_pending()
         {
             return true;
         }
@@ -1325,7 +1323,7 @@ impl RewriterPipe {
     }
 
     /// `SinkHandle::write` entry — input bytes arrived.
-    pub fn write(&self, data: &StreamResult) -> Writable {
+    pub fn write(&self, data: &StreamResult<'_>) -> Writable {
         let _pin = self.pin();
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
@@ -1884,22 +1882,22 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     // released by `controller_detached` below, and the free happens wherever
     // the last ref drops.
     unsafe fn finalize(_this: *mut Self) {}
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
+    fn write_bytes(&mut self, data: &StreamResult<'_>) -> Writable {
         RewriterPipe::write(self, data)
     }
     fn write_utf16(&mut self, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
         let _ = buf.write_utf16(text);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(self, &StreamResult::Temporary(&buf))
     }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
+    fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return RewriterPipe::write(self, data);
         }
         let mut buf = Vec::new();
         let _ = buf.write_latin1(bytes);
-        RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
+        RewriterPipe::write(self, &StreamResult::Temporary(&buf))
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         self.end_from_stream(err.map(StreamError::Error));

@@ -2821,21 +2821,18 @@ pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
 pub fn synchronized() -> Synchronized {
-    Synchronized::begin()
+    #[cfg(unix)]
+    {
+        print(format_args!("{}", SYNCHRONIZED_START));
+    }
+    Synchronized(())
 }
 
-pub struct Synchronized;
+#[must_use]
+pub struct Synchronized(());
 
-impl Synchronized {
-    pub(crate) fn begin() -> Synchronized {
-        #[cfg(unix)]
-        {
-            print(format_args!("{}", SYNCHRONIZED_START));
-        }
-        Synchronized
-    }
-
-    pub fn end(self) {
+impl Drop for Synchronized {
+    fn drop(&mut self) {
         #[cfg(unix)]
         {
             print(format_args!("{}", SYNCHRONIZED_END));

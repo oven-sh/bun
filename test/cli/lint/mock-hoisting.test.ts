@@ -137,11 +137,16 @@ const nestedRequire = (imported: string) =>
   `import ${imported} from "vitest";\nimport { test } from "vitest";\n` +
   'function spy() {\n  const { vitest } = require("vitest");\n  return vitest.fn();\n}\n' +
   'test("greets", () => {\n  console.log(TAG, typeof spy());\n});\n';
-/** A file that sets a global `vitest` of its own and calls `fn()` on `object`. It removes the global: the cases share a process. */
+/**
+ * A test that prints the type of what `fn()` of `object` returns, for a file that has set a global `vitest` of its own.
+ * It removes that global, also if the call throws: the cases share a process. `global` is how the file writes
+ * `globalThis`.
+ */
+const printsAndRemovesGlobal = (object: string, global = "globalThis") =>
+  `test("greets", () => {\n  try {\n    console.log(TAG, typeof ${object}.fn());\n  } finally {\n    delete ${global}.vitest;\n  }\n});\n`;
+/** A file that sets a global `vitest` of its own and calls `fn()` on `object`. */
 const assignsGlobal = (object: string) =>
-  requireGreet +
-  'vitest = { fn: () => "own" };\n' +
-  `test("greets", () => {\n  console.log(TAG, typeof ${object}.fn());\n  delete globalThis.vitest;\n});\n`;
+  requireGreet + 'vitest = { fn: () => "own" };\n' + printsAndRemovesGlobal(object);
 /** A use of the global `vi` in a file that imports `vitest` from Vitest as `imported`. */
 const besideGlobalVi = (imported: string, use: string) =>
   `import ${imported} from "vitest";\nimport { test } from "vitest";\n` +
@@ -662,7 +667,7 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text:
           "declare let vitest: { fn(): unknown };\n" +
           'vitest = { fn: () => "own" };\n' +
-          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n  delete (globalThis as any).vitest;\n});\n',
+          printsAndRemovesGlobal("vitest", "(globalThis as any)"),
         prints: ["string"],
         dangerously: ["function"],
       },
@@ -671,7 +676,7 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text:
           "interface vitest {\n  fn(): unknown;\n}\n" +
           'vitest = { fn: () => "own" };\n' +
-          'test("greets", () => {\n  console.log(TAG, typeof vitest.fn());\n  delete (globalThis as any).vitest;\n});\n',
+          printsAndRemovesGlobal("vitest", "(globalThis as any)"),
         prints: ["string"],
         dangerously: ["function"],
       },

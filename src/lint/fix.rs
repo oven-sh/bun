@@ -1,6 +1,6 @@
 //! Changes to the source text.
 
-use crate::ast::File;
+use crate::ast::{File, ImportSpec};
 use crate::context::IntoText;
 use crate::span::{Span, Spanned};
 use crate::tokens::{Token, TokenKind};
@@ -430,6 +430,44 @@ impl<'a> Fixer<'a> {
     /// `insertTextAfter`, `insertTextAfterRange`
     pub fn insert_after<'t>(self, at: impl Spanned, text: impl IntoText<'t>) -> Fix {
         Fix::owned(Span::empty(at.span().end), text.into_text())
+    }
+
+    /// Removes the named import `specifier` with the `,` or `{ .. }` around it, or the whole statement if it's the only one.
+    pub fn remove_import_specifier(self, specifier: ImportSpec<'a>) -> Option<Fix> {
+        let (import, span) = (specifier.import(), specifier.span());
+        let statement = import.stmt();
+        if import.named().len() == 1 {
+            if import.default().is_none() {
+                if self.has_directive_before(statement) {
+                    return None;
+                }
+                let removal = Removal::of(self.file.text(), statement.span());
+                return Some(self.remove(removal.without_leftovers()));
+            }
+            let open = self
+                .file
+                .tokens_in(statement)
+                .find(|it| it.is_punctuator("{"))?;
+            let comma = self
+                .file
+                .token_before(open)
+                .filter(|it| it.is_punctuator(","))?;
+            let close = self
+                .file
+                .tokens_after(span)
+                .find(|it| it.is_punctuator("}"))?;
+            return Some(self.remove(Span::new(comma.start(), close.end())));
+        }
+        let before = self.file.token_before(span)?;
+        if before.is_punctuator("{") {
+            let comma = self
+                .file
+                .token_after(span)
+                .filter(|it| it.is_punctuator(","))?;
+            let end = self.skip_white_space(comma.end());
+            return Some(self.remove(Span::new(span.start, end)));
+        }
+        Some(self.remove(Span::new(before.start(), span.end)))
     }
 }
 

@@ -22,6 +22,17 @@ fn is_called_immediately(func: Func) -> bool {
     !func.is_generator() && (parent.callee() == Some(e) || is_called_through_method())
 }
 
+/// The imports from `"react"`, except `import type`.
+pub(crate) fn react_imports<'a>(file: &'a File<'a>) -> impl Iterator<Item = Import<'a>> {
+    file.stmts_of_kind(StmtTag::Import)
+        .filter_map(|statement| match statement.kind() {
+            StmtKind::Import(import) if import.spec().is("react") && !import.is_type_only() => {
+                Some(import)
+            }
+            _ => None,
+        })
+}
+
 /// The memo for [`runs_while_module_is_evaluated`]. A rule that calls it keeps one in its state.
 pub(crate) type RunsLater<'a> = AncestorMemo<'a, ()>;
 

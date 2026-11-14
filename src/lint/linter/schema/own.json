@@ -373,6 +373,7 @@
       "additionalProperties": false
     }
   ],
+  "bun/react-no-manual-memoization": [],
   "bun/react-no-namespace-hooks": [],
   "bun/react-prefer-updater-function": [],
   "bun/zod-prefer-lazy-schema": [

@@ -1210,6 +1210,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if self.lexer.is_contextual_keyword(b"out") {
+                    // As in tsc, "out" is the name unless a word follows it on the same line.
+                    if !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
+                        && !self.word_follows_on_same_line()
+                    {
+                        break;
+                    }
+
                     let r = self.lexer.range();
                     if invalid_modifier_range.len == 0
                         && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
@@ -1292,6 +1299,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect_greater_than::<false>()?;
         Ok(result)
+    }
+
+    /// Whether an identifier or keyword follows the current token on its line.
+    #[cold]
+    #[inline(never)]
+    fn word_follows_on_same_line(&mut self) -> bool {
+        self.next_token_matches(|p| {
+            !p.lexer.has_newline_before && p.lexer.is_identifier_or_keyword()
+        })
     }
 
     pub(crate) fn skip_type_script_type_stmt(

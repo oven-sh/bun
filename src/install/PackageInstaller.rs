@@ -2560,6 +2560,9 @@ impl<'a> PackageInstaller<'a> {
                             *entry.value_ptr = 0;
                         }
                         *entry.value_ptr += count;
+                        if !self.manager().update_requests.is_empty() {
+                            self.summary.blocked_dependencies.push(dependency_id);
+                        }
                     }
                 }
 

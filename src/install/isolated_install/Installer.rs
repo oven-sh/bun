@@ -727,6 +727,9 @@ impl<'a> Installer<'a> {
                 .packages_with_blocked_scripts
                 .entry(dependencies[dep_id as usize].name_hash as TruncatedPackageNameHash)
                 .or_default() += usize::from(blocked_scripts);
+            if !self.manager().update_requests.is_empty() {
+                self.summary.blocked_dependencies.push(dep_id);
+            }
         }
     }
 

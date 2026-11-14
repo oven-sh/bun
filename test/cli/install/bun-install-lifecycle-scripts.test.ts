@@ -2079,6 +2079,187 @@ describe("the trusted set", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/12890. The count on stdout names no package.
+  describe("a command that names packages notes the ones whose scripts it blocked", () => {
+    const noteOf = (...names: string[]) =>
+      `note: skipping lifecycle scripts of ${names.map(name => `"${name}"`).join(", ")}: not in trustedDependencies`;
+    const counted = (scripts: number) =>
+      `Blocked ${scripts} postinstall${scripts > 1 ? "s" : ""}. Run \`bun pm untrusted\` for details.`;
+
+    /** What a command printed about blocked scripts, and its errors, under the stream each line was on. */
+    async function blockedOf(ctx: TestCtx, args: string[], cwd?: string) {
+      const { out, err, exitCode } = await bun(ctx, args, {}, cwd);
+      const about = (text: string) => text.split(/\r?\n/).filter(line => /^(Blocked|note:|error:) /.test(line));
+      return { stdout: about(out), stderr: about(err), exitCode };
+    }
+
+    test.concurrent.each(linkers)("on stderr, and not again once the package is installed (%s)", async linker => {
+      using ctx = await project(linker, { "package.json": { name: "foo" } });
+      expect(await blockedOf(ctx, ["add", "lifecycle-postinstall@1.0.0", "no-deps@1.0.0"])).toEqual({
+        stdout: [counted(1)],
+        stderr: [noteOf("lifecycle-postinstall")],
+        exitCode: 0,
+      });
+      expect(await blockedOf(ctx, ["add", "lifecycle-postinstall@1.0.0"])).toEqual({
+        stdout: [],
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("each one once, in the order of their names (%s)", async linker => {
+      using ctx = await project(linker, { "package.json": { name: "foo" } });
+      expect(await blockedOf(ctx, ["add", "uses-what-bin@1.5.0", "lifecycle-postinstall@1.0.0"])).toEqual({
+        stdout: [counted(2)],
+        stderr: [noteOf("lifecycle-postinstall", "uses-what-bin")],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("an npm: alias by the name of the dependency (%s)", async linker => {
+      using ctx = await project(linker, { "package.json": { name: "foo" } });
+      expect(await blockedOf(ctx, ["add", "zzz@npm:lifecycle-postinstall@1.0.0"])).toEqual({
+        stdout: [counted(1)],
+        stderr: [noteOf("zzz")],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("a dependency added to a workspace member (%s)", async linker => {
+      using ctx = await project(linker, {
+        "package.json": { name: "root", workspaces: ["packages/*"] },
+        "packages/member/package.json": { name: "member", version: "1.0.0" },
+      });
+      const member = join(ctx.packageDir, "packages", "member");
+      expect(await blockedOf(ctx, ["add", "lifecycle-postinstall@1.0.0"], member)).toEqual({
+        stdout: [counted(1)],
+        stderr: [noteOf("lifecycle-postinstall")],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("a package that `bun update` names and moves to a new version (%s)", async linker => {
+      using ctx = await project(linker, {
+        "package.json": { name: "foo", dependencies: { "uses-what-bin": "1.0.0" } },
+      });
+      expect(await blockedOf(ctx, ["install"])).toEqual({ stdout: [counted(1)], stderr: [], exitCode: 0 });
+      await write(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { "uses-what-bin": "^1.0.0" } }));
+      expect(await blockedOf(ctx, ["update", "uses-what-bin"])).toEqual({
+        stdout: [counted(1)],
+        stderr: [noteOf("uses-what-bin")],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("an install that names no package only counts (%s)", async linker => {
+      using ctx = await project(linker, {
+        "package.json": { name: "foo", dependencies: { "lifecycle-postinstall": "1.0.0" } },
+      });
+      const onlyCounted = { stdout: [counted(1)], stderr: [], exitCode: 0 };
+      expect(await blockedOf(ctx, ["install"])).toEqual(onlyCounted);
+      await removeNodeModules(ctx);
+      expect(await blockedOf(ctx, ["ci"])).toEqual(onlyCounted);
+    });
+
+    test.concurrent.each(linkers)("not a blocked package that the command did not name (%s)", async linker => {
+      using ctx = await project(linker, {
+        "package.json": { name: "foo", dependencies: { "lifecycle-postinstall": "1.0.0" } },
+      });
+      expect(await blockedOf(ctx, ["add", "no-deps@1.0.0"])).toEqual({
+        stdout: [counted(1)],
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("not a package that the command removes (%s)", async linker => {
+      using ctx = await project(linker, {
+        "package.json": { name: "foo", dependencies: { "lifecycle-postinstall": "1.0.0", "no-deps": "1.0.0" } },
+      });
+      const onlyCounted = { stdout: [counted(1)], stderr: [], exitCode: 0 };
+      expect(await blockedOf(ctx, ["install"])).toEqual(onlyCounted);
+      await removeNodeModules(ctx);
+      expect(await blockedOf(ctx, ["remove", "no-deps"])).toEqual(onlyCounted);
+    });
+
+    // A package that is not from npm is trusted by the name of the dependency.
+    test.concurrent("not a trusted dependency whose package another dependency has blocked", async () => {
+      using ctx = await project("hoisted", {
+        "package.json": { name: "foo" },
+        "scripted/package.json": { name: "scripted", version: "1.0.0", scripts: { postinstall: `${bunExe()} -e ""` } },
+      });
+      expect((await bun(ctx, ["pm", "pack"], {}, join(ctx.packageDir, "scripted"))).exitCode).toBe(0);
+      const tarball = "./scripted/scripted-1.0.0.tgz";
+      await write(
+        ctx.packageJson,
+        JSON.stringify({ name: "foo", dependencies: { other: tarball }, trustedDependencies: ["zzz"] }),
+      );
+      expect(await blockedOf(ctx, ["add", `zzz@${tarball}`])).toEqual({
+        stdout: [counted(1)],
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)("not a package that is trusted (%s)", async linker => {
+      const nothing = { stdout: [], stderr: [], exitCode: 0 };
+      using listed = await project(linker, {
+        "package.json": { name: "foo", trustedDependencies: ["lifecycle-postinstall"] },
+      });
+      expect(await blockedOf(listed, ["add", "lifecycle-postinstall@1.0.0"])).toEqual(nothing);
+      using flagged = await project(linker, { "package.json": { name: "foo" } });
+      expect(await blockedOf(flagged, ["add", "--trust", "lifecycle-postinstall@1.0.0"])).toEqual(nothing);
+    });
+
+    // Its name in `trustedDependencies` would not make an install run these scripts.
+    test.concurrent.each(linkers)("not a package whose scripts `ignoreScripts` turns off (%s)", async linker => {
+      using ctx = await project(linker, {
+        "package.json": { name: "foo", ignoreScripts: ["lifecycle-postinstall"] },
+      });
+      expect(await blockedOf(ctx, ["add", "lifecycle-postinstall@1.0.0"])).toEqual({
+        stdout: [counted(1)],
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(linkers)(
+      "not with --ignore-scripts, which turns off trusted scripts too (%s)",
+      async linker => {
+        using ctx = await project(linker, { "package.json": { name: "foo" } });
+        expect(await blockedOf(ctx, ["add", "--ignore-scripts", "lifecycle-postinstall@1.0.0"])).toEqual({
+          stdout: [counted(1)],
+          stderr: [],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.concurrent.skipIf(isWindows)("below the count line and above the rest of the summary", async () => {
+      using ctx = await project("hoisted", {
+        "package.json": { name: "foo", dependencies: { "no-deps": "1.0.0" } },
+      });
+      expect((await bun(ctx, ["install"])).exitCode).toBe(0);
+      // `no-deps` leaves with the add, so stdout has `Removed: 1` after the count line.
+      await write(ctx.packageJson, JSON.stringify({ name: "foo" }));
+      await using proc = spawn({
+        cmd: ["sh", "-c", `"$0" add lifecycle-postinstall@1.0.0 2>&1`, bunExe()],
+        cwd: ctx.packageDir,
+        env: ctx.env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [merged, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(merged.split("\n").filter(line => /^(Blocked|note:|Removed:) /.test(line))).toEqual([
+        counted(1),
+        noteOf("lifecycle-postinstall"),
+        "Removed: 1",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("npm_config_ignore_scripts", () => {
     const manifest = {
       name: "foo",

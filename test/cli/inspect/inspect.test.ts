@@ -297,7 +297,8 @@ describe("websocket", () => {
   });
 });
 
-describe.concurrent("ws+unix", () => {
+// Not concurrent: `bun test` kills the child of a test that times out only when the tests run one at a time.
+describe("ws+unix", () => {
   const script = ["-e", "setInterval(() => {}, 1 << 30)"];
 
   test.skipIf(!isPosix)("bun --inspect=ws+unix:///path/to.sock listens on the socket", async () => {

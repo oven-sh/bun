@@ -302,4 +302,45 @@ describe("url.format", () => {
       "http://example.com/?a=%231",
     );
   });
+
+  // An object `query` is serialized with querystring.stringify(), not
+  // URLSearchParams, which differ on arrays, spaces and non-primitives.
+  describe("serializes an object query with querystring.stringify", () => {
+    const cases = [
+      ["percent-encodes spaces instead of using +", { a: "1 2" }, "/p?a=1%202"],
+      ["expands an array value into repeated keys", { a: ["x", "y"] }, "/p?a=x&a=y"],
+      ["omits keys whose value is an empty array", { a: "1", b: [] }, "/p?a=1"],
+      [
+        "serializes null and undefined as empty values",
+        { a: 1, b: null, c: undefined, d: true },
+        "/p?a=1&b=&c=&d=true",
+      ],
+      ["serializes a symbol value as an empty value", { a: Symbol("s") }, "/p?a="],
+      ["serializes a non-primitive value as an empty value", { a: { b: 1 } }, "/p?a="],
+      ["serializes non-finite numbers as empty values", { a: Infinity, b: NaN }, "/p?a=&b="],
+      ["serializes a bigint value", { a: 10n }, "/p?a=10"],
+      ["serializes non-primitives inside an array", { a: [1, null, undefined, true] }, "/p?a=1&a=&a=&a=true"],
+      ["accepts an array as the whole query object", ["a", "b"], "/p?0=a&1=b"],
+      ["produces no search for an empty query object", {}, "/p"],
+    ];
+
+    for (const [label, query, expected] of cases) {
+      test(label, () => {
+        assert.strictEqual(url.format({ pathname: "/p", query }), expected);
+      });
+    }
+
+    test("an explicit search still takes precedence over query", () => {
+      assert.strictEqual(url.format({ pathname: "/p", search: "?z=9", query: { a: 1 } }), "/p?z=9");
+    });
+
+    test("keeps repeated keys intact across a parse/mutate/format round trip", () => {
+      const parsed = url.parse("http://e.com/p?tag=a&tag=b", true);
+      assert.deepStrictEqual(parsed.query.tag, ["a", "b"]);
+      parsed.query.tag.push("c");
+      parsed.query.note = "q 1";
+      parsed.search = undefined;
+      assert.strictEqual(url.format(parsed), "http://e.com/p?tag=a&tag=b&tag=c&note=q%201");
+    });
+  });
 });

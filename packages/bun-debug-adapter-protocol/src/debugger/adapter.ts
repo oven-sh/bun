@@ -777,6 +777,16 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
         const { breakpointId, locations } = result;
 
+        // JSC gives no location when it finds no place to pause for the line (it does not enter a
+        // function that starts on a later line: `breakpointLocationForOffset`), or when another
+        // breakpoint is already at the place that the line resolves to.
+        if (!locations.length) {
+          await this.#unsetBreakpoint(breakpointId);
+          return invalidBreakpoint(
+            new Error("This line has no code to pause on, or another breakpoint is already set on the same code."),
+          );
+        }
+
         const breakpoints = locations.map((location, i) =>
           this.#addBreakpoint({
             breakpointId,
@@ -795,12 +805,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     );
 
     if (unsetOld) {
-      await Promise.all(
-        oldBreakpoints.map(({ breakpointId }) => {
-          if (!breakpoints.some(({ breakpointId: id }) => breakpointId === id)) {
-            return this.#unsetBreakpoint(breakpointId);
-          }
-        }),
+      await this.#unsetOldBreakpoints(
+        oldBreakpoints,
+        breakpoints,
+        async i => (await this.#setBreakpointsByUrl(url, [requests[i]]))[0],
       );
     }
 
@@ -849,16 +857,36 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     );
 
     if (unsetOld) {
-      await Promise.all(
-        oldBreakpoints.map(({ breakpointId }) => {
-          if (!breakpoints.some(({ breakpointId: id }) => breakpointId === id)) {
-            return this.#unsetBreakpoint(breakpointId);
-          }
-        }),
+      await this.#unsetOldBreakpoints(
+        oldBreakpoints,
+        breakpoints,
+        async i => (await this.#setBreakpointsById(scriptId, [requests[i]]))[0],
       );
     }
 
     return breakpoints;
+  }
+
+  /**
+   * Removes the old breakpoints that no request kept. JSC refuses a request while another
+   * breakpoint is at the place that it resolves to. So each request that got no breakpoint is
+   * sent again after the removal.
+   */
+  async #unsetOldBreakpoints(
+    oldBreakpoints: Breakpoint[],
+    breakpoints: Breakpoint[],
+    retry: (index: number) => Promise<Breakpoint>,
+  ): Promise<void> {
+    const removed = oldBreakpoints.filter(
+      ({ breakpointId }) => !breakpoints.some(({ breakpointId: id }) => breakpointId === id),
+    );
+    await Promise.all(removed.map(({ breakpointId }) => this.#unsetBreakpoint(breakpointId)));
+
+    for (let i = 0; i < breakpoints.length; i++) {
+      if (!breakpoints[i].breakpointId) {
+        breakpoints[i] = await retry(i);
+      }
+    }
   }
 
   async #unsetBreakpoint(breakpointId: string): Promise<void> {

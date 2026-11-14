@@ -89,8 +89,23 @@ const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
+// Its values. Node hands its listener the net.Socket itself when the request is complete at the emit, and otherwise an
+// UpgradeStream, which the close of the connection destroys:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1027-L1050
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1110-L1143
+// Bun emits 'upgrade' before it parses the body, so an Upgrade request with a body is never complete there.
+const kHandedOffSocket = 1;
+const kHandedOffUpgradeStream = 2;
+// #closeHandled of a kHandedOffSocket that has the end of its stream. Like Node's net.Socket, it closes after its own
+// 'end' and 'finish', so the close of the connection leaves it the bytes that its reader has not taken.
+const kClosesAfterEnd = 2;
+// The connection has closed, and the socket waits for its reader.
+const kOutlivesConnection = 3;
 function closeHandle(handle) {
   if (!handle.closed) handle.close();
+}
+function destroySocket(socket) {
+  socket.destroy();
 }
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
@@ -819,7 +834,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kHandoffResponse] = handle;
             // The parser is detached: the socket is handed over with only
             // net.Socket's 'end' listener left, like Node.js.
-            detachSocketListenersForHandoff(socket);
+            detachSocketListenersForHandoff(socket, kHandedOffSocket);
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
             socket.bytesRead += head.length;
@@ -1052,7 +1067,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socketHandle.upgradeToTunnel(hasBody, handle);
           socket[kHandoffResponse] = handle;
           socket[kEnableStreaming](true);
-          detachSocketListenersForHandoff(socket);
+          detachSocketListenersForHandoff(socket, hasBody ? kHandedOffUpgradeStream : kHandedOffSocket);
           // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
           releaseServerParserShim(socket, http_req);
           if (hasBody) {
@@ -1313,7 +1328,8 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
   const socket: NodeHTTPServerSocket = this;
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
-      if (!socket.destroyed) {
+      // A handed-off socket closes in #onClose, which the same native close calls next.
+      if (!socket.destroyed && !socket[kHandedOff]) {
         socket.destroy();
       }
       break;
@@ -1486,8 +1502,8 @@ function resumePausedUpgradeIncoming(socket) {
 // connection-listener set removed (onParserExecuteCommon removes its data/end/
 // close/drain/error/timeout listeners) and only net.Socket's own 'end' listener
 // left in place.
-function detachSocketListenersForHandoff(socket) {
-  socket[kHandedOff] = true;
+function detachSocketListenersForHandoff(socket, as: typeof kHandedOffSocket | typeof kHandedOffUpgradeStream) {
+  socket[kHandedOff] = as;
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
@@ -1674,7 +1690,7 @@ function getNodeHTTPServerSocket() {
     [kOnReadParsed] = undefined;
     [kHandoffResponse] = undefined;
     [kDestroySoon] = false;
-    [kHandedOff] = false;
+    [kHandedOff]: false | typeof kHandedOffSocket | typeof kHandedOffUpgradeStream = false;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1683,15 +1699,17 @@ function getNodeHTTPServerSocket() {
     _paused = false;
     #pendingCallback = null;
     #pendingAbortMessage;
-    #closeHandled = false;
+    #closeHandled: boolean | typeof kClosesAfterEnd | typeof kOutlivesConnection = false;
     #peer;
     #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
+    // A slot of net.Socket.
+    declare _server: Server;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
-    declare _readableState: { emitClose: boolean };
+    declare _readableState: { emitClose: boolean; ended: boolean };
     declare writableBuffer: { chunk: Buffer }[];
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
@@ -1711,6 +1729,8 @@ function getNodeHTTPServerSocket() {
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
+      // The server that accepted the connection tracks it. A 'connection' listener of any server reassigns `server`.
+      this._server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
@@ -1809,11 +1829,19 @@ function getNodeHTTPServerSocket() {
           this[kHandoffResponse]?.unref();
         }
 
-        this.push(null);
-        // Like Node's net.Socket (and its UpgradeStream): EOF on a socket with no
-        // pending data emits 'end' even when nothing is reading the socket.
-        if (this.readableLength === 0) {
-          this.resume();
+        if (this[kHandedOff] === kHandedOffSocket) {
+          // Before push(null), which runs 'readable' listeners.
+          this.#closeHandled = kClosesAfterEnd;
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L231-L232
+          this.push(null);
+          // 'end' with nothing to read and nobody reading. A paused socket stays paused. A flowing one has its 'end' from push(null).
+          if (this.readableFlowing !== true) this.read(0);
+        } else {
+          this.push(null);
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1042-L1050
+          if (this.readableLength === 0) {
+            this.resume();
+          }
         }
       }
     }
@@ -1835,9 +1863,39 @@ function getNodeHTTPServerSocket() {
         handle.close();
       }
     }
+    // Whether a handed-off socket whose connection closed with no FIN of the peer gets 'end' when its reader has
+    // taken every byte, as it always has. That is the close after a reset of the peer, and after a failed TLS
+    // session. Node emits 'error' there. pipe() needs the 'end' to end its destination.
+    #endsWithItsConnection() {
+      // This side closed the connection. Node's net.Socket emits no 'end' after destroySoon().
+      if (this.destroyed || (this[kDestroySoon] && this[kHandedOff] === kHandedOffSocket)) return false;
+      // A WebSocket took the connection over, and reads it in native code.
+      return !this[kHandoffResponse]?.upgraded;
+    }
     #onClose(closedHandle = this[kHandle]) {
-      // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
-      if (this.#closeHandled) return;
+      if (this.#closeHandled) {
+        // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
+        if (this.#closeHandled === true) return;
+        if (!this.destroyed && !this.readableEnded && !this[kDestroySoon] && !this.#pendingCallback) {
+          // The peer's FIN ended the stream of a net.Socket, and its reader has not taken all of it. Like Node's, the
+          // socket closes after its own 'end' and 'finish': _destroy() runs the rest of this function. A write that
+          // waits for a drain has failed, and destroySoon() asked for the close, so neither waits for the reader.
+          this.#closeHandled = kOutlivesConnection;
+          // The handle went with the connection.
+          this[kBytesWritten] = handleBytesWritten(closedHandle);
+          this[kClosedWithUnsentData] = closedHandle.closedWithUnsentData;
+          this[kHandle] = null;
+          // So did the server's part: it tracks connections, and keeps nothing for a socket that its owner can drop.
+          // Node, whose socket keeps its handle, counts the socket until it closes, and server.close() waits for it.
+          const server = this._server;
+          const tracked = server[kTrackedConnections];
+          tracked.delete(this);
+          if (tracked.size === 0 && server[kPendingDrainClose]) process.nextTick(emitCloseServer, server);
+          // The keep-alive timer that the dispatcher leaves armed with no timeout would refresh itself for ever.
+          if (this.timeout === 0) this.setTimeout(0);
+          return;
+        }
+      }
       this.#closeHandled = true;
       const errored = this.errored;
       // freeParser equivalent: runs before 'close' listeners so they observe the
@@ -1848,7 +1906,10 @@ function getNodeHTTPServerSocket() {
         this[kBytesWritten] = handleBytesWritten(closedHandle);
         this[kClosedWithUnsentData] = closedHandle.closedWithUnsentData;
         // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
-        if (closedHandle.peerEnded) {
+        if (
+          closedHandle.peerEnded ||
+          (this[kHandedOff] && !this._readableState.ended && this.#endsWithItsConnection())
+        ) {
           this.push(null);
           this.read(0);
         }
@@ -1860,7 +1921,7 @@ function getNodeHTTPServerSocket() {
           this.#closeError = er.code === closeError.code ? er : closeError;
         }
       }
-      const server = this.server;
+      const server = this._server;
       const tracked = server?.[kTrackedConnections];
       if (tracked) {
         tracked.delete(this);
@@ -2004,6 +2065,8 @@ function getNodeHTTPServerSocket() {
       }
       const handle = this[kHandle];
       if (!handle) {
+        // The connection closed before, and the socket waited for its reader: the rest of its close runs now.
+        if (this.#closeHandled === kOutlivesConnection) this.#onClose(null);
         if ($isCallable(callback)) callback(err);
         return;
       }
@@ -2156,6 +2219,12 @@ function getNodeHTTPServerSocket() {
         }
         this.resetAndClosing = true;
         this.destroy();
+      } else if (this.#closeHandled === kOutlivesConnection) {
+        // Nothing is left to reset. Node, which still has the connection, resets it and emits no error.
+        if (!this.#resetSupported) {
+          throw $ERR_INVALID_HANDLE_TYPE();
+        }
+        this.destroy();
       } else {
         this.destroy($ERR_SOCKET_CLOSED());
       }
@@ -2234,6 +2303,13 @@ function getNodeHTTPServerSocket() {
             this.#pendingCallback = _callback;
             return false;
           }
+        } else if (this.#closeHandled === kOutlivesConnection) {
+          // The connection has closed, and the socket waits for its reader. The write fails like one that waited for a
+          // drain at the close: ERR_STREAM_DESTROYED to its callback, and no 'error'. Node fails it with EPIPE, and
+          // emits 'error'.
+          this.#pendingCallback = _callback;
+          process.nextTick(destroySocket, this);
+          return false;
         }
       } catch (e) {
         err = e;

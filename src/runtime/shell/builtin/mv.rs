@@ -656,16 +656,9 @@ impl ShellMvBatchedTask {
             )?);
             // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
             let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
-            let mut nbuf = bun_paths::path_buffer_pool::get();
             while let Some(entry) = iter.next()? {
-                let name = entry.name.slice_u8();
-                if name.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
-                nbuf[..name.len()].copy_from_slice(name);
-                nbuf[name.len()] = 0;
-                let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
+                let name = entry.name.as_zstr();
+                Self::move_across_devices(sd.fd(), name, dd.fd(), name, Some(output))?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);

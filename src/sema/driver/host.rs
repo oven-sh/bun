@@ -866,12 +866,10 @@ fn list(path: &[u8]) -> Directory {
         // The entry kind from the directory listing avoids a system call per file.
         let is_link = match entry.kind {
             EntryKind::SymLink => true,
-            EntryKind::Unknown => {
-                match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
-                    Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::SymLink,
-                    Err(_) => continue,
-                }
-            }
+            EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), entry.name.as_zstr()) {
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::SymLink,
+                Err(_) => continue,
+            },
             _ => false,
         };
         let is_dir = match entry.kind {

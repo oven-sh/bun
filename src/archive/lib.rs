@@ -200,22 +200,33 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
 
 /// Returns the path where node-tar would extract the npm tarball entry `path`, whose leading
 /// `package/` is already removed. The result is empty for an entry that node-tar skips.
-pub fn normalize_npm_entry_path<'a>(
-    path: &[OSPathChar],
-    buf: &'a mut [OSPathChar],
-) -> &'a mut [OSPathChar] {
+pub fn normalize_npm_entry_path<'a, T: bun_paths::PathChar>(
+    path: &[T],
+    buf: &'a mut [T],
+) -> &'a mut [T] {
     if path
         .split(|c| bun_paths::is_sep_any_t(*c))
-        .any(|part| part == [b'.' as OSPathChar; 2])
+        .any(|part| part == [T::from_u8(b'.'); 2])
     {
         return &mut buf[..0];
     }
     #[cfg(windows)]
-    return bun_paths::resolve_path::normalize_buf_t::<u16, bun_paths::platform::Auto>(path, buf);
+    return bun_paths::resolve_path::normalize_buf_t::<T, bun_paths::platform::Auto>(path, buf);
     #[cfg(not(windows))]
-    bun_paths::resolve_path::normalize_string_generic_t::<u8, false, false>(path, buf, b'/', |c| {
-        c == b'/'
-    })
+    bun_paths::resolve_path::normalize_string_generic_t::<T, false, false>(
+        path,
+        buf,
+        T::from_u8(b'/'),
+        |c| c == T::from_u8(b'/'),
+    )
+}
+
+/// Whether Windows takes the normalized `path` to start somewhere else than in the directory it is opened in.
+#[cfg(windows)]
+pub fn has_windows_root<T: bun_paths::PathChar>(path: &[T]) -> bool {
+    bun_paths::is_absolute_windows_t(path)
+        || matches!(path, [letter, colon, ..]
+            if bun_paths::resolve_path::is_drive_letter_t(*letter) && *colon == T::from_u8(b':'))
 }
 
 /// Returns the first component of an entry's path, which is the archive's root folder.
@@ -509,7 +520,7 @@ impl Archiver {
                 continue 'loop_;
             }
             #[cfg(windows)]
-            if bun_paths::is_absolute_windows(pathname) {
+            if has_windows_root(pathname) {
                 continue 'loop_;
             }
             let dirname = strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
@@ -691,17 +702,10 @@ impl Archiver {
                 continue;
             }
 
-            // Skip entries whose normalized path is absolute on Windows.
-            // `openatWindows` ignores `dir_fd` for absolute inputs (drive
-            // letter or UNC), so without this guard a tar entry could
-            // resolve outside the extraction directory. On POSIX the
-            // tokenize-on-'/' step already strips any leading separators,
-            // so `normalizeBufT` cannot produce an absolute output.
+            // On POSIX the leading separators are already gone.
             #[cfg(windows)]
-            {
-                if bun_paths::is_absolute_windows_t::<u16>(path) {
-                    continue 'loop_;
-                }
+            if has_windows_root(path) {
+                continue 'loop_;
             }
 
             #[cfg(windows)]
@@ -709,14 +713,7 @@ impl Archiver {
                 // When writing files on Windows, translate the characters to their
                 // 0xf000 higher-encoded versions.
                 // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                let mut remain: &mut [OSPathChar] = path;
-                if strings::starts_with_windows_drive_letter_t::<OSPathChar>(remain) {
-                    // don't encode `:` from the drive letter
-                    // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
-                    remain = &mut remain[2..];
-                }
-
-                for ch in remain.iter_mut() {
+                for ch in path.iter_mut() {
                     match *ch {
                         c if c == b'|' as OSPathChar
                             || c == b'<' as OSPathChar

@@ -1624,7 +1624,7 @@ describe("Bun.Archive", () => {
             );
             expect({ results, dest: tree(list[0].dest) }).toEqual({
               results: { slash: [mode === "plain" ? 1 : 0] },
-              dest: { "a": "directory", ...(mode === "plain" && { [join("a", "l")]: "directory" }) },
+              dest: { "a": "directory", [join("a", "l")]: "directory" },
             });
           },
         );

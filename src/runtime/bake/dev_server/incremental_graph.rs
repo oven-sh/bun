@@ -309,7 +309,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: the files of the chunk that were bundled again with the same output, in the chunk's order.
     /// After `settle_unchanged_files`, only those that left the chunk.
     pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
-    /// Client side: the files of the chunk that no file imported, and that imported nothing, before this bundle.
+    /// Client side: the files of the chunk that are new to the graph, and the html files.
     pub(crate) first_bundled_files: Vec<FileIndex<SIDE>>,
     /// Client side: `(importer, imported)` of each import that is new in this bundle. Empty if no file left the chunk.
     pub(crate) new_imports: Vec<(FileIndex<SIDE>, FileIndex<SIDE>)>,
@@ -810,9 +810,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     html_route_bundle_index = existing.html_route_bundle_index;
                     is_special_framework_file = existing.is_special_framework_file;
                 }
-                // Not decided by `existing`: a file that failed lost its content, and keeps its edges.
-                let edges = &self.edge_lists[file_index.get() as usize];
-                if edges.first_dep.is_none() && edges.first_import.is_none() {
+                // The graph has the html file of a route before its first bundle. A change of one reloads its page.
+                if !found_existing || html_route_bundle_index.is_some() {
                     self.first_bundled_files.push(file_index);
                 }
 

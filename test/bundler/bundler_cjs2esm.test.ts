@@ -626,6 +626,29 @@ describe("bundler", () => {
       stdout: "impl version 19.0.0\nrendered",
     },
   });
+  // The same when the file only calls a member of it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillCalled", {
+    files: {
+      "/entry.js": /* js */ `
+        import { render } from "react-dom";
+        console.log(render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var impl = require('./impl');
+        console.log('impl says', impl.describe());
+        module.exports = impl;
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.describe = function describe() { return "described"; };
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "impl says described\nrendered",
+    },
+  });
   // The re-exported file turns out to be CommonJS (its exports are not
   // statically known), so the linker keeps the converted file a CommonJS
   // wrapper around `module.exports = require()`.
@@ -2172,6 +2195,379 @@ describe("bundler", () => {
     cjs2esm: true,
     run: {
       stdout: "object 7 true n",
+    },
+  });
+  // `ns.default` on `import * as ns` of a lifted CommonJS module is `module.exports`,
+  // an object. A call of it passes no `this`, and no call in the file changes what a
+  // read of `ns.default` gets. Each spelling is a file of its own: the linker used to
+  // decide this once per file.
+  const liftedConfig = {
+    "/config.cjs": /* js */ `
+      exports.port = 8080;
+      exports.host = "localhost";
+    `,
+  };
+  const dotDefaultSpellings: Record<string, string> = {
+    call: /* js */ `const config = typeof mod.default === "function" ? mod.default() : mod.default;`,
+    optionalCall: /* js */ `const config = typeof mod.default === "function" ? mod.default?.() : mod.default;`,
+    templateTag: /* js */ `const config = typeof mod.default === "function" ? mod.default\`x\` : mod.default;`,
+    computedKey: /* js */ `const config = typeof mod["default"] === "function" ? mod["default"]() : mod["default"];`,
+    uncalledFunction: /* js */ `function never() { return mod.default(); }\nconst config = mod.default;`,
+    deadBranch: /* js */ `if (false) mod.default();\nconst config = mod.default;`,
+    treeShakenExport: /* js */ `export function unused() { return mod.default(); }\nconst config = mod.default;`,
+    nextToADefaultImport: /* js */ `import plain from "./config.cjs";\nconst config = typeof mod.default === "function" ? mod.default() : mod.default;`,
+    memberRead: /* js */ `function never() { return mod.default(); }\nconst config = { host: mod.default.host, port: mod.default.port };`,
+  };
+  const dotDefaultFiles = {
+    "/entry.mjs": Object.keys(dotDefaultSpellings)
+      .map(name => `import "./${name}.mjs";`)
+      .join("\n"),
+    ...Object.fromEntries(
+      Object.entries(dotDefaultSpellings).map(([name, body]) => [
+        `/${name}.mjs`,
+        `import * as mod from "./config.cjs";\n${body}\nconsole.log("${name}", config.host + ":" + config.port);`,
+      ]),
+    ),
+    ...liftedConfig,
+  };
+  const dotDefaultStdout = Object.keys(dotDefaultSpellings)
+    .map(name => `${name} localhost:8080`)
+    .join("\n");
+  itBundled("cjs2esm/StarImportDotDefaultCallIsModuleExports", {
+    files: dotDefaultFiles,
+    cjs2esm: true,
+    onAfterBundle(api) {
+      // every read and every call binds to the namespace object
+      expect(api.readFile("/out.js")).not.toContain(".default");
+    },
+    run: { stdout: dotDefaultStdout },
+  });
+  itBundled("cjs2esm/StarImportDotDefaultCallIsModuleExportsCLI", {
+    files: dotDefaultFiles,
+    backend: "cli",
+    run: { stdout: dotDefaultStdout },
+  });
+  itBundled("cjs2esm/StarImportDotDefaultCallIsModuleExportsMinified", {
+    files: dotDefaultFiles,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: dotDefaultStdout },
+  });
+  itBundled("cjs2esm/StarImportDotDefaultCallIsModuleExportsSplitting", {
+    files: {
+      "/a.mjs": `import * as mod from "./config.cjs";\n${dotDefaultSpellings.call}\nconsole.log("a", config.host + ":" + config.port);`,
+      "/b.mjs": `import * as mod from "./config.cjs";\n${dotDefaultSpellings.memberRead}\nconsole.log("b", config.host + ":" + config.port);`,
+      ...liftedConfig,
+    },
+    entryPoints: ["/a.mjs", "/b.mjs"],
+    outdir: "/out",
+    outputPaths: ["/out/a.js", "/out/b.js"],
+    splitting: true,
+    run: [
+      { file: "/out/a.js", stdout: "a localhost:8080" },
+      { file: "/out/b.js", stdout: "b localhost:8080" },
+    ],
+  });
+  itBundled("cjs2esm/StarImportDotDefaultCallIsModuleExportsCompile", {
+    files: {
+      "/entry.mjs": `import * as mod from "./config.cjs";\n${dotDefaultSpellings.call}\nconsole.log(config.host + ":" + config.port);`,
+      ...liftedConfig,
+    },
+    compile: true,
+    run: { stdout: "localhost:8080" },
+  });
+  itBundled("cjs2esm/StarImportDotDefaultCallThrowsTypeError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as mod from "./config.cjs";
+        let error;
+        try {
+          mod.default();
+        } catch (e) {
+          error = e;
+        }
+        console.log(error instanceof TypeError, typeof mod.default, mod.default.port);
+      `,
+      ...liftedConfig,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "true object 8080",
+    },
+  });
+  // The same namespace reached through another module.
+  itBundled("cjs2esm/ReExportedNamespaceDotDefaultCallIsModuleExports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./viaExportStarAs.mjs";
+        import "./viaExportClause.mjs";
+        import "./viaExportDefault.mjs";
+        import "./viaNamespaceOfTheBarrel.mjs";
+        import "./memberOfNamespaceOfTheBarrel.mjs";
+        import "./identity.mjs";
+      `,
+      "/barrel.mjs": /* js */ `
+        export * as Lib from "./config.cjs";
+        import * as ns from "./config.cjs";
+        export { ns as Named };
+        export default ns;
+      `,
+      "/viaExportStarAs.mjs": /* js */ `
+        import { Lib } from "./barrel.mjs";
+        const config = typeof Lib.default === "function" ? Lib.default() : Lib.default;
+        console.log("viaExportStarAs", config.host + ":" + config.port);
+      `,
+      "/viaExportClause.mjs": /* js */ `
+        import { Named } from "./barrel.mjs";
+        const config = typeof Named.default === "function" ? Named.default() : Named.default;
+        console.log("viaExportClause", config.host + ":" + config.port);
+      `,
+      "/viaExportDefault.mjs": /* js */ `
+        import Default from "./barrel.mjs";
+        const config = typeof Default.default === "function" ? Default.default() : Default.default;
+        console.log("viaExportDefault", config.host + ":" + config.port);
+      `,
+      "/viaNamespaceOfTheBarrel.mjs": /* js */ `
+        import * as barrel from "./barrel.mjs";
+        const config = typeof barrel.Lib === "function" ? barrel.Lib() : barrel.Lib;
+        console.log("viaNamespaceOfTheBarrel", config.host + ":" + config.port);
+      `,
+      "/memberOfNamespaceOfTheBarrel.mjs": /* js */ `
+        import * as barrel from "./barrel.mjs";
+        function never() { return barrel.Lib(); }
+        console.log("memberOfNamespaceOfTheBarrel", barrel.Lib.host + ":" + barrel.Lib.port);
+      `,
+      "/identity.mjs": /* js */ `
+        import * as ns from "./config.cjs";
+        import { Lib } from "./barrel.mjs";
+        function never() { return Lib.default(); }
+        console.log("identity", Lib.default === ns.default);
+      `,
+      ...liftedConfig,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: [
+        "viaExportStarAs localhost:8080",
+        "viaExportClause localhost:8080",
+        "viaExportDefault localhost:8080",
+        "viaNamespaceOfTheBarrel localhost:8080",
+        "memberOfNamespaceOfTheBarrel localhost:8080",
+        "identity true",
+      ].join("\n"),
+    },
+  });
+  // A react-family `module.exports = require("./impl")` file is lifted to `export *`.
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectNamespaceDotDefaultCall", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ReactDOM from "react-dom";
+        console.log(typeof ReactDOM.default === "function" ? ReactDOM.default() : ReactDOM.default.render(), ReactDOM.default.version);
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl.js');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function () { return "rendered"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "side effect\nrendered 19.0.0",
+    },
+  });
+  // A read of `ns.name` binds to the export whether or not the file also calls
+  // `ns.name()`. Only the call keeps `ns` as its `this`.
+  itBundled("cjs2esm/StarImportReadNextToAMethodCallBindsTheExport", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./lib.cjs";
+        console.log(ns.parse("x"), typeof ns.parse, ns.parse.length);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('console.log(exports_lib.parse("x"), typeof $parse, $parse.length);');
+    },
+    run: {
+      stdout: "helped:x function 1",
+    },
+  });
+  // A call that never runs keeps no namespace object for the reads.
+  itBundled("cjs2esm/StarImportReadNextToANeverRunMethodCallKeepsNoNamespace", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./lib.cjs";
+        function never() { return ns.parse("x"); }
+        console.log(ns.parse.length);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("exports_lib");
+    },
+    run: {
+      stdout: "1",
+    },
+  });
+  // `--minify-syntax` folds `(true ? ns.who : null)` to `ns.who`. The source
+  // calls the value without a `this`, and so does the bundle.
+  itBundled("cjs2esm/StarImportFoldedCalleeNextToAMethodCallPassesNoThis", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./lib.cjs";
+        console.log(ns.who("a"), (true ? ns.who : null)("b"));
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        exports.who = function (s) { return (this === undefined ? "none" : "this") + ":" + s; };
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "this:a none:b",
+    },
+  });
+  // TypeScript drops an import that nothing uses. A star import with only callees is used.
+  itBundled("cjs2esm/StarImportOnlyCalledInTypeScriptStaysImported", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from "./lib.cjs";
+        console.log(ns.who("a"));
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        exports.who = function (s) { return (this === undefined ? "none" : "this") + ":" + s; };
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "this:a",
+    },
+  });
+  // `ns.name` and `ns.name()` are two import items of one name. A name with no
+  // export is reported once, at its first use.
+  const missingMemberCalledAndRead: [name: string, files: Record<string, string>, warning: string][] = [
+    [
+      "NoMatchingExport",
+      { "/lib.mjs": /* js */ `export const a = 1;` },
+      `Import "missing" will always be undefined because there is no matching export in "lib.mjs"`,
+    ],
+    [
+      "AmbiguousExport",
+      {
+        "/lib.mjs": /* js */ `export * from "./one.mjs"; export * from "./two.mjs";`,
+        "/one.mjs": /* js */ `export const missing = 1;`,
+        "/two.mjs": /* js */ `export const missing = 2;`,
+      },
+      `Import "missing" will always be undefined because there are multiple matching exports`,
+    ],
+  ];
+  for (const [name, files, warning] of missingMemberCalledAndRead) {
+    itBundled(`cjs2esm/StarImportMemberCalledAndReadWarnsOnce${name}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import * as ns from "./lib.mjs";
+          let error;
+          try {
+            ns.missing();
+          } catch (e) {
+            error = e;
+          }
+          console.log(error instanceof TypeError, typeof ns.missing);
+        `,
+        ...files,
+      },
+      backend: "cli",
+      bundleWarnings: { "/entry.mjs": [warning] },
+      run: {
+        stdout: "true undefined",
+      },
+    });
+  }
+  // A default import is `module.exports`, not the namespace: `X.default` is `undefined` in
+  // Node when the module has no `default` export. A guarded call of it takes the other
+  // branch, on the default import and on `ns.default`.
+  itBundled("cjs2esm/DefaultImportDotDefaultGuardedCallTakesTheOtherBranch", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import lib from "./init.cjs";
+        import * as ns from "./init.cjs";
+        console.log(
+          lib.default ? lib.default() : lib.init(),
+          lib.default?.() ?? lib.init(),
+          ns.default.default ? ns.default.default() : ns.default.init(),
+        );
+      `,
+      "/init.cjs": /* js */ `
+        exports.init = function () { return "init"; };
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "init init init",
+    },
+  });
+  // A re-exported default import gives the module its CommonJS wrapper back, so the
+  // same guard through a barrel reads the real `module.exports`.
+  itBundled("cjs2esm/ReExportedDefaultImportDotDefaultGuardedCallTakesTheOtherBranch", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import viaFrom, { named } from "./from.mjs";
+        import viaLocal from "./local.mjs";
+        console.log(
+          viaFrom.default ? viaFrom.default() : viaFrom.init(),
+          named.default?.() ?? named.init(),
+          viaLocal.default ? viaLocal.default() : viaLocal.init(),
+        );
+      `,
+      "/from.mjs": /* js */ `
+        export { default, default as named } from "./one.cjs";
+      `,
+      "/local.mjs": /* js */ `
+        import lib from "./two.cjs";
+        export { lib as default };
+      `,
+      "/one.cjs": /* js */ `
+        exports.init = function () { return "init"; };
+      `,
+      "/two.cjs": /* js */ `
+        exports.init = function () { return "init"; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/one.cjs", "/two.cjs"] },
+    run: {
+      stdout: "init init init",
+    },
+  });
+  // The classic JSX factory is a callee too. The parser does not mark it as one
+  // yet (#46318), so its calls bind to the export and pass no `this`.
+  itBundled("cjs2esm/StarImportJsxFactoryNextToAMethodCallKeepsThis", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as lib from "./lib.cjs";
+        console.log(lib.h("hand"), <div />);
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        exports.h = function (tag) { return (this === undefined ? "none" : "this") + ":" + tag; };
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "lib.h",
+    },
+    run: {
+      stdout: "this:hand this:div",
     },
   });
 

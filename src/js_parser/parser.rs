@@ -958,10 +958,10 @@ impl IdentifierOpts {
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
-    /// The tag of a tagged template, which passes `this` like a call target.
+    /// A call target, or the tag of a tagged template, which passes `this` like a call target.
     #[inline]
-    pub(crate) const fn is_template_tag(self) -> bool {
-        self.0 & Self::IS_TEMPLATE_TAG != 0
+    pub(crate) const fn is_callee(self) -> bool {
+        self.0 & (Self::IS_CALL_TARGET | Self::IS_TEMPLATE_TAG) != 0
     }
     /// See `ExprIn::is_property_access_target`.
     #[inline]

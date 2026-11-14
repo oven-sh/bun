@@ -1896,7 +1896,10 @@ impl<'a> Parser<'a> {
                     && !p
                         .import_items_for_namespace
                         .get(&found.namespace_ref)
-                        .is_some_and(|items| items.count() > 0);
+                        .is_some_and(|items| items.count() > 0)
+                    && !p
+                        .import_call_items_for_namespace
+                        .contains_key(&found.namespace_ref);
                 if ns_is_unused {
                     // Drop the unused `import * as ns` part, keeping the other imports in order.
                     if let Some(i) = before.iter().position(|before_part| {

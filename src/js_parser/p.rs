@@ -491,6 +491,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) esm_export_keyword: bun_ast::Range,
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
+    /// The items of `ns.name(...)` callees of a star import, apart from the reads of `ns.name`.
+    pub(crate) import_call_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
@@ -5858,7 +5860,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_call_target() || opts.is_template_tag() {
+        if opts.is_callee() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
             if !self.is_revisit_for_substitution {
                 let call = self
@@ -6624,7 +6626,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
-        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
+        inner_use.is_call_target |= opts.is_callee();
         true
     }
 
@@ -9814,6 +9816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
+            import_call_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],

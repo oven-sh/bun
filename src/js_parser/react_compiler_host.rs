@@ -63,7 +63,8 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
         let symbol = self.p.symbols.get(item.inner_index() as usize)?;
         let name = symbol.original_name.slice();
-        let mut all = self.p.import_items_for_namespace.iter();
+        let mut all = (self.p.import_items_for_namespace.iter())
+            .chain(self.p.import_call_items_for_namespace.iter());
         all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
     }
     fn source(&self) -> &[u8] {

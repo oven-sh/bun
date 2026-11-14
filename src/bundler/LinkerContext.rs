@@ -3957,6 +3957,7 @@ impl<'a> LinkerContext<'a> {
                         // A name read off `import()` / `require()` is `undefined`
                         // at run time too, so there is nothing to say.
                         if self.is_call_record(prev_source_index, named_import.import_record_index)
+                            || self.is_later_item_of_name(prev_source_index, named_import)
                         {
                         } else if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
@@ -4219,7 +4220,7 @@ impl<'a> LinkerContext<'a> {
             || self.is_esm_namespace_ref(result.source_index, result.r#ref)
     }
 
-    /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
+    /// Must `X.name()` keep `X` as `this`, where `X.name` is `ref_`? A namespace object is not a function.
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -4228,9 +4229,10 @@ impl<'a> LinkerContext<'a> {
                 .symbols
                 .get_const(ref_)
                 .is_some_and(|symbol| symbol.call_ignores_this())
+            && !self.is_esm_namespace_ref(source_index, ref_)
     }
 
-    /// `ns.name()` for `import * as ns`. An unbound item prints as `ns.name`.
+    /// The item of a callee `ns.name(...)` for `import * as ns`. An unbound item prints as `ns.name`.
     fn method_call_item_needs_this(
         &self,
         import_ref: Ref,
@@ -4245,6 +4247,50 @@ impl<'a> LinkerContext<'a> {
                 .get_const(import_ref)
                 .is_some_and(|symbol| symbol.called_as_method() && symbol.namespace_alias.is_some())
             && self.method_call_needs_this(result.source_index, result.r#ref)
+    }
+
+    /// `X.default()` on a default import or `ns.default` of a lifted module: Node reads `undefined` there.
+    fn is_default_of_module_exports(
+        &self,
+        source_index: crate::IndexInt,
+        base: Ref,
+        resolved: &ImportMemberResolution,
+    ) -> bool {
+        self.graph.ast.items_flags()[resolved.source_index as usize]
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && self.is_esm_namespace_ref(resolved.source_index, resolved.r#ref)
+            && self.graph.ast.items_named_imports()[source_index as usize]
+                .get(&base)
+                .is_some_and(|import| {
+                    !import.alias_is_star
+                        && import
+                            .alias
+                            .is_some_and(|alias| alias.slice() == b"default")
+                        && self.graph.ast.items_import_records()[source_index as usize]
+                            .as_slice()
+                            .get(import.import_record_index as usize)
+                            .is_some_and(|record| {
+                                record.source_index.get() == resolved.source_index
+                            })
+                })
+    }
+
+    /// `ns.name` and `ns.name(...)` are two items of one name: only the first reports a missing export.
+    fn is_later_item_of_name(
+        &self,
+        source_index: crate::IndexInt,
+        named_import: &NamedImport,
+    ) -> bool {
+        named_import.namespace_ref.is_valid()
+            && self.graph.ast.items_named_imports()[source_index as usize]
+                .values()
+                .iter()
+                .any(|other| {
+                    other.namespace_ref == named_import.namespace_ref
+                        && other.alias_loc.start < named_import.alias_loc.start
+                        && other.alias.map(|alias| alias.slice())
+                            == named_import.alias.map(|alias| alias.slice())
+                })
     }
 
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
@@ -4511,13 +4557,15 @@ impl<'a> LinkerContext<'a> {
                         .slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
-                        self.log_disjoint().add_range_warning_fmt(
-                            Some(source), r,
-                            format_args!(
-                                "Import \"{}\" will always be undefined because there are multiple matching exports",
-                                bstr::BStr::new(alias),
-                            ),
-                        );
+                        if !self.is_later_item_of_name(source_index, named_import) {
+                            self.log_disjoint().add_range_warning_fmt(
+                                Some(source), r,
+                                format_args!(
+                                    "Import \"{}\" will always be undefined because there are multiple matching exports",
+                                    bstr::BStr::new(alias),
+                                ),
+                            );
+                        }
                     } else {
                         self.log_disjoint().add_range_error_fmt(
                             Some(source),
@@ -4537,6 +4585,17 @@ impl<'a> LinkerContext<'a> {
         if !method_call_items.is_empty() {
             let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
             for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
+                // Every use of such an item is a callee, so `symbol_uses` counts each of them.
+                debug_assert!(
+                    part.import_symbol_property_uses
+                        .as_ref()
+                        .is_none_or(|uses| {
+                            !uses
+                                .keys()
+                                .iter()
+                                .any(|base| method_call_items.contains_key(base))
+                        })
+                );
                 namespace_uses.clear();
                 for (item, item_use) in part
                     .symbol_uses
@@ -4687,7 +4746,8 @@ impl<'a> LinkerContext<'a> {
                 && let Some(resolved) = member_resolutions
                     .get(&(access.target_source, access.name))
                     .unwrap()
-                && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                && (self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                    || self.is_default_of_module_exports(source_index, access.base, resolved))
             {
                 keeps_this.push((access.base, access.name));
             }

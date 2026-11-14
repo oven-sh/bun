@@ -19,10 +19,11 @@ Using .prettierrc (Prettier config)
 
 Built-in plugins: @ianvs/prettier-plugin-sort-imports
 
-You can remove: @ianvs/prettier-plugin-sort-imports
-Still needed:   prettier (the "format" script runs it)
-Not checked:    other tools' configs, CI files, Git hooks
+Still needed:   @ianvs/prettier-plugin-sort-imports (prettier needs it)
+                prettier (the "format" script runs it)
 ```
+
+The plugin is built in, but the `format` script still runs Prettier, which loads it. Once nothing runs Prettier, `--doctor` lists both as removable.
 
 ---
 

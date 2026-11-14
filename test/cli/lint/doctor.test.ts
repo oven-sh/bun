@@ -483,6 +483,114 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(text.exitCode).toBe(0);
   });
 
+  // Serial: each run starts child processes, which would slow the other tests past their deadline.
+  test.serial(
+    "an ESLint that stays keeps what the ESLint config that an oxlint config hides loads",
+    async () => {
+      // ESLint reads its own config when the script runs it, whichever config `bun lint` picks. `eslint-config-acme`
+      // and the parser aren't installed: what the config names is needed all the same.
+      const project = (config: Record<string, string>, fields: object = {}) => ({
+        "package.json": JSON.stringify({
+          devDependencies: Object.fromEntries(
+            [
+              "eslint",
+              "oxlint",
+              "eslint-plugin-foo",
+              "eslint-config-acme",
+              "@typescript-eslint/parser",
+              "eslint-plugin-free",
+            ].map(name => [name, "*"]),
+          ),
+          ...fields,
+        }),
+        ".oxlintrc.json": JSON.stringify({ rules: { "no-var": "error" } }),
+        ...plugin("eslint-plugin-foo", ["bar"]),
+        "a.js": "var a = 1;\n",
+        ...config,
+      });
+      const script = { scripts: { "lint:old": "eslint ." } };
+      const legacy = {
+        ".eslintrc.json": JSON.stringify({
+          plugins: ["foo"],
+          extends: ["acme/base"],
+          overrides: [{ files: ["*.ts"], parser: "@typescript-eslint/parser" }],
+        }),
+      };
+      const flat = {
+        "eslint.config.js": `
+          const foo = require("eslint-plugin-foo");
+          module.exports = [{ plugins: { foo }, rules: { "foo/bar": "error" } }];`,
+      };
+      const byLegacy = `
+You can remove: eslint-plugin-free, oxlint
+Still needed:   @typescript-eslint/parser, eslint-config-acme, eslint-plugin-foo (eslint needs them)
+                eslint (the "lint:old" script runs it)
+Not checked:    other tools' configs, CI files, Git hooks
+`;
+      const [byScript, withFlat, noScript] = await Promise.all([
+        doctor(project(legacy, script)),
+        doctor(project(flat, script)),
+        doctor(project(legacy)),
+      ]);
+      expect(byScript.stdout).toEndWith(byLegacy);
+      expect(withFlat.stdout).toEndWith(`
+You can remove: @typescript-eslint/parser, eslint-config-acme, eslint-plugin-free, oxlint
+Still needed:   eslint (the "lint:old" script runs it)
+                eslint-plugin-foo (eslint needs it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+      expect(noScript.stdout).toEndWith(`
+You can remove: @typescript-eslint/parser, eslint, eslint-config-acme, eslint-plugin-foo, eslint-plugin-free, oxlint
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+      expect([byScript, withFlat, noScript].map(it => it.exitCode)).toEqual([0, 0, 0]);
+    },
+    timeout,
+  );
+
+  test.serial(
+    "an ESLint that stays keeps what the ESLint config of a subdirectory with an oxlint config loads",
+    async () => {
+      // ESLint 8 reads the root's `.eslintrc.json` too, which names `eslint-plugin-bar`. It never reads the configs
+      // of a dependency, or of a directory the project ignores.
+      const project = (fields: object) => ({
+        "package.json": JSON.stringify({
+          devDependencies: {
+            eslint: "*",
+            oxlint: "*",
+            "eslint-plugin-foo": "*",
+            "eslint-plugin-bar": "*",
+            "eslint-plugin-free": "*",
+          },
+          scripts: { "lint:old": "eslint ." },
+        }),
+        ...plugin("eslint-plugin-foo", ["bar"]),
+        ...plugin("eslint-plugin-bar", ["baz"]),
+        ...plugin("eslint-plugin-free", ["qux"]),
+        ".gitignore": "vendor\n",
+        ".oxlintrc.json": "{}",
+        ".eslintrc.json": JSON.stringify({ plugins: ["bar"] }),
+        "packages/web/.oxlintrc.json": "{}",
+        "packages/web/.eslintrc.json": JSON.stringify({ plugins: ["foo"] }),
+        "packages/web/a.js": "var a = 1;\n",
+        "node_modules/some-dependency/.eslintrc.json": JSON.stringify({ plugins: ["free"] }),
+        "node_modules/some-dependency/index.js": "",
+        "vendor/.oxlintrc.json": "{}",
+        "vendor/.eslintrc.json": JSON.stringify({ plugins: ["free"] }),
+        "vendor/b.js": "var b = 1;\n",
+        ...fields,
+      });
+      const { stdout, exitCode } = await doctor(project({}), ["--config", "packages/web/.oxlintrc.json"]);
+      expect(stdout).toContain(`
+You can remove: eslint-plugin-free, oxlint
+Still needed:   eslint (the "lint:old" script runs it)
+                eslint-plugin-bar, eslint-plugin-foo (eslint needs them)
+`);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test("an optional peer dependency of a shared config can be removed", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": dependencies("shared-config", "oxlint", "oxlint-tsgolint", "oxfmt"),

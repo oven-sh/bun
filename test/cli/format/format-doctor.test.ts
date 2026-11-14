@@ -8,14 +8,15 @@ afterAll(endChildren);
 
 const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
 
-async function doctor(files: Record<string, string>, args: string[] = []) {
+/** Runs `bun fmt --doctor` in the temporary directory, or in its subdirectory `cwd`. */
+async function doctor(files: Record<string, string>, args: string[] = [], cwd = "") {
   using dir = tempDir("bun-format-doctor", files);
   const list = () => (readdirSync(String(dir), { recursive: true }) as string[]).sort();
   const before = list();
   await using proc = spawn({
     cmd: [bunExe(), "fmt", "--threads", "2", "--doctor", ...args],
     env,
-    cwd: String(dir),
+    cwd: join(String(dir), cwd),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -464,6 +465,176 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(free.stdout).toEndWith(
       `\nYou can remove: prettier\nNot checked:    other tools' configs, CI files, Git hooks\n`,
     );
+  });
+
+  test("a Prettier that stays keeps the plugins of the .prettierrc that an oxfmt config hides", async () => {
+    // Prettier reads `.prettierrc` when the script runs it, whichever config `bun fmt` picks.
+    const plugins = { overrides: [{ files: "*.html", options: { plugins: ["prettier-plugin-go-template"] } }] };
+    const project = (fields: object, prettierrc = JSON.stringify(plugins)) => ({
+      "package.json": JSON.stringify({
+        devDependencies: { prettier: "*", "prettier-plugin-go-template": "*" },
+        ...fields,
+      }),
+      ".oxfmtrc.json": JSON.stringify({ ignorePatterns: ["layouts/**/*.html"] }),
+      ".prettierrc": prettierrc,
+      "layouts/list.html": "<ul>{{ range .Pages }}<li>{{ .Title }}</li>{{ end }}</ul>\n",
+    });
+    const script = { scripts: { "format:html": 'prettier --write "layouts/**/*.html"' } };
+    const still = `
+Still needed:   prettier (the "format:html" script runs it)
+                prettier-plugin-go-template (prettier needs it)
+`;
+    const [byScript, asJson, named, noScript, malformed] = await Promise.all([
+      doctor(project(script)),
+      doctor(project(script), ["-f", "json"]),
+      doctor(project(script), ["--config", ".oxfmtrc.json"]),
+      doctor(project({})),
+      doctor(project(script, "{ plugins: [")),
+    ]);
+    expect(byScript.stdout).toEndWith(`${still}
+note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
+`);
+    expect(JSON.parse(asJson.stdout).packages).toEqual({
+      removable: [],
+      needed: [
+        { name: "prettier", reason: "script", by: "format:html" },
+        { name: "prettier-plugin-go-template", reason: "dependent", by: "prettier" },
+      ],
+      not_checked: ["other tools' configs", "CI files", "Git hooks"],
+    });
+    expect(named.stdout).toEndWith(still);
+    expect(noScript.stdout).toContain("\nYou can remove: prettier, prettier-plugin-go-template\n");
+    expect(malformed.stdout).toContain("\nYou can remove: prettier-plugin-go-template\n");
+    expect([byScript, asJson, named, noScript, malformed].map(it => it.exitCode)).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  test("a Prettier that stays keeps what a hidden config that is a program loads", async () => {
+    const { stdout, exitCode } = await doctor({
+      "package.json": JSON.stringify({
+        devDependencies: { prettier: "*", "prettier-config-acme": "*", "prettier-plugin-acme": "*" },
+        scripts: { format: "prettier --write ." },
+      }),
+      ".oxfmtrc.json": "{}",
+      ".prettierrc.mjs": `export { default } from "prettier-config-acme";`,
+      "node_modules/prettier-config-acme/package.json": JSON.stringify({
+        name: "prettier-config-acme",
+        type: "module",
+        main: "index.js",
+      }),
+      "node_modules/prettier-config-acme/index.js": `export default { semi: false, plugins: ["prettier-plugin-acme"] };`,
+    });
+    expect(stdout).toContain(`
+Still needed:   prettier (the "format" script runs it)
+                prettier-config-acme, prettier-plugin-acme (prettier needs them)
+`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a Prettier that stays keeps the plugins of a .prettierrc in a subdirectory of an oxfmt project", async () => {
+    const { stdout, exitCode } = await doctor({
+      "package.json": JSON.stringify({
+        devDependencies: { prettier: "*", "prettier-plugin-go-template": "*", "prettier-plugin-far": "*" },
+        scripts: { "format:html": "prettier --write layouts" },
+      }),
+      ".oxfmtrc.json": JSON.stringify({ ignorePatterns: ["layouts/**/*.html"] }),
+      ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-far"] }),
+      "layouts/.prettierrc": JSON.stringify({ plugins: ["prettier-plugin-go-template"] }),
+      "layouts/list.html": "<ul>{{ range .Pages }}<li>{{ .Title }}</li>{{ end }}</ul>\n",
+      "layouts/a.js": ugly,
+    });
+    expect(stdout).toEndWith(`
+Still needed:   prettier (the "format:html" script runs it)
+                prettier-plugin-far, prettier-plugin-go-template (prettier needs them)
+
+note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
+`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a Prettier that stays reads the first config in a directory, and none above the one in use", async () => {
+    const project = (script: string, files: Record<string, string>) => ({
+      "package.json": JSON.stringify({
+        devDependencies: { prettier: "*", "prettier-plugin-x": "*" },
+        scripts: { format: script },
+      }),
+      "a.js": ugly,
+      ...files,
+    });
+    const [shadowed, byFlag] = await Promise.all([
+      // Two configs in one directory: Prettier reads `.prettierrc` and never `prettier.config.js`.
+      doctor(
+        project("prettier --write .", {
+          ".prettierrc": "{}",
+          "prettier.config.js": `module.exports = { plugins: ["prettier-plugin-x"] };`,
+        }),
+      ),
+      // A script that names the plugin keeps it, however it spells the flag.
+      doctor(project("prettier --plugin=prettier-plugin-x --write .", {})),
+    ]);
+    expect(shadowed.stdout).toEndWith(`
+You can remove: prettier-plugin-x
+Still needed:   prettier (the "format" script runs it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(byFlag.stdout).toContain(`
+Still needed:   prettier, prettier-plugin-x (the "format" script runs them)
+`);
+    expect([shadowed.exitCode, byFlag.exitCode]).toEqual([0, 0]);
+  });
+
+  test("a hidden .prettierrc above the working directory does not count when a nearer one is in use", async () => {
+    // Run in `pkg`: Prettier reads `pkg/.prettierrc` for its files and never the root's, which the root's
+    // `.oxfmtrc.json` hides from `bun fmt`.
+    const { stdout, exitCode } = await doctor(
+      {
+        "package.json": JSON.stringify({
+          devDependencies: { prettier: "*", "prettier-plugin-far": "*", "@ianvs/prettier-plugin-sort-imports": "*" },
+          scripts: { format: "prettier --write ." },
+        }),
+        ".oxfmtrc.json": "{}",
+        ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-far"] }),
+        "pkg/.prettierrc": JSON.stringify({ plugins: ["@ianvs/prettier-plugin-sort-imports"] }),
+        "pkg/a.js": ugly,
+      },
+      [],
+      "pkg",
+    );
+    expect(stdout).toContain(`
+You can remove: prettier-plugin-far
+Still needed:   @ianvs/prettier-plugin-sort-imports (prettier needs it)
+                prettier (the "format" script runs it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a Prettier that stays keeps the built-in plugins of the .prettierrc in use", async () => {
+    // Bun has the plugin, but the script still runs Prettier, which loads it.
+    const project = (fields: object) => ({
+      "package.json": JSON.stringify({
+        devDependencies: { prettier: "*", "@ianvs/prettier-plugin-sort-imports": "*" },
+        ...fields,
+      }),
+      ".prettierrc": JSON.stringify({ plugins: ["@ianvs/prettier-plugin-sort-imports"] }),
+      "a.js": ugly,
+    });
+    const [byScript, noScript] = await Promise.all([
+      doctor(project({ scripts: { format: "prettier --write ." } })),
+      doctor(project({})),
+    ]);
+    expect(byScript.stdout).toEndWith(`
+Built-in plugins: @ianvs/prettier-plugin-sort-imports
+
+Still needed:   @ianvs/prettier-plugin-sort-imports (prettier needs it)
+                prettier (the "format" script runs it)
+`);
+    expect(noScript.stdout).toEndWith(`
+Built-in plugins: @ianvs/prettier-plugin-sort-imports
+
+You can remove: @ianvs/prettier-plugin-sort-imports, prettier
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect([byScript.exitCode, noScript.exitCode]).toEqual([0, 0]);
   });
 
   test("an optional peer dependency of a shared config can be removed", async () => {

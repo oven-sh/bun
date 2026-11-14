@@ -111,6 +111,34 @@ impl Modules<'_> {
         Ok(())
     }
 
+    /// Runs the script for the config file at `path`, which loads all that the file refers to, so that `--doctor` sees
+    /// the modules it loads. Returns the packages that the file and what it extends name, whether or not they could be
+    /// loaded. A file that fails to load names nothing.
+    pub(crate) fn load_all(&mut self, path: &[u8]) -> Vec<Vec<u8>> {
+        let is_run = self.printed.iter().any(|it| it.0 == path);
+        if !is_run && self.run(path, path).is_err() {
+            return Vec::new();
+        }
+        let Some((_, printed)) = self.printed.iter().find(|it| it.0 == path) else {
+            return Vec::new();
+        };
+        let sections: [&[u8]; 3] = [b"plugins", b"configs", b"parsers"];
+        let by_from = (sections.iter()).filter_map(|it| printed.get(it)?.as_object());
+        let requests = by_from.flat_map(|it| it.iter().filter_map(|it| it.1.as_object()));
+        let is_package = |request: &&[u8]| {
+            !request.starts_with(b".") && !paths::is_absolute(request) && !request.is_empty()
+        };
+        let package = |request: &[u8]| {
+            let parts = if request.starts_with(b"@") { 2 } else { 1 };
+            let package: Vec<&[u8]> = strings::split(request, b"/").take(parts).collect();
+            package.join(&b"/"[..])
+        };
+        (requests.flatten().map(|it| &it.0[..]))
+            .filter(is_package)
+            .map(package)
+            .collect()
+    }
+
     /// The value the script prints at `keys`. A single run for `entry`, a file in the cascade, covers everything it
     /// refers to, including the plugin configs it extends, so another file's run can't be reused. `from` is the file
     /// that refers to the thing being looked up. The script may know it under a different path than this program does,
@@ -204,6 +232,14 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
             None => yaml()?,
         }
     }))
+}
+
+/// True if the ESLint 8 config `config`, or one of its overrides, names a package: in `extends`, `plugins` or `parser`.
+pub(crate) fn names_packages(config: &Json) -> bool {
+    let overrides = config.get(b"overrides").and_then(Json::as_array);
+    let keys: [&[u8]; 3] = [b"extends", b"plugins", b"parser"];
+    (std::iter::once(config).chain(overrides.unwrap_or_default()))
+        .any(|it| keys.iter().any(|key| it.get(key).is_some()))
 }
 
 /// True if the file at `path`, passed with `--config`, is an ESLint 8 config, as far as can be told without running it.

@@ -109,7 +109,7 @@ impl Readable {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
-            Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
+            Stdio::Capture => panic!("TODO: implement capture support in Stdio readable"),
             Stdio::ReadableStream(..) => {
                 // Nothing reads it, but closing it would fail the child's writes.
                 #[cfg(unix)]

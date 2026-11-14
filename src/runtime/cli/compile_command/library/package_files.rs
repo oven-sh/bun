@@ -154,7 +154,7 @@ fn find_exported_files(
     });
     let mut exported: Vec<ExportedFile> = entry_points
         .map(|file| {
-            let (javascript, source) = (posix_dest_path(file), file.src_path.text);
+            let (javascript, source) = (posix_dest_path(file), &*file.src_path);
             ExportedFile {
                 subpath: subpath_of(&javascript),
                 source: source.to_vec(),

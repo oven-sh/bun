@@ -4545,7 +4545,6 @@ pub mod bv2_impl {
                                 file,
                                 path.text,
                                 bun_wyhash::hash(path.text) as u32,
-                                None,
                             );
                         }
                     }
@@ -6809,15 +6808,9 @@ pub mod bv2_impl {
                         // only when it is interned for the process lifetime
                         // (`dupe_alloc` leaves other paths in the bundle arena).
                         let added = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(
-                                fd,
-                                source_path,
-                                hash,
-                                dir_fd,
-                                None,
-                            )
+                            bun_watcher.add_file::<{ cfg!(windows) }>(fd, source_path, hash, dir_fd)
                         } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
+                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd)
                         };
                         // A file that's already watched keeps its first descriptor.
                         if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {

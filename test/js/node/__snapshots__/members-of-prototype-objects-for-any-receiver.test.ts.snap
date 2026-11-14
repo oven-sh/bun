@@ -4471,29 +4471,29 @@ node:child_process.ChildProcess.prototype spawn()
 node:child_process.ChildProcess.prototype spawn("a", 1)
   throws TypeError ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received type string ('a') <- every receiver
 node:child_process.ChildProcess.prototype ref()
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
+  undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype ref("a", 1)
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
+  undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype unref()
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
+  undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype unref("a", 1)
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
+  undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype [Symbol.dispose]()
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Cannot access invalid private field <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  undefined <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype [Symbol.dispose]("a", 1)
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Cannot access invalid private field <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  undefined <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype [kHandle], read

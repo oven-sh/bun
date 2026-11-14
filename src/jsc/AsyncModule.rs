@@ -208,37 +208,22 @@ use bun_install::{self as install, LogLevel, PackageID};
 
 use crate::event_loop::{ConcurrentTaskItem, Task};
 
-/// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
-/// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
-/// methods, `progress_bar` selected via const generic to match the
-/// `enable_ansi_colors_stderr` branch.
-struct QueueRunTasksCallbacks<const PROGRESS: bool>;
+struct PendingModules<'a>(&'a mut Map);
 
-impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbacks<PROGRESS> {
-    type Ctx = Map;
-
-    const PROGRESS_BAR: bool = PROGRESS;
-    const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const HAS_ON_RESOLVE: bool = true;
-
-    fn on_resolve(_: &mut Map) {
-        bun_core::scoped_log!(AsyncModule, "onResolve");
+impl run_tasks::PendingImports for PendingModules<'_> {
+    fn on_package_manifest_error(&mut self, name: &[u8], err: bun_install::Error, url: &[u8]) {
+        Queue::on_package_manifest_error(self.0, name, err.name(), url)
     }
 
-    fn on_package_manifest_error(ctx: &mut Map, name: &[u8], err: bun_install::Error, url: &[u8]) {
-        Queue::on_package_manifest_error(ctx, name, err.name(), url)
-    }
-
-    fn on_package_download_error_pkg(
-        ctx: &mut Map,
+    fn on_package_download_error(
+        &mut self,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
         err: bun_install::Error,
         url: &[u8],
     ) {
-        Queue::on_package_download_error(ctx, package_id, name, resolution, err.name(), url)
+        Queue::on_package_download_error(self.0, package_id, name, resolution, err.name(), url)
     }
 }
 
@@ -290,19 +275,14 @@ impl Queue {
     }
 
     fn run_tasks(pm: &mut install::PackageManager, map: &mut Map) {
-        if bun_core::output::enable_ansi_colors_stderr() {
+        let log_level = if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, map, true, LogLevel::Default)
-                .expect("unreachable");
+            LogLevel::Default
         } else {
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
-                pm,
-                map,
-                true,
-                LogLevel::DefaultNoProgress,
-            )
-            .expect("unreachable");
-        }
+            LogLevel::DefaultNoProgress
+        };
+        let caller = run_tasks::Caller::PendingImports(&mut PendingModules(map));
+        run_tasks::run_tasks(pm, caller, true, log_level).expect("unreachable");
     }
 
     fn on_package_manifest_error(map: &mut Map, name: &[u8], err: &'static str, url: &[u8]) {

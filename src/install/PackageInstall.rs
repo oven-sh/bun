@@ -493,9 +493,7 @@ fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, d
             let name = entry.name.slice_u8();
             let ino: u64 = match crate::prune::entry_kind(dir, name, entry.kind) {
                 EntryKind::File if cfg!(windows) => {
-                    sys::fstatat(dir, &bun_core::ZBox::from_bytes(name))
-                        .ok()?
-                        .st_ino
+                    sys::fstatat(dir, entry.name.as_zstr()).ok()?.st_ino
                 }
                 EntryKind::File => entry.ino,
                 EntryKind::Directory if name == b"node_modules" => continue,

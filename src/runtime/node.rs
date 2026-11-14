@@ -49,9 +49,6 @@ pub(crate) mod statfs;
 #[path = "node/time_like.rs"]
 pub(crate) mod time_like;
 
-#[path = "node/dir_iterator.rs"]
-pub(crate) mod dir_iterator;
-
 #[path = "node/node_fs_constant.rs"]
 pub(crate) mod node_fs_constant;
 
@@ -67,7 +64,7 @@ pub(crate) mod util {
 }
 pub(crate) use util::validators;
 
-// `crate::node::dirent::Kind` shim for dir_iterator.rs / node_fs.rs —
+// `crate::node::dirent::Kind` shim for node_fs.rs —
 // callers reach `.Kind` through `Dirent`. Rust can't hang an associated
 // module off a struct re-export, so expose a tiny module mirroring that shape.
 pub(crate) mod dirent {

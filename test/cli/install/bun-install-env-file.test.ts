@@ -139,6 +139,12 @@ describe("bun install .env loading (#12011)", () => {
     ["NODE_ENV=test", { NODE_ENV: "test" }, "TESTSUFFIX"],
     ["BUN_ENV=test", { BUN_ENV: "test", NODE_ENV: "production" }, "TESTSUFFIX"],
     ["no NODE_ENV", {}, "PROD"],
+    // An empty value names no mode: it does not hide the other variable.
+    ["an empty BUN_ENV and NODE_ENV=development", { BUN_ENV: "", NODE_ENV: "development" }, "DEV"],
+    ["an empty BUN_ENV and NODE_ENV=test", { BUN_ENV: "", NODE_ENV: "test" }, "TESTSUFFIX"],
+    ["an empty NODE_ENV and BUN_ENV=development", { BUN_ENV: "development", NODE_ENV: "" }, "DEV"],
+    ["an empty BUN_ENV", { BUN_ENV: "" }, "PROD"],
+    ["an empty NODE_ENV", { NODE_ENV: "" }, "PROD"],
   ];
   test.concurrent.each(modes)("default files with %s", async (_label, env, token) => {
     const { auth } = await runInstall([], env);

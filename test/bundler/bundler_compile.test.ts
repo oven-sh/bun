@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -2002,4 +2002,273 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
+});
+
+// A package that loads its addon through a path built at run time (node-gyp-build, bindings) ships `prebuilds/`,
+// `binding.gyp` or `CMakeLists.txt`. The bundle keeps the build machine's absolute `__dirname`, so the executable reads
+// that path at run time. `bun build --compile` warns once per such package unless the package's own code loads a
+// `.node` file by a string literal.
+describe("compile warns for a native addon that the executable loads from disk", () => {
+  const loaderJs = /* js */ `
+    var path = require("path");
+    var runtimeRequire = require;
+    module.exports = runtimeRequire(path.join(__dirname, "prebuilds", process.platform + "-" + process.arch, "node.napi.node"));
+  `;
+  // node-gyp-build style: prebuilds/ and a loader that builds the path at run time. Two more JS files so that
+  // several reachable files map to the same package.
+  const fakeaddon = {
+    "node_modules/fakeaddon/package.json": JSON.stringify({ name: "fakeaddon", version: "1.0.0", main: "index.js" }),
+    "node_modules/fakeaddon/index.js": `require("./lib/a.js"); require("./lib/b.js");\n` + loaderJs,
+    "node_modules/fakeaddon/lib/a.js": `module.exports = 1;`,
+    "node_modules/fakeaddon/lib/b.js": `module.exports = 2;`,
+    "node_modules/fakeaddon/prebuilds/linux-x64/node.napi.node": "not a real addon",
+  };
+  // bindings style: binding.gyp, no build/ directory on this machine.
+  const gyponly = {
+    "node_modules/gyponly/package.json": JSON.stringify({ name: "gyponly", version: "1.0.0", main: "index.js" }),
+    "node_modules/gyponly/binding.gyp": `{ "targets": [{ "target_name": "gyponly", "sources": ["gyponly.cc"] }] }`,
+    "node_modules/gyponly/index.js": /* js */ `
+      var path = require("path");
+      var requireFunc = require;
+      module.exports = requireFunc(path.join(__dirname, "build/Release/gyponly.node"));
+    `,
+  };
+  // cmake-js style: CMakeLists.txt and a build/ directory.
+  const cmakeaddon = {
+    "node_modules/cmakeaddon/package.json": JSON.stringify({ name: "cmakeaddon", version: "1.0.0", main: "index.js" }),
+    "node_modules/cmakeaddon/CMakeLists.txt": `project(cmakeaddon)`,
+    "node_modules/cmakeaddon/index.js": /* js */ `
+      var path = require("path");
+      var requireFunc = require;
+      module.exports = requireFunc(path.join(__dirname, "build", "Release", "cmakeaddon.node"));
+    `,
+    "node_modules/cmakeaddon/build/Release/cmakeaddon.node": "not a real addon",
+  };
+
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...args, "index.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stdout + stderr;
+  }
+
+  test("prebuilds/: one warning that names the package and the --asset path", async () => {
+    using dir = tempDir("compile-addon-prebuilds", {
+      ...fakeaddon,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+    });
+    const output = await build(String(dir));
+    const root = join(String(dir), "node_modules", "fakeaddon");
+    expect(output).toContain(
+      `warn: fakeaddon ships a native addon, but no .node file from ${root} is embedded in the executable.`,
+    );
+    expect(output).toContain(
+      `note: embed the addon with --asset ${join("node_modules", "fakeaddon", "prebuilds")} (needs --aot)`,
+    );
+    expect(output).toContain(
+      `note: or load the .node file with a string literal require or import in the code of fakeaddon`,
+    );
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("binding.gyp without build/: the --asset path is not guessed", async () => {
+    using dir = tempDir("compile-addon-gyp", {
+      ...gyponly,
+      "index.js": `console.log(typeof require("gyponly"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).toContain(`warn: gyponly ships a native addon, but no .node file from`);
+    expect(output).toContain(`note: embed the directory that holds the .node file with --asset (needs --aot)`);
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("CMakeLists.txt with build/, nested under another package", async () => {
+    const nested = Object.fromEntries(
+      Object.entries(cmakeaddon).map(([file, text]) => ["node_modules/outer/" + file, text]),
+    );
+    using dir = tempDir("compile-addon-cmake", {
+      ...nested,
+      "node_modules/outer/package.json": JSON.stringify({ name: "outer", version: "1.0.0", main: "index.js" }),
+      "node_modules/outer/index.js": `module.exports = require("cmakeaddon");`,
+      "index.js": `console.log(typeof require("outer"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).toContain(`warn: cmakeaddon ships a native addon`);
+    expect(output).toContain(
+      `note: embed the addon with --asset ${join("node_modules", "outer", "node_modules", "cmakeaddon", "build")} (needs --aot)`,
+    );
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("one warning per package", async () => {
+    using dir = tempDir("compile-addon-two", {
+      ...fakeaddon,
+      ...gyponly,
+      "index.js": `console.log(typeof require("fakeaddon"), typeof require("gyponly"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).toContain("warn: fakeaddon ships a native addon");
+    expect(output).toContain("warn: gyponly ships a native addon");
+    expect(output.match(/warn: /g)).toHaveLength(2);
+  }, 30_000);
+
+  test("no warning when the package's own code loads the .node file by a string literal", async () => {
+    using dir = tempDir("compile-addon-embedded", {
+      ...fakeaddon,
+      "node_modules/fakeaddon/index.js": /* js */ `
+        try {
+          module.exports = require("./prebuilds/linux-x64/node.napi.node");
+        } catch {
+          ${loaderJs}
+        }
+      `,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).not.toContain("warn:");
+  }, 30_000);
+
+  test("a string literal require in the user's code does not silence the warning for the package's loader", async () => {
+    using dir = tempDir("compile-addon-user-literal", {
+      ...fakeaddon,
+      "index.js": /* js */ `
+        console.log(typeof require("./node_modules/fakeaddon/prebuilds/linux-x64/node.napi.node"));
+        console.log(typeof require("fakeaddon"));
+      `,
+    });
+    const output = await build(String(dir));
+    expect(output).toContain("warn: fakeaddon ships a native addon");
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("no warning when only the .node file or the package.json of the package is in the bundle", async () => {
+    using dir = tempDir("compile-addon-no-code", {
+      ...fakeaddon,
+      "index.js": /* js */ `
+        console.log(typeof require("./node_modules/fakeaddon/prebuilds/linux-x64/node.napi.node"));
+        console.log(require("fakeaddon/package.json").version);
+      `,
+    });
+    const output = await build(String(dir));
+    expect(output).not.toContain("warn:");
+  }, 30_000);
+
+  test("a package behind a symlink is one package, and its own string literal load counts", async () => {
+    // The isolated linker and pnpm install into a store and link `node_modules/<name>` to it. The entry of the
+    // package resolves through the link, the files it imports resolve under the real path.
+    using dir = tempDir("compile-addon-symlink", {
+      "node_modules/.store/fakeaddon/package.json": fakeaddon["node_modules/fakeaddon/package.json"],
+      "node_modules/.store/fakeaddon/index.js": fakeaddon["node_modules/fakeaddon/index.js"],
+      "node_modules/.store/fakeaddon/lib/a.js": fakeaddon["node_modules/fakeaddon/lib/a.js"],
+      "node_modules/.store/fakeaddon/lib/b.js": fakeaddon["node_modules/fakeaddon/lib/b.js"],
+      "node_modules/.store/fakeaddon/prebuilds/linux-x64/node.napi.node": "not a real addon",
+      "node_modules/.store/embedded/package.json": JSON.stringify({
+        name: "embedded",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "node_modules/.store/embedded/index.js": /* js */ `
+        require("./lib/a.js");
+        try {
+          module.exports = require("./prebuilds/linux-x64/node.napi.node");
+        } catch {
+          ${loaderJs}
+        }
+      `,
+      "node_modules/.store/embedded/lib/a.js": `module.exports = 1;`,
+      "node_modules/.store/embedded/prebuilds/linux-x64/node.napi.node": "not a real addon",
+      "index.js": `console.log(typeof require("fakeaddon"), typeof require("embedded"));`,
+    });
+    symlinkSync(join(".store", "fakeaddon"), join(String(dir), "node_modules", "fakeaddon"), "junction");
+    symlinkSync(join(".store", "embedded"), join(String(dir), "node_modules", "embedded"), "junction");
+    const output = await build(String(dir));
+    expect(output).toContain("warn: fakeaddon ships a native addon");
+    expect(output).toContain(`--asset ${join("node_modules", "fakeaddon", "prebuilds")} (needs --aot)`);
+    expect(output).not.toContain("embedded ships");
+    expect(output.match(/warn: /g)).toHaveLength(1);
+  }, 30_000);
+
+  test("no warning for the project's own build files", async () => {
+    using dir = tempDir("compile-addon-own-project", {
+      "package.json": JSON.stringify({ name: "myapp", version: "1.0.0" }),
+      "CMakeLists.txt": `project(myapp)`,
+      "binding.gyp": `{ "targets": [] }`,
+      "src/index.js": `console.log(require("./lib.js"));`,
+      "src/lib.js": `module.exports = 1;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "src/index.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test("no warning for a package without a native addon", async () => {
+    using dir = tempDir("compile-addon-none", {
+      "node_modules/plain/package.json": JSON.stringify({ name: "plain", version: "1.0.0", main: "index.js" }),
+      "node_modules/plain/index.js": `module.exports = require("./build/index.js");`,
+      "node_modules/plain/build/index.js": `module.exports = 2;`,
+      "index.js": `console.log(require("plain"));`,
+    });
+    const output = await build(String(dir));
+    expect(output).not.toContain("warn:");
+  }, 30_000);
+
+  test("no warning without --compile", async () => {
+    using dir = tempDir("compile-addon-no-compile", {
+      ...fakeaddon,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "index.js", "--outfile", "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build with compile reports the warning in logs", async () => {
+    using dir = tempDir("compile-addon-js-api", {
+      ...fakeaddon,
+      "index.js": `console.log(typeof require("fakeaddon"));`,
+      "build.js": /* js */ `
+        const result = await Bun.build({ entrypoints: ["./index.js"], compile: { outfile: "./app" } });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => [log.message, log.notes?.map(note => note.message)]) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { success, logs } = JSON.parse(stdout);
+    expect(logs).toHaveLength(1);
+    expect(logs[0][0]).toStartWith("fakeaddon ships a native addon, but no .node file from");
+    expect(logs[0][1]).toEqual([
+      `embed the addon with --asset ${join("node_modules", "fakeaddon", "prebuilds")} (needs --aot)`,
+      "or load the .node file with a string literal require or import in the code of fakeaddon, for example through a build plugin that rewrites its loader, so that it is embedded",
+    ]);
+    expect(success).toBe(true);
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });

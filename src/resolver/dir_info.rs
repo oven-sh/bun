@@ -268,6 +268,16 @@ impl DirInfo {
             .get(query)
     }
 
+    /// Whether the cached listing has an entry named `name_lower` (an already-lowercase basename).
+    /// Locks like [`get_entry`](Self::get_entry), never stats.
+    pub fn has_entry(&self, generation: Generation, name_lower: &'static [u8]) -> bool {
+        let rfs = &mut fs::FileSystem::instance().fs;
+        let _lock = rfs.entries_mutex.lock_guard();
+        rfs.entries_at_locked(self.entries, generation)
+            .and_then(|entries| entries.as_entries())
+            .is_some_and(|entries| entries.has_comptime_query(name_lower))
+    }
+
     /// As-cached listing access with no generation check and no locking.
     /// Scalar fields (`fd`, `dir`) may be read through this unlocked; the
     /// `.data` map must only be probed/iterated while `entries_mutex` is held

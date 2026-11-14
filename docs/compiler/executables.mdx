@@ -927,7 +927,31 @@ const addon = require("./addon.node");
 console.log(addon.hello());
 ```
 
-If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` file directly, or it won't bundle correctly.
+Only a `require()` or `import` with a string literal path embeds the `.node` file. Many packages load their addon through a loader instead: `node-gyp-build` (argon2, bcrypt), `bindings` (sqlite3, serialport) or `@mapbox/node-pre-gyp`. The loader finds the file at run time from `__dirname`, and in the executable `__dirname` is the absolute path of the package on the machine that ran the build. The executable then needs that `node_modules` directory, which exists only on the build machine.
+
+Without `--aot`, `bun build --compile` warns for each package in the bundle that ships `prebuilds/`, `binding.gyp` or `CMakeLists.txt` when none of its code loads a `.node` file by a string literal:
+
+```
+warn: argon2 ships a native addon, but no .node file from /app/node_modules/argon2 is embedded in the executable. The executable needs the build machine's copy at run time.
+note: embed the addon with --asset node_modules/argon2/prebuilds (needs --aot)
+note: or load the .node file with a string literal require or import in the code of argon2, for example through a build plugin that rewrites its loader, so that it is embedded
+```
+
+With `--aot`, embed the directory that holds the addon with `--asset`. A loader that builds the path from `__dirname` then finds the file inside the executable (`bindings` does not: it walks up from the caller's file name, so use a plugin for it):
+
+```bash terminal icon="terminal"
+bun build --compile --aot ./index.ts --asset node_modules/argon2/prebuilds --outfile mycli
+```
+
+`--aot` builds only for the platform it runs on, so this does not work with `--target`. `--asset` without `--aot` does not help, because the bundled `__dirname` stays the path of the build machine.
+
+Without `--aot`, make the code of the package load the `.node` file by a string literal, for example with a build plugin that rewrites its loader. When your own code loads the addon, require the `.node` file by a string literal. Use a relative path when the package has an `exports` map that does not list the file:
+
+```ts index.ts icon="/icons/typescript.svg"
+const addon = require("./node_modules/argon2/prebuilds/linux-x64/argon2.glibc.node");
+```
+
+This embeds the file, but it does not change the loader of the package: `require("argon2")` still reads the path on the build machine.
 
 Some addons load a shared library that ships beside them, like `sharp` and `libvips`. With `--aot`, embed the folder that holds both:
 

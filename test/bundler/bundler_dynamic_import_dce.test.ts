@@ -1,7 +1,9 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
+import { bunExe, tempDir } from "harness";
 import path from "path";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
+import { env, run } from "./splitting-fuzz";
 
 function readAllOutputs(outdir: string) {
   return readdirSync(outdir)
@@ -4751,6 +4753,606 @@ describe("bundler", () => {
       run: { stdout: "0 1" },
     });
   }
+
+  // ── Locals that stay locals ───────────────────────────────────────────
+
+  // A `var` in a nested scope that names a `.then` parameter is that
+  // parameter: the two share a value, and a read can go through either one.
+  itElides("ThenParamRedeclaredInNestedScope", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        const retry = globalThis.retry === true;
+        async function main() {
+          await import("./m.js").then(({ a }) => {
+            if (retry) {
+              var a = "fallback";
+            }
+            console.log(a);
+          });
+          await import("./m.js").then(ns => {
+            for (var ns of [{ a: "last" }]) {}
+            console.log(ns.a);
+          });
+          await import("./m.js").then(({ a }) => {
+            {
+              var a;
+              console.log("inner", a);
+            }
+          });
+          await import("./m.js").then(ns => {
+            {
+              var ns;
+              console.log(Object.keys(ns).join());
+            }
+          });
+          await Promise.all([import("./m.js"), import("./m.js")]).then(([{ a }, ns]) => {
+            if (!retry) {
+              var ns = { b: "local" };
+            }
+            console.log(a, ns.b);
+          });
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A"; export const b = "B";`,
+    },
+    stdout: "A\nlast\ninner A\na,b\nA local",
+  });
+
+  // Every statement that holds a nested `var` merges it the same way. None
+  // of these assigns the parameter, so each read sees the value the pattern
+  // bound. The `var` in `catch (a)` initializes the catch binding.
+  const nestedVarStatements = [
+    `{ var a; }`,
+    `if (no) { var a = 1; }`,
+    `for (var a; no; ) {}`,
+    `for (var a in {}) {}`,
+    `for (var a of []) {}`,
+    `try {} catch { var a = 1; }`,
+    `try { throw 0; } catch (a) { var a = 1; }`,
+    `switch (0) { case 1: var a = 1; }`,
+    `skip: { if (!no) break skip; var a = 1; }`,
+    `while (no) { var a = 1; }`,
+    `do { if (no) { var a = 1; } } while (no);`,
+    `{ var { a } = { a }; }`,
+  ];
+  itElides("ThenParamRedeclaredByEachStatement", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        const no = globalThis.no === true;
+        async function main() {
+          ${nestedVarStatements
+            .map(statement => `await import("./m.js").then(({ a }) => { ${statement} console.log(a); });`)
+            .join("\n")}
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A";`,
+    },
+    stdout: nestedVarStatements.map(() => "A").join("\n"),
+  });
+
+  // In sloppy code a function declared in a block is a `var` of the function
+  // scope too. A name beside it in the pattern still binds.
+  itElides("ThenParamRedeclaredByBlockFunction", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        const no = globalThis.no === true;
+        async function main() {
+          await import("./m.js").then(({ a }) => {
+            if (no) {
+              function a() {}
+            }
+            console.log(a);
+          });
+          await import("./m.js").then(({ a, b }) => {
+            if (no) {
+              function b() {}
+            }
+            console.log(a, b);
+          });
+          await import("./m.js").then(ns => {
+            if (no) {
+              function ns() {}
+            }
+            console.log((true ? ns.who : 0)());
+          });
+        }
+        main();
+      `,
+      "/m.js": /* js */ `
+        export const a = "A", b = "B";
+        export function who() {
+          return this && this.a === "A" ? "namespace" : "no namespace";
+        }
+      `,
+    },
+    stdout: "A\nA B\nno namespace",
+  });
+
+  // A read of such a parameter stays as written. It is not the export: a
+  // call through a value passes no `this`, and a getter runs for each read.
+  itElides("ThenParamRedeclaredReadsStayAsWritten", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        let calls = 0;
+        const other = {
+          get a() {
+            calls++;
+            return "getter";
+          },
+        };
+        async function main() {
+          await import("./m.js").then(ns => {
+            {
+              var ns;
+            }
+            console.log((true ? ns.who : 0)());
+          });
+          await import("./m.js").then(ns => {
+            for (var ns of [other]) {}
+            ns.a;
+            ns.a;
+            ns.a;
+            console.log(ns.a, calls);
+          });
+          await Promise.all([import("./m.js")]).then(([ns]) => {
+            for (var ns of [{ a: "last" }]) {}
+            console.log(ns.a);
+          });
+        }
+        main();
+      `,
+      "/m.js": /* js */ `
+        export const a = "A";
+        export function who() {
+          return this && this.a === "A" ? "namespace" : "no namespace";
+        }
+      `,
+    },
+    stdout: "no namespace\ngetter 4\nlast",
+  });
+
+  // A pattern local that is read only through the nested `var` has no use
+  // of its own. Its name still counts as read, and so does a `...rest` copy.
+  itElides("PatternLocalReadThroughNestedVar", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function viaImport() {
+          var { a } = await import("./x.js");
+          {
+            var a;
+            console.log(a);
+          }
+        }
+        function viaRequire() {
+          var { f } = require("./x.js");
+          {
+            var f;
+            console.log(typeof f);
+          }
+        }
+        async function viaRest() {
+          var { a, ...r } = await import("./y.js");
+          {
+            var r;
+            console.log(a, Object.keys(r).join());
+          }
+        }
+        async function viaPromiseAll() {
+          await Promise.all([import("./y.js")]).then(([{ a }]) => {
+            {
+              var a;
+              console.log(a);
+            }
+          });
+        }
+        async function main() {
+          await viaImport();
+          viaRequire();
+          await viaRest();
+          await viaPromiseAll();
+        }
+        main();
+      `,
+      "/x.js": `export const a = "xa"; export function f() {} export const d = "DROPPED";`,
+      "/y.js": `export const a = "ya", b = "yb";`,
+    },
+    stdout: "xa\nfunction\nya b\nya",
+  });
+
+  // The same at the top level of a module and of a script.
+  itElides("TopLevelPatternLocalReadThroughNestedVar", {
+    keepsNamespace: true,
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.js": /* js */ `
+        var { a } = await import("./x.js");
+        {
+          var a;
+          console.log(a);
+        }
+      `,
+      "/x.js": `export const a = "xa"; export const d = "DROPPED";`,
+    },
+    stdout: "xa",
+  });
+  itElides("ScriptPatternLocalReadThroughNestedVar", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        var { f } = require("./x.js");
+        {
+          var f;
+          console.log(typeof f);
+        }
+      `,
+      "/x.js": `export function f() {} export const d = "DROPPED";`,
+    },
+    stdout: "function",
+  });
+
+  // A second `var` declaration in the same scope is the same variable too.
+  // Its reads can be in an importer of the file.
+  itElides("ExportVarAssignedByPattern", {
+    keepsNamespace: true,
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.js": `import { a, r } from "./mid.js"; console.log("entry", a, Object.keys(r).join());`,
+      "/mid.js": /* js */ `
+        export var a;
+        var { a, b } = await import("./m.js");
+        export var r;
+        var { c, ...r } = await import("./n.js");
+        console.log("mid", b, c);
+      `,
+      "/m.js": `export const a = "A", b = "B"; export const d = "DROPPED";`,
+      "/n.js": `export const c = "C", e = "E", f = "F";`,
+    },
+    stdout: "mid B C\nentry A e,f",
+  });
+
+  // In TypeScript a local can have the name of an imported type. That import
+  // is no declaration of the variable, so the local still binds.
+  itElides("LocalNamedLikeATypeImport", {
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Config, Lazy } from "./types";
+        const { Config } = await import("./config");
+        console.log(Config.name);
+        const Lazy = require("./lazy");
+        console.log(Lazy.a);
+      `,
+      "/types.ts": `export interface Config { name: string } export interface Lazy { a: string }`,
+      "/config.ts": `export const Config = { name: "config" }; export const other = "DROPPED";`,
+      "/lazy.ts": `export const a = "lazy a"; export const b = "DROPPED";`,
+    },
+    stdout: "config\nlazy a",
+  });
+
+  // A pattern that assigns a parameter of a sloppy function writes `arguments`.
+  // `module.exports` keeps the bundle a CommonJS file, which runs sloppy.
+  itElides("ParameterAssignedByPatternReadThroughArguments", {
+    keepsNamespace: true,
+    variants: ["cjs", "cjsMinify"],
+    files: {
+      "/entry.cjs": /* js */ `
+        function viaArguments(a) {
+          var { a } = require("./m.js");
+          return arguments[0];
+        }
+        module.exports = viaArguments("param");
+        console.log(module.exports);
+      `,
+      "/m.js": `export const a = "A"; export const d = "DROPPED";`,
+    },
+    stdout: "A",
+  });
+
+  // With splitting the importee is its own chunk, and the names that the
+  // importer reads decide what the chunk exports.
+  itBundled("dynamic_import_dce/SplittingThenParamRedeclaredInNestedScope", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./x.js").then(({ a }) => {
+          {
+            var a;
+            console.log(a);
+          }
+        });
+        await import("./y.js").then(ns => {
+          {
+            var ns;
+            console.log(Object.keys(ns).join());
+          }
+        });
+      `,
+      "/x.js": `export const a = "xa"; export const b = "xb";`,
+      "/y.js": `export const a = "ya"; export const b = "yb";`,
+    },
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "xa\na,b" },
+  });
+
+  // Each way to bind a local, with each redeclaration of it. The unbundled
+  // run says what every case prints.
+  const redeclaredLocals: [open: string, local: string, read: string, close: string][] = [
+    [`await import("./m.js").then(({ a }) => {`, "a", "a", `});`],
+    [`await import("./m.js").then(ns => {`, "ns", "ns.a", `});`],
+    [`await Promise.all([import("./m.js")]).then(([ns]) => {`, "ns", "ns.a", `});`],
+    [`await Promise.all([import("./m.js")]).then(([{ a }]) => {`, "a", "a", `});`],
+    [`await (async () => { var { a } = await import("./m.js");`, "a", "a", `})();`],
+    [`(() => { var { f } = require("./m.js");`, "f", "typeof f", `})();`],
+    [`await (async () => { var { a, ...rest } = await import("./m.js");`, "rest", "Object.keys(rest).join()", `})();`],
+  ];
+  const redeclarations = (local: string, read: string) => [
+    ``,
+    `{ var ${local}; }`,
+    `{ var ${local}; console.log(${read}); }`,
+    `if (no) { var ${local} = 1; }`,
+    `for (var ${local} of no ? [1] : []) {}`,
+    `try { throw 0; } catch (${local}) { var ${local} = 1; }`,
+    `if (no) { function ${local}() {} }`,
+    `var ${local};`,
+  ];
+  test.concurrent("dynamic_import_dce/RedeclaredLocalsMatchUnbundled", async () => {
+    const cases = redeclaredLocals.flatMap(([open, local, read, close], binding) =>
+      redeclarations(local, read).map(
+        (redeclaration, i) => `${open} ${redeclaration} console.log("${binding}.${i}", ${read}); ${close}`,
+      ),
+    );
+    using dir = tempDir("dce-redeclared-locals", {
+      "entry.cjs": `const no = globalThis.no === true;\nasync function main() {\n${cases.join("\n")}\n}\nmain();\n`,
+      "m.js": `export const a = "A", b = "B"; export function f() {}`,
+    });
+    const cwd = String(dir);
+    const unbundled = await run([bunExe(), "entry.cjs"], cwd, env);
+    expect(unbundled.stdout.split("\n").filter(line => /^\d\.\d /.test(line))).toHaveLength(cases.length);
+    expect(unbundled.exitCode).toBe(0);
+    for (const minify of [false, true]) {
+      const outdir = minify ? "min" : "out";
+      const build = await Bun.build({
+        entrypoints: [path.join(cwd, "entry.cjs")],
+        outdir: path.join(cwd, outdir),
+        minify,
+      });
+      expect(build.logs).toEqual([]);
+      expect(await run([bunExe(), path.join(outdir, "entry.js")], cwd, env)).toEqual(unbundled);
+    }
+  });
+
+  // A `{...rest}` copy does not have the names that the pattern beside it
+  // took, so a pattern off the copy reads the copy.
+  itElides("RestCopyDestructured", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { f, ...rest0 } = require("./m.js");
+          const { f: g, b: b0 } = rest0;
+          console.log(typeof f, typeof g, b0);
+          const { a: a2, ...rest2 } = await import("./m.js");
+          const { b: b2, ...rest3 } = rest2;
+          const { a: y, b: z, c } = rest3;
+          console.log(a2, b2, y, z, c);
+          await import("./m.js").then(({ a, ...rest }) => {
+            const { a: x, b } = rest;
+            console.log(a, x, b);
+          });
+          const ns = await import("./m.js");
+          const { a: a3, ...rest4 } = ns;
+          const { a: w, b: b3 } = rest4;
+          console.log(a3, w, b3);
+          const [{ a: a5, ...rest5 }] = await Promise.all([import("./m.js")]);
+          const { a: v, b: b5 } = rest5;
+          console.log(a5, v, b5);
+          const { ...rest6 } = ns;
+          const { b: b6 } = rest6;
+          console.log(b6);
+        }
+        main();
+      `,
+      "/m.js": `export const a = "A", b = "B", c = "C"; export function f() {} export const d = "DROPPED";`,
+    },
+    stdout: [
+      "function undefined B",
+      "A B undefined undefined C",
+      "A undefined B",
+      "A undefined B",
+      "A undefined B",
+      "B",
+    ].join("\n"),
+  });
+
+  // The copy is an object of its own. A call through it can write any name,
+  // also one that the pattern beside it did not take.
+  itElides("RestCopyWrittenThroughCall", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { a, ...rest } = await import("./m.js");
+          rest.setB();
+          const { b } = rest;
+          console.log(a, b);
+          const ns = await import("./m.js");
+          const { ...all } = ns;
+          all.__defineGetter__("c", () => "getter");
+          const { c } = all;
+          console.log(c);
+          const { a: a2, ...rest2 } = require("./m.js");
+          rest2.setF();
+          const { f } = rest2;
+          console.log(a2, typeof f);
+          await import("./m.js").then(({ a, ...rest3 }) => {
+            const read = () => {
+              const { b } = rest3;
+              return b;
+            };
+            const before = read();
+            rest3.valueOf().b = "aliased";
+            console.log(a, before, read());
+          });
+        }
+        main();
+      `,
+      "/m.js": /* js */ `
+        export const a = "A", b = "B", c = "C";
+        export function f() {}
+        export function setB() {
+          this.b = "changed";
+        }
+        export function setF() {
+          this.f = "changed";
+        }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "A changed\ngetter\nA string\nA B aliased",
+  });
+
+  // `ns` may be null. The pattern then throws, and the importee did not load.
+  itElides("ConditionalLocalDestructured", {
+    keepsNamespace: true,
+    files: {
+      "/entry.js": /* js */ `
+        function viaRequire(c) {
+          const ns = c ? require("./a.js") : null;
+          try {
+            const { fx } = ns;
+            return "got " + fx();
+          } catch (e) {
+            return "threw " + e.constructor.name;
+          }
+        }
+        async function viaImport(c) {
+          let ns = !c ? undefined : await import("./a.js");
+          try {
+            const { x } = ns;
+            return "got " + x;
+          } catch (e) {
+            return "threw " + e.constructor.name;
+          }
+        }
+        async function main() {
+          console.log(viaRequire(false));
+          console.log(viaRequire(true));
+          console.log(await viaImport(false));
+          console.log(await viaImport(true));
+        }
+        main();
+      `,
+      "/a.js": /* js */ `
+        console.log("a init");
+        export const x = "ax";
+        export function fx() {
+          return "fx";
+        }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "threw TypeError\na init\ngot fx\nthrew TypeError\ngot ax",
+  });
+
+  // ── Locals that are still bound where the source is not ───────────────
+
+  itBundled("dynamic_import_dce/ReadBeforeDeclarationThrows", {
+    todo: true, // prints "early: undefined": `ns.a` is the export, which is readable before `ns` is
+    files: {
+      "/entry.js": /* js */ `
+        function early(get) {
+          try {
+            console.log("early:", get());
+          } catch (e) {
+            console.log("early threw", e.name);
+          }
+        }
+        function namespace() {
+          early(get);
+          const ns = require("./m.js");
+          console.log("late:", get());
+          function get() {
+            return ns.a;
+          }
+        }
+        namespace();
+      `,
+      "/m.js": `export const a = String("A");`,
+    },
+    run: { stdout: "early threw ReferenceError\nlate: A" },
+  });
+
+  itBundled("dynamic_import_dce/ReadInLaterSwitchCaseThrows", {
+    todo: true, // prints "A": the read in `default:` is the export
+    files: {
+      "/entry.js": /* js */ `
+        function pick(k) {
+          switch (k) {
+            case 0:
+              const ns = require("./m.js");
+              return ns.a + ns.a.length;
+            default:
+              return ns.a;
+          }
+        }
+        console.log(pick(0));
+        try {
+          console.log(pick(1));
+        } catch (e) {
+          console.log("threw", e.name);
+        }
+      `,
+      "/m.js": `export const a = "A";`,
+    },
+    run: { stdout: "A1\nthrew ReferenceError" },
+  });
+
+  itBundled("dynamic_import_dce/ThenParamDefaultReadsLaterNameThrows", {
+    todo: true, // prints "A A": `a` is the export, so the default value can read it
+    files: {
+      "/entry.js": /* js */ `
+        import("./m.js")
+          .then(({ b = a, a }) => console.log(a, b))
+          .catch(e => console.log("threw", e.name));
+      `,
+      "/m.js": `export const a = "A";`,
+    },
+    run: { stdout: "threw ReferenceError" },
+  });
+
+  itBundled("dynamic_import_dce/RestCopyMethodCallSeesEveryName", {
+    todo: true, // prints "false": `rest.hasOwnProperty` counts as a read of one name, so `b` is dropped
+    files: {
+      "/entry.js": `const { a, ...rest } = await import("./m.js"); console.log(rest.hasOwnProperty("b"));`,
+      "/m.js": `export const a = "A"; export const b = "B";`,
+    },
+    run: { stdout: "true" },
+  });
+
+  itBundled("dynamic_import_dce/SloppyBlockFunctionOverThenParam", {
+    todo: true, // prints "function undefined": the lowered block function is assigned to the parameter
+    files: {
+      "/entry.cjs": /* js */ `
+        import("./m.js").then(ns => {
+          {
+            function ns() {}
+          }
+          console.log(typeof ns, typeof ns.a);
+        });
+      `,
+      "/m.js": `export const a = "A";`,
+    },
+    format: "cjs",
+    run: { stdout: "object string" },
+  });
 
   // ── Cases that keep the namespace object ──────────────────────────────
 

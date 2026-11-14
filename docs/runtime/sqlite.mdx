@@ -862,7 +862,14 @@ class Database {
 
   query<ReturnType, ParamsType>(sql: string): Statement<ReturnType, ParamsType>;
   prepare<ReturnType, ParamsType>(sql: string, params?: ParamsType): Statement<ReturnType, ParamsType>;
-  run(sql: string, params?: SQLQueryBindings): { lastInsertRowid: number | bigint; changes: number };
+  run(
+    sql: string,
+    ...bindings: (string | bigint | TypedArray | ArrayBufferLike | number | boolean | null)[]
+  ): { lastInsertRowid: number | bigint; changes: number };
+  run(
+    sql: string,
+    bindings: SQLQueryBindings | readonly SQLQueryBindings[],
+  ): { lastInsertRowid: number | bigint; changes: number };
   exec = this.run;
   clearQueryCache(): void;
 

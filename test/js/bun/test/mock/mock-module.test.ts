@@ -1909,6 +1909,9 @@ describe.concurrent("a module mocked without a factory", () => {
 });
 
 describe.concurrent("a name that import and require() resolve to two files", () => {
+  // No project of these tests has an ES module `x.ts`, so none gets a twin: mock-module-two-files.test.ts would only
+  // repeat these tests, and leaves them out.
+  if (twoFiles) return;
   const esm = (name: string) =>
     `(globalThis.loaded ??= []).push("${name} esm"); export const which = "real esm"; export const fn = () => "real esm"; export default { which, fn };`;
   const cjs = (name: string) =>
@@ -3846,17 +3849,20 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       ...testFile("3.jest.doMock.test.js", "jest.doMock", 3),
       ...testFile("3.mock.module.test.js", "mock.module", 4),
     };
-    await expectFixturesToPass(project, 18, args);
-    // Once more behind a preload that has loaded, for the last two test files, the ES module of each by-require name
-    // and the CommonJS file of each by-import name. What a preload loads is booked to no test file.
-    await expectFixturesToPass(
-      {
-        ...project,
-        "preload.js": `for (const n of [3, 4]) { await import("by-require-" + n); require("by-import-" + n); }`,
-      },
-      18,
-      ["--preload", "./preload.js", ...args],
-    );
+    // The second run is behind a preload that has loaded, for the last two test files, the ES module of each
+    // by-require name and the CommonJS file of each by-import name. What a preload loads is booked to no test file.
+    // The two run at once: one after the other they take most of the time that a test has in a debug build.
+    await Promise.all([
+      expectFixturesToPass(project, 18, args),
+      expectFixturesToPass(
+        {
+          ...project,
+          "preload.js": `for (const n of [3, 4]) { await import("by-require-" + n); require("by-import-" + n); }`,
+        },
+        18,
+        ["--preload", "./preload.js", ...args],
+      ),
+    ]);
   });
 
   test.each(isolationFlags)(

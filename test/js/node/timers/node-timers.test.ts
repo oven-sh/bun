@@ -463,8 +463,8 @@ it("timers/promises clears its timers with the globals that were there when it s
       "-e",
       `
         const live = new Set();
-        const set = () => {
-          const timer = { ref: () => timer, unref: () => timer, hasRef: () => true };
+        const set = callback => {
+          const timer = { ref: () => timer, unref: () => timer, hasRef: () => true, callback };
           live.add(timer);
           return timer;
         };
@@ -486,6 +486,8 @@ it("timers/promises clears its timers with the globals that were there when it s
         const iterator = promises.setInterval(1000)[Symbol.asyncIterator]();
         iterator.next();
         counts.push(live.size);
+        // As in node, return() waits for the pending next(), and that one waits for a tick.
+        for (const timer of live) timer.callback();
         await iterator.return();
         counts.push(live.size);
         console.log(counts.join());

@@ -2088,6 +2088,16 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// The `.` of `a.b` and `a.#b`. A release build does not inline a plain `#[inline]` here.
+        #[inline(always)]
+        pub(crate) fn print_member_dot(&mut self) {
+            if self.prev_num_end == self.writer.written() {
+                // "1.toString" is a syntax error, so print "1 .toString" instead
+                self.print(b" ");
+            }
+            self.print(b".");
+        }
+
         #[inline]
         pub(crate) fn maybe_print_space(&mut self) {
             match self.writer.prev_char() {
@@ -3686,11 +3696,7 @@ pub(crate) mod __gated_printer {
                         if is_optional_chain {
                             self.print(b"?.");
                         } else {
-                            if self.prev_num_end == self.writer.written() {
-                                // "1.toString" is a syntax error, so print "1 .toString" instead
-                                self.print(b" ");
-                            }
-                            self.print(b".");
+                            self.print_member_dot();
                         }
 
                         self.add_source_mapping(e.name_loc);
@@ -3756,7 +3762,7 @@ pub(crate) mod __gated_printer {
                     match &e.index.data {
                         ExprData::EPrivateIdentifier(priv_) => {
                             if !is_optional_chain_start {
-                                self.print(b".");
+                                self.print_member_dot();
                             }
                             self.add_source_mapping(e.index.loc);
                             self.print_symbol(priv_.ref_);

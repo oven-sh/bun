@@ -754,8 +754,7 @@ impl<'a> PackageInstaller<'a> {
             let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
                 .name
                 .slice(string_buf);
-            let package_name_ = strings::StringOrTinyString::init(alias);
-            let mut target_package_name = package_name_;
+            let mut target_package_name = alias;
             let mut can_retry_without_native_binlink_optimization = false;
             let mut target_node_modules_path_opt: Option<AbsPath> = None;
             let mut defer_this_bin = false;
@@ -819,10 +818,8 @@ impl<'a> PackageInstaller<'a> {
                                     }
                                 }
 
-                                let replacement_name =
-                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 target_package_name =
-                                    strings::StringOrTinyString::init(replacement_name);
+                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 can_retry_without_native_binlink_optimization = true;
                             }
                         }
@@ -852,40 +849,24 @@ impl<'a> PackageInstaller<'a> {
             }
 
             loop {
-                // `node_modules_path` (mut) and `target_node_modules_path`
-                // (read-only) refer to the same buffer when no replacement is
-                // set. Derive both from a single `*mut` so the read pointer
-                // shares the write reference's provenance (a `*const` taken
-                // from `&node_modules_path` would be popped by the later
-                // `&mut` reborrow under stacked-borrows).
-                // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
-                // never writes through it while `node_modules_path` is borrowed.
-                let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
                 let mut bin_linker = bin::Linker {
                     bin,
                     global_bin_path: manager.options.bin_path,
-                    package_name: package_name_,
+                    package_name: alias,
                     target_package_name,
                     string_buf,
                     extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                     seen: Some(&mut self.seen_bin_links),
-                    target_node_modules_path: target_node_modules_path_opt
-                        .as_ref()
-                        .map(std::ptr::from_ref::<AbsPath>)
-                        .unwrap_or_else(|| nm_ptr.cast_const()),
-                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
-                    // other pointer derived from it is the read-only `target_node_modules_path`
-                    // above, which `bin::Linker::link` never writes through.
-                    node_modules_path: unsafe { &mut *nm_ptr },
+                    target_node_modules_path: target_node_modules_path_opt.as_ref(),
+                    node_modules_path: &mut node_modules_path,
                     abs_target_buf: link_target_buf,
-                    abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
                     is_behind_link,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };
 
-                bin_linker.link(global);
+                bin_linker.link(global, link_dest_buf);
                 is_behind_link = bin_linker.is_behind_link;
 
                 if can_retry_without_native_binlink_optimization
@@ -895,11 +876,11 @@ impl<'a> PackageInstaller<'a> {
                     if PackageManager::verbose_install() {
                         bun_core::pretty_errorln!(
                             "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
-                            bstr::BStr::new(package_name_.slice()),
-                            bstr::BStr::new(target_package_name.slice()),
+                            bstr::BStr::new(alias),
+                            bstr::BStr::new(target_package_name),
                         );
                     }
-                    target_package_name = package_name_;
+                    target_package_name = alias;
                     target_node_modules_path_opt = None;
                     continue;
                 }

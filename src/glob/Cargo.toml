@@ -17,3 +17,6 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
+
+[dev-dependencies]
+bun_sema_standalone = { path = "../sema/standalone" }

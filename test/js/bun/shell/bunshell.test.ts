@@ -6,10 +6,11 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
+  isLinux,
   isPosix,
   isRoot,
   isWindows,
@@ -1209,6 +1210,97 @@ booga"
       } finally {
         chmodSync(noaccess, 0o755);
       }
+    });
+
+    // `\xe9` is one raw byte, which the builtin `echo -e` writes. It is not UTF-8 by itself: it announces a character of three
+    // bytes. In a pattern it is that one byte, and what follows it is still pattern syntax.
+    describe("a byte that is not UTF-8 in a word with a glob", () => {
+      const words = (stdout: Buffer) => stdout.toString("latin1").trimEnd().split(" ").sort();
+      const latin1 = (text: string) => Buffer.from(text, "utf8").toString("latin1");
+
+      // The names are valid UTF-8: U+9000 is the bytes e9 80 80, U+9001 is e9 80 81, U+1F600 is f0 9f 98 80, U+1F601 is
+      // f0 9f 98 81 and U+00F8 is c3 b8. bash 5.2 names the same files.
+      test.concurrent.each([
+        ["y$(echo -e '\\xe9')*.bak", ["y\u9000.bak"]],
+        ["$(echo -e '\\xe9')*", ["\u9000", "\u9000\u9001", "\u9001"]],
+        // The first e9 of a name is not always the one that the word means.
+        ["*$(echo -e '\\xe9')*$(echo -e '\\x81')", ["\u9000\u9001", "\u9001"]],
+        // The same for two bytes of a character of three, and for three bytes of a character of four.
+        ["*$(echo -e '\\xe9\\x80')*$(echo -e '\\x81')", ["\u9000\u9001", "\u9001"]],
+        ["*$(echo -e '\\xf0\\x9f\\x98')*$(echo -e '\\x81')", ["\u{1f600}\u{1f601}"]],
+        // The same in a word with a `**` beside text.
+        ["**$(echo -e '\\xc3')*$(echo -e '\\xb8')x", ["\u00f8x", "\u00f8\u00f8x"]],
+      ])("echo %s over names that are UTF-8", async (word, names) => {
+        using dir = tempDir("bunshell-glob-bytes", {
+          "y\u9000.bak": "",
+          "\u9000": "",
+          "\u9001": "",
+          "\u9000\u9001": "",
+          "\u{1f600}": "",
+          "\u{1f600}\u{1f601}": "",
+          "\u00f8x": "",
+          "\u00f8\u00f8x": "",
+          "plain.bak": "",
+        });
+        const { stdout, stderr, exitCode } = await $`echo ${{ raw: word }}`.cwd(String(dir)).nothrow().quiet();
+        expect({ names: words(stdout), stderr: stderr.toString(), exitCode }).toEqual({
+          names: names.map(latin1).sort(),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // A folder asks one pattern once for each name. After 32 names another part of the matcher answers.
+      test.concurrent("echo *$(echo -e '\\xe9')*$(echo -e '\\x81') over a folder of 64 names", async () => {
+        const ends = ["\u9000\u9001", "\u9001", "\u9000", "\u9001\u9000"];
+        const all = Array.from({ length: 64 }, (_, index) => String(index).padStart(2, "0") + ends[index % 4]);
+        using dir = tempDir("bunshell-glob-bytes-64", Object.fromEntries(all.map(name => [name, ""])));
+        const word = "*$(echo -e '\\xe9')*$(echo -e '\\x81')";
+        const { stdout, stderr, exitCode } = await $`echo ${{ raw: word }}`.cwd(String(dir)).nothrow().quiet();
+        expect({ names: words(stdout), stderr: stderr.toString(), exitCode }).toEqual({
+          names: all
+            .filter(name => name.endsWith("\u9001"))
+            .map(latin1)
+            .sort(),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // A Linux file name is any bytes. bash 5.2 names the same files.
+      describe.skipIf(!isLinux)("over names that have that byte", () => {
+        test.concurrent.each([
+          ["y$(echo -e '\\xe9')*.bak", ["y\xe9z.bak"]],
+          ["$(echo -e 'y\\xe9')*", ["y\xe9a", "y\xe9z.bak"]],
+          ["*$(echo -e '\\xe9')", ["\xe9"]],
+          ["*$(echo -e '\\xe9')*.txt", ["caf\xe9.txt"]],
+          // The `*` that the quoted substitution writes is data. The shell hands it on as the class `[*]`, and the byte before
+          // it must not take that `[` along.
+          [`"$(echo -e 'a\\xc3*')"*.bak`, ["a\xc3*q.bak"]],
+          // A `\` that is data goes on as the class `[\\]`. The names are U+00F8 once and twice, and a `\`.
+          ["*$(echo -e '\\xc3')*$(echo -e '\\xb8')'\\'", ["\xc3\xb8\\", "\xc3\xb8\xc3\xb8\\"]],
+        ])("echo %s", async (word, names) => {
+          using dir = tempDir("bunshell-glob-byte-names", { "caf\u00e9.txt": "", "other.txt": "" });
+          for (const name of [
+            "y\xe9z.bak",
+            "y\xe9a",
+            "\xe9",
+            "caf\xe9.txt",
+            "a\xc3*q.bak",
+            "a\xc3[zz]q.bak",
+            "\xc3\xb8\\",
+            "\xc3\xb8\xc3\xb8\\",
+          ]) {
+            writeFileSync(Buffer.concat([Buffer.from(String(dir) + "/"), Buffer.from(name, "latin1")]), "");
+          }
+          const { stdout, stderr, exitCode } = await $`echo ${{ raw: word }}`.cwd(String(dir)).nothrow().quiet();
+          expect({ names: words(stdout), stderr: stderr.toString(), exitCode }).toEqual({
+            names,
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      });
     });
   });
 

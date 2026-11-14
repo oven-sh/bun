@@ -776,6 +776,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             return None;
         }
 
+        // The matcher takes a byte that isn't UTF-8 as part of a character of a name, which no filter can say.
+        if !strings::is_valid_utf8(slice) {
+            return None;
+        }
+
         let wide = strings::convert_utf8_to_utf16_in_buffer(&mut self.nt_filter_buf, slice);
         Some(wide)
     }

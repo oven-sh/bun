@@ -712,6 +712,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_paths",
+ "bun_sema_standalone",
  "bun_sys",
  "strum",
 ]

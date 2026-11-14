@@ -22,6 +22,9 @@ interface Image {
   // The imports to which a word of the data may point, or undefined where the file does not say.
   addressIsTaken?: Set<string>;
   ownTables: [number, number][];
+  // What only a Mach-O file says of its code: the address at which each function begins, in rising order, and the ranges of it that are data.
+  functions: number[];
+  dataInCode: [number, number][];
 }
 
 const jumpSlot = { x64: 7, arm64: 1026 };
@@ -41,15 +44,21 @@ function readMachO(file: Uint8Array): Image {
     const end = file.indexOf(0, at);
     return Buffer.from(file.subarray(at, end < 0 || end > at + most ? at + most : end)).toString("latin1");
   };
-  const image: Image = { file, view, isArm64: u32(4) === 0x0100000c, segments: [], importAt: new Map(), stubs: new Set(), ownTables: [] };
+  const image: Image = { file, view, isArm64: u32(4) === 0x0100000c, segments: [], importAt: new Map(), stubs: new Set(), ownTables: [], functions: [], dataInCode: [] };
   const pointers: { address: number; size: number; first: number; each: number; isStub: boolean }[] = [];
   let symbols = 0;
   let strings = 0;
   let indirect = 0;
+  let header = 0;
+  let functionStarts: [number, number] = [0, 0];
+  let dataInCode: [number, number] = [0, 0];
   for (let index = 0, at = 32; index < u32(16); index++, at += u32(at + 4)) {
     const command = u32(at);
     if (command === 2) [symbols, strings] = [u32(at + 8), u32(at + 16)];
     if (command === 11) indirect = u32(at + 56);
+    if (command === 0x26) functionStarts = [u32(at + 8), u32(at + 8) + u32(at + 12)];
+    if (command === 0x29) dataInCode = [u32(at + 8), u32(at + 8) + u32(at + 12)];
+    if (command === 0x19 && u64(at + 40) === 0 && u64(at + 48) > 0) header = u64(at + 24);
     if (command !== 0x19) continue;
     const isExecutable = (u32(at + 60) & 4) !== 0;
     // __TEXT holds constants too. Four bytes of 0x10 read as an `adr`.
@@ -73,6 +82,18 @@ function readMachO(file: Uint8Array): Image {
       if (isStub) image.stubs.add(address + index * each);
     }
   }
+  // LC_FUNCTION_STARTS: how far each function begins behind the one before it, the first one behind the header, as ULEB128. A zero ends them.
+  for (let [at, end] = functionStarts, address = header; at < end && file[at] !== 0; ) {
+    let distance = 0;
+    let scale = 1;
+    do {
+      distance += (file[at]! & 0x7f) * scale;
+      scale *= 128;
+    } while (file[at++]! >= 0x80);
+    image.functions.push((address += distance));
+  }
+  // LC_DATA_IN_CODE: on x64, the jump table that a compiler puts behind the function that uses it.
+  for (let [at, end] = dataInCode; at < end; at += 8) image.dataInCode.push([header + u32(at), header + u32(at) + view.getUint16(at + 4, true)]);
   return image;
 }
 
@@ -99,7 +120,7 @@ function readElf(file: Uint8Array): Image {
     const segment = segments.find(each => address >= each.address && address < each.address + (each.end - each.offset));
     return segment && segment.offset + (address - segment.address);
   };
-  const elf: Image = { file, view, isArm64, segments, importAt: new Map(), stubs: new Set(), addressIsTaken: new Set(), ownTables: [] };
+  const elf: Image = { file, view, isArm64, segments, importAt: new Map(), stubs: new Set(), addressIsTaken: new Set(), ownTables: [], functions: [], dataInCode: [] };
   if (!dynamic) return elf;
   const tags = new Map<number, number>();
   for (let at = dynamic[0]; at < dynamic[1]; at += 16) if (!tags.has(u64(at))) tags.set(u64(at), u64(at + 8));
@@ -216,15 +237,17 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
       }
       continue;
     }
-    for (let at = offset + 2; at + 4 <= end; at++) {
+    // `call` and `jmp` have one byte in front of the distance, so theirs can begin at the second byte of a range. The others have two, and both are in the range.
+    for (let at = offset + 1; at + 4 <= end; at++) {
       const word = view.getInt32(at, true);
       const before = file[at - 1]!;
-      const isBranch = before === 0xe8 || before === 0xe9 || (file[at - 2] === 0x0f && (before & 0xf0) === 0x80);
+      const isCall = before === 0xe8 || before === 0xe9;
+      const isBranch = isCall || (file[at - 2] === 0x0f && (before & 0xf0) === 0x80);
       const isOperand = (before & 0xc7) === 0x05 && operandOpcodes.includes(file[at - 2]!);
       if (!isBranch && !isOperand) continue;
       const name = nameAt(base + at + 4 + word);
-      const isShortBranch = before === 0xe8 || before === 0xe9;
-      if (name !== undefined && (!isShortBranch || beginsAnInstruction(file, at - 1, offset))) found(name, base + at);
+      const opcode = isCall ? at - 1 : at - 2;
+      if (name !== undefined && opcode >= offset && isAnOpcode(elf, opcode, offset, base)) found(name, base + at);
     }
   }
   return places;
@@ -244,18 +267,22 @@ export function placesThatCall(file: Uint8Array, names: readonly string[]): Plac
 }
 
 const isIn = (value: number, ...ranges: number[]) => ranges.some((low, index) => index % 2 === 0 && value >= low && value <= ranges[index + 1]!);
+const prefixes = [0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3];
+// A REX prefix is one too, and the processor takes any number of them in any order.
+const isPrefix = (byte: number) => (byte & 0xf0) === 0x40 || prefixes.includes(byte);
 
 // How many bytes the x64 instruction at `at` takes, or 0 for one that this does not know.
 function instructionLength(file: Uint8Array, at: number): number {
   let next = at;
   let hasSmallOperands = false;
   let hasSmallAddresses = false;
-  for (; [0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3].includes(file[next]!); next++) {
+  let hasWideOperands = false;
+  for (; isPrefix(file[next]!); next++) {
     hasSmallOperands ||= file[next] === 0x66;
     hasSmallAddresses ||= file[next] === 0x67;
+    // A REX prefix counts only directly in front of the opcode: `48 40 b8` is `mov eax, imm32`, and `48 66 b8` is `mov ax, imm16`.
+    hasWideOperands = (file[next]! & 0xf8) === 0x48;
   }
-  const hasWideOperands = (file[next]! & 0xf8) === 0x48;
-  if ((file[next]! & 0xf0) === 0x40) next++;
   let opcode = file[next++]!;
   // 0 is the table of opcodes of one byte, 1 the one after `0f`, 2 after `0f 38`, 3 after `0f 3a`. VEX and EVEX prefixes name one.
   let table = 0;
@@ -299,6 +326,46 @@ function instructionLength(file: Uint8Array, at: number): number {
   return next + immediate - at;
 }
 
+// Where the x64 instruction at `at` has its opcode: behind its prefixes.
+function opcodeOf(file: Uint8Array, at: number): number {
+  while (isPrefix(file[at]!)) at++;
+  return at;
+}
+
+// Whether one of the instructions from `from` on has its opcode at `opcode`. Undefined where one of them is unknown.
+function reaches(file: Uint8Array, from: number, opcode: number, isInAFunction: boolean): boolean | undefined {
+  for (;;) {
+    const length = instructionLength(file, from);
+    // A zero byte begins `add r/m8, r8`, which a compiler seldom writes, and most padding and data. Only inside a function is it known to be the instruction.
+    if (length === 0 || (file[from] === 0 && !isInAFunction)) return undefined;
+    if (from + length > opcode) return opcodeOf(file, from) === opcode;
+    from += length;
+  }
+}
+
+// Whether an x64 instruction has its opcode at `opcode`. In `d1 e9 48 83 f9 01`, which is `shr ecx, 1` and `cmp rcx, 1`, `e9` begins no jump.
+function isAnOpcode({ file, functions, dataInCode }: Image, opcode: number, start: number, base: number): boolean {
+  if (dataInCode.some(([from, to]) => base + opcode >= from && base + opcode < to)) return false;
+  // One of any 15 bytes in a row begins an instruction, as none is longer. From 64 bytes ahead, a reading that began inside one has nearly always joined the real ones.
+  let isPassed = false;
+  for (let ahead = 64; ahead < 64 + 15 && opcode - 78 >= start; ahead++) {
+    const isReached = reaches(file, opcode - ahead, opcode, false);
+    if (isReached) return true;
+    isPassed ||= isReached === false;
+  }
+  let next = 0;
+  for (let end = functions.length; next < end; ) {
+    const middle = (next + end) >> 1;
+    if (functions[middle]! - base <= opcode) next = middle + 1;
+    else end = middle;
+  }
+  // A function begins with an instruction. Where the file says where that is, only the reading from there shows that this is no opcode.
+  const from = next > 0 ? functions[next - 1]! - base : -1;
+  if (from >= start) return reaches(file, from, opcode, true) !== false;
+  // Elsewhere it is none if a reading passes over it and none reaches it. Where nothing can be read, the place is reported.
+  return !isPassed;
+}
+
 // Whether the instructions from `from` on end where `to` begins. `0f 05` is `syscall` only there: `0f 84 0f 05 00 00` is a jump.
 function leadsTo(file: Uint8Array, from: number, to: number): boolean {
   while (from < to) {
@@ -307,18 +374,6 @@ function leadsTo(file: Uint8Array, from: number, to: number): boolean {
     from += length;
   }
   return from === to;
-}
-
-// `e8` and four bytes are a call only where an instruction begins: `80 bb e8 96 00 00 01` is `cmpb $1, 0x96e8(%rbx)`.
-// A function begins at a multiple of 16 behind padding. It is no call only if none of the three nearest such places leads to it.
-function beginsAnInstruction(file: Uint8Array, at: number, start: number): boolean {
-  let heads = 0;
-  for (let head = at & ~15; head > start && head > at - 65536 && heads < 3; head -= 16) {
-    if (file[head - 1] !== 0xcc) continue;
-    if (leadsTo(file, head, at)) return true;
-    heads++;
-  }
-  return heads === 0;
 }
 
 function numberLoadedAhead(elf: Image, at: number, start: number, isFirstArgument: boolean): number | undefined {

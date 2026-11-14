@@ -3,7 +3,7 @@
 // of a small program. A question of Lower asks with nothing on the query stack, and a cycle that the answer closes there
 // has no query to note. The build must not stop at it.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { slot, spawned, unsupported } from "./harness/commands";
@@ -46,6 +46,7 @@ describe.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
   // The IR of the program and the counts of what was proven, built in that many passes.
   async function build(folder: string, passes: number) {
     const wire = join(folder, `passes-${passes}.ir`);
+    const executable = join(folder, isWindows ? `program-${passes}.exe` : `program-${passes}`);
     const made = await spawned(
       [
         bunExe(),
@@ -56,7 +57,7 @@ describe.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
         "--explain=statistics",
         `--aot-out=${wire}`,
         "--outfile",
-        `program-${passes}`,
+        executable,
         "main.ts",
       ],
       folder,
@@ -68,7 +69,7 @@ describe.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
       .filter(line => /^ *(?:Accesses|Values)[A-Za-z]+:? +\d+ *$/.test(line))
       .map(line => line.trim());
     expect(counts).not.toBeEmpty();
-    return { stderr: made.stderr, counts, ir: Bun.hash(readFileSync(wire)).toString(16) };
+    return { stderr: made.stderr, counts, ir: Bun.hash(readFileSync(wire)).toString(16), executable };
   }
 
   test("a cycle closed by a question of Lower stops no pass, and the passes answer as one does", () =>
@@ -83,7 +84,7 @@ describe.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
       expect(one.stderr).not.toContain("AOT passes of the checker | a cut");
       expect(two.stderr).toContain("AOT passes of the checker | a cut in front of file 1 of 2");
       expect({ counts: two.counts, ir: two.ir }).toEqual({ counts: one.counts, ir: one.ir });
-      const ran = await spawned([join(folder, "program-2")], folder, env);
+      const ran = await spawned([two.executable], folder, env);
       expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
     }));
 });

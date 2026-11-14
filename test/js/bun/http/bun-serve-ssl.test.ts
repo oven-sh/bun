@@ -759,7 +759,7 @@ test.concurrent.each([
         try {
           Bun.serve({ port: 0, fetch() {}, tls: ${options} }).stop(true);
         } catch (e) {
-          error = e.code;
+          error = String(e.code);
         }
         console.log(JSON.stringify({ before, error, after: isInFreedMemory() }));
       `,

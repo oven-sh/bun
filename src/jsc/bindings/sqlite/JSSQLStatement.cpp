@@ -260,17 +260,26 @@ VersionSqlite3::~VersionSqlite3()
     closeHandle();
 }
 
-// Shared with node:sqlite's termination path (Bun__closeAllNodeSqliteDatabasesForTermination):
-// with unfinalized statements close_v2 only zombifies the connection and
-// defers the WAL checkpoint to a finalize that never comes, so flush the WAL
-// into the main database file explicitly. Zero busy_timeout first — TRUNCATE
-// waits on readers via the connection's busy-handler, so a large user-set
-// timeout plus a cross-process reader would stall process.exit(); with a
-// zero handler TRUNCATE degrades to a passive checkpoint immediately.
+// Shared with node:sqlite's termination path. With unfinalized statements close_v2 only
+// zombifies the connection and never checkpoints, so flush the WAL here. A zero busy_timeout
+// keeps TRUNCATE from waiting on cross-process readers. Read-only schemas are skipped: their
+// checkpoint would hold the WAL write lock until its first write fails.
 extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
 {
     sqlite3_busy_timeout(db, 0);
-    sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
+    bool anyReadOnly = false;
+    for (int i = 0; const char* name = sqlite3_db_name(db, i); i++)
+        anyReadOnly |= sqlite3_db_readonly(db, name) == 1;
+    if (!anyReadOnly) {
+        sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
+        return;
+    }
+    for (int i = 0; const char* name = sqlite3_db_name(db, i); i++) {
+        // An empty name would mean "every schema" to sqlite3_wal_checkpoint_v2.
+        if (!name[0] || sqlite3_db_readonly(db, name) != 0)
+            continue;
+        sqlite3_wal_checkpoint_v2(db, name, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
+    }
 }
 
 // Called from the exiting VM's teardown once script is forbidden and its child workers are

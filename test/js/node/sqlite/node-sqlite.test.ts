@@ -1,7 +1,7 @@
 import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import { totalmem } from "node:os";
 import path from "node:path";
@@ -2576,6 +2576,106 @@ test.concurrent("process exit closes a database whose statements are still refer
   expect(readdirSync(String(dir))).toEqual(["exit.db"]);
   using verify = new DatabaseSync(path.join(String(dir), "exit.db"));
   expect(verify.prepare("SELECT x FROM t").get()).toEqual({ x: 42 });
+});
+
+// A read-only connection cannot copy WAL frames into the main file, so the exit
+// checkpoint must not run on it: it would take the WAL write lock (blocking
+// writers in other processes) and, on a fully backfilled WAL, truncate the WAL
+// file that another connection still uses. The truncation is the observable.
+test.concurrent("process exit does not checkpoint an unclosed read-only database", async () => {
+  using dir = tempDir("node-sqlite-readonly-exit", {});
+  const file = path.join(String(dir), "ro.db");
+  using held = new DatabaseSync(file);
+  held.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (42)");
+  held.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  const walSize = statSync(file + "-wal").size;
+  expect(walSize).toBeGreaterThan(0);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { DatabaseSync } = require('node:sqlite');
+       const db = new DatabaseSync(process.argv[1], { readOnly: true });
+       console.log(JSON.stringify(db.prepare('SELECT x FROM t').get()));
+       // intentionally not closed`,
+      file,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"x":42}\n', stderr: expect.any(String), exitCode: 0 });
+  expect(statSync(file + "-wal").size).toBe(walSize);
+});
+
+// Read-only is a property of each schema, not of the connection. `file:?mode=ro`
+// leaves the connection's open flags read-write, so a plain ATTACH opens its
+// file read-write. The exit checkpoint decides per schema: it flushes the
+// writable one and leaves the read-only one alone.
+describe.concurrent("process exit checkpoints each writable schema and skips each read-only one", () => {
+  // WAL with a fully backfilled, non-empty -wal. The connection stays open so
+  // the -wal file is not deleted when the child closes.
+  function prime(db: DatabaseSync) {
+    db.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1)");
+    db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  }
+
+  function walSizes(dir: string) {
+    return { main: statSync(path.join(dir, "main.db-wal")).size, att: statSync(path.join(dir, "att.db-wal")).size };
+  }
+
+  async function runChild(dir: string, source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const { DatabaseSync } = require('node:sqlite');\n${source}`],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: expect.any(String), exitCode: 0 });
+  }
+
+  test("read-only main, writable attached", async () => {
+    using dir = tempDir("node-sqlite-exit-ro-main", {});
+    using main = new DatabaseSync(path.join(String(dir), "main.db"));
+    using att = new DatabaseSync(path.join(String(dir), "att.db"));
+    prime(main);
+    prime(att);
+    const before = walSizes(String(dir));
+    expect(before.main).toBeGreaterThan(0);
+    expect(before.att).toBeGreaterThan(0);
+    await runChild(
+      String(dir),
+      `const db = new DatabaseSync('file:main.db?mode=ro');
+       db.exec("ATTACH 'att.db' AS a");
+       db.exec('INSERT INTO a.t VALUES (2)');
+       console.log(db.prepare('SELECT count(*) AS c FROM a.t').get().c);
+       // intentionally not closed`,
+    );
+    expect(walSizes(String(dir))).toEqual({ main: before.main, att: 0 });
+  });
+
+  test("writable main, read-only attached", async () => {
+    using dir = tempDir("node-sqlite-exit-ro-attached", {});
+    using main = new DatabaseSync(path.join(String(dir), "main.db"));
+    using att = new DatabaseSync(path.join(String(dir), "att.db"));
+    prime(main);
+    prime(att);
+    const before = walSizes(String(dir));
+    expect(before.main).toBeGreaterThan(0);
+    expect(before.att).toBeGreaterThan(0);
+    await runChild(
+      String(dir),
+      `const db = new DatabaseSync('main.db');
+       db.exec("ATTACH 'file:att.db?mode=ro' AS a");
+       db.exec('INSERT INTO main.t VALUES (2)');
+       console.log(db.prepare('SELECT count(*) AS c FROM main.t').get().c);
+       // intentionally not closed`,
+    );
+    expect(walSizes(String(dir))).toEqual({ main: 0, att: before.att });
+  });
 });
 
 describe("GC lifetime", () => {

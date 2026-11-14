@@ -745,36 +745,35 @@ impl<const SSL: bool> NewSocket<SSL> {
             UnixOrHost::Fd(f) => {
                 let socket_flags = self.flags.get();
                 let f = *f;
-                // The pipe transports keep stdio open themselves, so they take the caller's descriptor as is.
+                // The pipe transport keeps stdio open itself, so it takes the caller's descriptor as is.
                 if !SSL && socket_flags.contains(Flags::WRITE_ONLY_FD) {
                     // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
                     let tcp =
                         unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
-                    return Ok(super::fd_pipe::FdPipe::open(tcp, f, cx.context()));
+                    return super::fd_pipe::FdPipe::open(tcp, f, false, false, cx.context());
                 }
-                // A pipe or a FIFO can't be a `us_socket_t`: it reads through a `PosixPipe`. `fdIsRawSocket` skips the `fstat`.
+                // A pipe or a FIFO can't be a `us_socket_t`: it is read through an `FdPipe`. `fdIsRawSocket` skips the `fstat`.
                 #[cfg(unix)]
                 if !SSL && !socket_flags.contains(Flags::RAW_SOCKET_FD) {
-                    let is_pipe = socket_flags.contains(Flags::READABLE_PIPE_FD) || {
-                        let st = sys::fstat(f).map_err(sys::SystemErrno::from)?;
-                        match st.st_mode & libc::S_IFMT {
-                            libc::S_IFIFO => true,
-                            libc::S_IFSOCK => false,
-                            // A file or a terminal: neither transport can wait on it.
-                            _ => return Err(sys::SystemErrno::ENOTSOCK),
+                    let st = sys::fstat(f).map_err(sys::SystemErrno::from)?;
+                    match st.st_mode & libc::S_IFMT {
+                        libc::S_IFSOCK => {}
+                        libc::S_IFIFO => {
+                            // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
+                            let tcp = unsafe {
+                                bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>())
+                            };
+                            // On `Err` the fd is still the caller's.
+                            return super::fd_pipe::FdPipe::open(
+                                tcp,
+                                f,
+                                true,
+                                socket_flags.contains(Flags::PAUSE_ON_CONNECT),
+                                cx.context(),
+                            );
                         }
-                    };
-                    if is_pipe {
-                        // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
-                        let tcp =
-                            unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
-                        // On `Err` the fd is still the caller's.
-                        return super::posix_pipe::PosixPipe::open(
-                            tcp,
-                            f,
-                            socket_flags.contains(Flags::PAUSE_ON_CONNECT),
-                            cx.context(),
-                        );
+                        // A file or a terminal: neither transport can wait on it.
+                        _ => return Err(sys::SystemErrno::ENOTSOCK),
                     }
                 }
                 // uSockets closes its descriptor unconditionally; node never closes stdio, so it gets a duplicate.
@@ -3650,10 +3649,8 @@ bitflags::bitflags! {
         const WRITE_ONLY_FD        = 1 << 18;
         /// C++ points at this socket for a node:http connection, or for the `ws` WebSocket made of it, until `Bun__NodeHTTPSocket__onClose`. The ext of the `us_socket_t` is uWS's.
         const HELD_BY_SERVER       = 1 << 19;
-        /// node:net's `fdIsReadablePipe`: `do_connect` gives the descriptor to a `PosixPipe`, not to uSockets.
-        const READABLE_PIPE_FD     = 1 << 20;
         /// `fdIsRawSocket`: the caller knows the descriptor is a socket, so `do_connect` does not `fstat` it.
-        const RAW_SOCKET_FD        = 1 << 21;
+        const RAW_SOCKET_FD        = 1 << 20;
         /// TCP_NODELAY is known to be on, so asking for it again costs no syscall. node:net asks for each connection of an http.Server, and the accept has set it.
         const NO_DELAY = 1 << 30;
         /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.
@@ -4071,16 +4068,9 @@ pub(crate) mod testing_apis {
         }
     }
 
-    /// Live `PosixPipe`s (one per socket over a pipe or FIFO descriptor); always 0 on Windows.
-    pub(crate) fn posix_pipe_live_count() -> usize {
-        #[cfg(unix)]
-        {
-            crate::socket::posix_pipe::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
-        }
-        #[cfg(not(unix))]
-        {
-            0
-        }
+    /// Live `FdPipe`s: one per socket over a descriptor that is not a `us_socket_t`.
+    pub(crate) fn fd_pipe_live_count() -> usize {
+        crate::socket::fd_pipe::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Live `UpgradedDuplex`es (one per TLS socket over a JS stream).

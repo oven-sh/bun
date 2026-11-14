@@ -2122,6 +2122,21 @@ describe("Socket fd adoption", () => {
     });
   });
 
+  // Node adopts any fd > 2 that is a pipe or a socket, whether or not `readable` is given.
+  it.skipIf(fifoReadsUnsupported)("a bare { fd } over a FIFO read end reads, like node", async () => {
+    const { rfd, wfd } = openFifo("bare.fifo");
+    const socket = new Socket({ fd: rfd });
+    const events: string[] = [];
+    socket.on("end", () => events.push("end"));
+    const closed = once(socket, "close");
+    const first = once(socket, "data");
+    fs.writeSync(wfd, "ping");
+    events.push(`data:${(await first)[0]}`);
+    fs.closeSync(wfd);
+    await closed;
+    expect({ events, fd: fstatCode(rfd) }).toEqual({ events: ["data:ping", "end"], fd: "EBADF" });
+  });
+
   // A write larger than the pipe buffer can only complete once a reader drains
   // it; a synchronous write(2) there would block the thread (or fail with
   // EAGAIN on a non-blocking end). Both ends are adopted sockets.
@@ -2484,7 +2499,7 @@ describe("Socket fd adoption", () => {
       const script = /* js */ `
       const fs = require("node:fs");
       const net = require("node:net");
-      const { posixPipeInternals } = require("bun:internal-for-testing");
+      const { fdPipeInternals } = require("bun:internal-for-testing");
       const dir = ${JSON.stringify(String(dir))};
       function openFifo(name) {
         const path = dir + "/" + name;
@@ -2494,7 +2509,7 @@ describe("Socket fd adoption", () => {
       }
       const a = openFifo("a.fifo");
       const b = openFifo("b.fifo");
-      const before = posixPipeInternals.liveCount();
+      const before = fdPipeInternals.liveCount();
 
       const events = [];
       const nodeSocket = new net.Socket({ fd: a.rfd, readable: true });
@@ -2530,7 +2545,7 @@ describe("Socket fd adoption", () => {
       fs.writeSync(b.wfd, "2");
       await nodeData;
       await bunData.promise;
-      const whileOpen = posixPipeInternals.liveCount() - before;
+      const whileOpen = fdPipeInternals.liveCount() - before;
 
       fs.closeSync(a.wfd);
       fs.closeSync(b.wfd);
@@ -2540,10 +2555,10 @@ describe("Socket fd adoption", () => {
       // Finalizing the handles must not touch a socket its context already released.
       Bun.gc(true);
       // A context frees itself from a task it queues once its pipe has closed.
-      for (let i = 0; i < 100 && posixPipeInternals.liveCount() > 0; i++) {
+      for (let i = 0; i < 100 && fdPipeInternals.liveCount() > 0; i++) {
         await new Promise(resolve => setImmediate(resolve));
       }
-      console.log(JSON.stringify({ events: events.sort(), before, whileOpen, after: posixPipeInternals.liveCount() }));
+      console.log(JSON.stringify({ events: events.sort(), before, whileOpen, after: fdPipeInternals.liveCount() }));
     `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],

@@ -53,7 +53,7 @@ impl Echo {
 
             let args_len = argc - args_start;
             let mut out = Vec::new();
-            let mut has_leading_newline = false;
+            let mut add_newline = !no_newline;
             let mut stop_output = false;
 
             for i in 0..args_len {
@@ -65,10 +65,8 @@ impl Echo {
 
                 if escape_sequences {
                     stop_output = append_with_escapes(&mut out, thearg);
-                } else if is_last {
-                    if thearg.last() == Some(&b'\n') {
-                        has_leading_newline = true;
-                    }
+                } else if is_last && add_newline && thearg.last() == Some(&b'\n') {
+                    add_newline = false;
                     // Collapse a trailing run of '\n'.
                     out.extend_from_slice(bun_core::strings::trim_subsequent_leading_chars(
                         thearg, b'\n',
@@ -82,7 +80,7 @@ impl Echo {
                 }
             }
 
-            if !stop_output && !has_leading_newline && !no_newline {
+            if !stop_output && add_newline {
                 out.push(b'\n');
             }
             out

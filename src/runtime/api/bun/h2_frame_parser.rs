@@ -16,7 +16,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
-use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
+use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt, recycle};
 use bun_core::strings;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
@@ -29,6 +29,7 @@ use bun_jsc::{
     GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
 };
 use bun_ptr::RefPtr;
+use bun_uws_sys::UsIoVec;
 
 use crate::generated_bindgen::h2_frame_parser::js_H2FrameParser as js;
 
@@ -847,13 +848,9 @@ thread_local! {
     // write are serialized here and hit the socket in a single _write, instead of one
     // cork flush per 16 KB frame. Reused across calls; capacity is capped after use.
     static BATCH_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    // Wire-order segments of the in-progress send_data batch: frame headers (and any
-    // padded frames) live in BATCH_BUFFER and are referenced by offset; payload slices
-    // of plain-TCP writes are referenced directly so flush can writev them without
-    // copying 16 KB per frame into the batch.
-    static BATCH_SEGMENTS: RefCell<Vec<BatchSegment>> = const { RefCell::new(Vec::new()) };
-    // Reused iovec scratch for the vectored flush.
-    static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
+    // Always empty: only the allocations are kept.
+    static BATCH_SEGMENTS: Cell<Vec<BatchSegment<'static>>> = const { Cell::new(Vec::new()) };
+    static BATCH_IOVECS: Cell<Vec<UsIoVec<'static>>> = const { Cell::new(Vec::new()) };
     /// The parser whose frames `CORK_BUFFER` holds; the slot keeps a ref on it.
     /// `ManuallyDrop` so the slot needs no TLS destructor (a bare
     /// `#[thread_local]`, and nothing derefs a parser at thread exit).
@@ -868,21 +865,21 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-/// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
+/// One wire-order piece of a multi-frame send_data batch.
 #[derive(Clone, Copy)]
-enum BatchSegment {
+enum BatchSegment<'a> {
     /// Bytes inside BATCH_BUFFER (frame headers, padded frames, corked prefix).
     Batch { off: u32, len: u32 },
-    /// A borrowed payload slice, valid for the duration of the send_data call.
-    Ext { ptr: *const u8, len: u32 },
+    /// A slice of the payload, which a plain-TCP flush hands to writev without copying it.
+    Payload(&'a [u8]),
 }
 
-impl BatchSegment {
+impl<'a> BatchSegment<'a> {
     #[inline(always)]
-    fn raw_parts(self, batch: &[u8]) -> (*const u8, usize) {
+    fn bytes(self, batch: &'a [u8]) -> &'a [u8] {
         match self {
-            BatchSegment::Batch { off, len } => (batch[off as usize..].as_ptr(), len as usize),
-            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
+            BatchSegment::Batch { off, len } => &batch[off as usize..][..len as usize],
+            BatchSegment::Payload(bytes) => bytes,
         }
     }
 }
@@ -3121,23 +3118,17 @@ impl H2FrameParser {
     }
 
     /// Send the accumulated multi-frame batch in one socket write. No-op when empty.
-    fn flush_batch_buffer(&self) {
-        // Take the Vecs out of the thread-locals before writing: _write can re-enter JS
+    fn flush_batch_buffer(&self, segments: Vec<BatchSegment<'_>>) {
+        // Take the Vec out of the thread-local before writing: _write can re-enter JS
         // (JS-stream-backed sockets), and a re-entrant send_data must not hit a borrowed
         // RefCell. The re-entrant call sees an empty batch and flushes independently.
         let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
-        let mut segments = BATCH_SEGMENTS.with_borrow_mut(core::mem::take);
         if !segments.is_empty() {
             self.flush_batch_vectored(&data, &segments);
+            BATCH_SEGMENTS.set(recycle(segments));
         } else if !data.is_empty() {
             let _ = self._write(&data);
         }
-        segments.clear();
-        BATCH_SEGMENTS.with_borrow_mut(|sg| {
-            if sg.capacity() == 0 {
-                *sg = segments;
-            }
-        });
         data.clear();
         // Don't let one huge response pin its capacity forever.
         const BATCH_CAPACITY_CAP: usize = 1 << 20;
@@ -3155,39 +3146,34 @@ impl H2FrameParser {
     /// Vectored flush for plain-TCP batches: frame headers from the batch scratch and
     /// payload slices straight from the caller's buffer, one writev. A partial write
     /// copies the unwritten tail into write_buffer, which engages backpressure.
-    fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment]) {
+    fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment<'_>]) {
         let mut total: usize = 0;
         let total_written = match self.native_socket.get() {
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => BATCH_IOVECS
-                .with_borrow_mut(|iov| {
-                    iov.clear();
-                    iov.reserve(segments.len());
-                    for seg in segments {
-                        let (ptr, len) = seg.raw_parts(batch);
-                        if len == 0 {
-                            continue;
-                        }
-                        total += len;
-                        iov.push(bun_uws_sys::UsIoVec {
-                            base: ptr.cast(),
-                            len,
-                        });
+            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+                let mut iov: Vec<UsIoVec<'_>> = BATCH_IOVECS.take();
+                iov.reserve(segments.len());
+                for seg in segments {
+                    let bytes = seg.bytes(batch);
+                    if bytes.is_empty() {
+                        continue;
                     }
-                    if total == 0 {
-                        return 0usize;
-                    }
-                    let w = socket.get().write_vectored_raw(iov);
-                    if w < 0 { 0 } else { w as usize }
-                }),
+                    total += bytes.len();
+                    iov.push(UsIoVec::new(bytes));
+                }
+                let w = if total == 0 {
+                    0
+                } else {
+                    socket.get().write_vectored_raw(&iov)
+                };
+                BATCH_IOVECS.set(recycle(iov));
+                if w < 0 { 0 } else { w as usize }
+            }
             _ => {
                 // Socket changed under us (detach mid-call): degrade to the copy path
                 // to preserve order.
                 let mut all: Vec<u8> = Vec::new();
                 for seg in segments {
-                    let (ptr, len) = seg.raw_parts(batch);
-                    // SAFETY: Batch ranges were recorded inside `batch`, and Ext slices are
-                    // valid for the send_data call duration, which is still running.
-                    all.extend_from_slice(unsafe { core::slice::from_raw_parts(ptr, len) });
+                    all.extend_from_slice(seg.bytes(batch));
                 }
                 let _ = self._write(&all);
                 return;
@@ -3198,13 +3184,12 @@ impl H2FrameParser {
             let mut skip = total_written;
             let mut buffered: usize = 0;
             for seg in segments {
-                let (ptr, len) = seg.raw_parts(batch);
-                if skip >= len {
-                    skip -= len;
+                let bytes = seg.bytes(batch);
+                if skip >= bytes.len() {
+                    skip -= bytes.len();
                     continue;
                 }
-                // SAFETY: same as the copy path above; skip < len
-                let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
+                let rest = &bytes[skip..];
                 skip = 0;
                 let _ = self.write_buffer.with_mut(|wb| wb.write(rest));
                 buffered += rest.len();
@@ -5178,6 +5163,7 @@ impl H2FrameParser {
             }
         } else {
             let mut offset: usize = 0;
+            let mut segments: Vec<BatchSegment<'_>> = Vec::new();
 
             while offset < payload.len() {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
@@ -5213,7 +5199,7 @@ impl H2FrameParser {
                 {
                     // Preserve wire order: anything already batched goes out before the
                     // queued remainder is flushed later by the drain path.
-                    self.flush_batch_buffer();
+                    self.flush_batch_buffer(core::mem::take(&mut segments));
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     // the callback will only be called after the last frame is sended
@@ -5291,12 +5277,13 @@ impl H2FrameParser {
                                             * FrameHeader::BYTE_SIZE
                                 });
                                 self.drain_cork_into(batch);
+                                if vectorize {
+                                    segments = BATCH_SEGMENTS.take();
+                                }
                                 if vectorize && !batch.is_empty() {
-                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                        segs.push(BatchSegment::Batch {
-                                            off: 0,
-                                            len: batch.len() as u32,
-                                        })
+                                    segments.push(BatchSegment::Batch {
+                                        off: 0,
+                                        len: batch.len() as u32,
                                     });
                                 }
                             }
@@ -5307,24 +5294,17 @@ impl H2FrameParser {
                                 batch.extend_from_slice(slice);
                                 batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
                                 if vectorize {
-                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                        segs.push(BatchSegment::Batch {
-                                            off: header_off as u32,
-                                            len: (batch.len() - header_off) as u32,
-                                        })
-                                    });
-                                }
-                            } else if vectorize {
-                                BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                    segs.push(BatchSegment::Batch {
+                                    segments.push(BatchSegment::Batch {
                                         off: header_off as u32,
                                         len: (batch.len() - header_off) as u32,
                                     });
-                                    segs.push(BatchSegment::Ext {
-                                        ptr: slice.as_ptr(),
-                                        len: slice.len() as u32,
-                                    });
+                                }
+                            } else if vectorize {
+                                segments.push(BatchSegment::Batch {
+                                    off: header_off as u32,
+                                    len: (batch.len() - header_off) as u32,
                                 });
+                                segments.push(BatchSegment::Payload(slice));
                             } else {
                                 batch.extend_from_slice(slice);
                             }
@@ -5332,7 +5312,7 @@ impl H2FrameParser {
                     }
                 }
             }
-            self.flush_batch_buffer();
+            self.flush_batch_buffer(segments);
         }
 
         let mut settled_state: u8 = 0;

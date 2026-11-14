@@ -262,21 +262,19 @@ describe.concurrent("stdio _handle", () => {
     await once(child, "exit");
   });
 
-  // Windows: the 1 MB write is one in-flight uv_write request, and an active
-  // request keeps the loop alive however the pipe is unref'd (as in Node).
-  it.skipIf(isWindows)("child.stdin.unref releases the stdin writer keep-alive", async () => {
+  // Like Node: a queued write keeps the parent alive until the child has
+  // read it, however stdin is unref'd. Once drained the parent exits on its
+  // own, which closes the pipe and lets the child report the byte count.
+  it.skipIf(isWindows)("child.stdin.unref waits for queued writes, then releases the keep-alive", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const { spawn } = require("node:child_process");
-        const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], {
-          stdio: ["pipe", "ignore", "ignore"],
+        const child = spawn(process.execPath, ["-e", 'let n = 0; process.stdin.on("data", d => (n += d.length)); process.stdin.on("end", () => console.log(n))'], {
+          stdio: ["pipe", "inherit", "inherit"],
         });
-        process.on("exit", () => child.kill());
-        // Fill the pipe so the sink's writable poll stays armed, then unref
-        // everything: the process must exit on its own.
         child.stdin.write(Buffer.alloc(1 << 20, 10));
         child.stdin.unref();
         child.unref();
@@ -285,8 +283,9 @@ describe.concurrent("stdio _handle", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    expect(stdout).toBe(`${1 << 20}\n`);
     expect(exitCode).toBe(0);
   });
 

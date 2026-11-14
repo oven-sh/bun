@@ -1307,11 +1307,11 @@ class ChildProcess extends EventEmitter {
             const result = require("internal/fs/streams").writableFromFileSink(sink) as unknown as ChildStdinStream;
             result.readable = false;
             result._handle = new StdioPipeHandle(() => sink._getFd());
-            // Node's child.stdin is a net.Socket: forward ref/unref to the
-            // FileSink, edge-triggered like a Socket. The sink starts ref'd
-            // and #spawn's eager-load loop calls ref() on every slot, so a
-            // bare counter would need two unref() calls to take effect.
-            let refed = true;
+            // Node's child.stdin is a net.Socket with ref/unref. The FileSink
+            // already keeps the loop alive while a write is queued, so unref
+            // only undoes a ref made here; a bare sink.unref() would drop
+            // queued bytes, where Node delivers them.
+            let refed = false;
             result.ref = function ref() {
               if (!refed) {
                 refed = true;
@@ -1598,8 +1598,9 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio!) {
-          item?.ref?.();
+        // Not stdin: an idle child stdin pipe does not keep the loop alive.
+        for (let i = 1; i < this.stdio!.length; i++) {
+          this.stdio![i]?.ref?.();
         }
       }
     } catch (ex) {

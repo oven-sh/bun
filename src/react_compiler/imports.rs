@@ -52,6 +52,8 @@ pub(crate) struct ProgramContext {
 
     // Internal state
     known_referenced_names: IndexSet<String>,
+    /// Next suffix to try per uid base name. A name is never removed, so lower suffixes stay taken.
+    next_uid_suffix: IndexMap<String, u32>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
 }
 
@@ -76,6 +78,7 @@ impl ProgramContext {
             renames: Vec::new(),
             logged: CompilerError::new(),
             known_referenced_names: IndexSet::new(),
+            next_uid_suffix: IndexMap::new(),
             imports: IndexMap::new(),
         }
     }
@@ -121,14 +124,71 @@ impl ProgramContext {
         //   generateUid("_c") → strips to "c" → generates "_c", "_c2", "_c3", ...
         //   generateUid("foo") → generates "_foo", "_foo2", "_foo3", ...
         let base = name.trim_start_matches('_');
-        let mut uid = format!("_{}", base);
-        let mut i = 2;
-        while self.known_referenced_names.contains(&uid) {
-            uid = format!("_{}{}", base, i);
-            i += 1;
-        }
+        self.generate_uid(base)
+    }
+
+    /// Babel's `generateUid` search: the first free name of `_<base>`, `_<base>2`, `_<base>3`, ...
+    fn generate_uid(&mut self, base: &str) -> String {
+        let next_suffix = self
+            .next_uid_suffix
+            .entry(base.to_owned())
+            .or_insert_with(|| 1);
+        let uid = loop {
+            let uid = if *next_suffix > 1 {
+                format!("_{base}{next_suffix}")
+            } else {
+                format!("_{base}")
+            };
+            *next_suffix += 1;
+            if !self.known_referenced_names.contains(&uid) {
+                break uid;
+            }
+        };
         self.known_referenced_names.insert(uid.clone());
         uid
+    }
+
+    /// TS `generateGloballyUniqueIdentifierName`: Babel's `generateUid`, one set of names per file.
+    pub(crate) fn generate_globally_unique_identifier_name(
+        &mut self,
+        name: Option<&[u8]>,
+    ) -> StoreStr {
+        let base = name.unwrap_or(b"temp");
+        // Babel's `toIdentifier`: drop leading digits and non-identifier chars, then camel-case.
+        let mut camel = String::with_capacity(base.len());
+        let mut iter = base.iter().copied().peekable();
+        while let Some(&c) = iter.peek() {
+            let is_ident = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+            if c.is_ascii_digit() || !is_ident {
+                iter.next();
+            } else {
+                break;
+            }
+        }
+        let mut upper_next = false;
+        for c in iter {
+            if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+                if upper_next {
+                    camel.push(char::from(c.to_ascii_uppercase()));
+                    upper_next = false;
+                } else {
+                    camel.push(char::from(c));
+                }
+            } else {
+                upper_next = true;
+            }
+        }
+        // Strip leading '_' and trailing digits (Babel's generateUid behavior)
+        let stripped = camel
+            .trim_start_matches('_')
+            .trim_end_matches(|c: char| c.is_ascii_digit());
+        let uid_base = if stripped.is_empty() {
+            "temp"
+        } else {
+            stripped
+        };
+
+        arena_str(self.generate_uid(uid_base).as_bytes())
     }
 
     /// Add the memo cache import (the `c` function from the compiler runtime).
@@ -172,17 +232,6 @@ impl ProgramContext {
     /// Register a name as referenced so future uid generation avoids it.
     pub(crate) fn add_new_reference(&mut self, name: String) {
         self.known_referenced_names.insert(name);
-    }
-
-    /// Get the set of known referenced names for seeding per-function Environment UID generation.
-    pub(crate) fn known_referenced_names(&self) -> &IndexSet<String> {
-        &self.known_referenced_names
-    }
-
-    /// Merge UID names generated during a function compilation back into the program context,
-    /// so subsequent function compilations avoid collisions.
-    pub(crate) fn merge_uid_known_names(&mut self, names: &IndexSet<String>) {
-        self.known_referenced_names.extend(names.iter().cloned());
     }
 }
 

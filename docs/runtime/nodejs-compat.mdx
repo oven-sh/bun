@@ -165,6 +165,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
+CPU profile duration uses a monotonic clock and includes idle time. Inspector profiling captures the current stack at startup, even if no periodic samples follow.
+
 🟡 Partially implemented. `Session` supports the `Profiler` domain (including precise coverage), `Runtime.enable` and `NodeTracing`, from both `node:inspector` and `node:inspector/promises`. After `open()`, `Session` also forwards `Debugger` configuration commands such as `Debugger.enable` and `Debugger.setBreakpointByUrl` to the inspector server. Their results, such as `breakpointId`, are not returned. Other `Session` commands such as `Runtime.evaluate` and the `HeapProfiler` domain are not implemented. `open()`, `url()`, `close()` and `waitForDebugger()` are implemented. `open()` serves the `Debugger` and `Runtime` domains and throws in workers. Missing `Network`.
 
 ### [`node:repl`](https://nodejs.org/api/repl.html)

@@ -1334,11 +1334,11 @@ child_process[ChildProcess][prototype] --- object
 child_process[ChildProcess][prototype]: object above=EventEmitter extensible=true
 child_process[ChildProcess][prototype][constructor] c-w function
 child_process[ChildProcess][prototype][constructor] = child_process[ChildProcess]
-child_process[ChildProcess][prototype][stdin] cea accessor get=function set=undefined
-child_process[ChildProcess][prototype][stdout] cea accessor get=function set=undefined
-child_process[ChildProcess][prototype][stderr] cea accessor get=function set=undefined
-child_process[ChildProcess][prototype][stdio] cea accessor get=function set=undefined
-child_process[ChildProcess][prototype][connected] c-a accessor get=function set=undefined
+child_process[ChildProcess][prototype][stdin] cea accessor get=function set=function
+child_process[ChildProcess][prototype][stdout] cea accessor get=function set=function
+child_process[ChildProcess][prototype][stderr] cea accessor get=function set=function
+child_process[ChildProcess][prototype][stdio] cea accessor get=function set=function
+child_process[ChildProcess][prototype][connected] cea accessor get=function set=function
 child_process[ChildProcess][prototype][spawn] c-w function
 child_process[ChildProcess][prototype][spawn]: function function name="spawn" length=1 above=Function extensible=true
 child_process[ChildProcess][prototype][spawn][length] c-- number

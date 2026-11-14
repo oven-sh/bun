@@ -4447,25 +4447,35 @@ node:fs.Utf8Stream.prototype [Symbol.dispose]("a", 1)
 
 exports[`members of the prototype objects of node:child_process 1`] = `
 "node:child_process.ChildProcess.prototype stdin, read
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  undefined <- every receiver
+node:child_process.ChildProcess.prototype stdin, stored to
+  undefined, stores stdin <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  throws TypeError: Attempted to assign to readonly property stdin. <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string, undefined, null
 node:child_process.ChildProcess.prototype stdout, read
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  undefined <- every receiver
+node:child_process.ChildProcess.prototype stdout, stored to
+  undefined, stores stdout <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  throws TypeError: Attempted to assign to readonly property stdout. <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string, undefined, null
 node:child_process.ChildProcess.prototype stderr, read
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  undefined <- every receiver
+node:child_process.ChildProcess.prototype stderr, stored to
+  undefined, stores stderr <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  throws TypeError: Attempted to assign to readonly property stderr. <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string, undefined, null
 node:child_process.ChildProcess.prototype stdio, read
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  undefined <- every receiver
+node:child_process.ChildProcess.prototype stdio, stored to
+  undefined, stores stdio <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  throws TypeError: Attempted to assign to readonly property stdio. <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string, undefined, null
 node:child_process.ChildProcess.prototype connected, read
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  undefined <- every receiver
+node:child_process.ChildProcess.prototype connected, stored to
+  undefined, stores connected <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  throws TypeError: Attempted to assign to readonly property connected. <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string, undefined, null
 node:child_process.ChildProcess.prototype spawn()
   throws TypeError ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received undefined <- every receiver
 node:child_process.ChildProcess.prototype spawn("a", 1)
@@ -4497,9 +4507,7 @@ node:child_process.ChildProcess.prototype [Symbol.dispose]("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:child_process.ChildProcess.prototype [kHandle], read
-  throws TypeError: Cannot access invalid private field <- every object, a number, a string
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  undefined <- every receiver
 "
 `;
 

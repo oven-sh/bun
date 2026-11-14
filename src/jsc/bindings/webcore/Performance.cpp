@@ -43,7 +43,6 @@
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
 #include "PerformanceObserver.h"
-#include "PerformanceResourceTiming.h"
 #include "PerformanceTiming.h"
 #include "PerformanceUserTiming.h"
 #include "ScriptExecutionContext.h"
@@ -122,9 +121,6 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
     // if (m_navigationTiming && entryType == "navigation"_s)
     //     entries.append(m_navigationTiming);
 
-    if (entryType == "resource"_s)
-        entries.appendVector(m_resourceTimingBuffer);
-
     // if (m_firstContentfulPaint && entryType == "paint"_s)
     //     entries.append(m_firstContentfulPaint);
 
@@ -142,7 +138,6 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
 size_t Performance::memoryCost() const
 {
     size_t size = sizeof(Performance);
-    size += m_resourceTimingBuffer.size() * sizeof(PerformanceResourceTiming);
     if (m_userTiming) {
         size += m_userTiming->memoryCost();
     }
@@ -155,13 +150,6 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
 
     // if (m_navigationTiming && (entryType.isNull() || entryType == "navigation"_s) && name == m_navigationTiming->name())
     //     entries.append(m_navigationTiming);
-
-    if (entryType.isNull() || entryType == "resource"_s) {
-        for (auto& resource : m_resourceTimingBuffer) {
-            if (resource->name() == name)
-                entries.append(resource);
-        }
-    }
 
     // if (m_firstContentfulPaint && (entryType.isNull() || entryType == "paint"_s) && name == "first-contentful-paint"_s)
     //     entries.append(m_firstContentfulPaint);
@@ -179,8 +167,6 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
 
 void Performance::appendBufferedEntriesByType(const String& entryType, Vector<RefPtr<PerformanceEntry>>& entries) const
 {
-    if (entryType == "resource"_s)
-        entries.appendVector(m_resourceTimingBuffer);
     if (m_userTiming) {
         if (entryType.isNull() || entryType == "mark"_s)
             entries.appendVector(m_userTiming->getMarks());
@@ -191,7 +177,6 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
 
 void Performance::clearResourceTimings()
 {
-    m_resourceTimingBuffer.clear();
 }
 
 void Performance::setResourceTimingBufferSize(unsigned)

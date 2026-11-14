@@ -172,9 +172,6 @@ struct is_in_place_type : std::false_type {};
 template <class T>
 struct is_in_place_type<std::in_place_type_t<T>> : std::true_type {};
 
-template <class T>
-inline constexpr auto is_in_place_type_v = is_in_place_type<T>::value;
-
 template <class R, bool is_noexcept, class... ArgTypes>
 class any_invocable_impl {
   template <class T>

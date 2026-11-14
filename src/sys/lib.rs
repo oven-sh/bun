@@ -5691,11 +5691,6 @@ pub mod linux {
         }
     }
 }
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub mod linux {
-    // Empty on non-Linux; callers gate on `cfg(target_os = "linux")` (or
-    // `linux | android` for the Linux-kernel surface).
-}
 
 // ── `bun.darwin` — Darwin-only platform surface. ──
 #[cfg(target_os = "macos")]
@@ -5948,8 +5943,6 @@ pub mod darwin {
         }
     }
 }
-#[cfg(not(target_os = "macos"))]
-pub mod darwin {}
 
 // ── Mach-O header parsing (subset). ──────────────────────────────────────
 // Just the slice that the crash handler uses to
@@ -8709,8 +8702,6 @@ pub mod freebsd {
         unsafe { libc::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
 }
-#[cfg(not(target_os = "freebsd"))]
-pub mod freebsd {}
 
 /// RAII guard that closes a raw [`Fd`] on drop. Most code should prefer
 /// [`File`] / [`Dir`], which are owning RAII handles already; reach for this

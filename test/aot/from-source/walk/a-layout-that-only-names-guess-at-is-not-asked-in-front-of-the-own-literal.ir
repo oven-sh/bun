@@ -1,0 +1,32 @@
+# `var opts = options || {}`; what is given is an empty literal that a loop over keys fills. What is seen to arrive at `options` is that literal; the layout with the four names (L3, the literal the loop
+# reads from) is only the weakest guess by names. An earlier text asked [L3] first and [L0] on its failing side: the first never passed (433 instructions a turn with options given; 329 now; 122 without).
+# What is asked first must be what is written or seen on the other ways; else the body's own literal is asked alone and its failing side is as likely. f1 = configure.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: layouts=[L3]
+# CHECK: = GetSlotOrUndefined {{*}}key="encoding" receivers=[L0, L1] level=Proven
+# CHECK-NOT: layouts=[L3]
+# CHECK: Return
+# -- source: a-layout-that-only-names-guess-at-is-not-asked-in-front-of-the-own-literal.cjs
+# function configure(stream, options) {
+#   var opts = options || {};
+#   var encoding = opts.encoding !== undefined ? opts.encoding : null;
+#   var limit = opts.limit | 0;
+#   var length = opts.length != null && !isNaN(opts.length) ? opts.length | 0 : 0;
+#   var strict = opts.strict === true ? 1 : 0;
+#   return stream + limit + length + strict + (encoding === null ? 0 : 1) + (opts.verify ? 1 : 0);
+# }
+# const table = { configure };
+# const turns = Number(process.argv[2] || 1) * 100000;
+# const given = process.argv[3] !== "absent";
+# function make(i) {
+#   const made = {};
+#   const from = { limit: 3, length: i & 7, encoding: "utf8", strict: true };
+#   for (const key in from) made[key] = from[key];
+#   return made;
+# }
+# const handed = [make(1), make(2), make(3), make(4)];
+# let sum = 0;
+# for (let i = 0; i < turns; i++) sum += table[process.argv.length > 99 ? "x" : "configure"](i & 1, given ? handed[i & 3] : undefined);
+# console.log(sum / turns);
+# -- end of source

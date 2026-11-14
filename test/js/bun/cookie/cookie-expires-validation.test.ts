@@ -66,13 +66,13 @@ describe("Bun.Cookie expires validation", () => {
     });
 
     test("handles null", () => {
-      const cookie = new Bun.Cookie("name", "value", { expires: null });
+      const cookie = new Bun.Cookie("name", "value", { expires: null as any });
       expect(cookie.expires).toBeUndefined();
     });
 
     test("throws for non-date objects", () => {
       expect(() => {
-        new Bun.Cookie("name", "value", { expires: { time: 123456 } });
+        new Bun.Cookie("name", "value", { expires: { time: 123456 } as any });
       }).toThrow();
     });
 
@@ -84,7 +84,7 @@ describe("Bun.Cookie expires validation", () => {
 
     test("throws for arrays", () => {
       expect(() => {
-        new Bun.Cookie("name", "value", { expires: [2023, 11, 25] });
+        new Bun.Cookie("name", "value", { expires: [2023, 11, 25] as any });
       }).toThrowErrorMatchingInlineSnapshot(
         `"The argument 'expires' Invalid expires value. Must be a Date or a number. Received [ 2023, 11, 25 ]"`,
       );
@@ -92,7 +92,7 @@ describe("Bun.Cookie expires validation", () => {
 
     test("throws for booleans", () => {
       expect(() => {
-        new Bun.Cookie("name", "value", { expires: true });
+        new Bun.Cookie("name", "value", { expires: true as any });
       }).toThrowErrorMatchingInlineSnapshot(
         `"The argument 'expires' Invalid expires value. Must be a Date or a number. Received true"`,
       );

@@ -2,7 +2,7 @@ use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter
 
 use crate::shell::EnvStr;
 
-pub struct EnvMap {
+pub(crate) struct EnvMap {
     map: EnvMapInner,
 }
 
@@ -71,17 +71,8 @@ impl EnvMap {
         }
     }
 
-    /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
-    /// before handing it to this function!!!
     pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
-        let result = self.map.get_or_put(key).expect("OOM");
-        if !result.found_existing {
-            key.ref_();
-        } else {
-            result.value_ptr.deref();
-        }
-        val.ref_();
-        *result.value_ptr = val;
+        self.map.put(key, val).expect("OOM");
     }
 
     pub(crate) fn iterator(&mut self) -> Iterator<'_> {
@@ -96,39 +87,13 @@ impl EnvMap {
         self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
-    /// NOTE: Make sure you deref the string when done!
-    pub fn get(&self, key: EnvStr) -> Option<EnvStr> {
-        let val = *self.map.get(&key)?;
-        val.ref_();
-        Some(val)
+    pub(crate) fn get(&self, key: &[u8]) -> Option<&[u8]> {
+        self.map.get(&EnvStr::init_slice(key)).map(EnvStr::slice)
     }
 
     pub(crate) fn clone(&self) -> EnvMap {
-        let new = EnvMap {
+        EnvMap {
             map: self.map.clone().expect("OOM"),
-        };
-        new.ref_strings();
-        new
-    }
-
-    fn ref_strings(&self) {
-        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
-            key.ref_();
-            value.ref_();
         }
-    }
-
-    fn deref_strings(&self) {
-        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
-            key.deref();
-            value.deref();
-        }
-    }
-}
-
-impl Drop for EnvMap {
-    fn drop(&mut self) {
-        self.deref_strings();
-        // map storage freed by its own Drop
     }
 }

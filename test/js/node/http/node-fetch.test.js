@@ -1,11 +1,17 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
 import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import assert from "node:assert";
+import { constants, createPrivateKey } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
+import path from "node:path";
+import tls from "node:tls";
 import * as stream from "stream";
 
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -310,6 +316,108 @@ test.each([
   }).toEqual({ json: expected, bodyThenJson: expected, cloneJson: expected });
 });
 
+test("node-fetch Response accepts an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const response = new Response(legacy);
+  const text = response.text();
+  legacy.emit("data", Buffer.from("hello "));
+  legacy.emit("data", Buffer.from("world"));
+  legacy.emit("end");
+  expect(await text).toBe("hello world");
+});
+
+// Not expect(promise).rejects: it blocks on a promise that stays pending, so the test cannot time out (#14950).
+test.each([true, false])(
+  "node-fetch Response rejects the body read when an old-style Stream body fails (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    // Without a listener of its own, the source throws out of emit("error") unless the body handles the error.
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    const text = response.text();
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("integrity check failed");
+    legacy.emit("error", error);
+    expect(await text.catch(e => e)).toBe(error);
+  },
+);
+
+test("node-fetch Response rejects the body read when an old-style Stream body failed before the read", async () => {
+  const legacy = new stream.Stream();
+  const response = new Response(legacy);
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect(await response.text().catch(e => e)).toBe(error);
+});
+
+test.each([true, false])(
+  "node-fetch Response keeps a complete old-style Stream body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await response.text()).toBe("hello world");
+  },
+);
+
+test("node-fetch Response body stream emits the error of an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const { body } = new Response(legacy);
+  const failed = once(body, "error");
+  body.resume();
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect((await failed)[0]).toBe(error);
+});
+
+const discard = () => new stream.Writable({ write: (chunk, encoding, callback) => callback() });
+
+test("node-fetch Response rejects the body read for a Writable body", async () => {
+  const response = new Response(discard());
+  expect(await response.text().catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+function serveRequestBody() {
+  return Bun.serve({ port: 0, fetch: async req => new Response(await req.text().catch(() => "aborted")) });
+}
+
+test.each([true, false])(
+  "node-fetch fetch() rejects when an old-style Stream request body fails (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("upload failed");
+    legacy.emit("error", error);
+    expect(await response.catch(e => e)).toBe(error);
+  },
+);
+
+test.each([true, false])(
+  "node-fetch fetch() sends a complete old-style Stream request body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await (await response).text()).toBe("hello world");
+  },
+);
+
+test("node-fetch fetch() rejects for a Writable request body", async () => {
+  using server = serveRequestBody();
+  const response = fetch2(server.url, { method: "POST", body: discard() });
+  expect(await response.catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
   expect(await (await fetch2(server.url)).json()).toBeNull();
@@ -381,4 +489,254 @@ test("node-fetch request body streams properly", async () => {
   const allData = Buffer.concat(receivedChunks).toString();
   expect(allData).toBe("first chunksecond chunkthird chunk");
   expect(requestBodyComplete).toBe(true);
+});
+
+// @kubernetes/client-node passes an https.Agent (with ca/cert/key) to node-fetch: https://github.com/oven-sh/bun/issues/19754
+// The verdicts are those of Node.js v26.3.0 with node-fetch 2.6.13 and 3.3.2, but where a comment says what Node does.
+describe("node-fetch applies the TLS options of the agent", () => {
+  const read = name => readFileSync(path.join(import.meta.dirname, "..", "test", "fixtures", "keys", name));
+  // ca1 signs agent1, ca2 signs agent3. No certificate has a SAN, so clients verify CN under `servername`.
+  const ca = read("ca1-cert.pem");
+  const key = read("agent1-key.pem");
+  const cert = read("agent1-cert.pem");
+  const servername = "agent1";
+
+  async function serve(options = { key, cert }) {
+    const server = https.createServer(options, (req, res) => {
+      res.writeHead(200, { connection: "close" });
+      res.end(`authorized=${req.socket.authorized}`);
+    });
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      port: server.address().port,
+      async [Symbol.asyncDispose]() {
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  /** Answers each request with the protocol version and the cipher of its connection. */
+  async function serveNegotiated(options) {
+    const server = tls.createServer({ key, cert, ...options }, socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        const body = `${socket.getProtocol()} ${socket.getCipher().name}`;
+        socket.end(`HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+      });
+    });
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      port: server.address().port,
+      async [Symbol.asyncDispose]() {
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  /** The response body, or the code of the rejection. */
+  async function outcome(port, options, init) {
+    const agent = typeof options === "function" || options instanceof https.Agent ? options : new https.Agent(options);
+    try {
+      return await (await fetch2(`https://127.0.0.1:${port}/`, { agent, ...init })).text();
+    } catch (err) {
+      return String(err.code);
+    } finally {
+      if (typeof agent !== "function") agent.destroy();
+    }
+  }
+
+  test("ca and servername", async () => {
+    await using server = await serve();
+    assert.strictEqual(await outcome(server.port, { ca, servername }), "authorized=false");
+    assert.strictEqual(await outcome(server.port, { ca, servername, dhparam: "auto" }), "authorized=false");
+    assert.strictEqual(await outcome(server.port, { ca }), "ERR_TLS_CERT_ALTNAME_INVALID");
+    assert.strictEqual(await outcome(server.port, { servername }), "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  });
+
+  test("the client identity, in every form", async () => {
+    await using server = await serve({ key, cert, ca, requestCert: true, rejectUnauthorized: false });
+    const trust = { ca, servername };
+    const encryptedKey = createPrivateKey(key).export({
+      type: "pkcs8",
+      format: "pem",
+      cipher: "aes-256-cbc",
+      passphrase: "sample",
+    });
+    assert.deepStrictEqual(
+      {
+        none: await outcome(server.port, trust),
+        pem: await outcome(server.port, { ...trust, cert, key }),
+        pemObject: await outcome(server.port, { ...trust, cert, key: [{ pem: key }] }),
+        encrypted: await outcome(server.port, {
+          ...trust,
+          cert,
+          key: encryptedKey,
+          passphrase: "sample",
+        }),
+        pfx: await outcome(server.port, { ...trust, pfx: read("agent1.pfx"), passphrase: "sample" }),
+        pfxObject: await outcome(server.port, { ...trust, pfx: [{ buf: read("agent1.pfx"), passphrase: "sample" }] }),
+      },
+      {
+        none: "authorized=false",
+        pem: "authorized=true",
+        pemObject: "authorized=true",
+        encrypted: "authorized=true",
+        pfx: "authorized=true",
+        pfxObject: "authorized=true",
+      },
+    );
+  });
+
+  test("rejectUnauthorized disables verification only when it is false", async () => {
+    await using server = await serve();
+    assert.strictEqual(await outcome(server.port, { rejectUnauthorized: false }), "authorized=false");
+    for (const rejectUnauthorized of [0, null, "false", undefined, true]) {
+      assert.strictEqual(await outcome(server.port, { rejectUnauthorized }), "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    }
+    // Node reads both through the prototype chain.
+    const off = new https.Agent({ rejectUnauthorized: false });
+    assert.strictEqual(await outcome(server.port, Object.create(off)), "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    await assert.rejects(fetch2(`https://127.0.0.1:${server.port}/`, Object.create({ agent: off })), {
+      code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    });
+    const tls = { rejectUnauthorized: true };
+    assert.strictEqual(
+      await outcome(server.port, { rejectUnauthorized: false }, { tls }),
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    );
+  });
+
+  test("crl", async () => {
+    await using server = await serve({ key: read("agent3-key.pem"), cert: read("agent3-cert.pem") });
+    const trust = { ca: read("ca2-cert.pem"), servername: "agent3" };
+    // ca2-crl.pem revokes agent4 only.
+    assert.strictEqual(await outcome(server.port, { ...trust, crl: read("ca2-crl.pem") }), "authorized=false");
+    assert.strictEqual(await outcome(server.port, { ...trust, crl: read("ca2-crl-agent3.pem") }), "CERT_REVOKED");
+  });
+
+  test("checkServerIdentity", async () => {
+    await using server = await serve();
+    const seen = [];
+    function accept(hostname, peer) {
+      seen.push(hostname, peer.subject.CN);
+      return undefined;
+    }
+    function refuse() {
+      return Object.assign(new Error("not the pinned certificate"), { code: "ERR_TEST_PIN" });
+    }
+    assert.strictEqual(await outcome(server.port, { ca, checkServerIdentity: accept }), "authorized=false");
+    assert.deepStrictEqual(seen, ["127.0.0.1", "agent1"]);
+    assert.strictEqual(await outcome(server.port, { ca, servername, checkServerIdentity: refuse }), "ERR_TEST_PIN");
+  });
+
+  test("minVersion and maxVersion", async () => {
+    await using server = await serve({ key, cert, minVersion: "TLSv1.3" });
+    const trust = { ca, servername };
+    assert.strictEqual(await outcome(server.port, { ...trust, minVersion: "TLSv1.2" }), "authorized=false");
+    // Node reports the alert as EPROTO.
+    assert.match(await outcome(server.port, { ...trust, maxVersion: "TLSv1.2" }), /EPROTO|PROTOCOL_VERSION/);
+    assert.strictEqual(
+      await outcome(server.port, { ...trust, minVersion: "TLSv9" }),
+      "ERR_TLS_INVALID_PROTOCOL_VERSION",
+    );
+  });
+
+  test("allowPartialTrustChain", async () => {
+    // ca1 signs ca3, ca3 signs agent6. The server sends agent6 and ca3.
+    await using server = await serve({ key: read("agent6-key.pem"), cert: read("agent6-cert.pem") });
+    const trust = { ca: read("ca3-cert.pem"), checkServerIdentity: () => undefined };
+    assert.strictEqual(await outcome(server.port, { ...trust, allowPartialTrustChain: true }), "authorized=false");
+    assert.strictEqual(await outcome(server.port, trust), "UNABLE_TO_GET_ISSUER_CERT");
+    // Node takes any truthy value.
+    assert.strictEqual(
+      await outcome(server.port, { ...trust, allowPartialTrustChain: 1 }),
+      "UNABLE_TO_GET_ISSUER_CERT",
+    );
+  });
+
+  test("ciphers, sigalgs, ecdhCurve and secureOptions", async () => {
+    const trust = { ca, servername };
+    const refused = /EPROTO|HANDSHAKE_FAILURE|PROTOCOL_VERSION|NO_PROTOCOLS_AVAILABLE/;
+    await using aes256 = await serve({ key, cert, maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES256-GCM-SHA384" });
+    await using sha512 = await serve({ key, cert, sigalgs: "rsa_pss_rsae_sha512" });
+    await using p384 = await serve({ key, cert, ecdhCurve: "P-384" });
+    await using tls13 = await serve({ key, cert, minVersion: "TLSv1.3" });
+    for (const [port, accepted, rejected] of [
+      [aes256.port, { ciphers: "ECDHE-RSA-AES256-GCM-SHA384" }, { ciphers: "ECDHE-RSA-AES128-GCM-SHA256" }],
+      [sha512.port, { sigalgs: "rsa_pss_rsae_sha512" }, { sigalgs: "rsa_pss_rsae_sha256" }],
+      [p384.port, { ecdhCurve: "P-384" }, { ecdhCurve: "X25519" }],
+      [tls13.port, { secureOptions: constants.SSL_OP_NO_TLSv1_2 }, { secureOptions: constants.SSL_OP_NO_TLSv1_3 }],
+    ]) {
+      assert.strictEqual(await outcome(port, { ...trust, ...accepted }), "authorized=false");
+      assert.match(await outcome(port, { ...trust, ...rejected }), refused, JSON.stringify(rejected));
+    }
+  });
+
+  test("ciphers that name TLS 1.3 suites", async () => {
+    await using server = await serveNegotiated();
+    await using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
+    const trust = { ca, servername };
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    const refused = /EPROTO|PROTOCOL_VERSION|NO_CIPHERS_AVAILABLE|NO_PROTOCOLS_AVAILABLE/;
+    // BoringSSL has no list of TLS 1.3 suites to restrict, so only Node negotiates the one that is named.
+    assert.match(await outcome(server.port, { ...trust, ciphers: "TLS_AES_256_GCM_SHA384" }), /^TLSv1\.3 /);
+    assert.match(await outcome(tls12.port, { ...trust, ciphers: "TLS_AES_256_GCM_SHA384" }), refused);
+    assert.match(
+      await outcome(server.port, { ...trust, ciphers: "TLS_AES_256_GCM_SHA384", maxVersion: "TLSv1.2" }),
+      refused,
+    );
+    assert.match(await outcome(server.port, { ...trust, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }), /^TLSv1\.3 /);
+    assert.strictEqual(
+      await outcome(tls12.port, { ...trust, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }),
+      `TLSv1.2 ${aes256}`,
+    );
+    assert.match(await outcome(server.port, { ...trust, ciphers: aes256 }), /^TLSv1\.3 /);
+    assert.strictEqual(await outcome(tls12.port, { ...trust, ciphers: aes256 }), `TLSv1.2 ${aes256}`);
+  });
+
+  test("ciphers with an OpenSSL security level", async () => {
+    await using server = await serveNegotiated();
+    await using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
+    const trust = { ca, servername };
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    assert.match(await outcome(server.port, { ...trust, ciphers: "DEFAULT@SECLEVEL=0" }), /^TLSv1\.3 /);
+    assert.match(await outcome(server.port, { ...trust, ciphers: "DEFAULT:@SECLEVEL=1" }), /^TLSv1\.3 /);
+    assert.strictEqual(await outcome(tls12.port, { ...trust, ciphers: `${aes256}:@SECLEVEL=0` }), `TLSv1.2 ${aes256}`);
+  });
+
+  test("secureProtocol", async () => {
+    await using server = await serveNegotiated();
+    const trust = { ca, servername };
+    assert.match(await outcome(server.port, { ...trust, secureProtocol: "TLSv1_2_method" }), /^TLSv1\.2 /);
+    assert.match(await outcome(server.port, { ...trust, secureProtocol: "TLS_method" }), /^TLSv1\.3 /);
+    // There is no such method.
+    assert.strictEqual(
+      await outcome(server.port, { ...trust, secureProtocol: "TLSv1_3_method" }),
+      "ERR_TLS_INVALID_PROTOCOL_METHOD",
+    );
+    assert.strictEqual(
+      await outcome(server.port, { ...trust, secureProtocol: "TLSv1_2_method", minVersion: "TLSv1.3" }),
+      "ERR_TLS_PROTOCOL_VERSION_CONFLICT",
+    );
+  });
+
+  test("an agent that is a function of the request URL", async () => {
+    await using server = await serve();
+    const agent = new https.Agent({ ca, servername });
+    // node-fetch v2 passes a legacy url.parse() object and v3 a WHATWG URL. Both have these fields.
+    let calledWith;
+    try {
+      assert.strictEqual(await outcome(server.port, url => ((calledWith = url), agent)), "authorized=false");
+      assert.deepStrictEqual(
+        { protocol: calledWith?.protocol, hostname: calledWith?.hostname, port: String(calledWith?.port) },
+        { protocol: "https:", hostname: "127.0.0.1", port: String(server.port) },
+      );
+    } finally {
+      agent.destroy();
+    }
+  });
 });

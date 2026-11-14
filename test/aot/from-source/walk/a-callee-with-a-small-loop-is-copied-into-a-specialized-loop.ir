@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# function Entry(key, hash, value) { this.key = key; this.value = value; this.hash = hash; this.next = null; }
+# function Table() { this.slots = new Array(64); }
+# function run(n) { let sum = 0; for (let i = 0; i < n; i++) sum += table.get(i & 63); return sum; }
+# Table.prototype = {
+#   put: function (key, value) { const hash = key | 0; const index = hash & (this.slots.length - 1); const entry = new Entry(key, hash, value); entry.next = this.slots[index]; this.slots[index] = entry; },
+#   find: function (key, index, hash) { let entry = this.slots[index]; while (entry && (entry.hash != hash || key != entry.key)) entry = entry.next; return entry; },
+#   get: function (key) { const entry = this.find(key, key & (this.slots.length - 1), key | 0); if (entry) return entry.value; return null; },
+# };
+# const table = new Table();
+# for (let i = 0; i < 64; i++) table.put(i, 2);
+# print(run(+"100"));
+# -- end of source
+# The specialized version of the loop reads the list and asks the guards in its preheader, so it copies `find` too, whose loop follows one chain. f3 = run, f5 = find, f6 = get
+# RUN: walk f3:Body mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: callee=f6
+# CHECK: callee=f5
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 200

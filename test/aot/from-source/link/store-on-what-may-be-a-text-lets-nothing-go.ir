@@ -1,0 +1,81 @@
+# -- source: main.mjs
+# class Node { constructor(value) { this.value = value; this.next = null; } }
+# function link(node, next) {
+#   try {
+#     node.next = next;
+#   } catch {
+#     return next.value;
+#   }
+#   return node.next.value;
+# }
+# print(link(new Node(1), new Node(2)));
+# print(link("text", new Node(3)), link(4, new Node(5)));
+# -- end of source
+# A store on what may be a text or a number lets nothing go: no setter stands above those under that name.
+# RUN(GONE): link why-gone L0
+# GONE: why-gone L0: it has not gone
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 position=6 constructor=f2 fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=2
+layout L1 module=m1 position=12058 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key=@#"nextPosition" declared={type=number} flags=[IsRequired]}, {key=@#"steppedText" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0] place=12058 ownFieldCount=3
+variable g0 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=28
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g0 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=GlobalThis @201
+    v9 = PropGet v8 key="print" [isFreeName] @201
+    v10 = Integer integer=1 @221
+    v11 = Construct v7, -, v10 calleeName="Node" @216 @212
+    v12 = Integer integer=2 @234
+    v13 = Construct v7, -, v12 calleeName="Node" @229 @225
+    v14 = Call v1, -, v11, v13 calleeName="link" @207
+    v15 = Call v9, -, v14 calleeName="print" @201
+    v16 = Builtin builtin=GlobalThis @240
+    v17 = PropGet v16 key="print" [isFreeName] @240
+    v18 = String string="text" @251
+    v19 = Integer integer=3 @268
+    v20 = Construct v7, -, v19 calleeName="Node" @263 @259
+    v21 = Call v1, -, v18, v20 calleeName="link" @246
+    v22 = Integer integer=4 @278
+    v23 = Integer integer=5 @290
+    v24 = Construct v7, -, v23 calleeName="Node" @285 @281
+    v25 = Call v1, -, v22, v24 calleeName="link" @273
+    v26 = Call v17, -, v21, v25 calleeName="print" @240
+    v27 = Undefined @240
+    Return v27 @240
+}
+function f1 name="link" module=m0 position=76 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1, v1: undefined|null|L0):
+    Jump -> next b1() @106
+  b1() handler=b3():
+    PropSet v0, v1 key="next" @116
+    Jump -> next b2() @116
+  b2():
+    v3 = PropGet v0 key="next" @182
+    v4 = PropGet v3 key="value" @187
+    Return v4 @182
+  b3() role=CatchHandler:
+    v5 = CatchValue @144
+    v6 = PropGet v1 key="value" @157
+    Return v6 @157
+}
+function f2 name="Node" module=m0 position=24 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @24
+    v3 = NewObject v2 layout=L0 @24
+    v4 = Convert v3 declared={type=L0} @24
+    PropSet v4, v1 key="value" @34
+    v6 = Null @66
+    PropSet v4, v6 key="next" @54
+    v8 = Undefined @54
+    Return v4 @54
+}

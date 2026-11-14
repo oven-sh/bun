@@ -1,0 +1,15 @@
+# -- source: passed-key-of-six-names.ts
+# declare function print(value: unknown): void;
+# interface Row { id: number; age: number; score: number; rank: number; level: number; zip: number }
+# interface Choice { key: keyof Row }
+# const rows: Row[] = [{ id: 1, age: 2, score: 3, rank: 4, level: 5, zip: 6 }, { id: 7, age: 8, score: 9, rank: 10, level: 11, zip: 12 }];
+# const choices = ["id", "age"].map(name => ({ key: name.trim() }) as Choice);
+# function count(choice: Choice): number { const { key } = choice; return rows.filter(row => row[key] === 2).length; }
+# function total(choice: Choice): number { const { key } = choice; let sum = 0; for (const row of rows) sum += row[key]; return sum; }
+# for (const choice of choices) print(count(choice) + total(choice));
+# -- end of source
+# A key that a callback captures is told apart by up to sixteen names of the holder; one in front of a loop of its own body by four.
+# RUN: walk f4:Body mechanisms=all
+# CHECK: SwitchString [[key]] strings=["age", "id", "level", "rank", "score", "zip"]
+# RUN(OWN): walk f2:Body mechanisms=all
+# OWN-NOT: SwitchString

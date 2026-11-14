@@ -1,0 +1,17 @@
+# `{ style: s, width: w }` for `{ width?, height?, style? }`: the allocation lists nothing and each member is defined behind it. The scan leaves the keys in their turn in the summary, the plan takes an order from them,
+# and each definition writes the word that lists its key next, in the place of a call that searches for it.
+# f1 = inTurn
+# -- source: order-in-which-a-literal-defines-its-members-is-one-of-the-image.ts
+# declare function sink(...values: unknown[]): void;
+# type Options = { width?: number; height?: number; style?: { bold?: boolean; color?: string } };
+# function inTurn(w: number, s: { bold?: boolean }) { const o: Options = { style: s, width: w }; sink(o); }
+# sink(inTurn);
+# -- end of source
+# RUN(SUMMARY): summary f1
+# SUMMARY: allocation-lists {{*}}"style" "width"
+# RUN(ORDERS): plan orders mechanisms=all
+# ORDERS: order {{*}}: "style" "width"
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: PutSlotOrAdd {{*}}key="style" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="width" {{*}}orderWordAfter=

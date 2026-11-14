@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# "use strict";
+# const record = { v: 1 };
+# Object.defineProperty(record, "size", { get() { return this.v; }, set(x) { this.v = x * 2; } });
+# function make(v) { const made = { v }; Object.defineProperty(made, "size", { get() { return this.v; }, set(x) { this.v = x + 1; }, enumerable: true, configurable: true }); return made; }
+# function run(count) { let sum = 0; for (let i = 0; i < count; i++) { sum += record.size; record.size = i & 3; } return sum; }
+# function runMade(made, count) { let sum = 0; for (let i = 0; i < count; i++) { sum += made.size; made.size = i & 3; } return sum; }
+# print(run(10), runMade(make(1), 10), runMade(make(2), 10));
+# -- end of source
+# The accessor is laid in front of everything that sees the object: reads and stores run its halves, and nobody else does. f4 to f7 = the halves.
+# RUN(KNOWN): link functions mechanisms=all
+# KNOWN: function f4 callers-known
+# KNOWN: function f5 callers-known
+# KNOWN: function f6 callers-known
+# KNOWN: function f7 callers-known
+# RUN(RECORD): walk f2 mechanisms=all
+# RECORD-NOT: GetSlotGetter
+# RECORD: frame {{*}} callee=f4
+# RECORD: frame {{*}} callee=f5
+# RUN(MADE): walk f3 mechanisms=all
+# MADE-NOT: GetSlotGetter
+# MADE: frame {{*}} callee=f6
+# MADE: frame {{*}} callee=f7
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 25 22 23

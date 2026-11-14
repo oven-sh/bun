@@ -1,0 +1,17 @@
+# f1 = make
+# f2 = makeCache
+# f3 = Screen
+# f4 = start
+# f5 = sum
+# -- source: main.mjs
+# function make(length, kind) { switch (kind) { case "uint8": var made = new Uint8Array(length); break; case "int32": var made = new Int32Array(length); } return made; }
+# function makeCache(tiles) { const cache = []; let tile = 0; while (tile < tiles) cache[tile++] = make(64, "uint8"); return cache; }
+# function Screen() { this.cache = null; this.start(); }
+# Screen.prototype.start = function () { this.cache = makeCache(8); };
+# Screen.prototype.sum = function () { let all = 0; for (let t = 0; t < 8; t++) { const tile = this.cache[t]; for (let i = 0; i < 64; i++) all += tile[i] + i; } return all; };
+# const screen = new Screen(); globalThis.unseen = screen;
+# print(screen.sum()); screen.cache[3] = [1.5, 2]; print(screen.sum());
+# -- end of source
+# The helper fills the array with what one call returns for the string it passes.
+# RUN: link held fields
+# CHECK: "cache" proven=null|Array<Uint8Array>

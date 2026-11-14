@@ -5,7 +5,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub struct Binary {
+pub(crate) struct Binary {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Binary>,
     pub(crate) io: IO,

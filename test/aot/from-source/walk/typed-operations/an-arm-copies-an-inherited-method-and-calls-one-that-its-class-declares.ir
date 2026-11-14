@@ -1,0 +1,40 @@
+# -- source: an-arm-copies-an-inherited-method-and-calls-one-that-its-class-declares.ts
+# declare function print(value: unknown): void;
+# abstract class Shape { abstract area(): number; twice(): number { return this.area() * 2; } }
+# class Square extends Shape { constructor(private side: number) { super(); } area(): number { return this.side * this.side; } }
+# class Disk extends Shape { constructor(private r: number) { super(); } area(): number { return 3 * this.r * this.r; } twice(): number { return super.twice() + 1; } }
+# function twices(shapes: Shape[], turns: number): number { let total = 0; for (let i = 0; i < turns; i++) total += shapes[i & 1].twice(); return total; }
+# function areas(shapes: Shape[], turns: number): number { let total = 0; for (let i = 0; i < turns; i++) total += shapes[i & 1].area(); return total; }
+# function once(shapes: Shape[], i: number): number { return shapes[i].area(); }
+# const shapes: Shape[] = [new Square(2), new Disk(1)];
+# print(twices(shapes, 10)); print(areas(shapes, 10)); print(once(shapes, 1));
+# -- end of source
+# A receiver that is proven to be of a few layouts is told apart by a row of tests of the shape, and behind each test the method is known. Is it copied into its arm? Only where the copy
+# learns more of `this` than the method does in its own unit. `twice` is inherited: by itself it knows `this` as any Shape, and in the arm of Square its `this.area()` is Square.area: it is
+# copied, and nothing is called. `area` is declared by each class: by itself it knows `this` as well as an arm would. It is copied into its arm in a loop, where it is a small leaf and the
+# loop calls nothing then; outside a loop it gets no arms. Nobody constructs the base itself: every receiver has the method, and there is one call through the method table. Copies outside
+# loops were four fifths of what the rows cost a build and of their bytes, and a hundredth of what they bought.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L1]
+# CHECK-NOT: = CallDirect
+# CHECK: = Mul {{*}}form=Numbers
+# CHECK: = ShapeTest {{*}}layouts=[L2]
+# RUN(AREAS): walk f2 mechanisms=all
+# AREAS-LABEL: code f2:Body
+# AREAS: = ShapeTest {{*}}layouts=[L1]
+# AREAS-NOT: = CallTable
+# AREAS-NOT: = CallDirect
+# AREAS: = ShapeTest {{*}}layouts=[L2]
+# AREAS-NOT: = CallTable
+# AREAS-NOT: = CallDirect
+# RUN(ONCE): walk f3 mechanisms=all
+# ONCE-LABEL: code f3:Body
+# ONCE-NOT: = ShapeTest
+# ONCE: = CallTable
+# ONCE-NOT: = ShapeTest
+# ONCE-NOT: = CallDirect
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 75
+# ANSWERS-NEXT: 35
+# ANSWERS-NEXT: 3

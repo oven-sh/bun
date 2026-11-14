@@ -1,14 +1,14 @@
 //! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0).
 
-pub mod endpoint;
+pub(crate) mod endpoint;
 pub(crate) mod ffi;
-pub mod session;
-pub mod stream;
-pub mod tls;
+pub(crate) mod session;
+pub(crate) mod stream;
+pub(crate) mod tls;
 
-pub use endpoint::QuicEndpoint;
-pub use session::QuicSession;
-pub use stream::QuicStream;
+pub(crate) use endpoint::QuicEndpoint;
+pub(crate) use session::QuicSession;
+pub(crate) use stream::QuicStream;
 
 /// Monotonic nanoseconds, mirroring Node's use of `uv_hrtime()` for the
 /// `*_AT` stats slots.
@@ -23,18 +23,17 @@ pub(crate) mod callbacks {
     pub(crate) fn set(global: &JSGlobalObject, holder: JSValue) {
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .node_quic_callbacks
-            .set(global, holder);
+            .with_mut(|callbacks| callbacks.set(global, holder));
     }
 
     pub(crate) fn get(global: &JSGlobalObject, name: &str) -> Option<JSValue> {
         let holder = global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .node_quic_callbacks
+            .get()
             .get()?;
         match holder.get(global, name) {
             Ok(Some(value)) if value.is_callable() => Some(value),

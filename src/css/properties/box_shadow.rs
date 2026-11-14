@@ -52,7 +52,7 @@ impl css::generic::IsCompatible for BoxShadow {
 }
 
 impl BoxShadow {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut color: Option<CssColor> = None;
         struct Lengths {
             x: Length,
@@ -183,11 +183,11 @@ pub struct BoxShadowHandler {
 }
 
 impl BoxShadowHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         let arena = dest.bump();
         match property {

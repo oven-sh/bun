@@ -1,0 +1,3 @@
+// The runtime of browserify, but what it reads behind the look at `require` is another name, which nothing declares.
+process.on("uncaughtException", e => console.log(e.name));
+(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){throw new Error("Cannot find module '"+o+"'")}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&nothingDeclaresThis;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){ console.log("a", require("./b").n); },{"./b":2}],2:[function(require,module,exports){ exports.n = 5; console.log("b"); },{}]},{},[1]);

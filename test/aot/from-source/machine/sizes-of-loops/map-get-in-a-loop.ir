@@ -1,0 +1,23 @@
+# f1 = total
+# -- source: map-get-in-a-loop.ts
+# function total(prices: Map<string, number>, names: string[]): number {
+#   let sum = 0;
+#   for (let k = 0; k < names.length; k++) sum += prices.get(names[k]!) ?? 0;
+#   return sum;
+# }
+# declare const input: any;
+# const prices = new Map<string, number>();
+# prices.set(String(input), +input);
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = total(prices, names);
+# -- end of source
+# The map is searched in line, by the tag of its string keys. What every search asks of the map is read once, before both versions of the loop.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns {{*}}keysAreStrings
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = GetMapValueByStringTag
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = GetMapValueByStringTag

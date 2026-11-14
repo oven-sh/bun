@@ -1,4 +1,4 @@
-import { parse } from "url";
+import { parse, urlToHttpOptions } from "url";
 
 describe("Url.prototype.parse", () => {
   it("parses URL correctly", () => {
@@ -67,6 +67,22 @@ describe("Url.prototype.parse", () => {
   });
 });
 
+it("urlToHttpOptions returns a null-prototype object", () => {
+  const options = urlToHttpOptions(new URL("http://user:pass@foo.bar.com:21/aaa/zzz?l=24#test"));
+  expect(Object.getPrototypeOf(options)).toBe(null);
+  expect<object>({ ...options }).toEqual({
+    protocol: "http:",
+    hostname: "foo.bar.com",
+    hash: "#test",
+    search: "?l=24",
+    pathname: "/aaa/zzz",
+    path: "/aaa/zzz?l=24",
+    href: "http://user:pass@foo.bar.com:21/aaa/zzz?l=24#test",
+    port: 21,
+    auth: "user:pass",
+  });
+});
+
 it("URL constructor throws ERR_MISSING_ARGS", () => {
   var err;
   try {
@@ -76,7 +92,6 @@ it("URL constructor throws ERR_MISSING_ARGS", () => {
     err = e;
   }
 
-  // @ts-expect-error
   expect(err?.code).toEqual("ERR_MISSING_ARGS");
 });
 

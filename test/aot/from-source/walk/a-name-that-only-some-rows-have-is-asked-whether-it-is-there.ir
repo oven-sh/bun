@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# const rows = [{ id: 1, price: 2 }, { id: 2, price: 3, discount: 1 }, { id: 3, price: 4, note: "n" }, { id: 4, price: 5, note: "n", discount: 2 }];
+# function work(list) { let total = 0; for (const row of list) total += row.price - (row.discount ?? 0) + (row.note ? 1 : 0) + row.id; return total; }
+# sink(work(rows));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: = ShapeTest
+# CHECK: = GetSlotOrUndefined {{*}}key="discount"
+# CHECK-NOT: = ShapeTest
+# CHECK: = GetSlotOrUndefined {{*}}key="note"
+# CHECK-NOT: = ShapeTest
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 23

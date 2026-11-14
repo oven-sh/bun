@@ -1,0 +1,40 @@
+# -- source: a-holder-whose-length-bounds-the-counter-that-reads-it-is-asked-for-a-list-in-front-of-the-loop.mjs
+# const shelf = new Map([["ints", JSON.parse("[3,9,4]")], ["halves", JSON.parse("[0.5,-2,1e300]")], ["mixed", JSON.parse('["x",null,7]')], ["text", "wxyz"], ["bytes", Uint8Array.of(7, 8)], ["five", 5], ["like", { length: 2, 0: "p" }], ["holes", [1, , 0.5]]]);
+# let kept;
+# function last(name) { const l = shelf.get(name); kept = "none"; for (let i = 0; i < l.length; i++) kept = l[i]; return kept; }
+# function find(name, x) { const l = shelf.get(name); for (let i = 0; i < l.length; i++) if (l[i] === x) return i; return -1; }
+# function copy(name) { const l = shelf.get(name), o = new Array(4); let sum = 0; for (let i = 0; i < l.length; i++) { o[i] = l[i]; sum += i; } return sum < 0 ? "" : o.join("|"); }
+# function gather(name) { const l = shelf.get(name), o = []; for (let i = 0; i < l.length; i++) o.push(l[i]); return o.length; }
+# function each(name, take) { const l = shelf.get(name); kept = "none"; for (let i = 0; i < l.length; i++) take(l[i]); return kept; }
+# const seen = [];
+# for (const name of shelf.keys()) seen.push(name + ":" + String(last(name)) + "," + find(name, 7) + "," + copy(name) + "," + gather(name) + "," + String(each(name, name === "text" ? (x) => { kept = x + x; } : (x) => { kept = x; })));
+# sink(seen.join(" "));
+# -- end of source
+# In a file without written types nothing is known of what a Map gives. The loop's own text says what to ask: it names nothing off the holder but its length, its head holds the counter against that length,
+# and a turn reads the holder under the counter. Neither arithmetic nor a relation of order takes the element, so nothing said "numbers" and the loop was built once, closed: the length and the read by stubs,
+# 50 instructions a turn. The front asks for a list; in the copy behind it the length is read in front and the read stands in line (the kind of the storage is asked in the turn). Where the element is compared for equality or stored by key there are two copies, one for a list whose storage holds numbers and one for any other, and each copy's kind is settled in front. What is no list runs the loop
+# as it was walked before. Only where the turns call nothing but built-ins that the look knows: behind a call of anything else nothing asked in front holds, and the read is the lesser part of such a turn.
+# f1 = last, f2 = find, f3 = copy, f4 = gather, f5 = each
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement
+# RUN(FIND): walk f2:Body mechanisms=all
+# FIND-LABEL: code f2:Body
+# FIND: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# FIND: = GetArrayElement {{*}}arrayStorage=Double
+# FIND: = HasArrayStorage {{*}}arrayStorage=Contiguous
+# FIND: = GetArrayElement {{*}}arrayStorage=Contiguous
+# RUN(COPY): walk f3:Body mechanisms=all
+# COPY-LABEL: code f3:Body
+# COPY: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# COPY: = GetArrayElement {{*}}arrayStorage=Double
+# RUN(GATHER): walk f4:Body mechanisms=all
+# GATHER-LABEL: code f4:Body
+# GATHER: = GetArrayElement
+# RUN(EACH): walk f5:Body mechanisms=all
+# EACH-LABEL: code f5:Body
+# EACH-NOT: = GetArrayElement
+# RUN(COUNT): compile mechanisms=all CounterIndexedLoopsVersioned
+# COUNT: statistic CounterIndexedLoopsVersioned 4
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: ints:4,-1,3|9|4|,3,4 halves:1e+300,-1,0.5|-2|1e+300|,3,1e+300 mixed:7,2,x||7|,3,7 text:z,-1,w|x|y|z,4,zz bytes:8,0,7|8||,2,8 five:none,-1,|||,0,none like:undefined,-1,p|||,2,undefined holes:0.5,-1,1||0.5|,3,0.5

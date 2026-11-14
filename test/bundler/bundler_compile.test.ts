@@ -437,6 +437,36 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  // A file imported with { type: "file" } is embedded byte for byte, whatever it begins with and whatever its extension.
+  itBundled("compile/EmbeddedFileKeepsItsBytes", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync } from "fs";
+        import utf8Bin from "./utf8.bin" with { type: "file" };
+        import utf8Txt from "./utf8.txt" with { type: "file" };
+        import utf8Js from "./utf8.js" with { type: "file" };
+        import utf16Bin from "./utf16.bin" with { type: "file" };
+        import utf16Json from "./utf16.json" with { type: "file" };
+        import bytesBin from "./bytes.bin" with { type: "file" };
+        import bytesTs from "./bytes.ts" with { type: "file" };
+        for (const path of [utf8Bin, utf8Txt, utf8Js, utf16Bin, utf16Json, bytesBin, bytesTs]) {
+          console.log(readFileSync(path).toString("hex"));
+        }
+      `,
+      "/utf8.bin": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.txt": Buffer.from("efbbbf61620a", "hex"),
+      "/utf8.js": Buffer.from("efbbbf61620a", "hex"),
+      "/utf16.bin": Buffer.from("fffe61006200", "hex"),
+      "/utf16.json": Buffer.from("fffe61006200", "hex"),
+      "/bytes.bin": Buffer.from("fffe000180810a", "hex"),
+      "/bytes.ts": Buffer.from("fffe000180810a", "hex"),
+    },
+    outfile: "dist/out",
+    run: {
+      stdout: "efbbbf61620a\nefbbbf61620a\nefbbbf61620a\nfffe61006200\nfffe61006200\nfffe000180810a\nfffe000180810a",
+    },
+  });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
     compile: true,
@@ -1668,9 +1698,6 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
     // before the growth `reserve()` (which would otherwise see a negative size_diff).
     ["filesize-past-eof", machoTemplate({ bunFileOff: 0, bunFileSize: 0x8000, fileSize: 256 }), "OffsetOutOfRange"],
-    // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
-    // write_section only grows, so a template that would require shrinking is rejected.
-    ["filesize-needs-shrink", machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 }), "InvalidObject"],
   ] as const) {
     const badTemplate = join(cwd, `template-${name}`);
     await Bun.write(badTemplate, bytes);
@@ -1728,6 +1755,59 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(stderr).not.toContain("OffsetOutOfRange");
     const outBytes = Buffer.from(await Bun.file(outGood).arrayBuffer());
     expect(outBytes.includes("compiled-from-template")).toBe(true);
+    expect(exitCode).toBe(0);
+  }
+
+  // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot, as in a
+  // template that is itself a compiled executable. write_section only grows, so the segment
+  // keeps its size, nothing behind it moves, and what the bundle leaves of the slot is zeroed.
+  const largerTemplate = join(cwd, "template-larger-slot");
+  const largerBytes = machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 });
+  largerBytes.fill(0xaa, 0x4000, 0xc000);
+  await Bun.write(largerTemplate, largerBytes);
+  const outLarger = join(cwd, "out-larger-slot");
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        largerTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outLarger,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("InvalidObject");
+    const outBytes = Buffer.from(await Bun.file(outLarger).arrayBuffer());
+    const bundleSize = Number(outBytes.readBigUInt64LE(0x4000));
+    const segment = 32; // LC_SEGMENT_64 __BUN
+    const section = segment + 72;
+    const linkedit = section + 80;
+    expect({
+      vmsize: Number(outBytes.readBigUInt64LE(segment + 32)),
+      fileoff: Number(outBytes.readBigUInt64LE(segment + 40)),
+      filesize: Number(outBytes.readBigUInt64LE(segment + 48)),
+      sectionSize: Number(outBytes.readBigUInt64LE(section + 40)),
+      linkeditFileOff: Number(outBytes.readBigUInt64LE(linkedit + 40)),
+    }).toEqual({
+      vmsize: 0x8000,
+      fileoff: 0x4000,
+      filesize: 0x8000,
+      sectionSize: 8 + bundleSize,
+      linkeditFileOff: 0xc000,
+    });
+    expect(bundleSize).toBeLessThan(0x4000);
+    expect(outBytes.subarray(0x4008, 0x4008 + bundleSize).includes("compiled-from-template")).toBe(true);
+    expect(outBytes.subarray(0x4008 + bundleSize, 0xc000).every(byte => byte === 0)).toBe(true);
     expect(exitCode).toBe(0);
   }
 }, 60_000);

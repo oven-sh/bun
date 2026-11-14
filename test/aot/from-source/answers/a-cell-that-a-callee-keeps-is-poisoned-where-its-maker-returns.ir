@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# const holder: { inner: { lid: number } | null } = { inner: null };
+# function keep(o: { lid: number }): void { holder.inner = o; }
+# function make(i: number): number { const o = { lid: i }; keep(o); return i; }
+# print(make(3));
+# print(holder.inner!.lid);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a cell that the walk still holds as fresh where a function returns is dead there by the walk's own claim, so it is overwritten (EndCellLifetime).
+# Code that holds the cell after all crashes the next time it looks into the cell, and the message says where the cell was allocated.
+# Fault injection, testing=AssumeCalleesRetainNothing: the walk assumes that the callee of a direct call does not retain an argument, so `o` stays fresh across keep(o).
+# No value is wrong: without the check the program prints 3, 3 and continues.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed with

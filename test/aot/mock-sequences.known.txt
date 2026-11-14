@@ -1,0 +1,29 @@
+# Every line of test/aot/mock-sequences*.test.ts that `bun test --aot` prints otherwise than `bun test`:
+#   <fault> <way> <sequence> <step> <what is asked>: loud | SILENT | <what the compiled run says>
+# A fix takes its lines out: BUN_AOT_REWRITE_MOCK_SEQUENCES=1 writes the lines of what ran anew, keeps the first word by the key, and puts `?` in front of a new key.
+# The ways: see harness/mock-sequences.ts. `m` is the mocked module, user.js holds `import { flag } from m`.
+#   second-mock            vi.doMock(m, f1); await import(m); vi.doMock(m, f2) or mock.module(m, f2), vi.doUnmock(m), mock.restore(): what the loads behind the later event get
+#   late-rejection         vi.doMock(m, async () => { await 0; throw e }): what the loads behind the failure get
+#   require-beside-await   require(m) while the mock's async factory has not been called, or has not settled
+#   require-of-importer    require("./user.js") in place of import("./user.js")
+#   user-above             user.js lies in an image above m's
+#   bare-behind-rejection  vi.doMock(m) without a factory, behind a factory that rejected
+#   next-file              the next test file, which mocks nothing
+#   plains-accident        a factory fails, user.js fails to load, import(m) fails once more, then comes a mock that does not fail: `bun test` goes on answering import("./user.js") with the old error until its next eviction pass: the failing import(m) took the entry of m out of the registry, so the next mock finds nothing stale. A compiled run does the same unless m is a CommonJS module or user.js had loaded before: those lines are left.
+#   names-the-original     a comment or a string in the factory names vi.importActual, importOriginal or original: `bun test` reads the text of a factory, passes over comments and not over strings
+#   asks-for-the-original  the factory awaits its argument (under either name) or vi.importActual(m), in double or single quotes, and may throw behind that
+#   body-awaits            m holds a top-level await
+#   body-throws            the body of m throws behind its exports
+# A `+` behind the fault: the compiler on Bun's main branch prints that line as `bun test` does: it was lost since.
+names-the-original one comment+string+single.cjs.late.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.cjs.late.throws 2 string values: SILENT | import threw the body throws 1 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.cjs.late.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.cjs.required.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.cjs.required.throws 2 string values: SILENT | import threw the body throws 1 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.cjs.required.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.late.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.js.late.throws 2 string values: SILENT | import threw the body throws 1 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.late.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.required.throws 2 string names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+names-the-original one comment+string+single.js.required.throws 2 string values: SILENT | import threw the body throws 1 require string2 late string2,vi.importActual(importOriginal)2,string2 top none
+names-the-original one comment+string+single.js.required.throws 3 single held: SILENT | late string2,vi.importActual(importOriginal)2,string2 top none

@@ -1,0 +1,24 @@
+# `gate[marks] |= ..` reads the field and stores into it. The look of the read asks the slot for a value of the written type, and where it fails the typed arm is left: behind it the field lies in its slot, so the store overwrites.
+# it asks the cell whether it is frozen and nothing else: what stands above the object is asked only by a store that may create the property.
+# f1 = raise, f2 = lay
+# -- source: a-store-behind-a-look-that-asks-for-the-value-overwrites.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Mark { Open = 1, Busy = 2 }
+# const marks = Symbol("marks");
+# class Gate { [marks]: Mark = Mark.Open; }
+# function raise(gate: Gate): void { gate[marks] |= Mark.Busy; }
+# function lay(gate: Gate): void { gate[marks] = Mark.Busy; }
+# sink(Gate, raise, lay);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest
+# CHECK: = IsNotFrozen
+# CHECK: = IsSlotFilled {{*}}key=symbol("marks"){{*}}level=Proven [holdsDeclaredType]
+# CHECK: : i32 @JSValue = GetSlot {{*}}key=symbol("marks"){{*}}level=Proven [holdsDeclaredType]
+# CHECK: = BitOr {{*}}form=Integers
+# CHECK: = PutSlot {{*}}key=symbol("marks"){{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = HasLayoutPrototype
+# NEVER-NOT: = AreMembersUnchanged
+# NEVER-NOT: = PutSlotOrAdd

@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isRoot, isWindows, tempDir, type DirectoryTree } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -80,7 +80,7 @@ const fixture = tempDir("no-orphans", {
 });
 
 async function spawnTree(noOrphans: string | undefined, childScript = "child.js") {
-  const env: Record<string, string> = { ...bunEnv };
+  const env: NodeJS.Dict<string> = { ...bunEnv };
   // bunEnv spreads process.env; make sure an ambient BUN_FEATURE_FLAG_NO_ORPHANS
   // from the test runner doesn't leak into the "unset" case.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -219,7 +219,7 @@ test.concurrent.skipIf(!isPosix)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.concurrent.skipIf(!isPosix || process.getuid?.() !== 0)(
+test.concurrent.skipIf(!isPosix || !isRoot)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
@@ -282,7 +282,7 @@ describe.concurrent.each([
         process.exit(0);
       `,
     });
-    const env: Record<string, string> = { ...bunEnv, ...extraEnv };
+    const env: NodeJS.Dict<string> = { ...bunEnv, ...extraEnv };
     if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const proc = Bun.spawn({
       cmd: [bunExe(), ...argv, "clean-exit.js"],
@@ -332,8 +332,8 @@ describe.concurrent.each([
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
   test.concurrent.skipIf(!isPosix)("bun run and the script exit", async () => {
-    using dir = tempDir("no-orphans-run", files);
-    const env: Record<string, string> = { ...bunEnv };
+    using dir = tempDir("no-orphans-run", files as DirectoryTree);
+    const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const sh = Bun.spawn({
       cmd: ["/bin/sh", "-c", `"${bunExe()}" run --no-orphans ${runArgs} & wait`],
@@ -599,7 +599,7 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
       process.exit(0);
     `,
   });
-  const env: Record<string, string> = { ...bunEnv };
+  const env: NodeJS.Dict<string> = { ...bunEnv };
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   const proc = Bun.spawn({
     cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
@@ -725,9 +725,11 @@ test.concurrent.skipIf(!isLinux)(
       // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
       // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
       expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      // The script can write its ids before the spawn returns, and `give()` runs behind it.
+      const inForeground = new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `);
+      const deadline = Date.now() + 4000;
+      while (!inForeground.test(readFileSync(`/proc/${runPid}/stat`, "utf8")) && Date.now() < deadline) await sleep(10);
+      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(inForeground);
 
       // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
       // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
@@ -748,6 +750,8 @@ test.concurrent.skipIf(!isLinux)(
         // only ever observe 'S'. The post-condition is what matters.
         await waitState(scriptPid, st => st === "T" || st === "t", 200);
         const resumed = await waitState(scriptPid, st => st === "S" || st === "R", 3000);
+        // bun still runs for a moment behind the SIGCONT.
+        await waitState(runPid, st => st === "S", 3000);
         expect({
           round: i,
           resumed,
@@ -762,9 +766,7 @@ test.concurrent.skipIf(!isLinux)(
       }
 
       // Foreground pgroup is back on the script after each dance round.
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(inForeground);
     } finally {
       if (runPid > 0) reap(runPid);
       if (scriptPid > 0) reap(-scriptPid, scriptPid);
@@ -1003,7 +1005,7 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // link: it spawns the leaf via plain CreateProcess, so the leaf escapes
 // libuv's job but not the --no-orphans job. The leaf writes its pid to a file
 // so the test can observe it after cmd.exe's stdout pipe is torn down.
-async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>, bunfig = false) {
+async function spawnTreeWindows(argv: readonly string[], extraEnv: NodeJS.Dict<string>, bunfig = false) {
   // No `cwd` anywhere in the chain: the leaf must not hold an open handle on
   // the tempDir (CWD lock) or the negative test's cleanup races the rm.
   const dir = tempDir("no-orphans-win", {
@@ -1159,7 +1161,7 @@ test.concurrent.skipIf(!isWindows)(
       `,
       "sup.bat": `@"${bunExe()}" --no-orphans "%~dp0probe.js"\r\n`,
     });
-    const env: Record<string, string> = { ...bunEnv };
+    const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     await using proc = Bun.spawn({
       cmd: ["cmd.exe", "/d", "/c", `${dir}\\sup.bat`],

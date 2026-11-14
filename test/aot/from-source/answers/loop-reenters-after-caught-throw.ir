@@ -1,0 +1,19 @@
+# f1 = plus, f2 = told
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# function plus(v: any) { if (v < 0) throw new Error("negative"); return v + 1; }
+# function told(list: any) {
+#   let total = 0;
+#   for (let i = 0; i < 24; i++) { const v = list[i]; try { total = (total + plus(v)) | 0; } catch (error) { total = (total + String(error).length) | 0; } }
+#   return total;
+# }
+# const list: any = JSON.parse("[" + Array.from({ length: 24 }, (_, k) => (k === 3 ? -1 : k)).join() + "]");
+# print(told(list), told(list));
+# -- end of source
+# The handler runs other code, so a caught throw restarts its iteration in generic code. That iteration returns to a block in front of the hoisted guards, the header of a loop around the specialized version.
+# RUN(WALK): walk f2 mechanisms=all
+# WALK-LABEL: code f2:Body
+# WALK: isLoopHead=true:
+# WALK-NEXT: = TypeTest
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 311 311

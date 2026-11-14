@@ -16,9 +16,9 @@ use bun_alloc::ArenaVecExt as _;
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 // Clone derive gated on `Image` gaining `Clone` upstream.
 #[cfg_attr(any(), derive(Clone))]
-pub struct Background {
+pub struct Background<'bump> {
     /// The background image.
-    pub(crate) image: Image,
+    pub(crate) image: Image<'bump>,
     /// The background color.
     pub(crate) color: CssColor,
     /// The background position.
@@ -35,8 +35,8 @@ pub struct Background {
     pub(crate) clip: BackgroundClip,
 }
 
-impl Background {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+impl<'bump> Background<'bump> {
+    pub(crate) fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut color: Option<CssColor> = None;
         let mut position: Option<BackgroundPosition> = None;
         let mut size: Option<BackgroundSize> = None;
@@ -191,7 +191,7 @@ impl Background {
             has_output = true;
         }
 
-        if (output_padding_box && !self.clip.eql_origin(BackgroundOrigin::BorderBox))
+        if (output_padding_box && !self.clip.eql_origin(self.origin))
             || !self.clip.eql_origin(BackgroundOrigin::BorderBox)
         {
             if has_output {
@@ -215,17 +215,17 @@ impl Background {
         Ok(())
     }
 
-    fn get_image(&self) -> &Image {
+    fn get_image(&self) -> &Image<'bump> {
         &self.image
     }
 
-    fn with_image(&self, arena: &Bump, image: Image) -> Self {
+    fn with_image(&self, arena: &Bump, image: Image<'bump>) -> Self {
         let mut ret = self.deep_clone(arena);
         ret.image = image;
         ret
     }
 
-    fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
+    fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background<'bump> {
         let mut ret = self.deep_clone(arena);
         ret.color = self.color.get_fallback(arena, kind);
         ret.image = self.image.get_fallback(arena, kind);
@@ -284,7 +284,7 @@ pub struct ExplicitBackgroundSize {
 }
 
 impl BackgroundSize {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {
             let height = input
                 .try_parse(LengthPercentageOrAuto::parse)
@@ -296,7 +296,7 @@ impl BackgroundSize {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"cover" => Ok(BackgroundSize::Cover),
@@ -343,7 +343,7 @@ pub struct BackgroundPosition {
 }
 
 impl BackgroundPosition {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let pos = Position::parse(input)?;
         Ok(BackgroundPosition::from_position(pos))
     }
@@ -391,9 +391,9 @@ impl BackgroundRepeat {
         }
     }
 
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let state = input.state();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"repeat-x" => return Ok(BackgroundRepeat {
@@ -580,9 +580,9 @@ impl BackgroundProperty {
 }
 
 #[derive(Default)]
-pub struct BackgroundHandler {
+pub struct BackgroundHandler<'bump> {
     pub(crate) color: Option<CssColor>,
-    pub(crate) images: Option<SmallList<Image, 1>>,
+    pub(crate) images: Option<SmallList<Image<'bump>, 1>>,
     pub(crate) has_prefix: bool,
     pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
     pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
@@ -591,9 +591,8 @@ pub struct BackgroundHandler {
     pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
-    // `'bump` through BackgroundHandler would avoid the heap alloc.
-    pub(crate) decls: Vec<Property>,
+    // TODO(perf): `bun_alloc::ArenaVec<'bump, Property>` would avoid the heap alloc.
+    pub(crate) decls: Vec<Property<'bump>>,
     pub(crate) flushed_properties: BackgroundProperty,
     pub(crate) has_any: bool,
 }
@@ -636,12 +635,12 @@ macro_rules! push_property {
     }};
 }
 
-impl BackgroundHandler {
+impl<'bump> BackgroundHandler<'bump> {
     pub(crate) fn handle_property(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         let arena = dest.bump();
         match property {
@@ -650,8 +649,8 @@ impl BackgroundHandler {
                 self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
-                self.background_helper(val, property, dest, context);
-                self.images = Some(val.deep_clone(arena));
+                flush_helper!(self, images, val, dest, context);
+                self.set_images(val.deep_clone(arena), property, dest, context);
             }
             Property::BackgroundPosition(val) => {
                 let len = val.len();
@@ -718,7 +717,7 @@ impl BackgroundHandler {
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
                 }
-                self.background_helper(&images, property, dest, context);
+                flush_helper!(self, images, &images, dest, context);
                 let arena = dest.bump();
                 let color = val.last().unwrap().color.deep_clone(arena);
                 flush_helper!(self, color, &color, dest, context);
@@ -741,7 +740,7 @@ impl BackgroundHandler {
                 }
 
                 self.color = Some(color);
-                self.images = Some(images);
+                self.set_images(images, property, dest, context);
                 let len = val.len();
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
@@ -804,32 +803,44 @@ impl BackgroundHandler {
         true
     }
 
-    fn background_helper(
+    /// Call it after every flush of the arm: to `flush`, the last of `self.decls` is `self.images`.
+    fn set_images(
         &mut self,
-        val: &SmallList<Image, 1>,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        images: SmallList<Image<'bump>, 1>,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
-        flush_helper!(self, images, val, dest, context);
-
         // Store prefixed properties. Clear if we hit an unprefixed property and we have
         // targets. In this case, the necessary prefixes will be generated.
-        self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
+        self.has_prefix = images.any(|item: &Image| item.has_vendor_prefix());
         if self.has_prefix {
             let arena = dest.bump();
             self.decls.push(property.deep_clone(arena));
         } else if context.targets.browsers.is_some() {
             self.decls.clear();
         }
+        self.images = Some(images);
     }
 
-    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    fn flush(
+        &mut self,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
+    ) {
         if !self.has_any {
             return;
         }
         self.has_any = false;
         let arena = dest.bump();
+
+        // If the last declaration is prefixed, pop the last value
+        // so it isn't duplicated when we flush.
+        if self.has_prefix {
+            let _ = self.decls.pop();
+            self.has_prefix = false;
+        }
+        dest.extend(self.decls.drain(..));
 
         let mut maybe_color: Option<CssColor> = self.color.take();
         let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();
@@ -1133,23 +1144,9 @@ impl BackgroundHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
-        // If the last declaration is prefixed, pop the last value
-        // so it isn't duplicated when we flush.
-        if self.has_prefix {
-            let _ = self.decls.pop();
-            // Drop handles deinit.
-        }
-
-        let arena = dest.bump();
-        for decl in self.decls.drain(..) {
-            // `Property` is not `Clone` here, so move out via drain.
-            let _ = arena;
-            dest.push(decl);
-        }
-
         self.flush(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
     }
@@ -1157,13 +1154,13 @@ impl BackgroundHandler {
 
 // `Background` participates in `SmallList::get_fallbacks` via the
 // `ImageFallback` trait.
-impl crate::small_list::ImageFallback for Background {
+impl<'bump> crate::small_list::ImageFallback<'bump> for Background<'bump> {
     #[inline]
-    fn get_image(&self) -> &Image {
+    fn get_image(&self) -> &Image<'bump> {
         Background::get_image(self)
     }
     #[inline]
-    fn with_image(&self, arena: &Bump, image: Image) -> Self {
+    fn with_image(&self, arena: &Bump, image: Image<'bump>) -> Self {
         Background::with_image(self, arena, image)
     }
     #[inline]

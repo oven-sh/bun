@@ -18,6 +18,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import {
+  overridesDarwinAllocator,
+  replacedLibcAllocationSymbols,
+  replacedOperatorNewSymbols,
+} from "./deps/mimalloc.ts";
+import { definesLibcFunctions, libcFunctionsScriptPath, versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -90,6 +96,14 @@ export interface BinaryExpectations {
   minOSVersion?: string;
   /** Undefined dynamic symbols that must not appear (`*` wildcards). */
   forbiddenImports: string[];
+  requiredImports?: string[];
+  /**
+   * The exact set of imported symbols, for a program small enough that every import is a decision (the Windows
+   * `.bin/` shim). Undefined = only `forbiddenImports` is checked.
+   */
+  importedSymbols?: string[];
+  /** The file may not be larger than this many bytes. */
+  maxFileSize?: number;
   /**
    * Allowed static initializers (`*` wildcards over the symbol each
    * .init_array / __init_offsets entry points at). Ours is a codebase with
@@ -101,6 +115,16 @@ export interface BinaryExpectations {
    * lazy instead — function-local static, LazyNeverDestroyed, constinit.
    */
   staticInitializers?: string[];
+  /**
+   * Symbols that the executable's own symbol table may not define (`*`
+   * wildcards over mangled names): code that is there for tests and debugging
+   * and has to stay out of what ships. Undefined = not checkable on this
+   * format (PE: the names are in the PDB), or the flavour may have them.
+   *
+   * A match means that something reachable calls it: find the caller. In the
+   * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
+   */
+  forbiddenSymbols?: string[];
   elf?: {
     type: "EXEC" | "DYN";
     /** PT_GNU_STACK must be RW, never RWE. */
@@ -109,6 +133,8 @@ export interface BinaryExpectations {
     rwxLoad: false;
     relro: boolean;
     bindNow: boolean;
+    /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
+    tlsSegment: boolean;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -124,8 +150,8 @@ export interface BinaryExpectations {
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
    * Mach-O debug info lives in the dSYM, on PE in the PDB). `compressed`:
-   * the DWARF sections carry SHF_COMPRESSED (at link, or post-link with
-   * rust-lld — flags.ts --compress-debug-sections).
+   * the DWARF sections carry SHF_COMPRESSED (flags.ts
+   * --compress-debug-sections).
    */
   debugInfo?: { symtab: boolean; debugSections: boolean; compressed: boolean };
 }
@@ -158,6 +184,16 @@ export function versionScriptGlobals(path: string): { patterns: string[]; demang
     (inCxx ? demangledPatterns : patterns).push(s);
   }
   return { patterns, demangledPatterns };
+}
+
+/** The `global:` blocks of version scripts in the form lld's `--export-dynamic-symbol-list` reads. */
+export function exportList(versionScripts: string[]): string {
+  const globals = versionScripts.map(versionScriptGlobals);
+  const patterns = globals.flatMap(g => g.patterns);
+  const demangledPatterns = globals.flatMap(g => g.demangledPatterns);
+  const lines = patterns.map(p => `  ${p};`);
+  if (demangledPatterns.length > 0) lines.push('  extern "C++" {', ...demangledPatterns.map(p => `    ${p};`), "  };");
+  return `{\n${lines.join("\n")}\n};\n`;
 }
 
 /** One symbol per line, `#`/`;` comments and blank lines skipped (symbols.txt, symbols.def bodies). */
@@ -229,6 +265,24 @@ function runtimeInitializers(cfg: Config): string[] {
     // compiler-rt's outline-atomics probe and bionic's cpu-feature init.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
+  if (cfg.arm64 && cfg.freebsd) {
+    // compiler-rt's outline-atomics probe and its cpu-feature init. clang 23
+    // made -moutline-atomics the FreeBSD aarch64 default
+    // (FreeBSD::IsAArch64OutlineAtomicsDefault), so both our objects and the
+    // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
+    initializers.push("init_have_lse_atomics", "__init_cpu_features");
+  }
+  if (cfg.fuzzilli && gnu) {
+    // -fsanitize-coverage: the constructor that hands the guards to
+    // FuzzilliREPRL.cpp (one for the binary, bun's objects and the -coverage
+    // WebKit's share it), and the two of clang's runtime, which the flag
+    // links (flags.ts).
+    initializers.push(
+      "sancov.module_ctor_trace_pc_guard",
+      "_GLOBAL__sub_I_sanitizer_common_libcdep.cpp",
+      "_GLOBAL__sub_I_ubsan_init_standalone.cpp",
+    );
+  }
   return initializers;
 }
 
@@ -240,6 +294,14 @@ function runtimeInitializers(cfg: Config): string[] {
  * import guard/pure-virtual/typeid helpers from it, so only the throw path is
  * banned there. Emulated TLS and libatomic calls are banned everywhere.
  */
+function requiredImports(cfg: Config): string[] {
+  if (!cfg.hardened) return [];
+  return [
+    "__stack_chk_fail",
+    ...(cfg.abi === "gnu" && cfg.release && !cfg.asan ? ["__memcpy_chk", "__snprintf_chk"] : []),
+  ];
+}
+
 function forbiddenImports(cfg: Config): string[] {
   // Emulated TLS and libatomic calls: nowhere.
   const forbidden = ["__emutls_*", "__atomic_*"];
@@ -259,6 +321,12 @@ function forbiddenImports(cfg: Config): string[] {
     // C++ runtime static (glibc, Android) or part of the OS (macOS): the
     // unwinder entry must not be imported either.
     forbidden.push("_Unwind_Resume");
+  }
+  if (overridesDarwinAllocator(cfg)) {
+    // Everything linked into the executable allocates from mimalloc
+    // (MimallocOverrideDarwin.cpp). An import of one of these is code that
+    // reached the system allocator around it.
+    forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols);
   }
   if (cfg.linux && cfg.abi !== "musl") {
     // …nor the function-local-static guards (musl/FreeBSD/macOS take them
@@ -289,16 +357,113 @@ const PREBUILT_BMALLOC_DLLEXPORTS = {
   patterns: ["?*@bmalloc@@*"],
 };
 
+/**
+ * Code that only the AoT compiler's tests use. Bun hands the engine the program as bytes, so nothing in Bun reads or
+ * writes IR text: in WebKit the lexer, parser and printer of IR text are sources of testaot alone, and in bun_aot the
+ * printer is behind the `ir_text` feature. The rest is declared in the engine's own headers but defined under WebKit's
+ * aot/tests/, which only testaot links: the printer and parser of the walk's Code, the parser of summaries, and the
+ * procedures that the back end's tests build and run.
+ */
+function testOnlySymbols(cfg: Config): string[] | undefined {
+  if (cfg.assertions) return undefined;
+  return [
+    "*3JSC3AOT5Typed5Lexer*",
+    "*3JSC3AOT5Typed10TextParser*",
+    "*3JSC3AOT5Typed12parseProgram*",
+    "*3JSC3AOT5Typed11parseFields*",
+    "*3JSC3AOT5Typed12parseVariant*",
+    "*3JSC3AOT5Typed18WireProgramBuilder*",
+    "*3JSC3AOT5Typed9IRPrinter*",
+    "*3JSC3AOT5Typed11printFields*",
+    "*3JSC3AOT5Typed12printVariant*",
+    "*3JSC3AOT5Typed12printProgram*",
+    "*3JSC3AOT5Typed13printFunction*",
+    "*3JSC3AOT5Typed9printBody*",
+    "*3JSC3AOT5Typed10printValue*",
+    "*3JSC3AOT5Typed15printTerminator*",
+    // Only the overload that takes a Program: the one that takes a TypeReader (ir/AOTTypeText.h) is the library's.
+    "*3JSC3AOT5Typed9printTypeERN3WTF11PrintStreamERKNS1_7ProgramE*",
+    "*3JSC3AOT5Typed11printString*",
+    "*3JSC3AOT5Typed16printPropertyKey*",
+    "*3JSC3AOT5Typed9printCode*",
+    "*3JSC3AOT5Typed9parseCode*",
+    "*3JSC3AOT5Typed10walkToText*",
+    "*3JSC3AOT5Typed14parseSummaries*",
+    "*3JSC3AOT7Machine13TestProcedure*",
+    "*3JSC3AOT7Machine20buildRandomProcedure*",
+    "*builtinTableRuntimeFunctionTokens*",
+    "*7bun_aot2ir5print*",
+    "*7bun_aot2ir10print_body*",
+    "*7bun_aot2ir11print_names*",
+    "*7bun_aot2ir9generated10entry_text*",
+    "*7bun_aot2ir9generated11record_text*",
+    "*RUNTIME_FUNCTION_TOKENS*",
+  ];
+}
+
+/**
+ * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
+ * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
+ * raw NT calls. Everything here is that property stated as a check.
+ */
+export function shimExpectations(): BinaryExpectations {
+  return {
+    format: "pe",
+    exports: { exact: [], patterns: [] },
+    // kernel32 and ntdll are in every Windows process; anything else is a DLL load added to every launch.
+    neededLibs: { names: ["KERNEL32.dll", "ntdll.dll"], exact: true },
+    forbiddenImports: [],
+    importedSymbols: [
+      "CreateProcessW",
+      "GetConsoleMode",
+      "GetExitCodeProcess",
+      "GetLastError",
+      "NtClose",
+      "NtCreateFile",
+      "NtReadFile",
+      "NtWriteFile",
+      "RtlExitUserProcess",
+      "SetConsoleCtrlHandler",
+      "SetConsoleMode",
+      "WaitForSingleObject",
+    ],
+    // 8 KiB today. A panic path that formats a message, or an allocator, shows up as tens of KiB.
+    maxFileSize: 16 * 1024,
+    minOSVersion: "6.0",
+    pe: {
+      dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
+      subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
+    },
+  };
+}
+
+/** Of `elf`, what the program headers and the dynamic section answer. */
+type ElfLayout = Pick<
+  NonNullable<BinaryExpectations["elf"]>,
+  "type" | "execStack" | "rwxLoad" | "relro" | "bindNow" | "tlsSegment"
+>;
+
+/** The stripped `bun`, the file that ships: whatever `binaryExpectations()` says that is read without a symbol table. ELF only. */
+export function strippedExpectations(cfg: Config): (Omit<BinaryExpectations, "elf"> & { elf: ElfLayout }) | undefined {
+  const expect = binaryExpectations(cfg);
+  if (expect.elf === undefined) return undefined;
+  delete expect.staticInitializers;
+  delete expect.forbiddenSymbols;
+  delete expect.debugInfo;
+  const { type, execStack, rwxLoad, relro, bindNow, tlsSegment } = expect.elf;
+  return { ...expect, elf: { type, execStack, rwxLoad, relro, bindNow, tlsSegment } };
+}
+
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
   const src = (f: string) => join(cfg.cwd, "src", f);
-  // A sanitizer build links its runtime (and, on macOS, our dyld shim for
-  // it) and gains a module constructor per translation unit; those are
+  // A sanitizer build links its runtime and gains a module constructor per
+  // translation unit; those are
   // properties of the flavour, so the library set is opened up for them and
   // the initializer audit is skipped there. Debug and release are held to
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
-  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
+  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "libgcc_s.so.1"] : [];
   // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
   // liblog.so is NEEDED exactly when a live __android_log_* reference
   // survives — a system library either way, allowed rather than pinned.
@@ -309,8 +474,16 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
       ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
       : [];
-  const allowedLibs = [...sanitizerLibs, ...localWebKitLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
+  // --fuzzilli=on: clang's coverage runtime needs it.
+  const coverageLibs = cfg.fuzzilli && cfg.linux && cfg.abi === "gnu" ? ["libresolv.so.2"] : [];
+  const allowedLibs = [
+    ...sanitizerLibs,
+    ...coverageLibs,
+    ...localWebKitLibs,
+    ...(cfg.abi === "android" ? ["liblog.so"] : []),
+  ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
+  const forbiddenSymbols = testOnlySymbols(cfg);
 
   switch (format) {
     case "elf": {
@@ -335,6 +508,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         // glibc 2.17 = RHEL 7 / Amazon Linux 2, the oldest distro generation
         // bun runs on.
         maxSymbolVersions = { GLIBC: "2.17" };
+        if (cfg.relr) versionNames = ["GLIBC_ABI_DT_RELR"];
       } else if (musl) {
         // libstdc++/libgcc stay dynamic on musl on purpose: an N-API addon
         // built on Alpine links libstdc++.so.6, and it and bun must share one
@@ -357,30 +531,41 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       return {
         format,
-        exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
+        exports: {
+          versionScript: versionScriptPath(cfg),
+          exact: definesLibcFunctions(cfg) ? versionScriptGlobals(libcFunctionsScriptPath(cfg)).patterns : [],
+          patterns: [],
+        },
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),
+        requiredImports: requiredImports(cfg),
         ...(staticInitializers && { staticInitializers }),
+        ...(forbiddenSymbols && { forbiddenSymbols }),
         elf: {
           // Android requires PIE; everywhere else bun is a fixed-address
           // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
           // flags.ts links `-z norelro -z lazy` (a startup-time choice from
           // the CMake era, kept as is); recorded so a change is deliberate.
-          type: android ? "DYN" : "EXEC",
+          type: android || cfg.hardened ? "DYN" : "EXEC",
           execStack: false,
           rwxLoad: false,
-          relro: false,
-          bindNow: false,
+          relro: cfg.hardened,
+          bindNow: cfg.hardened,
+          tlsSegment: !android,
         },
-        debugInfo: { symtab: true, debugSections: true, compressed: true },
+        debugInfo: { symtab: true, debugSections: cfg.debugInfo !== "none", compressed: true },
       };
     }
 
     case "macho":
       return {
         format,
-        exports: { symbolList: src("symbols.txt"), exact: [], patterns: [] },
+        exports: {
+          symbolList: src("symbols.txt"),
+          exact: overridesDarwinAllocator(cfg) ? replacedOperatorNewSymbols.map(name => `_${name}`) : [],
+          patterns: [],
+        },
         neededLibs: {
           names: [
             "/usr/lib/libSystem.B.dylib",
@@ -394,6 +579,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
         forbiddenImports: forbiddenImports(cfg),
         ...(staticInitializers && { staticInitializers }),
+        ...(forbiddenSymbols && { forbiddenSymbols }),
         macho: {
           flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
           segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
@@ -426,6 +612,10 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "?*@node@@*",
             "llhttp_*",
             ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
+            // The debug WebKit prebuilt's libpas exports its system-heap entry
+            // points the same way (`-export:` directives in the archive
+            // members); the release prebuilt has none. Debug builds only.
+            ...(cfg.debug ? ["pas_system_heap_*"] : []),
           ],
         },
         neededLibs: {

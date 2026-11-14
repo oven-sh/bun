@@ -330,7 +330,7 @@ describe("HTTP server CONNECT", () => {
         }
       });
 
-      writeChunked(socket, ["HTTP/1.1 ", "200 ", "Connection ", "established\r\n\r\n"]).catch(reject);
+      writeChunked(socket as net.Socket, ["HTTP/1.1 ", "200 ", "Connection ", "established\r\n\r\n"]).catch(reject);
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");

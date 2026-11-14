@@ -1,0 +1,19 @@
+# f1 = total
+# -- source: main.mjs
+# const d = JSON.parse('{"rows":[[1,2,3],[4,5,6],[7,8,9]]}'), e = JSON.parse('{"rows":[[1,2],null]}');
+# function total(d) { let sum = 0; for (let x = 0; x < d.rows[0].length; x++) for (let y = 0; y < d.rows.length; y++) sum += d.rows[y][x]; return sum; }
+# print(total(d));
+# try { total(e); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# The inner loop has a typed version: its array is found before it, and each row it steps to is asked to be an array. The row is read by the storage of that array, its number by the storage of the row.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="rows"
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Contiguous
+# CHECK: [[row]]: {{*}} = GetArrayElement {{*}} arrayStorage=Contiguous
+# CHECK-NEXT: = TypeTest [[row]] testedType=Array<number>
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double
+# CHECK: = GetArrayElement {{*}} arrayStorage=Double
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 45
+# ANSWERS-NEXT: true

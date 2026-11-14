@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const CONCURRENCY = 100;
 const REQUESTS = Number(process.env.REQUESTS ?? 10000);
+const unix = process.env.SOCKET_PATH;
 
 const app = express();
 app.use(bodyParser.json());
@@ -12,16 +13,16 @@ app.use(bodyParser.json());
 app.post("/error", (req, res) => {
   try {
     // This specific pattern causes the segfault in Bun v1.2.6
-    const headers = { location: undefined };
+    const headers: any = { location: undefined };
     headers.location.split("*/")["2"].split(")")["0"];
-  } catch (err) {
+  } catch (err: any) {
     setTimeout(() => res.status(500).json({ error: err.message }), 1);
   }
 });
 
-var server = app.listen(0, async () => {
-  const port = server.address().port;
-  console.log(`Server running on http://localhost:${port}`);
+var server = app.listen(unix ?? 0, async () => {
+  const origin = unix ? "http://localhost" : `http://localhost:${server.address().port}`;
+  console.log(`Server running on ${unix ?? origin}`);
 
   const active = new Set();
 
@@ -31,7 +32,8 @@ var server = app.listen(0, async () => {
     const secondPromise = setTimeout(() => controller.abort(), Math.random() * 5 + 1);
 
     try {
-      await fetch(`http://localhost:${port}/error`, {
+      await fetch(`${origin}/error`, {
+        unix,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",

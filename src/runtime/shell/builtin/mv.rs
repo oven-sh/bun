@@ -1,32 +1,37 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{ZBox, ZStr};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
+use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, closefd, shell_openat};
+use crate::shell::interpreter::{
+    Interpreter, NodeId, ShellTask, closefd, shell_lstatat, shell_openat, shell_statat,
+};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Mv {
+pub(crate) struct Mv {
     pub args: MvArgs,
     pub(crate) state: MvState,
 }
 
 #[derive(Default)]
-pub struct MvArgs {
+pub(crate) struct MvArgs {
     /// Index into argv where source paths start.
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
     pub(crate) target_idx: usize,
     pub(crate) target_fd: Option<bun_sys::Fd>,
+    /// `-n` — do not overwrite an existing file
+    pub(crate) no_clobber: bool,
 }
 
 #[derive(Default)]
-pub enum MvState {
+pub(crate) enum MvState {
     #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
@@ -211,9 +216,13 @@ impl Mv {
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let (sources_start, target_idx) = {
+                let (sources_start, target_idx, no_clobber) = {
                     let me = Self::state_mut(interp, cmd);
-                    (me.args.sources_start, me.args.target_idx)
+                    (
+                        me.args.sources_start,
+                        me.args.target_idx,
+                        me.args.no_clobber,
+                    )
                 };
                 let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
@@ -228,9 +237,14 @@ impl Mv {
                     tasks.push(ShellMvBatchedTask {
                         cmd,
                         idx: i,
+                        was_on_disk: srcs
+                            .iter()
+                            .map(|it| is_on_disk_at(cwd, it.as_bytes()))
+                            .collect(),
                         sources: srcs,
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
+                        no_clobber,
                         cwd,
                         error_signal: None,
                         err: None,
@@ -303,7 +317,7 @@ impl Mv {
     }
 
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
-        let (all_done, had_err) = {
+        let (all_done, had_err, sources, was_on_disk, target, is_folder) = {
             let MvState::Executing {
                 task_count,
                 tasks_done,
@@ -314,15 +328,39 @@ impl Mv {
             else {
                 unreachable!()
             };
+            let target = ZBox::from_bytes(tasks[task_idx].target.as_bytes());
             if let Some(e) = tasks[task_idx].err.take() {
                 error_signal.store(true, Ordering::SeqCst);
                 if err.is_none() {
                     *err = Some(e);
                 }
             }
+            let sources = core::mem::take(&mut tasks[task_idx].sources);
+            let was_on_disk = core::mem::take(&mut tasks[task_idx].was_on_disk);
+            let is_folder = tasks[task_idx].target_fd.is_some() || sources.len() > 1;
             *tasks_done += 1;
-            (*tasks_done >= *task_count, err.is_some())
+            (
+                *tasks_done >= *task_count,
+                err.is_some(),
+                sources,
+                was_on_disk,
+                target,
+                is_folder,
+            )
         };
+        // A task that fails has moved those in front, and `-n` leaves some where they are.
+        let sources = sources.iter().zip(was_on_disk);
+        for (source, _) in sources.filter(|&(_, was_on_disk)| was_on_disk) {
+            let (cwd, source) = (Builtin::shell(interp, cmd).cwd(), source.as_bytes());
+            let name = bun_paths::basename(strings::without_trailing_slash(source));
+            match is_folder {
+                true => {
+                    let target = [target.as_bytes(), b"/", name].concat();
+                    note_moved_shell_operand(cwd, source, &target);
+                }
+                false => note_moved_shell_operand(cwd, source, target.as_bytes()),
+            }
+        }
         if all_done {
             if had_err {
                 let e = match &mut Self::state_mut(interp, cmd).state {
@@ -346,9 +384,10 @@ impl Mv {
             return Err(MvParseError::ShowUsage);
         }
         let mut idx = 0usize;
+        let mut no_clobber = false;
         while idx < argc {
             let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(flag) {
+            match Self::parse_flag(flag, &mut no_clobber) {
                 MvFlag::Done => {
                     let filepath_args = argc - idx;
                     if filepath_args < 2 {
@@ -357,6 +396,7 @@ impl Mv {
                     let me = Self::state_mut(interp, cmd);
                     me.args.sources_start = idx;
                     me.args.target_idx = argc - 1;
+                    me.args.no_clobber = no_clobber;
                     return Ok(());
                 }
                 MvFlag::ContinueParsing => {}
@@ -367,13 +407,16 @@ impl Mv {
         Err(MvParseError::ShowUsage)
     }
 
-    fn parse_flag(flag: &[u8]) -> MvFlag {
+    fn parse_flag(flag: &[u8], no_clobber: &mut bool) -> MvFlag {
         if flag.is_empty() || flag[0] != b'-' {
             return MvFlag::Done;
         }
         for &ch in &flag[1..] {
             match ch {
-                b'f' | b'h' | b'i' | b'n' | b'v' => {}
+                // The last of `-f` and `-n` wins.
+                b'n' => *no_clobber = true,
+                b'f' => *no_clobber = false,
+                b'h' | b'i' | b'v' => {}
                 _ => return MvFlag::IllegalOption(b"-"),
             }
         }
@@ -401,7 +444,7 @@ enum MvFlag {
 
 /// `openat(target, O_RDONLY|O_DIRECTORY)`
 /// on a worker thread to learn whether the destination is a directory.
-pub struct ShellMvCheckTargetTask {
+pub(crate) struct ShellMvCheckTargetTask {
     pub(crate) cmd: NodeId,
     pub(crate) cwd: bun_sys::Fd,
     pub(crate) target: ZBox,
@@ -425,14 +468,17 @@ impl ShellMvCheckTargetTask {
 }
 
 /// renameat() each source into the target.
-pub struct ShellMvBatchedTask {
+pub(crate) struct ShellMvBatchedTask {
     pub(crate) cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done`.
     pub(crate) idx: usize,
     pub(crate) sources: Vec<ZBox>,
+    /// Which of them the disk has had.
+    was_on_disk: Vec<bool>,
     pub(crate) target: ZBox,
     pub(crate) target_fd: Option<bun_sys::Fd>,
+    pub(crate) no_clobber: bool,
     pub(crate) cwd: bun_sys::Fd,
     /// Back-reference into `MvState::Executing::error_signal`. The owning
     /// `MvState` outlives every batched task (tasks are joined / counted in
@@ -460,6 +506,7 @@ impl ShellMvBatchedTask {
                 dir,
                 this.target.as_bytes(),
                 &this.sources[0],
+                this.no_clobber,
                 &mut buf,
             ) {
                 this.err = Some(e);
@@ -467,7 +514,13 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
-        if let Err(e) = Self::do_rename(this.cwd, &this.sources[0], this.cwd, &this.target) {
+        if let Err(e) = Self::do_rename(
+            this.cwd,
+            &this.sources[0],
+            this.cwd,
+            &this.target,
+            this.no_clobber,
+        ) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
@@ -483,10 +536,37 @@ impl ShellMvBatchedTask {
         src: &ZStr,
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
+        no_clobber: bool,
     ) -> Result<(), bun_sys::Error> {
+        use bun_sys::E;
+
+        if let Some(error) = refuse_move((src_dir, src.as_bytes()), (dst_dir, dst.as_bytes())) {
+            return Err(error);
+        }
+        if no_clobber {
+            if shell_lstatat(dst_dir, dst).is_ok() {
+                // `dst` stays. A missing `src` is still an error.
+                return shell_lstatat(src_dir, src)
+                    .map(drop)
+                    .map_err(|e| e.with_path(src.as_bytes()));
+            }
+            // Where the kernel and the filesystem can, also refuse a `dst` created since the check.
+            #[cfg(unix)]
+            {
+                // EXDEV is handled below.
+                const UNSUPPORTED: [E; 5] =
+                    [E::ENOSYS, E::EINVAL, E::ENOTSUP, E::EOPNOTSUPP, E::EXDEV];
+                let mode = bun_sys::RenameMode::NoReplace;
+                match bun_sys::renameat2(src_dir, src, dst_dir, dst, mode) {
+                    Err(e) if e.get_errno() == E::EEXIST => return Ok(()),
+                    Err(e) if UNSUPPORTED.contains(&e.get_errno()) => {}
+                    result => return result,
+                }
+            }
+        }
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
-            Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
-                Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {
+            Err(e) if e.get_errno() == E::EXDEV => {
+                Self::move_across_devices(src_dir, src, dst_dir, dst, None).map_err(|e| {
                     if e.path.is_empty() {
                         e.with_path(src.as_bytes())
                     } else {
@@ -499,16 +579,32 @@ impl ShellMvBatchedTask {
     }
 
     /// EXDEV fallback: copy `src` to `dst`, then (only on success) remove `src`.
+    ///
+    /// `output` is `None` for `mv`'s operand. Below the operand, it's the `(st_dev, st_ino)` of the
+    /// directory being copied into. The walk must not enter it, or it would copy its own output.
     fn move_across_devices(
         src_dir: bun_sys::Fd,
         src: &ZStr,
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
+        output: Option<(u64, u64)>,
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
+
+        if let Some((dev, ino)) = output {
+            // A filesystem without inode numbers reports `st_ino == 0`.
+            if S::ISDIR(mode)
+                && st.st_ino != 0
+                && st.st_dev as u64 == dev
+                && st.st_ino as u64 == ino
+            {
+                // `rename(2)` fails with EINVAL when a directory is moved into itself on the same mount.
+                return Err(bun_sys::Error::from_code(E::EINVAL, Tag::rename));
+            }
+        }
 
         // Bind mounts can alias one inode through two vfsmounts (renameat()
         // still returns EXDEV); treat same-inode as the POSIX rename() no-op.
@@ -534,6 +630,10 @@ impl ShellMvBatchedTask {
         let src_nofollow = if cfg!(windows) { 0 } else { O::NOFOLLOW };
 
         if S::ISDIR(mode) {
+            // This function recurses once per directory level.
+            if !bun_core::StackCheck::init().is_safe_to_recurse() {
+                return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
+            }
             let sd = Dir::from_fd(shell_openat(
                 src_dir,
                 src,
@@ -546,6 +646,10 @@ impl ShellMvBatchedTask {
             }
             let st = sst;
             let mode = st.st_mode as bun_core::Mode;
+            let output = match output {
+                Some(id) => id,
+                None => Self::output_directory(dst_dir, dst, &st)?,
+            };
             // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
             if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
                 if e.get_errno() != E::EEXIST {
@@ -572,7 +676,7 @@ impl ShellMvBatchedTask {
                 nbuf[..name.len()].copy_from_slice(name);
                 nbuf[name.len()] = 0;
                 let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
+                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
@@ -622,6 +726,62 @@ impl ShellMvBatchedTask {
         bun_sys::unlinkat(src_dir, src)
     }
 
+    /// Returns the `(st_dev, st_ino)` of the directory `dst` is created in. Fails with `EINVAL`,
+    /// like `rename(2)` on the same mount, if that directory is `src` or is inside `src`.
+    fn output_directory(
+        dst_dir: bun_sys::Fd,
+        dst: &ZStr,
+        src: &bun_sys::Stat,
+    ) -> Result<(u64, u64), bun_sys::Error> {
+        use bun_sys::{E, Tag};
+
+        let is_src = |dir: &bun_sys::Stat| {
+            src.st_ino != 0 && dir.st_dev == src.st_dev && dir.st_ino == src.st_ino
+        };
+
+        let mut path = bun_paths::path_buffer_pool::get();
+        let mut len = 0;
+        let made_in = match bun_paths::dirname(dst.as_bytes()) {
+            None => bun_sys::fstat(dst_dir)?,
+            Some(dir) => {
+                if dir.len() >= bun_paths::MAX_PATH_BYTES {
+                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
+                }
+                path[..dir.len()].copy_from_slice(dir);
+                len = dir.len();
+                path[len] = 0;
+                shell_statat(dst_dir, ZStr::from_buf(&path[..], len))?
+            }
+        };
+        if is_src(&made_in) {
+            return Err(bun_sys::Error::from_code(E::EINVAL, Tag::rename));
+        }
+
+        // Check each parent by appending `..` until the root, where `..` resolves to itself.
+        let mut below = (made_in.st_dev, made_in.st_ino);
+        loop {
+            let up: &[u8] = if len == 0 { b".." } else { b"/.." };
+            if len + up.len() >= bun_paths::MAX_PATH_BYTES {
+                break;
+            }
+            path[len..len + up.len()].copy_from_slice(up);
+            len += up.len();
+            path[len] = 0;
+            // Stop at a parent we can't stat. `move_across_devices` still checks every directory it enters.
+            let Ok(parent) = shell_statat(dst_dir, ZStr::from_buf(&path[..], len)) else {
+                break;
+            };
+            if (parent.st_dev, parent.st_ino) == below {
+                break;
+            }
+            if is_src(&parent) {
+                return Err(bun_sys::Error::from_code(E::EINVAL, Tag::rename));
+            }
+            below = (parent.st_dev, parent.st_ino);
+        }
+        Ok((made_in.st_dev as u64, made_in.st_ino as u64))
+    }
+
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the
     /// fields it touches so `src` can borrow `self.sources[_]` while `self.err`
     /// is written by the caller.
@@ -630,23 +790,28 @@ impl ShellMvBatchedTask {
         target_fd: bun_sys::Fd,
         target: &[u8],
         src: &ZStr,
+        no_clobber: bool,
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
-        let len =
-            resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
-        if len + 1 >= bun_paths::MAX_PATH_BYTES {
-            return Err(bun_sys::Error::from_code(
+        // `normalize_buf_z` doesn't bounds-check `buf`. It can add one byte
+        // (`""` becomes `"."`), and the NUL needs one more.
+        let result = if base.len() + 1 >= bun_paths::MAX_PATH_BYTES {
+            Err(bun_sys::Error::from_code(
                 bun_sys::E::ENAMETOOLONG,
                 bun_sys::Tag::rename,
-            ));
-        }
-        buf[len] = 0;
-        let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        Self::do_rename(cwd, src, target_fd, path_in_dir).map_err(|e| {
+            ))
+        } else {
+            let path_in_dir =
+                resolve_path::normalize_buf_z::<bun_paths::platform::Auto>(base, &mut buf[..]);
+            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber)
+        };
+        result.map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
-            let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
-            e.with_path(joined.as_bytes())
+            let mut spill = Vec::new();
+            let joined =
+                resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, &[target, base]);
+            e.with_path(joined)
         })
     }
 
@@ -670,6 +835,7 @@ impl ShellMvBatchedTask {
                 dir,
                 self.target.as_bytes(),
                 &self.sources[i],
+                self.no_clobber,
                 &mut buf,
             ) {
                 self.err = Some(e);
@@ -687,6 +853,10 @@ impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
         // SAFETY: fn contract; the Mv state outlives the queue entry.
         unsafe { (*this).task.unref_unrun() }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
@@ -694,6 +864,10 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: as above.
         unsafe { (*this).task.unref_unrun() }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -704,8 +878,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     fn run_from_thread_pool(this: &mut Self) {
         Self::run_from_thread_pool(this)
     }
-    // `*mut Self` sig forced by `ShellTaskCtx` trait contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is a live `ShellMvCheckTargetTask` held in `MvState::CheckTarget`.
@@ -719,8 +891,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     fn run_from_thread_pool(this: &mut Self) {
         Self::run_from_thread_pool(this)
     }
-    // `*mut Self` sig forced by `ShellTaskCtx` trait contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.

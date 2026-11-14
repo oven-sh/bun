@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function look(o: any): number {
+#   let t = 0;
+#   for (let i = 0; i < 2; i++) t += o.first.length + o.second.length;
+#   if (t > 100) throw new RangeError("full");
+#   return t;
+# }
+# function maker(first: any, second: any): number {
+#   let s = 0;
+#   try { s += look({ first, second }); } catch { s++; }
+#   return s;
+# }
+# const kept: any = { first: "x", second: "yy" };
+# print(maker("a", "bc") + look(kept));
+# -- end of source
+# f1 = look, f2 = maker
+# An object whose fields may hold cells is lent to a callee that only looks, under a handler of its maker's own frame. It lies in the frame.
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject {{*}}storage=Frame
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 12

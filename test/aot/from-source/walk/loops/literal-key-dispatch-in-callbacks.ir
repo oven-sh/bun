@@ -1,0 +1,26 @@
+# A key declared as one of a few string literals is dispatched over them in repeated code: a loop, a function that calls itself, and a callback that an array method calls for each element. Here the comparator
+# captures `axis`, a const that is read off an array: the checker finds three literals, which is the expected type of the capture. Each field is then read by its name and the subtraction is of numbers.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Axis = "x" | "y" | "z";
+# interface Point { readonly x: number; readonly y: number; readonly z: number }
+# const axes: readonly Axis[] = ["x", "y", "z"];
+# class Node { next: Node | null = null; constructor(readonly point: Point, readonly dimension: number) {} }
+# function sorted(points: Point[], dimension: number): string { const axis = axes[dimension]!; return points.slice().sort((a, b) => a[axis] - b[axis]).map(p => p.x).join(); }
+# function depth(node: Node | null, point: Point): number { if (!node) return 0; const axis = axes[node.dimension]!; return (point[axis] < node.point[axis] ? 1 : 10) + depth(node.next, point); }
+# const points: Point[] = [{ x: 1, y: 9, z: 2.5 }, { x: 2, y: 3, z: 0.5 }, { x: 3, y: 4, z: 1.5 }];
+# const root = new Node(points[0]!, 0); root.next = new Node(points[1]!, 1); root.next.next = new Node(points[2]!, 2);
+# print(sorted(points, 0), sorted(points, 1), sorted(points, 2), depth(root, { x: 0, y: 5, z: 1 }));
+# const odd: any = [{ x: 1, y: "b", z: 1 }, { x: 2, y: "a", z: 2 }]; (axes as any)[3] = "w";
+# print(sorted(odd, 1), sorted(odd, 3), depth(root, { x: 2, y: "0", z: null } as any));
+# -- end of source
+# RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
+# EVENT: statistic AccessesDispatchedByKeyString 3
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1,2,3 2,3,1 2,3,1 12
+# RIGHT-NEXT: 1,2 1,2 12
+# RIGHT-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: 1,2,3 2,3,1 2,3,1 12
+# CHECKED-NEXT: 1,2 1,2 12
+# CHECKED-NEXT: exited with 0

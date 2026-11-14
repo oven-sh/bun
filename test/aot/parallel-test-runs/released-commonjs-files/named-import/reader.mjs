@@ -1,0 +1,1 @@
+import { word, bump } from "./gauge.cjs"; export const read = () => [word, bump()].join(); export const space = null;

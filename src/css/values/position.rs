@@ -15,7 +15,7 @@ pub struct Position {
 }
 
 impl Position {
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Position> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Position> {
         // Try parsing a horizontal position first
         if let Ok(horizontal_pos) = input.try_parse(HorizontalPosition::parse) {
             match horizontal_pos {
@@ -149,21 +149,24 @@ impl Position {
 
     pub(crate) fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         if let (PositionComponent::Side(xs), PositionComponent::Length(yl)) = (&self.x, &self.y) {
-            if xs.side != HorizontalPositionKeyword::Left {
+            if xs.offset.is_some() && xs.side != HorizontalPositionKeyword::Left {
                 self.x.to_css(dest)?;
                 dest.write_str(" top ")?;
                 return yl.to_css(dest);
             }
         }
         if let PositionComponent::Side(xs) = &self.x {
-            if xs.side != HorizontalPositionKeyword::Left && self.y.is_center() {
+            if xs.offset.is_some()
+                && xs.side != HorizontalPositionKeyword::Left
+                && self.y.is_center()
+            {
                 // If there is a side keyword with an offset, "center" must be a keyword not a percentage.
                 self.x.to_css(dest)?;
                 return dest.write_str(" center");
             }
         }
         if let (PositionComponent::Length(xl), PositionComponent::Side(ys)) = (&self.x, &self.y) {
-            if ys.side != VerticalPositionKeyword::Top {
+            if ys.offset.is_some() && ys.side != VerticalPositionKeyword::Top {
                 dest.write_str("left ")?;
                 xl.to_css(dest)?;
                 dest.write_str(" ")?;
@@ -180,6 +183,16 @@ impl Position {
                 return xl.to_css(dest);
             }
         }
+        if let PositionComponent::Side(PositionComponentSide {
+            side: HorizontalPositionKeyword::Left,
+            offset: Some(xl),
+        }) = &self.x
+        {
+            if self.y.is_center() {
+                // `left 10px center` => `10px`
+                return xl.to_css(dest);
+            }
+        }
         if let PositionComponent::Side(xs) = &self.x {
             if xs.offset.is_none() && self.y.is_center() {
                 let p: LengthPercentage = xs.side.into_length_percentage();
@@ -190,6 +203,18 @@ impl Position {
             if ys.offset.is_none() && self.x.is_center() {
                 return self.y.to_css(dest);
             }
+        }
+        if let (
+            PositionComponent::Center,
+            PositionComponent::Side(PositionComponentSide {
+                side: VerticalPositionKeyword::Bottom,
+                offset: Some(_),
+            }),
+        ) = (&self.x, &self.y)
+        {
+            // `center bottom 10px` must keep the keyword: `50% bottom 10px` is not valid.
+            dest.write_str("center ")?;
+            return self.y.to_css(dest);
         }
         if let (PositionComponent::Side(xs), PositionComponent::Side(ys)) = (&self.x, &self.y) {
             if xs.offset.is_none() && ys.offset.is_none() {
@@ -221,6 +246,8 @@ impl Position {
                 PositionComponent::Length(len) => {
                     if len.is_zero() {
                         break 'x_len Some(&zero);
+                    } else {
+                        break 'x_len Some(len);
                     }
                 }
                 PositionComponent::Center => break 'x_len Some(&fifty),
@@ -246,6 +273,8 @@ impl Position {
                 PositionComponent::Length(len) => {
                     if len.is_zero() {
                         break 'y_len Some(&zero);
+                    } else {
+                        break 'y_len Some(len);
                     }
                 }
                 PositionComponent::Center => break 'y_len Some(&fifty),
@@ -310,7 +339,7 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
+impl<S: protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
     fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {
             if l.is_zero() {
@@ -320,7 +349,10 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         false
     }
 
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
+    where
+        S: protocol::Parse<'bump>,
+    {
         if input
             .try_parse(|i: &mut css::Parser| i.expect_ident_matching(b"center"))
             .is_ok()

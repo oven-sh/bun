@@ -46,7 +46,9 @@ use super::frame;
 
 /// The owner implements [`bun_core::IntrusiveField<Channel<Self>>`]
 /// (via `bun_core::intrusive_field!`) plus the two callbacks below.
-pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+    /// Before the frames of one read.
+    fn on_channel_data(&mut self) {}
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -56,7 +58,7 @@ pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
 // `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
 // on `Drop` than on the struct, so Drop/Default below are unbounded too.)
-pub struct Channel<Owner> {
+pub(crate) struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     pub(crate) r#in: JsCell<Vec<u8>>,
     /// Outgoing bytes the kernel didn't accept yet.
@@ -77,9 +79,9 @@ pub struct Channel<Owner> {
 }
 
 #[cfg(windows)]
-pub type Backend = WindowsBackend;
+pub(crate) type Backend = WindowsBackend;
 #[cfg(not(windows))]
-pub type Backend = PosixBackend;
+pub(crate) type Backend = PosixBackend;
 
 impl<Owner> Default for Channel<Owner> {
     fn default() -> Self {
@@ -110,10 +112,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- POSIX (usockets) --------------------------------------------------------
 
 #[cfg(not(windows))]
-pub type Socket = uws::NewSocketHandler<false>;
+pub(crate) type Socket = uws::NewSocketHandler<false>;
 
 #[cfg(not(windows))]
-pub struct PosixBackend {
+pub(crate) struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
     /// Bytes at the front of `out` already written to the kernel;
     /// front-draining per partial write instead is quadratic in backlog size.
@@ -137,19 +139,19 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// one-off whose ext type (`*mut Self`) varies by Owner — not worth a
     /// `SocketKind` value of its own. The per-file isolation swap skips
     /// `rare.test_parallel_ipc_group` so the coordinator link survives.
-    fn ensure_posix_group(vm: &mut VirtualMachine) -> &mut uws::SocketGroup {
+    fn ensure_posix_group(vm: &VirtualMachine) -> &uws::SocketGroup {
         let loop_ = vm.uws_loop();
         let g = vm.rare_data().test_parallel_ipc_group(loop_);
         // First Owner to call wins the vtable; coordinator and worker run in
         // separate processes so there's never more than one Owner type sharing
         // this group.
-        if g.vtable.is_none() {
+        if g.vtable.get().is_none() {
             // cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
             // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
             // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
             // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
             // exactly what `vtable::make` would produce.
-            g.vtable = Some(&PosixHandlers::<Owner>::VTABLE);
+            g.vtable.set(Some(&PosixHandlers::<Owner>::VTABLE));
         }
         g
     }
@@ -158,7 +160,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- Windows (uv.Pipe) -------------------------------------------------------
 
 #[cfg(windows)]
-pub struct WindowsBackend {
+pub(crate) struct WindowsBackend {
     pub(crate) pipe: Cell<*mut uv::Pipe>,
     /// Read scratch — libuv asks us to allocate before each read.
     /// Wrapped so every byte is interior-mutable: libuv forms
@@ -192,25 +194,18 @@ impl Default for WindowsBackend {
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    // callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
-    // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
-    // `&mut`. Take a raw `*const` and cast
-    // away const locally — single-threaded init path. A `&VirtualMachine`
-    // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
-    // promotion; the raw-pointer route sidesteps that lint while keeping both
-    // call sites (which pass `&`/`&mut` and coerce) unchanged.
     /// `this` is the channel's address derived from the owner's `&mut`.
-    pub(crate) fn adopt(this: *mut Self, vm: *const VirtualMachine, fd: Fd) -> bool {
+    pub(crate) fn adopt(this: *mut Self, vm: &VirtualMachine, fd: Fd) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);
         Self::adopt_impl(self_, this, vm, fd)
     }
 
-    fn adopt_impl(&self, this: *mut Self, _vm: *const VirtualMachine, fd: Fd) -> bool {
+    fn adopt_impl(&self, this: *mut Self, vm: &VirtualMachine, fd: Fd) -> bool {
         #[cfg(windows)]
         {
-            let _ = this; // registered via `adopt_pipe_impl` from `self.root`
+            let _ = (this, vm); // registered via `adopt_pipe_impl` from `self.root`
             // With ipc=true
             // libuv wraps reads/writes in its own framing; both ends use it so
             // the wrapping is transparent and our payload bytes pass through
@@ -251,9 +246,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
-            // VM is process-singleton and accessed only from the main
-            // thread here; route through the safe singleton accessor.
-            let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
             let g = Self::ensure_posix_group(vm);
             let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, true) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
@@ -272,11 +264,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
     /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(
-        this: *mut Self,
-        _vm: *const VirtualMachine,
-        pipe: *mut uv::Pipe,
-    ) -> bool {
+    pub(crate) fn adopt_pipe(this: *mut Self, _vm: &VirtualMachine, pipe: *mut uv::Pipe) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);
@@ -429,57 +417,48 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
-        if !self.out.get().is_empty() {
-            return true;
-        }
         #[cfg(windows)]
         {
-            return !self.backend.inflight.get().is_empty();
+            !self.out.get().is_empty() || !self.backend.inflight.get().is_empty()
         }
         #[cfg(not(windows))]
         {
-            false
+            !self.out.get().is_empty()
         }
     }
 
     /// Best-effort drain of any buffered writes.
-    pub fn flush(&self) {
-        #[cfg(windows)]
-        {
-            return self.submit_windows_write();
-        }
-        #[cfg(not(windows))]
-        {
-            while !self.done.get() {
-                let mut pending = self.out.replace(Vec::new());
-                let mut head = self.backend.out_head.get();
-                debug_assert!(head <= pending.len());
-                if pending.len() <= head {
-                    self.backend.out_head.set(0);
-                    self.out.set(pending);
-                    return;
-                }
-                let wrote = self.backend.socket.get().write(&pending[head..]);
-                let w = usize::try_from(wrote)
-                    .unwrap_or(0)
-                    .min(pending.len() - head);
-                head += w;
-                if head == pending.len() {
-                    pending.clear();
-                    head = 0;
-                } else if head >= pending.len() - head {
-                    // Sent prefix caught up to the tail: compact (amortized linear).
-                    pending.drain_front(head);
-                    head = 0;
-                }
-                self.backend.out_head.set(head);
-                self.out.with_mut(|cur| {
-                    pending.extend_from_slice(cur);
-                    *cur = pending;
-                });
-                if wrote <= 0 {
-                    return;
-                }
+    #[cfg(not(windows))]
+    pub(crate) fn flush(&self) {
+        while !self.done.get() {
+            let mut pending = self.out.replace(Vec::new());
+            let mut head = self.backend.out_head.get();
+            debug_assert!(head <= pending.len());
+            if pending.len() <= head {
+                self.backend.out_head.set(0);
+                self.out.set(pending);
+                return;
+            }
+            let wrote = self.backend.socket.get().write(&pending[head..]);
+            let w = usize::try_from(wrote)
+                .unwrap_or(0)
+                .min(pending.len() - head);
+            head += w;
+            if head == pending.len() {
+                pending.clear();
+                head = 0;
+            } else if head >= pending.len() - head {
+                // Sent prefix caught up to the tail: compact (amortized linear).
+                pending.drain_front(head);
+                head = 0;
+            }
+            self.backend.out_head.set(head);
+            self.out.with_mut(|cur| {
+                pending.extend_from_slice(cur);
+                *cur = pending;
+            });
+            if wrote <= 0 {
+                return;
             }
         }
     }
@@ -490,6 +469,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         if self.done.get() {
             return;
         }
+        // SAFETY: see `owner_ptr()` — the Owner outlives all callbacks and the `&mut Owner` lives only for this call.
+        unsafe { &mut *self.owner_ptr() }.on_channel_data();
         let mut buf = self.r#in.replace(Vec::new());
         buf.extend_from_slice(data);
         let mut head: usize = 0;
@@ -612,6 +593,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         unsafe { &**(*s).ext::<PosixExt<Owner>>() }
     }
 
+    #[optimize(size)]
     unsafe extern "C" fn raw_on_data(
         s: *mut uws::us_socket_t,
         data: *mut u8,

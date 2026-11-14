@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1056,6 +1056,47 @@ test("decorator and declare", () => {
   expect(counter).toBe(1);
 });
 
+test("removes decorated declare and abstract fields from a class expression", async () => {
+  const source = `
+    const A = class {
+      @dec declare a: number;
+      @dec static declare b: number;
+      @dec abstract c: string;
+      @dec declare [key]: number;
+      @dec declare private d: number;
+      e = 1;
+      @dec f = 2;
+      @dec m() {}
+    };
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const transpiler = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+        });
+        process.stdout.write(transpiler.transformSync(${JSON.stringify(source)}));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "const A = class {
+      e = 1;
+      f = 2;
+      m() {}
+    };"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
   // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
   // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
@@ -1077,17 +1118,21 @@ test("lowering many decorated instance fields into a large constructor body stay
           loader: "ts",
           tsconfig: { compilerOptions: { experimentalDecorators: true } },
         });
-        function time(M) {
-          const src = gen(M);
-          const t0 = performance.now();
+        function time(M, src) {
+          const start = process.cpuUsage();
           const out = t.transformSync(src);
-          const ms = performance.now() - t0;
+          const { user, system } = process.cpuUsage(start);
           if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
             throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
-          return ms;
+          return (user + system) / 1000;
         }
-        const tSmall = time(100);
-        const tLarge = time(50000);
+        // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
+        const [small, large] = [gen(100), gen(50000)];
+        let [tSmall, tLarge] = [Infinity, Infinity];
+        for (let i = 0; i < 7; i++) {
+          tSmall = Math.min(tSmall, time(100, small));
+          tLarge = Math.min(tLarge, time(50000, large));
+        }
         console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],

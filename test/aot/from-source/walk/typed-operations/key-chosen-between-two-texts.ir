@@ -1,0 +1,12 @@
+# -- source: key-chosen-between-two-texts.ts
+# declare function print(value: unknown): void;
+# class Term { constructor(readonly name: string, readonly size: number) { } }
+# function keyOf(term: Term): string { return term.size ? term.name + "/" + term.size : term.name + "/none"; }
+# const table: Record<string, number> = { "a/2": 1, "b/none": 2 };
+# function sum(terms: Term[]): number { let sum = 0; for (const term of terms) sum += table[keyOf(term)]; return sum; }
+# print(sum([new Term("a", 2), new Term("b", 0)]));
+# -- end of source
+# Both texts that a conditional chooses between are made as names where what it gives is the key of a read.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# CHECK: = Strcat {{*}}[isLikelyKey, isLikelyName]

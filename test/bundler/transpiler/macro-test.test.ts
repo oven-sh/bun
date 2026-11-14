@@ -1,7 +1,7 @@
-import { escapeHTML } from "bun" assert { type: "macro" };
+import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -13,9 +13,9 @@ import defaultMacro, {
   identity as identity2,
   ireturnapromise,
   symbolKeys,
-} from "./macro.ts" assert { type: "macro" };
+} from "./macro.ts" with { type: "macro" };
 
-import * as macros from "./macro.ts" assert { type: "macro" };
+import * as macros from "./macro.ts" with { type: "macro" };
 
 test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
@@ -142,6 +142,35 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
+// This file used `assert` for its own imports until TypeScript 7 made that a syntax error (TS2880).
+test("the `assert { type: 'macro' }` spelling works for every form of import", async () => {
+  using dir = tempDir("macro-import-assertion", {
+    "macro.ts": `export function identity(arg: any) {\n  return arg;\n}\nexport default function () {\n  return "default";\n}\n`,
+    "index.ts": `
+      import { escapeHTML } from "bun" assert { type: "macro" };
+      import defaultMacro, { identity, identity as alias, default as defaultAlias } from "./macro.ts" assert { type: "macro" };
+      import * as macros from "./macro.ts" assert { type: "macro" };
+      console.log(JSON.stringify([escapeHTML("<a>"), defaultMacro(), identity(1), alias(2), defaultAlias(), macros.identity(3)]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Every call is replaced by its result, so the macros ran at transpile time. Debug builds print
+  // "[macro] call identity" to stdout first, so only the tail of stdout is matched.
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(
+      /console\.log\(JSON\.stringify\(\["&lt;a&gt;", "default", 1, 2, "default", 3\]\)\);$/,
+    ),
+    exitCode: 0,
+  });
+});
+
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
 // an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.
@@ -188,6 +217,89 @@ test("object destructuring of a macro result keeps every bound property regardle
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[2,1,1,1,2]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// A `const` initialized with a macro result is inlined at each use, so every use shares one AST object.
+test("spreading a macro result into JSX doesn't change the other uses of its const", async () => {
+  using dir = tempDir("macro-jsx-spread-run", {
+    "m.ts": `export function m() {\n  return { a: 1, b: [2] };\n}\n`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => props;\n`,
+    "index.jsx": [
+      `import { m } from "./m.ts" with { type: "macro" };`,
+      `const x = m();`,
+      `const before = x;`,
+      `const child = <div {...x}>kid</div>;`,
+      `const spread = <div {...x} />;`,
+      `console.log(JSON.stringify([before, child, spread, x]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect(stdout.trim().split("\n").pop()).toBe(
+    `[{"a":1,"b":[2]},{"a":1,"b":[2],"children":"kid"},{"a":1,"b":[2]},{"a":1,"b":[2]}]`,
+  );
+  expect(exitCode).toBe(0);
+});
+
+// A value returned only by a getter can be collected once the walk moves on, and a later value can reuse its address.
+test("inlines every new array, object or promise returned by a macro result's getters", async () => {
+  const count = 12;
+  using dir = tempDir("macro-getter-made-values", {
+    "m.ts": `
+      // Each read of target[i] creates a new value. Every third read runs the GC first.
+      function lazy(target: object, make: (i: number) => unknown) {
+        for (let i = 0; i < ${count}; i++) {
+          Object.defineProperty(target, i, {
+            enumerable: true,
+            get() {
+              if (i % 3 === 0) Bun.gc(true);
+              return make(i);
+            },
+          });
+        }
+        return target;
+      }
+      export function objects() {
+        return lazy({}, i => ({ id: i }));
+      }
+      export function arrays() {
+        return lazy([], i => [i, i + 1]);
+      }
+      export function promises() {
+        return lazy({}, i => Promise.resolve(i));
+      }
+    `,
+    "index.ts": `
+      import { objects, arrays, promises } from "./m.ts" with { type: "macro" };
+      console.log(JSON.stringify({ objects: objects(), arrays: arrays(), promises: promises() }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const indices = Array.from({ length: count }, (_, i) => i);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({
+    objects: Object.fromEntries(indices.map(i => [i, { id: i }])),
+    arrays: indices.map(i => [i, i + 1]),
+    promises: Object.fromEntries(indices.map(i => [i, i])),
+  });
   expect(exitCode).toBe(0);
 });
 
@@ -594,5 +706,217 @@ describe("--no-macros", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
     expect(out).toContain("INLINED_RESULT");
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
+  });
+});
+
+describe("macros in data: URL modules", () => {
+  const macroSource = `
+    import { writeFileSync } from "node:fs";
+    export function f() {
+      writeFileSync("MACRO_RAN", "macro executed");
+      return "INLINED_RESULT";
+    }
+  `;
+  const callerSource = (dir: string) =>
+    `import { f } from ${JSON.stringify(path.join(dir, "macro.ts"))} with { type: "macro" }; console.log(f(), f\`\`);`;
+  const toDataUrl = (code: string) => "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+
+  describe.each([
+    ["direct import", (dir: string) => toDataUrl(callerSource(dir))],
+    ["nested data: URL", (dir: string) => toDataUrl(`import ${JSON.stringify(toDataUrl(callerSource(dir)))};`)],
+  ])("%s", (_, getSpecifier) => {
+    test.concurrent.each([
+      ["bun build", ["build", "./entry.ts", "--outdir", "dist"]],
+      ["bun run", ["run", "./entry.ts"]],
+    ])("%s errors", async (_, args) => {
+      using dir = tempDir("macro-data-url", { "macro.ts": macroSource });
+      await Bun.write(path.join(String(dir), "entry.ts"), `import ${JSON.stringify(getSpecifier(String(dir)))};\n`);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.split('error: Macros cannot be run from a "data:" URL module.').length - 1).toBe(2);
+      expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+});
+
+describe("macros in dependency paths", () => {
+  const isCaseInsensitive = existsSync(import.meta.path.toUpperCase());
+  const macroFiles = (folder: string) => ({
+    [`${folder}/caller.js`]: `import { f } from "./macro.js" with { type: "macro" };\nexport const value = f();\n`,
+    [`${folder}/macro.js`]: `import { writeFileSync } from "node:fs";\nexport function f() {\n  writeFileSync("MACRO_RAN", "");\n  return "INLINED";\n}\n`,
+  });
+  async function runBuild(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--target=browser", "--outdir=dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, ran: existsSync(path.join(dir, "MACRO_RAN")) };
+  }
+  const refused = {
+    stderr: expect.stringContaining("macros cannot be run from node_modules"),
+    exitCode: 1,
+    ran: false,
+  };
+  const allowed = { stderr: "", exitCode: 0, ran: true };
+
+  test.concurrent.each([
+    "Node_Modules/dep",
+    "NODE_MODULES/@scope/dep",
+    "cache/dep@1.0.0@@@1",
+    "cache/@scope/dep@1.0.0@@@1/lib",
+    "cache/dep@1.0.0@@registry.example.com@@@1",
+    "cache/dep@1.0.0@@@1_patch_hash=0123456789abcdef",
+    "cache/@G@0123456789abcdef0123456789abcdef01234567",
+    "cache/@GH@owner-dep-0123456@@@1",
+    "cache/@T@0123456789abcdef@@@1",
+  ])("errors in %s", async folder => {
+    using dir = tempDir("macro-dependency", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `try { require("../../${folder}/caller.js") } catch {}\n`,
+      ...macroFiles(folder),
+    });
+    expect(await runBuild(String(dir))).toEqual(refused);
+  });
+
+  test.concurrent.skipIf(!isCaseInsensitive)("errors for a path with different case", async () => {
+    using dir = tempDir("macro-dependency-case", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import "../../Node_Modules/dep/caller.js";\n`,
+      ...macroFiles("node_modules/dep"),
+    });
+    expect(await runBuild(String(dir))).toEqual(refused);
+  });
+
+  test.concurrent.each(["src", "node_modules_old", "my-node_modules/x", "a@@b"])("allowed in %s", async folder => {
+    using dir = tempDir("macro-project", { "entry.js": `import "./${folder}/caller.js";\n`, ...macroFiles(folder) });
+    expect(await runBuild(String(dir))).toEqual(allowed);
+  });
+
+  test.concurrent("allowed in linked packages", async () => {
+    using dir = tempDir("macro-linked", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import "linked";\n`,
+      ...macroFiles("packages/linked"),
+      "packages/linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0", main: "caller.js" }),
+    });
+    symlinkSync(path.join(String(dir), "packages/linked"), path.join(String(dir), "node_modules/linked"), "junction");
+    expect(await runBuild(String(dir))).toEqual(allowed);
+  });
+});
+
+test("bun build of a macro call next to a property read of the same import", async () => {
+  using dir = tempDir("bundler-macro-property-read", {
+    "macro.ts": `export function m() {\n  return 42;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m.name, m());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("console.log(m.name, 42);");
+  expect(exitCode).toBe(0);
+});
+
+test("bun build reports a macro result that is nested too deeply", async () => {
+  using dir = tempDir("bundler-macro-deep-result", {
+    "macro.ts": `export function m() {\n  let list = null;\n  for (let i = 0; i < 100000; i++) list = { i, next: list };\n  return list;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport const list = m();\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: The value returned by this macro is nested too deeply");
+  expect(exitCode).toBe(1);
+});
+
+// Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.
+describe("macro VM env loader", () => {
+  const macroModules = 8;
+  const files: Record<string, string> = {
+    ".env": Array.from({ length: 5000 }, (_, i) => `VAR_${i}=value_number_${i}`).join("\n") + "\n",
+    "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
+    "entry.ts":
+      Array.from({ length: macroModules }, (_, i) => `import m${i} from "./m${i}.ts";`).join("\n") +
+      `\nconsole.log(${Array.from({ length: macroModules }, (_, i) => `m${i}`).join(", ")});\n`,
+  };
+  for (let i = 0; i < macroModules; i++) {
+    files[`m${i}.ts`] = `import { value } from "./macro.ts" with { type: "macro" };\nexport default value("m${i}");\n`;
+  }
+
+  test("bun build doesn't crash with several macro modules and a .env", async () => {
+    using dir = tempDir("macro-env-loader-race", files);
+    const builds = 4;
+    const results = await Promise.all(
+      Array.from({ length: builds }, async (_, i) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./entry.ts", "--target=bun", "--outdir", `out${i}`],
+          env: { ...bunEnv, UV_THREADPOOL_SIZE: "8" },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      }),
+    );
+    expect(results).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
+    for (let i = 0; i < builds; i++) {
+      const out = await Bun.file(path.join(String(dir), `out${i}`, "entry.js")).text();
+      for (let m = 0; m < macroModules; m++) {
+        expect(out).toContain(`var m${m}_default = "m${m}";`);
+      }
+    }
+  }, 60_000);
+
+  // `bun build` without `--env` doesn't read `.env`.
+  test.concurrent("the .env loaded for a macro doesn't affect the build's resolver", async () => {
+    using dir = tempDir("macro-env-loader-isolated", {
+      "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
+      "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
+      "with-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nimport { dep } from "dep";\nconsole.log(value("a"), dep);\n`,
+      "without-macro.ts": `import { dep } from "dep";\nconsole.log("b", dep);\n`,
+    });
+    await Bun.write(path.join(String(dir), ".env"), `NODE_PATH=${path.join(String(dir), "vendor")}\n`);
+    const build = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", entry, "--target=bun"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        resolved: stdout.includes("from NODE_PATH"),
+        unresolved: stderr.includes('Could not resolve: "dep"'),
+        exitCode,
+      };
+    };
+    const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
+    expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
+    expect(withMacro).toEqual(withoutMacro);
   });
 });

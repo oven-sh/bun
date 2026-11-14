@@ -4,22 +4,21 @@ use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
 #[cfg(unix)]
 use bun_io::FilePollFlag;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 use bun_io::max_buf::MaxBuf;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
-use bun_sys;
 
 use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Pending,
     Done(Vec<u8>),
@@ -30,7 +29,7 @@ pub enum State {
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "PipeReader")]
-pub struct PipeReader {
+pub(crate) struct PipeReader {
     pub(crate) reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
@@ -102,7 +101,7 @@ impl PipeReader {
     }
 
     pub(crate) fn create(
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
@@ -111,8 +110,10 @@ impl PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
-            event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop: bun_ptr::BackRef::new(event_loop),
+            event_loop_handle: bun_jsc::EventLoopHandle::init(
+                core::ptr::from_ref(event_loop).cast_mut().cast(),
+            ),
             stdio_result: result,
             state: State::Pending,
         });
@@ -146,13 +147,14 @@ impl PipeReader {
     pub(crate) fn start(
         &mut self,
         process: NonNull<Subprocess<'static>>,
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         lazy: bool,
     ) {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
-        self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop = bun_ptr::BackRef::new(event_loop);
+        self.event_loop_handle =
+            bun_jsc::EventLoopHandle::init(core::ptr::from_ref(event_loop).cast_mut().cast());
         #[cfg(windows)]
         {
             if lazy {
@@ -226,8 +228,8 @@ impl PipeReader {
     }
 
     // pub const toJS = toReadableStream;
-    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_readable_stream(global_object)
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        self.to_readable_stream(cx)
     }
 
     fn on_reader_done(&mut self) {
@@ -287,7 +289,7 @@ impl PipeReader {
         }
     }
 
-    fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
@@ -304,7 +306,7 @@ impl PipeReader {
             State::Pending => {
                 // `_parent` is unused in `from_pipe`; pass the raw ptr instead
                 // of `self` so borrowck allows `&mut self.reader` alongside it.
-                let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
+                let stream = ReadableStream::from_pipe(cx, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }
@@ -316,7 +318,7 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_owned_slice(global_object, bytes, 0)
+                ReadableStream::from_owned_slice(cx, bytes, 0)
             }
             State::Err(..) => {
                 let State::Err(bytes, err) =
@@ -324,7 +326,7 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_bytes_then_error(global_object, bytes, err)
+                ReadableStream::from_bytes_then_error(cx, bytes, err)
             }
         }
     }
@@ -363,25 +365,14 @@ impl PipeReader {
         }
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
-        // `event_loop.virtual_machine` is set by the time a PipeReader is
-        // created. The VM is the per-thread singleton owning `event_loop`, so
-        // the `BackRef` invariant (pointee outlives holder) trivially holds.
-        let vm = self
-            .event_loop
-            .virtual_machine
-            .map(bun_ptr::BackRef::from)
-            .expect("event_loop.virtual_machine");
-        let uws = vm.uws_loop();
-        #[cfg(windows)]
-        {
-            // SAFETY: uws loop pointer is live for the VM lifetime.
-            unsafe { (*uws).uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            uws.cast()
-        }
+    #[cfg(unix)]
+    fn loop_(&self) -> LoopRef {
+        self.event_loop.native_loop()
+    }
+
+    #[cfg(windows)]
+    fn loop_(&self) -> LoopRef {
+        self.event_loop.vm_ref().uws_loop().uv_loop()
     }
 }
 
@@ -398,9 +389,10 @@ impl Drop for PipeReader {
 // with `self`), so `&mut *this` autoref is OK.
 bun_io::impl_buffered_reader_parent! {
     SubprocessPipeReader for PipeReader;
+    feature = Spawn;
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
-    loop_           = |this| (*this).loop_().cast();
+    loop_           = |this| (*this).loop_();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }

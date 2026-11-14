@@ -1,0 +1,32 @@
+# arm64: a fence behind two late stores of a new object. `fill` makes its objects in a loop by a constructor function that comes out of a variable, so the prototype is asked for at run time; where it is another than the site's, the structure is found in the table of transitions and stored in line, behind the fence of the fields. A fence of its own follows that store. x86-64 has no fence at all.
+# f3 = fill
+# -- source: object-made-under-another-prototype-in-a-loop-has-a-fence-behind-its-structure.ts
+# declare function sink(...values: unknown[]): void;
+# interface Mark { flags: number; name: string; who(): number }
+# function MarkObject(this: Mark, flags: number, name: string) { this.flags = flags; this.name = name; }
+# MarkObject.prototype.who = function () { return 2; };
+# const allocator = { markConstructor: () => MarkObject as any as new (flags: number, name: string) => Mark };
+# const Made = allocator.markConstructor();
+# let latest: Mark;
+# function create(flags: number, name: string): Mark { const made = new Made(flags, name); if (flags & 1) latest = made; return made; }
+# const kept: Mark[] = [];
+# for (let i = 0; i < 4; i++) kept.push(create(0, "x"));
+# function fill(round: number) { for (let i = 0; i < kept.length; i++) kept[i] = create(i + round, "p"); }
+# (MarkObject as any).prototype = { who() { return 2; } };
+# fill(1);
+# sink(kept[0].who(), latest!.flags);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK: GetConstructPrototype
+# CHECK: NewObject
+# REQUIRES(EMIT): arm64
+# RUN(EMIT): emit f3 mechanisms=all
+# EMIT: = Fence(
+# EMIT: = Store({{*}}JSCell_structureID
+# EMIT: = Store8({{*}}JSCell_typeInfoFlags
+# EMIT-NEXT: = Load8Z({{*}}collectorState
+# EMIT: = Fence(
+# REQUIRES(NONE): x86_64
+# RUN(NONE): emit f3 mechanisms=all
+# NONE: = Store({{*}}JSCell_structureID
+# NONE-NOT: = Fence(

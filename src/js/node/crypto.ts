@@ -7,6 +7,8 @@ const { CryptoHasher } = Bun;
 
 const {
   getCurves,
+  getHashes,
+  oneShotDigest,
   certVerifySpkac,
   certExportPublicKey,
   certExportChallenge,
@@ -47,12 +49,25 @@ const {
   generateKeyPairSync,
 
   X509Certificate,
+}: Record<string, any> & {
+  certVerifySpkac(spkac: BufferSource): boolean;
+  certExportPublicKey(spkac: BufferSource): Buffer | string;
+  certExportChallenge(spkac: BufferSource): Buffer | string;
+  Sign: new () => $Node.NativeSign;
+  Verify: new () => $Node.NativeVerify;
+  Hash: new (algorithm: string | $Node.NativeHash, options?: object) => $Node.NativeHash;
+  Hmac: new (algorithm: string, key: unknown, options?: object) => $Node.NativeHmac;
+  Cipher: new (isDecipher: boolean, cipher: string, key: unknown, iv: unknown, options?: object) => $Node.NativeCipher;
+  DiffieHellman: new (sizeOrKey: unknown, keyEncoding?: unknown, generator?: unknown, genEncoding?: unknown) => object;
+  ECDH: {
+    new (curve: string): object;
+    prototype: { setPublicKey(key: CryptoData, encoding?: string): void };
+  };
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
   pbkdf2,
   pbkdf2Sync,
-  timingSafeEqual,
   randomInt,
   randomUUID,
   randomUUIDv7,
@@ -63,14 +78,41 @@ const {
   getFips,
   setFips,
   setEngine,
-  getHashes,
   scrypt,
   scryptSync,
   argon2: _argon2,
   argon2Sync: _argon2Sync,
-} = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
+}: Record<string, any> & {
+  argon2(
+    message: BufferSource,
+    nonce: BufferSource,
+    parallelism: number,
+    tagLength: number,
+    memory: number,
+    passes: number,
+    secret: BufferSource,
+    associatedData: BufferSource,
+    type: number,
+    callback: (error: Error | undefined, result: Buffer) => void,
+  ): void;
+  argon2Sync(
+    message: BufferSource,
+    nonce: BufferSource,
+    parallelism: number,
+    tagLength: number,
+    memory: number,
+    passes: number,
+    secret: BufferSource,
+    associatedData: BufferSource,
+    type: number,
+  ): Buffer;
+} = $bindgen("node_crypto_binding.bind.ts", "crypto") as any;
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding: (encoding: string) => string | undefined = $bindgen(
+  "node_util_binding.bind.ts",
+  "normalizeEncoding",
+);
+const timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
 
 const {
   validateFunction,
@@ -80,23 +122,67 @@ const {
   validateString,
   validateUint32,
 } = require("internal/validators");
-const { deprecate } = require("internal/util/deprecate");
+const { deprecate, getDeprecationWarningEmitter } = require("internal/util/deprecate");
+
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const kHandle = Symbol("kHandle");
 
-function verifySpkac(spkac, encoding) {
+type CryptoData = $Node.CryptoData;
+type DoneCallback = (error?: Error | null) => void;
+type Decoder = InstanceType<typeof StringDecoder>;
+type BufferSource = Buffer | ArrayBufferView | ArrayBufferLike;
+
+declare global {
+  namespace $Node {
+    interface Sign extends Writable {
+      [kHandle]: NativeSign;
+      update(data: CryptoData, encoding?: string): this;
+      sign(options: unknown, encoding?: string): Buffer | string;
+    }
+    interface Verify extends Writable {
+      [kHandle]: NativeVerify;
+      update(data: CryptoData, encoding?: string): this;
+      verify(options: unknown, signature: CryptoData, signatureEncoding?: string): boolean;
+    }
+    interface Hash extends Transform {
+      [kHandle]: NativeHash;
+      copy(options?: TransformOptions): Hash;
+      update(data: CryptoData, encoding?: string): this;
+      digest(outputEncoding?: string): Buffer | string;
+    }
+    interface Hmac extends Transform {
+      [kHandle]: NativeHmac;
+      update(data: CryptoData, encoding?: string): this;
+      digest(outputEncoding?: string): Buffer | string;
+    }
+    /** `Cipheriv` and `Decipheriv`. */
+    interface Cipher extends Transform {
+      [kHandle]: NativeCipher;
+      _decoder: Decoder | null;
+      setAutoPadding(autoPadding?: boolean): this;
+      getAuthTag(): Buffer;
+      setAuthTag(tag: CryptoData, encoding?: string): this;
+      setAAD(data: CryptoData, options?: { plaintextLength?: number; encoding?: string }): this;
+      update(data: CryptoData, inputEncoding?: string, outputEncoding?: string): Buffer | string;
+      final(outputEncoding?: string): Buffer | string;
+    }
+  }
+}
+
+function verifySpkac(spkac: string | BufferSource, encoding?: string) {
   return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
 }
-function exportPublicKey(spkac, encoding) {
+function exportPublicKey(spkac: string | BufferSource, encoding?: string) {
   return certExportPublicKey(getArrayBufferOrView(spkac, "spkac", encoding));
 }
-function exportChallenge(spkac, encoding) {
+function exportChallenge(spkac: string | BufferSource, encoding?: string) {
   return certExportChallenge(getArrayBufferOrView(spkac, "spkac", encoding));
 }
 
 function Certificate(): void {
-  if (!new.target) {
-    return new Certificate();
+  if (!(this instanceof Certificate)) {
+    return new Certificate() as any;
   }
 
   this.verifySpkac = verifySpkac;
@@ -108,10 +194,9 @@ Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
 
-var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
-function getArrayBufferOrView(buffer, name, encoding?) {
+function getArrayBufferOrView(buffer: string | BufferSource, name: string, encoding?: string): BufferSource {
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
@@ -127,7 +212,9 @@ const crypto = globalThis.crypto;
 
 var crypto_exports: any = {};
 
-crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
+crypto_exports.getRandomValues = function getRandomValues(value) {
+  return crypto.getRandomValues(value);
+};
 crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
@@ -145,8 +232,70 @@ crypto_exports.createPrivateKey = createPrivateKey;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
 
-crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
-  return CryptoHasher.hash(algorithm, input, outputEncoding);
+const maybeEmitDeprecationWarning = getDeprecationWarningEmitter(
+  "DEP0198",
+  "Creating SHAKE128/256 digests without an explicit options.outputLength is deprecated.",
+  undefined,
+  (algorithm: string) => {
+    if (algorithm.length !== 8 && algorithm.length !== 9) return false;
+    const name = StringPrototypeToLowerCase.$call(algorithm);
+    return name === "shake128" || name === "shake256" || name === "shake-128" || name === "shake-256";
+  },
+);
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L323-L391
+crypto_exports.hash = function hash(algorithm, input, options) {
+  validateString(algorithm, "algorithm");
+  // oneShotDigest() tells the objects that it takes from the others.
+  if (typeof input !== "string" && !$isObject(input)) {
+    throw $ERR_INVALID_ARG_TYPE("input", ["Buffer", "TypedArray", "DataView", "string"], input);
+  }
+  if (options === undefined) {
+    maybeEmitDeprecationWarning(algorithm);
+    return oneShotDigest(algorithm, input, "hex");
+  }
+  let outputEncoding;
+  let outputLength;
+  let hasDigestOptions = false;
+
+  if (typeof options === "string") {
+    outputEncoding = options;
+  } else {
+    // Not in Node: the digest is written into a TypedArray or a DataView.
+    if (isArrayBufferView(options)) {
+      return CryptoHasher.hash(algorithm, input as Bun.BlobOrStringOrBuffer, options as NodeJS.TypedArray);
+    }
+    validateObject(options, "options");
+    outputLength = options.outputLength;
+    outputEncoding = options.outputEncoding;
+    hasDigestOptions = options.functionName !== undefined || options.customization !== undefined;
+  }
+
+  outputEncoding ??= "hex";
+
+  let normalized = outputEncoding;
+  // Fast case: if it's 'hex', we don't need to validate it further.
+  if (normalized !== "hex") {
+    validateString(outputEncoding, "outputEncoding");
+    normalized = normalizeEncoding(outputEncoding);
+    // If the encoding is invalid, normalizeEncoding() returns undefined.
+    if (normalized === undefined) {
+      // normalizeEncoding() doesn't handle 'buffer'.
+      if (StringPrototypeToLowerCase.$call(outputEncoding) === "buffer") {
+        normalized = "buffer";
+      } else {
+        throw $ERR_INVALID_ARG_VALUE("outputEncoding", outputEncoding);
+      }
+    }
+  }
+
+  if (outputLength !== undefined) {
+    validateUint32(outputLength, "outputLength");
+  } else {
+    maybeEmitDeprecationWarning(algorithm);
+  }
+
+  return oneShotDigest(algorithm, input, normalized, outputLength, hasDigestOptions);
 };
 
 crypto_exports.pbkdf2 = pbkdf2;
@@ -163,9 +312,9 @@ crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
 crypto_exports.Certificate = Certificate;
 
-function Sign(algorithm, options): void {
+function Sign(this: $Node.Sign, algorithm: string, options?: $Node.WritableOptions): void {
   if (!(this instanceof Sign)) {
-    return new Sign(algorithm, options);
+    return new Sign(algorithm, options) as any;
   }
 
   validateString(algorithm, "algorithm");
@@ -177,14 +326,15 @@ function Sign(algorithm, options): void {
 $toClass(Sign, "Sign", Writable);
 
 Object.assign(Sign.prototype, {
-  _write: function (chunk, encoding, callback) {
+  _write: function (this: $Node.Sign | $Node.Verify, chunk: CryptoData, encoding: string, callback: DoneCallback) {
     this.update(chunk, encoding);
     callback();
   },
-  update: function (data, encoding) {
-    return this[kHandle].update(this, data, encoding);
+  update: function (this: $Node.Sign | $Node.Verify, data: CryptoData, encoding?: string) {
+    this[kHandle].update(undefined, data, encoding);
+    return this;
   },
-  sign: function (options, encoding) {
+  sign: function (this: $Node.Sign, options: unknown, encoding?: string) {
     return this[kHandle].sign(options, encoding);
   },
 });
@@ -192,15 +342,15 @@ Object.assign(Sign.prototype, {
 crypto_exports.Sign = Sign;
 crypto_exports.sign = sign;
 
-function createSign(algorithm, options?) {
+function createSign(algorithm: string, options?: $Node.WritableOptions): $Node.Sign {
   return new Sign(algorithm, options);
 }
 
 crypto_exports.createSign = createSign;
 
-function Verify(algorithm, options): void {
+function Verify(this: $Node.Verify, algorithm: string, options?: $Node.WritableOptions): void {
   if (!(this instanceof Verify)) {
-    return new Verify(algorithm, options);
+    return new Verify(algorithm, options) as any;
   }
 
   validateString(algorithm, "algorithm");
@@ -215,7 +365,7 @@ Verify.prototype._write = Sign.prototype._write;
 Verify.prototype.update = Sign.prototype.update;
 
 Object.assign(Verify.prototype, {
-  verify: function (options, signature, sigEncoding) {
+  verify: function (this: $Node.Verify, options: unknown, signature: CryptoData, sigEncoding?: string) {
     return this[kHandle].verify(options, signature, sigEncoding);
   },
 });
@@ -223,52 +373,65 @@ Object.assign(Verify.prototype, {
 crypto_exports.Verify = Verify;
 crypto_exports.verify = verify;
 
-function createVerify(algorithm, options?) {
+function createVerify(algorithm: string, options?: $Node.WritableOptions): $Node.Verify {
   return new Verify(algorithm, options);
 }
 
 crypto_exports.createVerify = createVerify;
 
-function Hash(algorithm, options?): void {
+type HashOptions = $Node.TransformOptions & { outputLength?: number; functionName?: unknown; customization?: unknown };
+
+function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: HashOptions): void {
   if (!new.target) {
-    return new Hash(algorithm, options);
+    return new Hash(algorithm, options) as any;
   }
 
   const handle = new _Hash(algorithm, options);
   this[kHandle] = handle;
+
+  if (typeof algorithm === "string") {
+    // They are for cSHAKE, which BoringSSL does not have.
+    if (options != null && (options.functionName !== undefined || options.customization !== undefined)) {
+      throw new Error("Digest method not supported");
+    }
+    if (typeof options !== "object" || options === null || options.outputLength === undefined) {
+      maybeEmitDeprecationWarning(algorithm);
+    }
+  }
 
   LazyTransform.$apply(this, [options]);
 }
 $toClass(Hash, "Hash", LazyTransform);
 
 Object.assign(Hash.prototype, {
-  copy: function (options) {
+  copy: function (this: $Node.Hash, options?: $Node.TransformOptions): $Node.Hash {
     return new Hash(this[kHandle], options);
   },
-  _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
+  _transform: function (this: $Node.Hash, chunk: CryptoData, encoding: string, callback: DoneCallback) {
+    this[kHandle].update(undefined, chunk, encoding, false);
     callback();
   },
-  _flush: function (callback) {
+  _flush: function (this: $Node.Hash, callback: DoneCallback) {
     this.push(this[kHandle].digest(null, false));
     callback();
   },
-  update: function (data, encoding) {
-    return this[kHandle].update(this, data, encoding);
+  update: function (this: $Node.Hash, data: CryptoData, encoding?: string) {
+    this[kHandle].update(undefined, data, encoding);
+    return this;
   },
-  digest: function (outputEncoding) {
+  digest: function (this: $Node.Hash, outputEncoding?: string) {
     return this[kHandle].digest(outputEncoding);
   },
 });
 
 crypto_exports.Hash = deprecate(Hash, "crypto.Hash constructor is deprecated.", "DEP0179");
-crypto_exports.createHash = function createHash(algorithm, options) {
+crypto_exports.createHash = function createHash(algorithm: string, options?: $Node.TransformOptions): $Node.Hash {
   return new Hash(algorithm, options);
 };
 
-function Hmac(hmac, key, options?): void {
-  if (!new.target) {
-    return new Hmac(hmac, key, options);
+function Hmac(this: $Node.Hmac, hmac: string, key: unknown, options?: $Node.TransformOptions): void {
+  if (!(this instanceof Hmac)) {
+    return new Hmac(hmac, key, options) as any;
   }
 
   const handle = new _Hmac(hmac, key, options);
@@ -279,24 +442,29 @@ function Hmac(hmac, key, options?): void {
 $toClass(Hmac, "Hmac", LazyTransform);
 
 Object.assign(Hmac.prototype, {
-  update: function (data, encoding) {
-    return this[kHandle].update(this, data, encoding);
+  update: function (this: $Node.Hmac, data: CryptoData, encoding?: string) {
+    this[kHandle].update(undefined, data, encoding);
+    return this;
   },
-  digest: function (outputEncoding) {
+  digest: function (this: $Node.Hmac, outputEncoding?: string) {
     return this[kHandle].digest(outputEncoding);
   },
-  _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
+  _transform: function (this: $Node.Hmac, chunk: CryptoData, encoding: string, callback: DoneCallback) {
+    this[kHandle].update(undefined, chunk, encoding, false);
     callback();
   },
-  _flush: function (callback) {
+  _flush: function (this: $Node.Hmac, callback: DoneCallback) {
     this.push(this[kHandle].digest());
     callback();
   },
 });
 
 crypto_exports.Hmac = deprecate(Hmac, "crypto.Hmac constructor is deprecated.", "DEP0181");
-crypto_exports.createHmac = function createHmac(hmac, key, options) {
+crypto_exports.createHmac = function createHmac(
+  hmac: string,
+  key: unknown,
+  options?: $Node.TransformOptions,
+): $Node.Hmac {
   return new Hmac(hmac, key, options);
 };
 
@@ -313,7 +481,7 @@ const kArgon2Types = { __proto__: null, argon2d: 0, argon2i: 1, argon2id: 2 };
 
 // Node's argon2 path rejects KeyObject and throws node-formatted
 // ERR_INVALID_ARG_TYPE, unlike the local `getArrayBufferOrView` above.
-function getArgon2BufferSource(buffer, name) {
+function getArgon2BufferSource(buffer: string | BufferSource, name: string): BufferSource {
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") return Buffer.from(buffer, "utf8");
   if (!isArrayBufferView(buffer)) {
@@ -325,7 +493,34 @@ function getArgon2BufferSource(buffer, name) {
 // Mirrors `check()` in node's lib/internal/crypto/argon2.js, except a
 // wrong-typed secret/associatedData names the property (node passes no name
 // there and trips ERR_INTERNAL_ASSERTION on it).
-function checkArgon2(algorithm, parameters) {
+interface Argon2Parameters {
+  message: string | BufferSource;
+  nonce: string | BufferSource;
+  parallelism: number;
+  tagLength: number;
+  memory: number;
+  passes: number;
+  secret?: string | BufferSource;
+  associatedData?: string | BufferSource;
+  type?: undefined;
+}
+
+interface CheckedArgon2Parameters {
+  message: BufferSource;
+  nonce: BufferSource;
+  parallelism: number;
+  tagLength: number;
+  memory: number;
+  passes: number;
+  secret: BufferSource;
+  associatedData: BufferSource;
+  type: number;
+}
+
+function checkArgon2(
+  algorithm: "argon2d" | "argon2i" | "argon2id",
+  parameters: Argon2Parameters | CheckedArgon2Parameters,
+): CheckedArgon2Parameters {
   validateString(algorithm, "algorithm");
   validateOneOf(algorithm, "algorithm", ["argon2d", "argon2i", "argon2id"]);
   const type = kArgon2Types[algorithm];
@@ -365,7 +560,11 @@ function checkArgon2(algorithm, parameters) {
   return { message, nonce, secret, associatedData, tagLength, passes, parallelism, memory, type };
 }
 
-crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
+crypto_exports.argon2 = function argon2(
+  algorithm: "argon2d" | "argon2i" | "argon2id",
+  parameters: Argon2Parameters | CheckedArgon2Parameters,
+  callback: (error: Error | null, result?: Buffer) => void,
+) {
   parameters = checkArgon2(algorithm, parameters);
 
   validateFunction(callback, "callback");
@@ -386,7 +585,10 @@ crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
     },
   );
 };
-crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
+crypto_exports.argon2Sync = function argon2Sync(
+  algorithm: "argon2d" | "argon2i" | "argon2id",
+  parameters: Argon2Parameters | CheckedArgon2Parameters,
+) {
   parameters = checkArgon2(algorithm, parameters);
 
   return _argon2Sync(
@@ -425,7 +627,7 @@ for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   });
 }
 
-function createDiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding) {
+function createDiffieHellman(sizeOrKey: unknown, keyEncoding?: unknown, generator?: unknown, genEncoding?: unknown) {
   return new DiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding);
 }
 crypto_exports.DiffieHellmanGroup = DiffieHellmanGroup;
@@ -437,12 +639,12 @@ crypto_exports.diffieHellman = diffieHellman;
 
 ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;
-crypto_exports.createECDH = function createECDH(curve) {
+crypto_exports.createECDH = function createECDH(curve: string) {
   return new ECDH(curve);
 };
 
 {
-  function getDecoder(decoder, encoding) {
+  function getDecoder(decoder: Decoder | null, encoding: string) {
     const normalizedEncoding = normalizeEncoding(encoding);
     decoder ||= new StringDecoder(encoding);
     if (decoder.encoding !== normalizedEncoding) {
@@ -458,9 +660,15 @@ crypto_exports.createECDH = function createECDH(curve) {
     return decoder;
   }
 
-  function Cipheriv(cipher, key, iv, options): void {
-    if (!new.target) {
-      return new Cipheriv(cipher, key, iv, options);
+  function Cipheriv(
+    this: $Node.Cipher,
+    cipher: string,
+    key: unknown,
+    iv: unknown,
+    options?: $Node.TransformOptions,
+  ): void {
+    if (!(this instanceof Cipheriv)) {
+      return new Cipheriv(cipher, key, iv, options) as any;
     }
 
     this[kHandle] = new Cipher(false, cipher, key, iv, options);
@@ -470,31 +678,35 @@ crypto_exports.createECDH = function createECDH(curve) {
   $toClass(Cipheriv, "Cipheriv", LazyTransform);
 
   Object.assign(Cipheriv.prototype, {
-    setAutoPadding: function (ap) {
+    setAutoPadding: function (this: $Node.Cipher, ap?: boolean) {
       this[kHandle].setAutoPadding(ap);
       return this;
     },
-    getAuthTag: function () {
+    getAuthTag: function (this: $Node.Cipher) {
       return this[kHandle].getAuthTag();
     },
-    setAAD: function (aadbuf, options) {
+    setAAD: function (
+      this: $Node.Cipher,
+      aadbuf: CryptoData,
+      options?: { plaintextLength?: number; encoding?: string },
+    ) {
       this[kHandle].setAAD(aadbuf, options);
       return this;
     },
-    _transform: function (chunk, encoding, callback) {
+    _transform: function (this: $Node.Cipher, chunk: CryptoData, encoding: string, callback: DoneCallback) {
       this.push(this[kHandle].update(chunk, encoding));
       callback();
     },
-    _flush: function (callback) {
+    _flush: function (this: $Node.Cipher, callback: DoneCallback) {
       try {
         this.push(this[kHandle].final());
       } catch (e) {
-        callback(e);
+        callback(e as Error);
         return;
       }
       callback();
     },
-    update: function (data, inputEncoding, outputEncoding) {
+    update: function (this: $Node.Cipher, data: CryptoData, inputEncoding?: string, outputEncoding?: string) {
       const res = this[kHandle].update(data, inputEncoding);
 
       if (outputEncoding && outputEncoding !== "buffer") {
@@ -504,7 +716,7 @@ crypto_exports.createECDH = function createECDH(curve) {
 
       return res;
     },
-    final: function (outputEncoding) {
+    final: function (this: $Node.Cipher, outputEncoding?: string) {
       const res = this[kHandle].final();
 
       if (outputEncoding && outputEncoding !== "buffer") {
@@ -516,9 +728,15 @@ crypto_exports.createECDH = function createECDH(curve) {
     },
   });
 
-  function Decipheriv(cipher, key, iv, options): void {
-    if (!new.target) {
-      return new Decipheriv(cipher, key, iv, options);
+  function Decipheriv(
+    this: $Node.Cipher,
+    cipher: string,
+    key: unknown,
+    iv: unknown,
+    options?: $Node.TransformOptions,
+  ): void {
+    if (!(this instanceof Decipheriv)) {
+      return new Decipheriv(cipher, key, iv, options) as any;
     }
 
     this[kHandle] = new Cipher(true, cipher, key, iv, options);
@@ -529,7 +747,7 @@ crypto_exports.createECDH = function createECDH(curve) {
 
   Object.assign(Decipheriv.prototype, {
     setAutoPadding: Cipheriv.prototype.setAutoPadding,
-    setAuthTag: function (tagbuf, encoding) {
+    setAuthTag: function (this: $Node.Cipher, tagbuf: CryptoData, encoding?: string) {
       this[kHandle].setAuthTag(tagbuf, encoding);
       return this;
     },
@@ -542,10 +760,20 @@ crypto_exports.createECDH = function createECDH(curve) {
 
   crypto_exports.Cipheriv = Cipheriv;
   crypto_exports.Decipheriv = Decipheriv;
-  crypto_exports.createCipheriv = function createCipheriv(cipher, key, iv, options) {
+  crypto_exports.createCipheriv = function createCipheriv(
+    cipher: string,
+    key: unknown,
+    iv: unknown,
+    options?: $Node.TransformOptions,
+  ): $Node.Cipher {
     return new Cipheriv(cipher, key, iv, options);
   };
-  crypto_exports.createDecipheriv = function createDecipheriv(cipher, key, iv, options) {
+  crypto_exports.createDecipheriv = function createDecipheriv(
+    cipher: string,
+    key: unknown,
+    iv: unknown,
+    options?: $Node.TransformOptions,
+  ): $Node.Cipher {
     return new Decipheriv(cipher, key, iv, options);
   };
   crypto_exports.getCiphers = getCiphers;

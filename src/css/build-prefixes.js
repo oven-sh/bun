@@ -57,7 +57,8 @@ prefixes["clip-path"].browsers = prefixes["clip-path"].browsers.filter(b => {
 
 prefixes["any-pseudo"] = {
   browsers: Object.entries(mdn.css.selectors.is.__compat.support).flatMap(([key, value]) => {
-    if (Array.isArray(value)) {
+    // Firefox for Android has no release from 69 to 78: it got `:is()` in 79, Firefox in 78.
+    if (Array.isArray(value) && key !== "firefox_android") {
       key = MDN_BROWSER_MAPPING[key] || key;
       let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
       let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
@@ -474,11 +475,20 @@ let flags = [
   "double_position_gradients",
   "vendor_prefixes",
   "logical_properties",
+  "light_dark",
   ["selectors", ["nesting", "not_selector_list", "dir_selector", "lang_selector_list", "is_selector"]],
   ["media_queries", ["media_interval_syntax", "media_range_syntax", "custom_media_queries"]],
   [
     "colors",
-    ["color_function", "oklab_colors", "lab_colors", "p3_colors", "hex_alpha_colors", "space_separated_color_notation"],
+    [
+      "color_function",
+      "oklab_colors",
+      "lab_colors",
+      "p3_colors",
+      "hex_alpha_colors",
+      "space_separated_color_notation",
+      "light_dark",
+    ],
   ],
 ];
 

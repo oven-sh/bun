@@ -1,0 +1,23 @@
+# -- source: main.js
+# function V(n) { this.n = n; this.ref = n; }
+# function S(n) { this.n = n; this.args = [n]; }
+# function onlyTested(t) { if (t instanceof V) return 1; return 0; }
+# function onlyRead(t) { return t.ref; }
+# function onlyPassed(t) { return t; }
+# function readBehindTest(t) { if (t instanceof V) return t.ref; return 0; }
+# function testedAgainstTwo(t) { if (t instanceof V) return t.ref; if (t instanceof S) return t.args; return 0; }
+# var list = JSON.parse("[1,2,3]").map(function (n) { return n & 1 ? new V(n) : new S(n); });
+# var sum = 0; for (var i = 0; i < list.length; i++) { var x = list[i]; sum += onlyTested(x) * 100 + (onlyRead(x) ? 10 : 0) + (readBehindTest(x) ? 1 : 0) + (testedAgainstTwo(x) ? 1000 : 0); }
+# print(sum, onlyPassed(new V(3)).ref);
+# -- end of source
+# What `new V(..)` makes and what `t instanceof V` lets through is an instance of V to the checker, as it is where V is a class, in a file that no checked file sees. It goes through lists, returns and arguments, so the parameters are expected to hold the layouts of V and S. The code tests that at the run. A name read alone says nothing, as with classes.
+# RUN(HEADS): print
+# HEADS: name="onlyTested"{{*}}parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}]
+# HEADS: name="onlyRead"{{*}}parameters=[{type=anything flags=[IsExpected]}]
+# The one instance that the file passes to onlyPassed() is seen at the call.
+# HEADS: name="onlyPassed"{{*}}parameters=[{type=undefined|null|L0 flags=[IsFromCompiler, IsExpected]}]
+# HEADS: name="readBehindTest"{{*}}parameters=[{type=undefined|null|L0 flags=[IsExpected]}]
+# HEADS: name="testedAgainstTwo"{{*}}parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3222 3
+# ANSWERS-NEXT: exited with 0

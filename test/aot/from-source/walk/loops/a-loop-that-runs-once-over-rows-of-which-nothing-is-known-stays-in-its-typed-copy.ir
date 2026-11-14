@@ -1,0 +1,22 @@
+# -- source: a-loop-that-runs-once-over-rows-of-which-nothing-is-known-stays-in-its-typed-copy.ts
+# declare function publish(total: (rows: any) => number): void;
+# function total(rows: any): number { let sum = 0; for (const row of rows) sum += row.price * row.count; return sum; }
+# publish(total);
+# -- end of source
+# LIBRARY: own
+# f1 = total. The rows are parsed by the shell: ordinary objects of which the program knows nothing. The loop runs ONCE: at its first row the sites of both reads hold nothing.
+# The read that asks its site alone has the tables by name filed at once (an own plain value is looked for without running code) and is answered by their front: the turn stays in the typed copy. The site takes answers of its own by the rule of all sites, behind its samples.
+# Before, the empty value came back, the turn began again in the other copy, and all the rows behind it were read there by the general read: it calls the run time until the tables by name are filed.
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE-LABEL: code f1:Body
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="price"
+# TWICE: = GetValueAtSiteOrAbsent {{*}}key="count"
+# RUN(ONCE): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const rows = JSON.parse("[" + Array.from({ length: 400 }, (_, i) => `{"name":"n${i}","price":${i},"count":2}`).join(",") + "]"); const general = () => aotOperationCount("operationAOTGetByIdAndCache"); const fills = () => aotOperationCount("operationAOTFillSiteAnswers"); const generalBefore = general(), fillsBefore = fills(); print(total(rows)); print("general reads by the run time:", general() - generalBefore); print("asked to file or to fill:", fills() - fillsBefore); };
+# ONCE: 159600
+# ONCE-NEXT: general reads by the run time: 0
+# Each of the two sites fills its row once, where it claims it, however many rows there are.
+# ONCE-NEXT: asked to file or to fill: 2
+# ONCE-NEXT: exited with 0
+# RUN(GETTER): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const rows = JSON.parse("[" + Array.from({ length: 40 }, (_, i) => `{"name":"n${i}","price":${i},"count":2}`).join(",") + "]"); let asked = 0; Object.defineProperty(rows[0], "price", { get() { asked++; return 1000; } }); print(total(rows), asked); };
+# GETTER: 3560 1
+# GETTER-NEXT: exited with 0

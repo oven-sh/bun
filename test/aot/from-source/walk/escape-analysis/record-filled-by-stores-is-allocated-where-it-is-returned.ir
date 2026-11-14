@@ -1,0 +1,22 @@
+# f1 = make, f2 = keep
+# -- source: record-filled-by-stores-is-allocated-where-it-is-returned.ts
+# declare function sink(...values: unknown[]): void;
+# declare function next(): unknown;
+# interface Row { first: unknown; second: unknown; third: unknown }
+# function make(): Row { const row = {} as Row; row.first = next(); row.second = null; row.third = 3; return row; }
+# function keep(): Row { const row = {} as Row; row.first = next(); sink(row); row.second = null; row.third = 3; return row; }
+# sink(make, keep);
+# -- end of source
+# Nobody but its maker has the record until it is returned, so it is allocated there with every field. What other code has seen is allocated where it is written.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: = NewObject {{*}}fields=[0, {{*}}]
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: Return
+# RUN(SEEN): walk f2 mechanisms=all
+# SEEN-LABEL: code f2:Body
+# SEEN: = NewObject layout=
+# SEEN: PutSlotOrAdd {{*}}key="first"
+# SEEN-NOT: = NewObject
+# SEEN: Return

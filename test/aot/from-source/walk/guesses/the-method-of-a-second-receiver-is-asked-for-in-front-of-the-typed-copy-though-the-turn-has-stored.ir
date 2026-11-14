@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# "use strict";
+# const make = () => { const v = new DataView(new ArrayBuffer(256)); for (let i = 0; i < 256; i++) v.setUint8(i, i * 7); return v; };
+# const first = new DataView(new ArrayBuffer(256)), second = new DataView(new ArrayBuffer(256)), source = make(), other = make();
+# function f(t) { for (let i = 0; i < 64; i++) { first.setUint8(i, source.getUint8(i)); second.setUint8(i, other.getUint8(i)); } return t + first.getUint8(t & 63) + second.getUint8(3); }
+# print(f(1), f(2));
+# -- end of source
+# f1 = f
+# `second.setUint8` is read for a call that stands behind its operands, so the read alone opens a guess only where its proof outlives the stretch. That was so where the turn may begin again in the closed copy,
+# which `first.setUint8` has ended by storing: the read stayed as written, on the usual way, and cut the walk of the typed copy short. `second` stands in front of the loop and no other code has run in the turn:
+# the test whether it is as made is asked in front, and its proof outlives the stretch all the same. 99 instructions a turn | 40.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NOT: calleeKey=
+# CHECK: PutDataViewElement
+# CHECK-NOT: calleeKey=
+# CHECK: PutDataViewElement
+# RUN(ANSWER): run-in-shell
+# ANSWER: 29 37
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 29 37
+# CHECKED-NEXT: exited with 0

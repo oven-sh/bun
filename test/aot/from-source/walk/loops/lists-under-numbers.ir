@@ -1,0 +1,21 @@
+# f1 = pick, f2 = change, f3 = step
+# -- source: main.ts
+# let phase = 0.25, place = 0.5;
+# function pick(table: number[], n: number): number { let sum = 0; for (let i = 0; i < n; i++) { phase = phase + 0.75; if (phase > 15) phase = phase - 15; const k = Math.floor(phase); sum += table[k]!; } return sum; }
+# function change(table: number[], n: number): number { let sum = 0; for (let i = 0; i < n; i++) { phase = phase + 0.75; if (phase > 15) phase = phase - 15; const k = Math.floor(phase); table[k] = (table[k]! + 1) & 63; sum += table[k]!; } return sum; }
+# function step(table: number[], n: number, by: number): number { let sum = 0; for (let i = 0; i < n; i++) { const k = place = (place + by) % 16; table[k] = (table[k]! + 1) & 63; sum += 1 / k; } return sum; }
+# const table: number[] = []; for (let i = 0; i < 16; i++) table.push(i * 3);
+# print(pick(table, 40), change(table, 40)); place = 0;
+# print(step(table, 3, 7), step(table, 2, 0.5), step(table, 4, -32), table.join(), Object.keys(table).length);
+# -- end of source
+# A list that stands in front of a loop is tested there also where the turn makes the key as a number. A read takes the number as it is.
+# RUN: walk f1 mechanisms=all
+# CHECK: = CallInline {{*}} inlineBuiltin=MathFloor
+# CHECK: = GetArrayElement {{*}} level=Proven [keyIsIntegral
+# A key that stores too is asked for an index once a turn.
+# RUN(STORES): walk f2 mechanisms=all
+# STORES: = TypeTest {{*}} testedType=int[0, 2147483647]
+# STORES: = PutContiguousIndex
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 840 920
+# ANSWERS-NEXT: 0.41428571428571426 0.3484848484848485 -0.4 2,7,8,11,16,18,21,26,26,29,34,35,38,43,45,45 18

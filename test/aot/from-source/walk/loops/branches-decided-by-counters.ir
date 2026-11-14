@@ -1,0 +1,13 @@
+# f1 = near
+# -- source: main.ts
+# const grid: number[][] = []; for (let y = 0; y < 8; y++) { const row: number[] = []; for (let x = 0; x < 8; x++) row.push(y * 8 + x); grid.push(row); }
+# function near(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const k = (i * 5 + 3) % 8, j = (i * 3 + 3) % 8; for (let d = 0; d < 4; d++) { const x = k + (d === 0 ? 1 : d === 1 ? -1 : 0), y = j + (d === 2 ? 1 : d === 3 ? -1 : 0); if (y >= 0 && y < 8 && x >= 0 && x < 8) sum += grid[y]![x]!; } } return sum; }
+# print(near(20), near(3));
+# -- end of source
+# The counter decides the branches, so a turn is small and the four turns are written out.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: = StrictEq
+# CHECK: Return
+# CHECK-NOT: = StrictEq
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 2097 305

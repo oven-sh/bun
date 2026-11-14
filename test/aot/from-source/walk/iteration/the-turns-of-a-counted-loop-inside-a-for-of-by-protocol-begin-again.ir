@@ -1,0 +1,12 @@
+# -- source: main.ts
+# declare const sink: any;
+# function turns(given: any, to: any, other: any, note: any): any { let sum: any = 0; for (const p of given) { for (let c = 0; c < to.length; c++) { const dx = p[0] - to[c][0]; note(c); const dy = p[1] - other[c][1]; sum = sum + dx * dy; } } return sum; }
+# sink(turns);
+# -- end of source
+# LIBRARY: own
+# The for-of steps by protocol, so the counted loop stands under the handler that closes the iterator. That handler reads nothing of the loop: a turn of the typed copy that has done nothing may begin again in the closed copy, as it may under no handler.
+# The loop's own text subtracts what it reads at written places, so rows of numbers are expected of `to` and `other` and the typed copy is bought.
+# Nothing of the library is reached, so the turns counted are those of this loop. Under a handler that shuts them there are none. How many places there are is not the subject: it rises where more is asked in a turn and falls where two questions become one.
+# STATISTIC: IterationRestartsEmitted >= 1
+# RUN: compile mechanisms=all
+# CHECK: image not empty

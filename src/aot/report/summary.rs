@@ -1,0 +1,316 @@
+use core::cmp::Reverse;
+
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
+use bun_sema::util::SharedSort;
+use bun_trim::UnseenCodeCause;
+
+use super::build_rows::write_note_row;
+use super::format::{self, PathPrinter};
+use super::json::JsonWriter;
+use super::levels::{
+    ASCENDING_LEVELS, AccessColumn, CostCounts, LevelCounts, ProgramTotals, SiteTotals,
+    compute_totals, totals_of,
+};
+use super::positions::{PathStyle, Positions, write_shown_position};
+use super::runtime_use::record_at;
+use super::source_texts::ModuleOrigin;
+use super::wording::{
+    column_description, column_key, column_label, level_label, unseen_code_sentence,
+};
+use super::{ReportEntry, ReportInput};
+use crate::builtins::table;
+use crate::diagnostics::{SourcePosition, package_with_slow_code};
+use crate::engine::{AccessCountRecord, UnseenCodeRecord, builtin_of};
+use crate::ir::generated::AccessCost;
+use crate::ir::ids::ModuleId;
+use crate::statistics::{StatisticId, Statistics};
+
+const MAX_LISTED_FILES: usize = 5;
+const MAX_LISTED_PLACES: usize = 3;
+
+pub fn write_summary(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
+    let options = input.options;
+    write_slow_code_in_packages(input, has_colors, out);
+    write_trim_causes(input, has_colors, out);
+    if !options.hardening_names.is_empty() {
+        let names = options.hardening_names.join(&b", "[..]);
+        write_note_row("harden", &[names], has_colors, out);
+    }
+    write_developer_words(options, out);
+    if options.explain.contains(ExplainSet::TEXT) {
+        write_access_lines(&compute_totals(input), out);
+    }
+}
+
+pub(super) fn collect_details(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
+    let texts = input.texts;
+    let text = details_text(
+        input.engine.access_counts(),
+        |module| texts.path(module),
+        |module| texts.origin(module),
+        input.statistics,
+        &PathPrinter::new(),
+    );
+    out.extend(text.map(|text| ReportEntry::line(ExplainSet::TEXT, text)));
+}
+
+pub(super) fn write_level_counts(json: &mut JsonWriter, key: &str, counts: &LevelCounts) {
+    json.begin_object(key);
+    for level in ASCENDING_LEVELS {
+        json.number(level_label(level), counts.get(level));
+    }
+    json.end_object();
+}
+
+pub(super) fn write_access_counts(json: &mut JsonWriter, key: &str, totals: &SiteTotals) {
+    let costs = &totals.access_costs;
+    json.begin_object(key);
+    for column in AccessColumn::ALL.into_iter().rev() {
+        json.number(column_key(column), costs.in_column(column));
+    }
+    json.number("testedSlotOnly", costs.get(AccessCost::TestsSlot));
+    json.number("provenWithoutAnyTest", totals.accesses.typed());
+    json.end_object();
+}
+
+fn free_tenths(costs: &CostCounts) -> u32 {
+    format::percent_tenths(costs.free(), costs.total())
+}
+
+fn write_columns_line(out: &mut Vec<u8>, label: &str, costs: &CostCounts) {
+    out.extend_from_slice(label.as_bytes());
+    format::write_percent(out, free_tenths(costs));
+    let mut separator: &[u8] = b" of property accesses are one load: ";
+    for column in AccessColumn::ALL {
+        out.extend_from_slice(separator);
+        format::write_count(out, costs.in_column(column));
+        format::write_parts(out, &[b" ", column_label(column).as_bytes()]);
+        separator = b", ";
+    }
+    out.extend_from_slice(b" (");
+    format::write_count(out, costs.total());
+    out.extend_from_slice(b")\n");
+}
+
+/// `--aot-harden` is a public flag, so the words that it stands for are not listed.
+fn write_developer_words(options: &AotOptions, out: &mut Vec<u8>) {
+    let words = options.option_words.iter();
+    let mut words = words
+        .filter(|word| !options.hardening_words.contains(word))
+        .peekable();
+    if words.peek().is_none() {
+        return;
+    }
+    out.extend_from_slice(b"Built with developer options:");
+    for word in words {
+        format::write_parts(out, &[b" --aot-", word]);
+    }
+    out.push(b'\n');
+}
+
+/// For the logs of `Bun.build()`.
+pub fn write_developer_options(options: &AotOptions, out: &mut Vec<u8>) {
+    if !options.hardening_names.is_empty() {
+        let names = options.hardening_names.join(&b", "[..]);
+        format::write_parts(out, &[b"Hardened with ", &names, b"\n"]);
+    }
+    write_developer_words(options, out);
+}
+
+fn write_access_lines(totals: &ProgramTotals, out: &mut Vec<u8>) {
+    let program = &totals.program.access_costs;
+    let dependencies = &totals.dependencies.access_costs;
+    if dependencies.total() > 0 {
+        write_columns_line(out, "Dependencies: ", dependencies);
+    }
+    if program.total() > 0 {
+        write_columns_line(out, "", program);
+    }
+}
+
+fn write_slow_code_in_packages(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
+    if input.options.explain.contains(ExplainSet::TEXT) {
+        return;
+    }
+    let records = input.engine.user_diagnostics().iter();
+    let mut packages: Vec<&[u8]> = records
+        .filter_map(|record| package_with_slow_code(record, input.texts))
+        .collect();
+    packages.shared_sort_unstable();
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    for same_package in packages.chunk_by(|a, b| a == b) {
+        let count = same_package.len() as u64;
+        let mut line = Vec::new();
+        format::write_counted(
+            &mut line,
+            count,
+            "regular expression",
+            "regular expressions",
+        );
+        let verb: &[u8] = if count == 1 { b" is" } else { b" are" };
+        format::write_parts(&mut line, &[b" in ", same_package[0], verb]);
+        line.extend_from_slice(b" compiled at run time");
+        lines.push(line);
+    }
+    if let Some(last) = lines.last_mut() {
+        last.extend_from_slice(b" (--explain lists them)");
+    }
+    write_note_row("note", &lines, has_colors, out);
+}
+
+struct TrimCause {
+    sentence: &'static str,
+    places: Vec<SourcePosition>,
+    is_about_build: bool,
+}
+
+/// The program's text can't name a built-in like `%GeneratorFunction%`, so a record about one has no place to show.
+fn names_internal_builtin(record: &UnseenCodeRecord) -> bool {
+    builtin_of(record.builtin).is_some_and(|id| table::text_of(id).starts_with('%'))
+}
+
+fn collect_trim_causes(input: &ReportInput<'_>) -> Vec<TrimCause> {
+    let records = input.engine.unseen_code();
+    let mut positions = Positions::new(input, PathStyle::Posix);
+    let mut causes: Vec<TrimCause> = Vec::new();
+    for unseen in &input.used_features.causes {
+        let sentence = unseen_code_sentence(unseen.cause);
+        let index = match causes.iter().position(|cause| cause.sentence == sentence) {
+            Some(index) => index,
+            None => {
+                causes.push(TrimCause {
+                    sentence,
+                    places: Vec::new(),
+                    is_about_build: matches!(
+                        unseen.cause,
+                        UnseenCodeCause::ProgramNotCompiled
+                            | UnseenCodeCause::ReportMissing
+                            | UnseenCodeCause::FlowResultDisabled
+                            | UnseenCodeCause::OptionAdmitsCode
+                    ),
+                });
+                causes.len() - 1
+            }
+        };
+        let place = record_at(records, unseen.witness)
+            .filter(|record| !names_internal_builtin(record))
+            .and_then(|record| positions.resolve_location(record.witness.location));
+        causes[index].places.extend(place);
+    }
+    // Once one place lets in code that the compiler can't see, that code can reach every other way to load code.
+    // The engine lists each of those too. They have no place in the program, and they follow from the first.
+    let is_root = |cause: &TrimCause| cause.is_about_build || !cause.places.is_empty();
+    if causes.iter().any(is_root) {
+        causes.retain(is_root);
+    }
+    // What an eval() can do, it can do by loading code too. Each place is listed under the first reason that names it.
+    let mut listed: Vec<SourcePosition> = Vec::new();
+    causes.retain_mut(|cause| {
+        cause.places.shared_sort_unstable();
+        cause.places.dedup();
+        let had_places = !cause.places.is_empty();
+        cause.places.retain(|place| !listed.contains(place));
+        listed.extend_from_slice(&cause.places);
+        !had_places || !cause.places.is_empty()
+    });
+    causes
+}
+
+fn write_trim_causes(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
+    if !input.options.trim.removes_unused {
+        return;
+    }
+    let causes = collect_trim_causes(input);
+    if causes.is_empty() {
+        return;
+    }
+    let mut lines = vec![b"kept APIs your code doesn't call:".to_vec()];
+    for cause in &causes {
+        lines.push(cause.sentence.as_bytes().to_vec());
+        for place in cause.places.iter().take(MAX_LISTED_PLACES) {
+            let mut line = b"  ".to_vec();
+            write_shown_position(&mut line, Some(place));
+            lines.push(line);
+        }
+        if cause.places.len() > MAX_LISTED_PLACES {
+            let mut line = b"  and ".to_vec();
+            format::write_count(&mut line, (cause.places.len() - MAX_LISTED_PLACES) as u64);
+            line.extend_from_slice(b" more");
+            lines.push(line);
+        }
+    }
+    write_note_row("trim", &lines, has_colors, out);
+}
+
+fn details_text<'r>(
+    records: &[AccessCountRecord],
+    path_of: impl Fn(ModuleId) -> &'r [u8],
+    origin_of: impl Fn(ModuleId) -> ModuleOrigin,
+    statistics: &Statistics,
+    printer: &PathPrinter,
+) -> Option<Vec<u8>> {
+    let all = totals_of(records, &origin_of).combined().access_costs;
+    if all.total() == 0 {
+        return None;
+    }
+    let mut files = Vec::new();
+    for record in records {
+        let module = record.module_id();
+        let accesses = CostCounts::from_words(record.access_costs);
+        if accesses.not_free() > 0 && origin_of(module) == ModuleOrigin::Program {
+            files.push((path_of(module), accesses));
+        }
+    }
+    files.shared_sort_by_key(|(path, accesses)| (Reverse(accesses.not_free()), *path));
+
+    let mut text = Vec::new();
+    write_access_columns(&mut text, &all);
+    text.extend_from_slice(b"\nCalls: ");
+    format::write_count(&mut text, statistics.get(StatisticId::DirectCalls));
+    text.extend_from_slice(b" direct, ");
+    format::write_count(&mut text, statistics.get(StatisticId::IndirectCalls));
+    text.extend_from_slice(b" indirect");
+    write_untyped_files(&mut text, &files, printer);
+    Some(text)
+}
+
+fn write_access_columns(out: &mut Vec<u8>, all: &CostCounts) {
+    let rows = AccessColumn::ALL.map(|column| {
+        let mut count = Vec::new();
+        format::write_count(&mut count, all.in_column(column));
+        (count, column_description(column))
+    });
+    let width = rows.iter().map(|(count, _)| count.len()).max().unwrap_or(0);
+    out.extend_from_slice(b"All property accesses, including dependencies:");
+    for (count, description) in &rows {
+        out.extend_from_slice(b"\n  ");
+        out.resize(out.len() + width - count.len(), b' ');
+        format::write_parts(out, &[count, b"  ", description.as_bytes()]);
+    }
+}
+
+fn write_untyped_files(out: &mut Vec<u8>, files: &[(&[u8], CostCounts)], printer: &PathPrinter) {
+    if files.is_empty() {
+        return;
+    }
+    out.extend_from_slice(b"\nFiles with the most untyped accesses:");
+    for (path, accesses) in files.iter().take(MAX_LISTED_FILES) {
+        out.extend_from_slice(b"\n  ");
+        out.extend_from_slice(&printer.posix_path(path));
+        out.extend_from_slice(b"  ");
+        format::write_percent(out, free_tenths(accesses));
+        out.extend_from_slice(b" typed (");
+        format::write_count(out, accesses.free());
+        out.extend_from_slice(b" of ");
+        format::write_count(out, accesses.total());
+        out.push(b')');
+    }
+    if files.len() > MAX_LISTED_FILES {
+        out.extend_from_slice(b"\n  and ");
+        format::write_count(out, (files.len() - MAX_LISTED_FILES) as u64);
+        out.extend_from_slice(b" more");
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,8 @@
+test.extend(): the text of a callback, out of which the runner reads its fixtures, holds JSX.
+#### jsx.test.tsx
+/** @jsxRuntime classic */
+/** @jsx h */
+import { test } from "bun:test";
+const local = test.extend<{ state: number }>({ state: 5 });
+const h = (tag: string, props: object | null, ...children: unknown[]) => tag + JSON.stringify(props) + children.join();
+local("an element in the body", ({ state }) => console.log("| CASE", <p title="t">{state}</p>));

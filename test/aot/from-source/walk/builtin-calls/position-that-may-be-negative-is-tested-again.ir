@@ -1,0 +1,10 @@
+# `pos < text.length` says nothing of the lower end: of a position from -4 to 3 the read asks the bounds
+# f1 = code
+# -- source: position-that-may-be-negative-is-tested-again.ts
+# function code(text: string, from: number, flag: boolean): number { const pos = (from & 7) - 4; if (pos < text.length) { if (flag) return text.charCodeAt(pos); return -1; } return -2; }
+# console.log(code("abc", 5, true), code("abc", 1, true), code("abc", 7, false));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetStringCodeUnit
+# CHECK: |whole

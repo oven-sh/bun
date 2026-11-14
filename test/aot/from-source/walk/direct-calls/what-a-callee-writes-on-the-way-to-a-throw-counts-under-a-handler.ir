@@ -1,0 +1,19 @@
+# the callee stores only where it goes on to throw. Where the throw leaves the unit nothing of the unit runs behind it, so the call writes nothing. Under a handler of the unit the store counts
+# the callee only tests what it is handed for null, which converts nothing: a relation on a value that nobody knows runs its valueOf, and a callee that runs such code may write anything on every way
+# f1 = check, f2 = plain, f3 = guarded
+# -- source: what-a-callee-writes-on-the-way-to-a-throw-counts-under-a-handler.ts
+# declare function sink(...values: unknown[]): void;
+# let last = 0;
+# function check(n: unknown) { if (n === null) { last = 1; throw "refused"; } }
+# function plain(n: unknown) { const before = last; check(n); return before === last; }
+# function guarded(n: unknown) { const before = last; try { check(n); } catch { } return before === last; }
+# sink(plain, guarded);
+# -- end of source
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect {{*}}mayThrow
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+DirectCalls
+# NEVER-NOT: = CallDirect {{*}}mayWriteObservableState
+# RUN(UNDER): walk f3 mechanisms=none+TypedOperations+DirectCalls
+# UNDER-LABEL: code f3:Body
+# UNDER: = CallDirect {{*}}mayWriteObservableState

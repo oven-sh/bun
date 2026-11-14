@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# function P(x, y) { this.z = 0; this.init(x, y); this.w = y; }
+# P.prototype.init = function (x, y) { this.x = x; this.y = y; };
+# P.prototype.sum = function () { return this.x + this.y + this.z + this.w; };
+# const kept = [null, null, null, null];
+# function run(k) { var n = 0; for (var i = 0; i < k; i++) { var p = new P(i, 1); kept[i & 3] = p; n = (n + p.sum()) | 0; } return n; }
+# print(run(40));
+# -- end of source
+# Nobody stores under P.prototype: an allocation names the prototype of the layout, and lists what the constructor and its method store.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-NOT: GetConstructPrototype
+# CHECK: NewObject
+# CHECK-NOT: PutSlotOrAdd
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 860

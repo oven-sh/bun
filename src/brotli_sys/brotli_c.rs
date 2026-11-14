@@ -1,6 +1,6 @@
 // TODO: prefer generating this file via bindgen
 
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
@@ -154,6 +154,7 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_FORMAT_PADDING_1 = -14,
     ERROR_FORMAT_PADDING_2 = -15,
     ERROR_FORMAT_DISTANCE = -16,
+    ERROR_FORMAT_BLOCK_SWITCH = -17,
     ERROR_COMPOUND_DICTIONARY = -18,
     ERROR_DICTIONARY_NOT_SET = -19,
     ERROR_INVALID_ARGUMENTS = -20,

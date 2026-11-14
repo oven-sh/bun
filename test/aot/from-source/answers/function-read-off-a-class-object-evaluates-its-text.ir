@@ -1,0 +1,11 @@
+# `Plain.constructor` finds no member of the class and goes on to Function.prototype, where it finds Function. Whoever reads the name off a class object is told that nobody knows what it finds, as off any other closure: so the build knows that a text may be evaluated, and the call does not throw an EvalError.
+# -- source: main.js
+# class Plain { hello() { return 1; } }
+# function makerOf(c) { return c.constructor; }
+# function tell() { try { return makerOf(Plain)("return 7")(); } catch (e) { return e.name; } }
+# print(tell());
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 7
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

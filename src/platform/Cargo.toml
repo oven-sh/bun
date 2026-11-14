@@ -9,6 +9,5 @@ path = "lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc.workspace = true
-bun_core.workspace = true

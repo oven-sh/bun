@@ -28,13 +28,14 @@
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
 #include "ScriptExecutionContext.h"
+#include "ModuleGraph.h"
 #include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
 
 JSPerformanceObserverCallback::JSPerformanceObserverCallback(JSObject* callback, JSDOMGlobalObject* globalObject)
-    : PerformanceObserverCallback(globalObject->scriptExecutionContext())
+    : PerformanceObserverCallback(globalObject->currentScriptExecutionContext())
     , m_data(new JSCallbackData(globalObject->vm(), callback, this))
 {
 }
@@ -57,6 +58,8 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
 {
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
+
+    Bun::ModuleGraphContextScope moduleGraphContext(*scriptExecutionContext());
 
     Ref<JSPerformanceObserverCallback> protectedThis(*this);
 

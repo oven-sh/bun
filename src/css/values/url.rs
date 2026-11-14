@@ -1,117 +1,43 @@
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
-use bun_ast::ImportRecord;
-use bun_core::strings;
-
-/// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
-pub struct Url {
-    /// The url string.
+/// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value.
+#[derive(Clone)]
+pub struct Url<'bump> {
+    /// The url as written.
+    text: &'bump [u8],
+    /// The import record of this `url()`.
     pub(crate) import_record_idx: u32,
-    /// The location where the `url()` was seen in the CSS source file.
-    pub(crate) loc: crate::dependencies::Location,
 }
 
-impl Url {
-    pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
-        let start_pos = input.position();
-        let loc = input.current_source_location();
-        let url = input.expect_url_cloned()?;
-        let import_record_idx =
-            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url {
+impl<'bump> Url<'bump> {
+    pub(crate) fn new(text: &'bump [u8], import_record_idx: u32) -> Url<'bump> {
+        Url {
+            text,
             import_record_idx,
-            loc: crate::dependencies::Location::from_source_location(loc),
-        })
+        }
     }
 
-    /// Returns whether the URL is absolute, and not relative.
-    pub(crate) fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
-        let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
-
-        // Quick checks. If the url starts with '.', it is relative.
-        if strings::starts_with_char(url, b'.') {
-            return false;
-        }
-
-        // If the url starts with '/' it is absolute.
-        if strings::starts_with_char(url, b'/') {
-            return true;
-        }
-
-        // If the url starts with '#' we have a fragment URL.
-        // These are resolved relative to the document rather than the CSS file.
-        // https://drafts.csswg.org/css-values-4/#local-urls
-        if strings::starts_with_char(url, b'#') {
-            return true;
-        }
-
-        // Otherwise, we might have a scheme. These must start with an ascii alpha character.
-        // https://url.spec.whatwg.org/#scheme-start-state
-        if url.is_empty() || !url[0].is_ascii_alphabetic() {
-            return false;
-        }
-
-        // https://url.spec.whatwg.org/#scheme-state
-        for &c in url {
-            match c {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.' => {}
-                b':' => return true,
-                _ => break,
-            }
-        }
-
-        false
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Url<'bump>> {
+        let start_pos = input.position();
+        let url = input.expect_url()?;
+        let end_pos = input.position();
+        let import_record_idx =
+            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
+        Ok(Url::new(url, import_record_idx))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use crate::dependencies::UrlDependency;
-        let dep: Option<UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` (mut borrow) is hoisted out of the arg
-            // list so `filename()` (shared borrow) can run; result is `&'a _`.
-            let import_records = dest.get_import_records()?;
-            Some(UrlDependency::new(
-                dest.arena,
-                self,
-                dest.filename(),
-                import_records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
         let import_record = dest.import_record(self.import_record_idx)?;
         let is_internal = import_record
             .flags
             .contains(bun_ast::ImportRecordFlags::IS_INTERNAL);
-        let url = dest.get_import_record_url(self.import_record_idx)?;
-        // SAFETY: `url` borrows arena-backed `import_info` data valid for the
-        // printer's `'a`; detach so `dest` can be re-borrowed mutably below.
-        // Printer arena, not parser source — route to the raw primitive.
-        let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
+        let (url, is_placeholder) = dest.get_import_record_url(self.import_record_idx)?;
 
-        if dest.minify && !is_internal {
+        // The path that replaces a placeholder can hold a space or a parenthesis: keep the quotes.
+        if dest.minify && !is_internal && !is_placeholder {
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
-            // `Token::to_css_generic(UnquotedUrl(url))` is inlined here —
-            // `Token` payloads are `&'static [u8]` placeholders and we only
-            // have `&'a [u8]`.
             use css::WriteAll;
             if buf
                 .write_all(b"url(")
@@ -146,23 +72,15 @@ impl Url {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        Url {
-            import_record_idx: self.import_record_idx,
-            loc: self.loc,
-        }
+        self.clone()
     }
 
-    // TODO: dedupe import records??
-    // This might not fucking work
+    /// Each `url()` has its own import record, so the text decides.
     pub fn eql(&self, other: &Url) -> bool {
-        self.import_record_idx == other.import_record_idx
+        self.text == other.text
     }
 
-    // TODO: dedupe import records??
-    // This might not fucking work
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Only `import_record_idx` participates in identity (matches `eql`
-        // above); `loc` is presentation metadata.
-        hasher.update(&self.import_record_idx.to_ne_bytes());
+        hasher.update(self.text);
     }
 }

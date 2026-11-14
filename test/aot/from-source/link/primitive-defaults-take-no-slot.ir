@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# function Machine() { this.a = 1; }
+# Machine.prototype.table = [1, 2, 3];
+# Machine.prototype.pending = undefined;
+# Machine.prototype.begin = function (n) { this.table = new Uint8Array(n); if (n > 5) this.pending = { n }; };
+# Machine.prototype.read = function () { return this.pending; };
+# Machine.prototype.sum = function () { let s = 0; for (let i = 0; i < 3; i++) s = s + this.table[i] | 0; return s; };
+# const machine = new Machine(); globalThis.seen = [Machine, machine]; machine.begin((0, eval)("3")); console.log(machine.read(), machine.sum());
+# -- end of source
+# Where unseen code has the objects, a name over an object on the prototype is stored into a slot (`table`): most objects store it. A name over a primitive (`pending`) is mostly read off the prototype and gets no slot.
+# RUN: link fields
+# CHECK: field L0.1 "table" appended
+# CHECK-NOT: "pending" appended

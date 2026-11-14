@@ -1,0 +1,391 @@
+use super::module_cache::name_of_module_cache;
+use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
+use super::{BuiltinPath, ResolveInput};
+use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, Scope};
+use bun_sema::atom::Atom;
+use bun_sema::bind::{
+    Binding, BindingInitializer, BindingStability, Decl, InitialState, Parent, SymbolId,
+};
+use bun_sema::hir::{
+    BinOp, ExprId, ExprKind, Flags, ImportEqualsId, ImportEqualsTarget, NodeData, PatId, PatKind,
+};
+use bun_sema::util::SharedSort;
+use smallvec::SmallVec;
+
+pub(super) fn declared_names(
+    input: &ResolveInput<'_, '_>,
+) -> impl Iterator<Item = (PatId, SymbolId)> {
+    let names = (0..input.hir.pats.len() as u32).map(PatId);
+    names.filter_map(|name| {
+        match input.hir[name].kind {
+            PatKind::Ident(_) => {}
+            PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => return None,
+        }
+        let symbol = input.bound.declared_symbol(Decl::Var(name));
+        (!symbol.is_none()).then_some((name, symbol))
+    })
+}
+
+fn is_prototype_object(id: BuiltinId) -> bool {
+    table::entry(table::canonical_id(id)).kind == BuiltinKind::Prototype
+}
+
+impl Resolver<'_, '_> {
+    pub(super) fn is_stable(&self, symbol: SymbolId) -> bool {
+        let input = self.input;
+        let is_dead_store = |target: ExprId| input.decisions.is_dead_expr(target);
+        matches!(
+            input
+                .bound
+                .binding_stability_ignoring(symbol, &is_dead_store),
+            BindingStability::Stable
+        )
+    }
+
+    pub(super) fn find_alias_source(&self, symbol: SymbolId) -> Option<AliasSource> {
+        let input = self.input;
+        if !self.is_stable(symbol) {
+            let initializer = self.find_only_value_stored_to(symbol)?;
+            return Some(AliasSource::Initializer {
+                initializer,
+                members: SmallVec::new(),
+            });
+        }
+        match input.bound.binding_initializer(input.hir, symbol) {
+            BindingInitializer::Expression(initializer) => Some(AliasSource::Initializer {
+                initializer,
+                members: SmallVec::new(),
+            }),
+            BindingInitializer::PatternProperty { source, path } => {
+                let members = path.iter().map(|&key| input.names.get(key));
+                Some(AliasSource::Initializer {
+                    initializer: source,
+                    members: members.collect::<Option<_>>()?,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// `var a; (a = process) === null || a === void 0 ? void 0 : a.env`: what `process?.env` is compiled down to.
+    /// A variable that is declared without a value and stored to at one place holds that value or `undefined`.
+    fn find_only_value_stored_to(&self, symbol: SymbolId) -> Option<ExprId> {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        if bound.binding_stability(symbol) != BindingStability::Stored
+            || bound.initializing_declaration(symbol).is_some()
+            || bound.initial_state(symbol) == InitialState::Initialized
+        {
+            return None;
+        }
+        let [store] = bound.stores_to(symbol) else {
+            return None;
+        };
+        let Parent::Expr(assignment) = bound.parent_of_expr(store.target) else {
+            return None;
+        };
+        match hir[assignment].kind {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } if target == store.target => Some(value),
+            _ => None,
+        }
+    }
+
+    fn is_filled_by_a_store(&self, symbol: SymbolId) -> bool {
+        self.input.bound.binding_stability(symbol) == BindingStability::Stored
+            && !self.is_stable(symbol)
+    }
+
+    /// Only a namespace of the realm is followed through a store: `process`, `Bun`, `console`, `Math`. Not the global
+    /// object, nothing of the test runner, neither table of the loader.
+    pub(super) fn is_followed_through_a_store(&self, value: ResolvedValue) -> bool {
+        let id = value.path.id;
+        let entry = table::entry(table::canonical_id(id));
+        value.kind == HolderKind::Object
+            && entry.scope == Scope::Realm
+            && entry.kind == BuiltinKind::Namespace
+            && !table::is_of_test_runner(id)
+            && !table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT)
+            && !super::module_cache::is_module_cache(id)
+            && !super::module_cache::is_table_of_loaders(id)
+    }
+
+    pub(super) fn is_local_alias_filled_by_a_store(&self, target: ExprId) -> bool {
+        let bound = self.input.bound;
+        let Binding::Symbol(symbol) = bound.binding(target) else {
+            return false;
+        };
+        matches!(self.input.hir[target].kind, ExprKind::Ident(_))
+            && self.is_filled_by_a_store(symbol)
+            && matches!(
+                self.aliases.get(&symbol),
+                Some(AliasSource::Initializer { .. })
+            )
+            && !self.is_exported(symbol)
+            && !bound.is_visible_to_eval(symbol)
+            && bound.dynamic_lookup_scope(NodeData::Expr(target)).is_none()
+            && !self.is_named_outside(symbol)
+    }
+
+    pub(super) fn collect_declared_aliases(&mut self) {
+        let input = self.input;
+        if let Some(facts) = self.facts {
+            self.add_declared_aliases_of_part(facts);
+            self.collect_entity_aliases();
+            return;
+        }
+        for (name, symbol) in declared_names(input) {
+            let flags = input.bound.modifier_flags(input.hir, Decl::Var(name));
+            if flags.contains(Flags::EXPORT) {
+                self.exported_symbols.insert(symbol);
+            }
+            if !self.aliases.contains_key(&symbol)
+                && let Some(source) = self.find_alias_source(symbol)
+            {
+                self.aliases.insert(symbol, source);
+            }
+        }
+        self.collect_entity_aliases();
+    }
+
+    fn expose_entity_root(&mut self, root: Binding) {
+        let id = match root {
+            Binding::Symbol(symbol) => {
+                self.exported_symbols.insert(symbol);
+                match self.aliases.get(&symbol) {
+                    Some(AliasSource::Known(value)) => value.path.id,
+                    Some(AliasSource::Initializer { .. }) | None => return,
+                }
+            }
+            Binding::CommonJs(variable) => match self.commonjs.get(variable) {
+                Some(path) => path.id,
+                None => return,
+            },
+            Binding::Arguments(_) | Binding::Free => return,
+        };
+        self.mention(id);
+        self.expose(id);
+    }
+
+    fn collect_entity_aliases(&mut self) {
+        let input = self.input;
+        for import in (0..input.hir.import_equals.len() as u32).map(ImportEqualsId) {
+            let names = match input.hir[import].target {
+                ImportEqualsTarget::Entity(names) => names,
+                ImportEqualsTarget::Require(_) => continue,
+            };
+            let symbol = input.bound.declared_symbol(Decl::ImportEquals(import));
+            if symbol.is_none() || !input.bound.has_runtime_value(symbol) {
+                continue;
+            }
+            let root = input.bound.entity_root_binding(import);
+            match root {
+                Binding::Free => {}
+                Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
+                    self.expose_entity_root(root);
+                    continue;
+                }
+            }
+            let path: SmallVec<[Atom; 4]> = input.hir.texts(names).collect();
+            let value = match self.resolve_global_path(&path) {
+                ExprState::Builtin(value) => value,
+                _ => continue,
+            };
+            let is_local = self.is_stable(symbol)
+                && !input.hir[import].flags.contains(Flags::EXPORT)
+                && !self.is_exported(symbol)
+                && !input.bound.is_visible_to_eval(symbol);
+            if is_local {
+                self.aliases
+                    .insert(symbol, AliasSource::Known(value.predicted()));
+            } else {
+                self.expose(value.path.id);
+            }
+        }
+    }
+
+    fn resolve_alias(&self, symbol: SymbolId) -> Option<ResolvedValue> {
+        self.resolve_alias_source(self.aliases.get(&symbol)?)
+    }
+
+    fn resolve_alias_source(&self, source: &AliasSource) -> Option<ResolvedValue> {
+        match source {
+            AliasSource::Known(value) => Some(*value),
+            AliasSource::Initializer {
+                initializer,
+                members,
+            } => {
+                if let Some(cache) = self.find_extracted_module_cache(source) {
+                    return Some(cache.stored());
+                }
+                let mut value = match self.value_of(*initializer) {
+                    Some(value) => value,
+                    None => self.find_object_only_held_by(*initializer)?,
+                };
+                for &name in members {
+                    value = ResolvedValue::object(self.find_member(value, name)?);
+                }
+                Some(value.stored())
+            }
+        }
+    }
+
+    fn find_extracted_module_cache(&self, source: &AliasSource) -> Option<ResolvedValue> {
+        match source {
+            AliasSource::Initializer {
+                initializer,
+                members,
+            } => match members[..] {
+                [name]
+                    if name == name_of_module_cache() && self.value_of(*initializer).is_none() =>
+                {
+                    self.find_created_require_cache(*initializer)
+                }
+                _ => None,
+            },
+            AliasSource::Known(_) => None,
+        }
+    }
+
+    pub(super) fn may_still_be_undefined(&self, symbol: SymbolId, value: ResolvedValue) -> bool {
+        self.input.bound.initial_state(symbol) == InitialState::Undefined
+            && matches!(
+                table::canonical_id(value.path.id),
+                BuiltinId::ModuleObject | BuiltinId::ModuleRequire | BuiltinId::ModuleRequireMain
+            )
+    }
+
+    pub(super) fn find_module_object_behind_tests(
+        &self,
+        initializer: ExprId,
+    ) -> Option<ResolvedValue> {
+        let hir = self.input.hir;
+        let initializer = hir.skip_type_assertions(initializer);
+        match hir[initializer].kind {
+            ExprKind::Binary { op: BinOp::And, .. } => self.held_value_of(initializer),
+            _ => None,
+        }
+    }
+
+    pub(super) fn find_object_only_held_by(&self, initializer: ExprId) -> Option<ResolvedValue> {
+        let hir = self.input.hir;
+        match hir[hir.skip_type_assertions(initializer)].kind {
+            ExprKind::Call(_) | ExprKind::Ident(_) => {
+                let held = self.held_value_of(initializer);
+                held.filter(|held| {
+                    table::is_of_test_runner(held.path.id) || is_prototype_object(held.path.id)
+                })
+            }
+            ExprKind::Index { .. } | ExprKind::Dot { .. } => {
+                let held = self.held_value_of(initializer);
+                held.filter(|held| {
+                    table::canonical_id(held.path.id) == BuiltinId::ModuleObject
+                        || is_prototype_object(held.path.id)
+                        || super::module_cache::is_module_cache(held.path.id)
+                })
+            }
+            _ => self.find_module_object_behind_tests(initializer),
+        }
+    }
+
+    fn only_holds_its_object(&self, symbol: SymbolId) -> bool {
+        let source = self.aliases.get(&symbol);
+        source.is_some_and(|source| self.is_source_of_object_only_held(source))
+    }
+
+    fn is_source_of_object_only_held(&self, source: &AliasSource) -> bool {
+        match source {
+            AliasSource::Initializer { initializer, .. } => {
+                self.find_extracted_module_cache(source).is_some()
+                    || self.find_object_only_held_by(*initializer).is_some()
+            }
+            AliasSource::Known(_) => false,
+        }
+    }
+
+    pub(super) fn compute_symbol_state(&mut self, expr: ExprId, symbol: SymbolId) -> ExprState {
+        let Some(value) = self.resolve_alias(symbol) else {
+            return ExprState::Unresolved;
+        };
+        let is_filled_by_a_store = self.is_filled_by_a_store(symbol);
+        if is_filled_by_a_store && !self.is_followed_through_a_store(value) {
+            return ExprState::Unresolved;
+        }
+        let bound = self.input.bound;
+        if bound.dynamic_lookup_scope(NodeData::Expr(expr)).is_some() {
+            self.expose(value.path.id);
+            return ExprState::Unresolved;
+        }
+        let is_held = is_filled_by_a_store
+            || self.may_still_be_undefined(symbol, value)
+            || self.only_holds_its_object(symbol);
+        match is_held {
+            true => ExprState::Held(value),
+            false => ExprState::Builtin(value),
+        }
+    }
+
+    pub(super) fn collect_symbol_paths(&self) -> Vec<(SymbolId, BuiltinPath)> {
+        let mut paths = Vec::new();
+        for (&symbol, source) in &self.aliases {
+            if self.is_source_of_object_only_held(source) || self.is_filled_by_a_store(symbol) {
+                continue;
+            }
+            match self.resolve_alias_source(source) {
+                Some(ResolvedValue {
+                    path,
+                    kind: HolderKind::Object,
+                    ..
+                }) => paths.push((symbol, path)),
+                Some(ResolvedValue {
+                    kind: HolderKind::ModuleNamespace,
+                    ..
+                })
+                | None => {}
+            }
+        }
+        paths.shared_sort_unstable_by_key(|entry| entry.0);
+        paths
+    }
+
+    pub(super) fn collect_paths_read_by_patterns(&self) -> Vec<(SymbolId, BuiltinPath)> {
+        let mut paths = Vec::new();
+        for (&symbol, source) in &self.aliases {
+            let AliasSource::Initializer {
+                initializer,
+                members,
+            } = source
+            else {
+                continue;
+            };
+            let (Some(holder), false) = (self.value_of(*initializer), members.is_empty()) else {
+                continue;
+            };
+            let read = members.iter().try_fold(holder, |holder, &name| {
+                self.find_member(holder, name).map(ResolvedValue::object)
+            });
+            if let Some(read) = read {
+                paths.push((symbol, read.path));
+            }
+        }
+        paths.shared_sort_unstable_by_key(|entry| entry.0);
+        paths
+    }
+
+    pub(super) fn is_local_alias(&self, name: PatId) -> bool {
+        let bound = self.input.bound;
+        let symbol = match bound.initialized_binding(name) {
+            Binding::Symbol(symbol) => symbol,
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return false,
+        };
+        matches!(
+            self.aliases.get(&symbol),
+            Some(AliasSource::Initializer { .. })
+        ) && !self.is_exported(symbol)
+            && !bound.is_visible_to_eval(symbol)
+            && bound.dynamic_lookup_scope(NodeData::Pat(name)).is_none()
+            && !self.is_named_outside(symbol)
+    }
+}

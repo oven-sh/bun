@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { total() { var t = 0; for (var i = 0; i < 4; i++) t += this.get(i, 1); return t; } }; } var mixed = mixin;
+# class View extends mixed() { constructor(m) { super(); this.m = m; } get(i, j) { return this.m.get(j, i); } put(v) { this.m = v; } }
+# class M extends mixed(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } put(v) { this.rows = v; } }
+# function sum(m) { var t = m.constructor === M ? 1 : 0; for (var i = 0; i < 4; i++) t += m.get(i, 1); return t; }
+# function plus(other) { var t = 0; for (var i = 0; i < 4; i++) t += this.get(i, 1) + other.get(1, i); return t; }
+# var m = new M(4), v = new View(m);
+# print(sum(m), sum(v), plus.call(m, v), plus.call(v, m), m.total(), v.total());
+# -- end of source
+# Only classes below one mixin have the method: a receiver that nothing else tells is the one whose structure tells its class.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: HasStructureOfClass {{*}}layout=L2
+# CHECK: AreMembersUnchanged conditions=[{layout=L2 key="get"}]
+# RUN(SLOPPY): walk f3 mechanisms=all
+# SLOPPY-LABEL: code f3:Body
+# SLOPPY: HasStructureOfClass {{*}}layout=L2
+# RUN(ANSWER): run-in-shell
+# ANSWER: 4 3.5 6 7 3 3.5
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 4 3.5 6 7 3 3.5
+# CHECKED-NEXT: exited with 0

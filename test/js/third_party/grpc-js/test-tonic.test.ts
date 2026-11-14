@@ -2,7 +2,7 @@ import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { chmod, cp, mkdir, rename } from "fs/promises";
+import { chmod, cp, mkdir, rename, rm } from "fs/promises";
 import { tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import path, { join } from "path";
@@ -41,25 +41,36 @@ const cargoBin = Bun.which("cargo") as string;
 // re-compile the entire tonic/tokio dependency tree (~50s) on every run.
 const cacheDir = join(tmpdir(), "bun-test-tonic-cache");
 
-async function getProtocZipBytes(): Promise<Uint8Array> {
+async function openProtocZip() {
   const cachedPath = join(cacheDir, `protoc-${protoVersion}-${release}.zip`);
   const cached = Bun.file(cachedPath);
   if (await cached.exists()) {
-    return await cached.bytes();
+    try {
+      return await unzipper.Open.buffer(await cached.bytes());
+    } catch {
+      // An earlier run cached a response that was not the zip. Every later run on this machine would fail on it.
+      await rm(cachedPath, { force: true });
+    }
   }
-  const bytes = await fetch(releases[release]).then(res => res.bytes());
+  const response = await fetch(releases[release]);
+  if (!response.ok) {
+    throw new Error(`downloading ${releases[release]} failed: ${response.status} ${response.statusText}`);
+  }
+  const bytes = await response.bytes();
+  // Only bytes that open as a zip are cached.
+  const zip = await unzipper.Open.buffer(bytes);
   await mkdir(cacheDir, { recursive: true });
   // Write-then-rename so a concurrent/crashed run never leaves a truncated zip behind.
   const partial = `${cachedPath}.${process.pid}.tmp`;
   await Bun.write(partial, bytes);
   await rename(partial, cachedPath);
-  return bytes;
+  return zip;
 }
 
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
   await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
-  const protocZip = await unzipper.Open.buffer(await getProtocZipBytes());
+  const protocZip = await openProtocZip();
 
   const protocPath = join(tmpDir, "protoc");
   await mkdir(protocPath, { recursive: true });
@@ -133,7 +144,7 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   });
 
   test("flow control should work in both directions", async () => {
-    const hello_proto = grpc.loadPackageDefinition(packageDefinition).helloworld;
+    const hello_proto = grpc.loadPackageDefinition(packageDefinition).helloworld as any;
 
     // Create client
     const client = new hello_proto.Greeter(server.address, grpc.credentials.createInsecure());

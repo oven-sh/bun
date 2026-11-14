@@ -160,6 +160,7 @@ impl Shared {
     fn loop_of(&self, kind: LoopKind) -> &EventLoop {
         // SAFETY: caller holds a ticket or is inside the weak gate before
         // `Closed`; the VM and both embedded loops are alive.
+        // Callers keep to what `EventLoop` allows other threads.
         unsafe {
             match kind {
                 LoopKind::Regular => &(*self.hot.vm).regular_event_loop,
@@ -168,6 +169,8 @@ impl Shared {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn notify(&self) {
         let _g = self.drained.0.lock();
         self.drained.1.notify_all();
@@ -177,7 +180,7 @@ impl Shared {
     /// on the condvar, not on the loop).
     fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
         let el = self.loop_of(kind);
-        el.concurrent_tasks.push(task);
+        el.post(task);
         if self.state() >= State::Draining {
             self.notify();
         } else {
@@ -394,7 +397,7 @@ impl VmHandle {
             // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
             // `notify_need_termination` is thread-safe (VMTraps). Raw field
             // read, no `&VirtualMachine` formed off-thread.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
+            unsafe { (*(*self.0.hot.vm).jsc_vm.get().cast_const()).notify_need_termination() };
             self.0.loop_of(LoopKind::Regular).wakeup();
         }
     }
@@ -411,6 +414,12 @@ impl VmHandle {
     #[inline]
     pub fn script_allowed(&self) -> bool {
         self.0.state() == State::Open
+    }
+
+    /// Returns true once teardown has finished waiting. Nothing waits for a ticket issued after that.
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.0.state() == State::Closed
     }
 
     pub(crate) fn tickets_outstanding(&self) -> u32 {
@@ -515,10 +524,16 @@ impl VirtualMachine {
         let h = self.handle_ref();
         h.assert_js_thread();
         debug_assert!(
-            h.0.state() != State::Closed,
+            !h.closed(),
             "off-thread work started after the VM finished draining"
         );
         Ticket::issue(&h.0, self.current_loop_kind())
+    }
+
+    /// See [`VmHandle::closed`].
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.handle_ref().closed()
     }
 }
 
@@ -726,9 +741,9 @@ pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
     if delta > 0 {
-        vm.event_loop_shared().ref_keep_alive();
+        vm.event_loop().ref_keep_alive();
     } else {
-        vm.event_loop_shared().unref_keep_alive();
+        vm.event_loop().unref_keep_alive();
     }
 }
 
@@ -747,25 +762,27 @@ pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
     unsafe { VmHandle::borrow_ref(r) }.add_keep_alive(kind, delta.signum());
 }
 
-/// Any thread: Node's `can_call_into_js()`.
+/// Any thread: wake the VM's loop (no-op once closed).
 ///
 /// # Safety
 /// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool {
+pub unsafe extern "C" fn Bun__VmHandle__wake(r: *const Shared) {
     // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.script_allowed()
+    unsafe { VmHandle::borrow_ref(r) }.wake()
+}
+
+/// Any thread: Node's `can_call_into_js()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VmHandle__scriptAllowed(r: &Shared) -> bool {
+    r.state() == State::Open
 }
 
 /// The address of this handle's state byte, for C++ to test
 /// `*addr == BUN_VM_HANDLE_STATE_OPEN` inline on its native→JS entries.
-///
-/// # Safety
-/// `r` is a live reference.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__stateAddress(r: *const Shared) -> *const AtomicU8 {
-    // SAFETY: fn contract; `hot.state` lives in the Arc payload `r` points at.
-    unsafe { &raw const (*r).hot.state }
+pub extern "C" fn Bun__VmHandle__stateAddress(r: &Shared) -> *const AtomicU8 {
+    &raw const r.hot.state
 }
 
 // C++ (BunClientData.h) hard-codes this value.
@@ -784,7 +801,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
 }
 
 impl Clone for ConcurrentPoster {
@@ -831,13 +848,7 @@ impl ConcurrentPoster {
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
-            }
+            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }
@@ -933,7 +944,7 @@ impl IsolatedPosterInner {
         if open {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.concurrent_tasks.push(task);
+            el.post(task);
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);

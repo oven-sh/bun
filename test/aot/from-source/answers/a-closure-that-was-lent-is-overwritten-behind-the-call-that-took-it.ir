@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => string) | null = null;
+# function keep(callback: () => string): void { kept = callback; }
+# function make(start: number): number { const label = "n" + start; keep(() => label); return label.length; }
+# print(make(3));
+# print(make(14));
+# print(kept!());
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a closure that a directly called function borrows is allocated in the heap, not in the frame, and is overwritten right after the call that lends it.
+# A frame that has ended cannot hold a mark, but a cell that something still holds can.
+# This closure captures a value and no scope, so nothing but its own cell can reveal the fault.
+# Fault injection, testing=AssumeCalleesRetainNothing: Link says that keep() does nothing with its argument but call it.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 2
+# CALL: 3
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed with

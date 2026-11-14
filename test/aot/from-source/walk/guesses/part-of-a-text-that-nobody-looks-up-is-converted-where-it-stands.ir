@@ -1,0 +1,14 @@
+# `${a.id},${b.id}` that is printed: no cache of keys is asked, and the call that joins any primitives is dearer than the conversion of a number and the join of strings. No test, no arms.
+# -- source: shown.ts
+# type Item = { id: number; name: string };
+# export function shown(a: Item, b: Item) { console.log(`${a.id},${b.id}`); }
+# (globalThis as any).shown = shown;
+# shown({ id: 1, name: "a" }, { id: 2, name: "b" });
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: frequency=Unlikely
+# CHECK: = ToString
+# CHECK: = ToString
+# CHECK: = Strcat
+# CHECK-NOT: isLikelyKey
+# CHECK: Return

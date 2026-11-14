@@ -1,0 +1,165 @@
+---
+title: "Smaller executables"
+description: "Why an executable is as big as it is, and how to make it smaller with bun compile --trim"
+---
+
+<Warning>`--trim` and ahead-of-time compilation are experimental.</Warning>
+
+An executable is a copy of the Bun runtime with your program attached. For a small program, almost all of the file is Bun. `--trim` removes the Bun and Node.js APIs that your program never uses.
+
+```bash terminal icon="terminal"
+bun compile --trim ./server.ts
+```
+
+The build prints the size of the executable and how much it removed. In `Bun.build`, the option is `compile: { trim: true }`.
+
+`bun compile` already leaves out the `bun` command line and the JIT compilers, unless your code passes `Bun.build` an option that needs them, like `compile`. `bun build --compile` keeps both, and `--trim` only removes the command line there.
+
+A trimmed executable doesn't read `bunfig.toml` at startup unless you pass `--compile-autoload-bunfig`.
+
+## See what the compiler found
+
+`--trim` only removes what the compiler can prove you don't use. `--explain=trim` lists what it keeps and why. With `bun check --aot`, it builds nothing.
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  port: 3000,
+  routes: { "/": () => new Response("hello") },
+});
+console.log("listening");
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=trim ./server.ts
+```
+
+```txt
+aot: trim: the compiler can see every API this program uses
+aot: trim: kept Bun.serve (serve): used (Bun.serve) at server.ts:1:1
+aot: trim: removed bun:sqlite and node:sqlite (sqlite): unused
+```
+
+## What blocks `--trim`
+
+If the report starts with `blocked by`, your program or a dependency could reach APIs that the compiler can't see, so `--trim` keeps more. The line says where.
+
+| `blocked by`      | Your program                                                                    |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `eval`            | Calls `eval` or `new Function`                                                  |
+| `runtime-code`    | Uses `node:vm` or `Bun.plugin`                                                  |
+| `native-code`     | Uses `bun:ffi` or a native addon                                                |
+| `dynamic-import`  | Imports a computed path, or starts a `Worker` from a computed path or from text |
+| `external-import` | Imports an `--external` package or a URL                                        |
+| `build-option`    | Is built with `--compile-inspector`                                             |
+
+With the last two, `--trim` keeps almost every API. With the others, unused Bun and Node.js APIs are still removed.
+
+## Make it smaller
+
+- `--disallow-code-generation-from-strings` removes the parser and the interpreter. `eval` and `new Function` then throw.
+- `--trim-locales en,de` removes the `Intl` data for every other locale. Using another locale exits the process.
+- `--no-compile-function-source` removes the source text of functions. `fn.toString()` then returns `[native code]`, and an error message [quotes less](/compiler/compatibility) of the code that failed.
+
+Without `--trim-locales`, Bun keeps the locales that your code passes as constants, as in `toLocaleString("de")`. One call with a computed locale, or with none, keeps them all. The flag has no effect on macOS, where Bun uses the system's ICU library.
+
+### Turn off code from strings
+
+A dependency that calls `new Function` is the most common reason `--trim` is blocked. With [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings), those calls throw an `EvalError`, so they block nothing. A library that tries `new Function` in a `try` block falls back to plain code, and one that needs generated code throws at startup. `bun` takes the flag too, so you can find out which before you build.
+
+`node:vm` and `module._compile` still run code from strings with that flag, as in Node.js. With `=strict` they throw the `EvalError` too, and block nothing.
+
+## Using a removed feature
+
+Bun removes code, not names. `typeof HTMLRewriter` gives the same result as before. A call throws an `Error` with the code `ERR_FEATURE_REMOVED` and a message that says how to keep the feature.
+
+Your program runs into this through a name that isn't known until run time, as in `Bun[name]()` or `globalThis[name]()`, and in code that the compiler never sees, like a string passed to `eval`. That code finds the APIs that the rest of your program uses.
+
+For `Bun[name]()`, the parts of `Bun` that are written in JavaScript, like `Bun.$` and `Bun.sql`, are always kept, and others may be. A copy of the `Bun` you name, like `{ ...Bun }`, counts as a use. The test runner, `Intl`, `Temporal` and `WebAssembly` are kept only where your code names them.
+
+`bun test` runs your source files, so it can't find these errors. Test the executable itself.
+
+In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only such code uses. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Without `serve`, `listen()` in `node:http` emits an `"error"` event. Neither has a command-line flag.
+
+### Feature names
+
+`allow` and `remove` take these names. Your editor completes them from the type `Bun.Build.TrimFeature`, and `--explain=trim` prints them in parentheses. Each size is roughly what the feature adds to a trimmed executable. No size means less than 0.1 MB.
+
+<Accordion title="All feature names">
+
+| Name             | What it covers                                                                                                                                                                                                                                            | Linux x64 | macOS arm64 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ----------- |
+| `cli`            | The whole `bun` command line: the package manager, the test runner, `bun build`, `bun lint`, `bun fmt`, `bun check` and the ahead-of-time compiler.                                                                                                       | 47.4 MB   | 44.8 MB     |
+| `lint`           | `bun lint`.                                                                                                                                                                                                                                               | 12.2 MB   | 11.9 MB     |
+| `fmt`            | `bun fmt`.                                                                                                                                                                                                                                                | 0.2 MB    |             |
+| `check`          | `bun check`, `--check`, and type checking and declaration files in `bun build` and `Bun.build()`.                                                                                                                                                         | 0.3 MB    | 0.3 MB      |
+| `install`        | The package manager: `bun install`, `add`, `remove`, `update`, `link`, `unlink`, `pm` and its subcommands, `patch`, `outdated`, `publish`, `audit`, `why`, `prune`, `dedupe`, `info` and `bunx`.                                                          | 1.8 MB    | 1.6 MB      |
+| `aot`            | The ahead-of-time compiler: `bun compile`, `bun build --compile --aot`, `bun run --aot` and `compile.aot` in `Bun.build()`.                                                                                                                               | 9.6 MB    | 9.3 MB      |
+| `repl`           | `bun repl`.                                                                                                                                                                                                                                               |           |             |
+| `create`         | `bun create` and `bun init`.                                                                                                                                                                                                                              |           |             |
+| `upgrade`        | `bun upgrade`.                                                                                                                                                                                                                                            |           |             |
+| `run`            | The rest of the command line: `bun run` with `package.json` scripts and `--filter`, `bun exec`, `--help` and shell completions.                                                                                                                           | 0.6 MB    | 0.3 MB      |
+| `spawn`          | Everything that starts a process: `Bun.spawn()`, `Bun.spawnSync()`, `node:child_process`, `node:cluster`, `Bun.$`, `Bun.cron`, `Bun.WebView`, `Bun.Terminal`, `Bun.openInEditor()`, `process.execve()`, `--watch`, `--hot` and automatic crash reporting. | 1.8 MB    | 1.3 MB      |
+| `process-kill`   | `process.kill()`.                                                                                                                                                                                                                                         |           |             |
+| `process-report` | `process.report`, the Node.js diagnostic report.                                                                                                                                                                                                          |           |             |
+| `dialogs`        | `alert()`, `confirm()` and `prompt()`, which read from the terminal.                                                                                                                                                                                      |           |             |
+| `ipc`            | IPC with the parent process that started the executable with `ipc` or `fork()`: `process.send()`, `process.disconnect()`, `process.channel`, `process.connected`, and the `"message"` and `"disconnect"` events.                                          |           |             |
+| `native-code`    | Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, and `Database.loadExtension()` in `bun:sqlite`.                                                                                                                         | 0.7 MB    | 0.5 MB      |
+| `jit`            | The JIT compilers for JavaScript, regular expressions and WebAssembly.                                                                                                                                                                                    | 14.1 MB   | 14.2 MB     |
+| `interpreter`    | Everything that runs code that isn't in the executable: the JavaScript parser, the interpreter and the transpiler.                                                                                                                                        | 3.7 MB    | 2.7 MB      |
+| `bundler`        | `bun build`, `Bun.build()`, HTML imports and the development server in `Bun.serve()`, with the CSS parser and the React Compiler.                                                                                                                         | 6.0 MB    | 2.5 MB      |
+| `test`           | `bun test`, `bun:test` and `node:test`: the test runner, `expect()` and its matchers, mocks and snapshots.                                                                                                                                                | 2.1 MB    | 1.8 MB      |
+| `inspector`      | The debugger: `--inspect`, `BUN_INSPECT` and `node:inspector`.                                                                                                                                                                                            | 0.6 MB    | 0.7 MB      |
+| `profiler`       | The CPU and heap profilers, heap snapshots and code coverage: `--cpu-prof`, `--heap-prof`, `Bun.generateHeapSnapshot()`, `v8.writeHeapSnapshot()` and the profiling functions in `bun:jsc`.                                                               | 0.3 MB    | 0.4 MB      |
+| `source-maps`    | Source maps: the ones that the `sourcemap` option embeds in the executable, which stack traces use, and `SourceMap` and `findSourceMap()` in `node:module`.                                                                                               |           |             |
+| `image`          | `Bun.Image` and `.image()` on a `Blob`.                                                                                                                                                                                                                   | 1.3 MB    | 0.9 MB      |
+| `archive`        | `Bun.Archive`, and everything else that reads or writes a tar archive.                                                                                                                                                                                    |           |             |
+| `sqlite`         | `bun:sqlite`, `node:sqlite` and imports with `type: "sqlite"`.                                                                                                                                                                                            | 1.9 MB    |             |
+| `sql`            | `Bun.sql` and `Bun.SQL` for PostgreSQL and MySQL.                                                                                                                                                                                                         | 0.3 MB    | 0.3 MB      |
+| `redis`          | `Bun.redis`, `Bun.RedisClient` and `--redis-preconnect`.                                                                                                                                                                                                  | 0.3 MB    | 0.3 MB      |
+| `s3`             | `Bun.s3`, `Bun.S3Client`, and `s3:` URLs in `Bun.file()`, `Bun.write()` and `fetch()`.                                                                                                                                                                    | 0.1 MB    |             |
+| `html-rewriter`  | `HTMLRewriter`.                                                                                                                                                                                                                                           |           |             |
+| `ffi`            | `bun:ffi` and its C compiler.                                                                                                                                                                                                                             | 0.7 MB    | 0.5 MB      |
+| `native-addons`  | Native addons: `.node` files, `process.dlopen()`, N-API, and the V8 and libuv symbols that addons link against.                                                                                                                                           |           |             |
+| `webassembly`    | `WebAssembly`, `node:wasi` and imports of `.wasm` files.                                                                                                                                                                                                  | 1.0 MB    | 1.1 MB      |
+| `shell`          | `Bun.$`, the shell.                                                                                                                                                                                                                                       | 0.4 MB    | 0.4 MB      |
+| `webview`        | `Bun.WebView`.                                                                                                                                                                                                                                            |           |             |
+| `fetch`          | Bun's HTTP client: `fetch()`, `Bun.fetch()` and `Bun.FetchSession`.                                                                                                                                                                                       | 0.3 MB    |             |
+| `serve`          | `Bun.serve()`, and the `node:http` and `node:https` servers, which are built on it.                                                                                                                                                                       | 0.4 MB    | 0.3 MB      |
+| `sockets`        | `Bun.listen()` and `Bun.connect()`, and everything that opens or accepts a connection through `node:net`: `net.connect()`, `net.createServer().listen()`, `node:tls`, `node:http2`, `http.request()` and `https.request()`.                               |           |             |
+| `dns`            | `Bun.dns` and `node:dns`.                                                                                                                                                                                                                                 | 0.3 MB    | 0.3 MB      |
+| `http2`          | `node:http2`, and HTTP/2 and HTTP/3 in `Bun.serve()`.                                                                                                                                                                                                     | 0.3 MB    |             |
+| `http3`          | HTTP/3 in `Bun.serve()`, and `node:quic`.                                                                                                                                                                                                                 | 0.5 MB    |             |
+| `websocket`      | The `WebSocket` client.                                                                                                                                                                                                                                   | 0.2 MB    |             |
+| `udp`            | `Bun.udpSocket()` and `node:dgram`.                                                                                                                                                                                                                       |           |             |
+| `worker`         | `Worker` and `node:worker_threads`.                                                                                                                                                                                                                       |           |             |
+| `node-vm`        | `node:vm`.                                                                                                                                                                                                                                                | 0.1 MB    |             |
+| `node-crypto`    | `node:crypto`.                                                                                                                                                                                                                                            | 0.4 MB    |             |
+| `web-crypto`     | `crypto.subtle`, `SubtleCrypto` and `CryptoKey`.                                                                                                                                                                                                          | 0.2 MB    |             |
+| `password`       | `Bun.password`.                                                                                                                                                                                                                                           |           |             |
+| `brotli`         | Brotli in `node:zlib`, `CompressionStream`, `DecompressionStream` and `fetch`.                                                                                                                                                                            | 0.4 MB    | 0.3 MB      |
+| `intl`           | All of `Intl`, plus `localeCompare()`, `toLocaleString()`, `toLocaleDateString()` and `toLocaleTimeString()`, with their locale data.                                                                                                                     | 10.5 MB   |             |
+| `intl-segmenter` | `Intl.Segmenter` and its dictionaries.                                                                                                                                                                                                                    | 3.1 MB    |             |
+| `temporal`       | `Temporal` and `Date.prototype.toTemporalInstant()`.                                                                                                                                                                                                      | 0.5 MB    | 0.5 MB      |
+| `bun-jsc`        | `bun:jsc` and `node:v8`.                                                                                                                                                                                                                                  |           |             |
+| `plugin`         | `Bun.plugin()`.                                                                                                                                                                                                                                           |           |             |
+| `fs-router`      | `Bun.FileSystemRouter`.                                                                                                                                                                                                                                   |           |             |
+| `terminal`       | `Bun.Terminal` and the `terminal` option of `Bun.spawn()`.                                                                                                                                                                                                |           |             |
+| `cron`           | `Bun.cron()`.                                                                                                                                                                                                                                             |           |             |
+| `secrets`        | `Bun.secrets`.                                                                                                                                                                                                                                            |           |             |
+| `markdown`       | `Bun.markdown`.                                                                                                                                                                                                                                           |           |             |
+| `yaml`           | `Bun.YAML`.                                                                                                                                                                                                                                               |           |             |
+| `toml`           | `Bun.TOML`.                                                                                                                                                                                                                                               |           |             |
+| `json5`          | `Bun.JSON5`.                                                                                                                                                                                                                                              |           |             |
+| `jsonc`          | `Bun.JSONC`.                                                                                                                                                                                                                                              |           |             |
+| `jsonl`          | `Bun.JSONL`.                                                                                                                                                                                                                                              |           |             |
+| `xml`            | `Bun.XML`.                                                                                                                                                                                                                                                |           |             |
+| `glob`           | `Bun.Glob`.                                                                                                                                                                                                                                               |           |             |
+| `semver`         | `Bun.semver`.                                                                                                                                                                                                                                             |           |             |
+| `color`          | `Bun.color()`.                                                                                                                                                                                                                                            |           |             |
+| `cookie`         | `Bun.Cookie`, `Bun.CookieMap` and `request.cookies` in `Bun.serve()`.                                                                                                                                                                                     |           |             |
+| `csrf`           | `Bun.CSRF`.                                                                                                                                                                                                                                               |           |             |
+| `hash`           | `Bun.hash()`, `Bun.sha()` and the hash classes from `Bun.MD4` to `Bun.SHA512_256`.                                                                                                                                                                        |           |             |
+| `crypto-hasher`  | `Bun.CryptoHasher`.                                                                                                                                                                                                                                       |           |             |
+| `url-pattern`    | `URLPattern`.                                                                                                                                                                                                                                             |           |             |
+
+</Accordion>

@@ -19,11 +19,11 @@ pub struct FallbackHandler {
 }
 
 impl FallbackHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         // Each (field, Property variant, has_vendor_prefix) pair is expanded via macro.
 
@@ -55,6 +55,7 @@ impl FallbackHandler {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant(val));
                     } else if let Some(index) = *$self_field {
+                        context.remove_conditional_property(property.property_id());
                         dest[index] = Property::$Variant(val);
                     } else {
                         // val dropped — Drop handles cleanup

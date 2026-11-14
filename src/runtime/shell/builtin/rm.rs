@@ -4,6 +4,9 @@ use bun_core::{ZBox, ZStr, strings};
 use bun_paths::resolve_path::{self, Platform, platform};
 use bun_sys::{E, FdExt, dir_iterator};
 
+use crate::node::fs::{
+    find_embedded_shell_folder, forget_shell_operand, is_on_disk_at, note_found_on_disk,
+};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -13,13 +16,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Rm {
+pub(crate) struct Rm {
     pub(crate) opts: Opts,
     pub(crate) state: RmState,
 }
 
 #[derive(Default)]
-pub enum RmState {
+pub(crate) enum RmState {
     #[default]
     Idle,
     ParseOpts {
@@ -33,7 +36,7 @@ pub enum RmState {
     Err(ExitCode),
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     /// Index into argv where filepath args start.
     pub(crate) args_start: usize,
     pub(crate) total_tasks: usize,
@@ -53,7 +56,7 @@ impl ExecState {
 }
 
 #[derive(Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-f`, `--force` — ignore nonexistent files and arguments, never prompt.
     pub(crate) force: bool,
     /// Configures how the user should be prompted on removal of files.
@@ -79,12 +82,12 @@ impl Default for Opts {
 }
 
 #[derive(Default, Clone, Copy)]
-pub enum PromptBehaviour {
+pub(crate) enum PromptBehaviour {
     /// `--interactive=never` (default)
     #[default]
     Never,
     /// `-I`, `--interactive=once`
-    Once { removed_count: u32 },
+    Once,
     /// `-i`, `--interactive=always`
     Always,
 }
@@ -98,6 +101,7 @@ enum RmParseFlag {
 
 impl Rm {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+        note_found_on_disk();
         Self::next(interp, cmd)
     }
 
@@ -393,6 +397,20 @@ impl Rm {
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
         let task_err = unsafe { (*task).err.get_mut().take() };
+        // SAFETY: the root task is freed with `task`, behind this function.
+        let (operand, is_recursive, was_on_disk) = unsafe {
+            (
+                (*(*task).root_task).path.as_bytes(),
+                (*task).opts.recursive,
+                (*task).was_on_disk,
+            )
+        };
+        let cwd = Builtin::shell(interp, cmd).cwd();
+        let find_folder = || find_embedded_shell_folder(cwd, operand).filter(|_| !is_recursive);
+        let task_err = task_err.or_else(find_folder);
+        if task_err.is_none() {
+            forget_shell_operand(cwd, operand, was_on_disk);
+        }
         // Format the error string before
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
@@ -527,7 +545,7 @@ impl Rm {
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=once" => {
-                    opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 };
+                    opts.prompt_behaviour = PromptBehaviour::Once;
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=always" => {
@@ -546,7 +564,7 @@ impl Rm {
                 b'r' | b'R' => opts.recursive = true,
                 b'v' => opts.verbose = true,
                 b'd' => opts.remove_empty_dirs = true,
-                b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
+                b'i' => opts.prompt_behaviour = PromptBehaviour::Once,
                 b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
                 _ => return RmParseFlag::IllegalOptionWithFlag,
             }
@@ -572,7 +590,7 @@ impl Rm {
 /// separator the user is using and prefer that. If both are used, pick the
 /// first one.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JoinStyle {
+pub(crate) enum JoinStyle {
     Posix,
     Windows,
 }
@@ -593,14 +611,14 @@ impl JoinStyle {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EntryKindHint {
+pub(crate) enum EntryKindHint {
     Idk,
     Dir,
 }
 
 /// One per filepath argument; owns the root
 /// [`DirTask`] and tracks the cross-thread error state.
-pub struct ShellRmTask {
+pub(crate) struct ShellRmTask {
     pub(crate) cmd: NodeId,
     pub(crate) opts: Opts,
     pub(crate) cwd: bun_sys::Fd,
@@ -626,6 +644,7 @@ pub struct ShellRmTask {
     /// can take `&self` without an interior `&mut` cast.
     pub(crate) err: bun_threading::Guarded<Option<bun_sys::Error>>,
     pub(crate) join_style: JoinStyle,
+    was_on_disk: bool,
     pub(crate) event_loop: EventLoopHandle,
     pub task: ShellTask,
 }
@@ -633,7 +652,7 @@ pub struct ShellRmTask {
 /// One per directory in the recursive
 /// walk; root and children alike are heap-allocated (see the comment on
 /// [`ShellRmTask::root_task`]).
-pub struct DirTask {
+pub(crate) struct DirTask {
     pub(crate) task_manager: *mut ShellRmTask,
     pub(crate) parent_task: *mut DirTask,
     pub path: ZBox,
@@ -648,16 +667,6 @@ pub struct DirTask {
     /// Intrusive node for the thread-pool dispatch.
     pub(crate) work_task: WorkPoolTask,
 }
-
-// SAFETY: raw-pointer fields are only dereferenced on the threads that own
-// them (worker pool / main thread); the surrounding atomics + `err` mutex
-// provide the necessary synchronisation.
-unsafe impl Send for ShellRmTask {}
-// SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
-// by the `subtask_count` / `pending_main_callbacks` atomic protocol; non-atomic
-// fields are single-owner per the `need_to_wait` handoff (see
-// `verbose_deleted`).
-unsafe impl Send for DirTask {}
 
 impl ShellRmTask {
     #[allow(clippy::too_many_arguments)]
@@ -700,6 +709,7 @@ impl ShellRmTask {
             pending_main_callbacks: AtomicU32::new(1),
             err: bun_threading::Guarded::new(None),
             join_style,
+            was_on_disk: is_on_disk_at(cwd, root_path),
             event_loop: evtloop,
             task: ShellTask::new(evtloop),
         });
@@ -1733,6 +1743,10 @@ impl bun_event_loop::Taskable for ShellRmTask {
             ShellRmTask::decr_pending_and_maybe_deinit(this);
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl bun_event_loop::Taskable for DirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmDirTask;
@@ -1748,6 +1762,10 @@ impl bun_event_loop::Taskable for DirTask {
             }
             ShellRmTask::decr_pending_and_maybe_deinit(tm);
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

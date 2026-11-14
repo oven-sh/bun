@@ -79,30 +79,11 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
     }
 }
 
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        bump.alloc((**self).deep_clone(bump))
-    }
-}
-
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
         // PERF: element-wise deep_clone — profile if hot
         // (specialization would let `T: Copy` use `alloc_slice_copy`).
         bump.alloc_slice_fill_iter(self.iter().map(|e| e.deep_clone(bump)))
-    }
-}
-
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // PERF: element-wise deep_clone — profile if hot.
-        let mut out = ArrayList::with_capacity_in(self.len(), bump);
-        for item in self.iter() {
-            out.push(item.deep_clone(bump));
-        }
-        out
     }
 }
 
@@ -165,13 +146,6 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
     }
 }
 
-impl<'bump> DeepClone<'bump> for bun_ast::Loc {
-    #[inline]
-    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
-        *self
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────────
 // Eql
 // ───────────────────────────────────────────────────────────────────────────────
@@ -179,7 +153,7 @@ impl<'bump> DeepClone<'bump> for bun_ast::Loc {
 /// `lhs.eql(&rhs)` for CSS types. This is the equivalent of doing
 /// `#[derive(PartialEq)]` in Rust — and most impls could be exactly that.
 /// Kept as a separate trait because some CSS types want structural
-/// equality that differs from `PartialEq` (e.g. `VendorPrefix`, idents).
+/// equality that differs from `PartialEq` (e.g. `VendorPrefix`).
 pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
@@ -193,19 +167,6 @@ pub use bun_css_derive::CssEql;
 #[inline]
 pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
-}
-
-fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-    debug_assert_eq!(lhs.len(), rhs.len());
-    for (left, right) in lhs.iter().zip(rhs.iter()) {
-        if !left.eql(right) {
-            return false;
-        }
-    }
-    true
 }
 
 // Blanket / base impls.
@@ -239,13 +200,6 @@ impl<T: CssEql> CssEql for [T] {
             }
         }
         true
-    }
-}
-
-impl<'bump, T: CssEql> CssEql for ArrayList<'bump, T> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        eql_list(self, other)
     }
 }
 
@@ -284,7 +238,7 @@ eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 /// require every field type to itself impl `CssEql`; it bridges
 /// `PartialEq` → `CssEql` wholesale. Prefer `#[derive(CssEql)]` only when a
 /// field's `CssEql` is intentionally *different* from its `PartialEq` (e.g.
-/// `Ident`, `Url`).
+/// `Url`).
 ///
 /// REJECTED alternative: `impl<T: PartialEq> CssEql for T {}` blanket — would
 /// overlap the existing `Option<T>`/`Vec<T>`/`[T]`/`Box<T>` blanket impls
@@ -313,19 +267,6 @@ impl CssEql for str {
     }
 }
 
-impl<T: CssEql, const N: usize> CssEql for [T; N] {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        // Element-wise eql (length is `N` on both sides by type).
-        for (a, b) in self.iter().zip(other.iter()) {
-            if !a.eql(b) {
-                return false;
-            }
-        }
-        true
-    }
-}
-
 impl<T: CssEql + ?Sized> CssEql for Box<T> {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -340,13 +281,6 @@ impl CssEql for VendorPrefix {
     }
 }
 
-impl CssEql for bun_ast::Loc {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.start == other.start
-    }
-}
-
 impl CssEql for () {
     #[inline]
     fn eql(&self, _other: &Self) -> bool {
@@ -354,32 +288,10 @@ impl CssEql for () {
     }
 }
 
-// `CssEql` impls for `CustomIdent`/`DashedIdent`/`Ident` (defined in
-// `values/ident.rs`, which does not depend on this trait).
-mod ident_eql {
-    use super::CssEql;
-    use crate::values::ident::{CustomIdent, DashedIdent, Ident};
-
-    macro_rules! ident_eql_impl {
-        ($($t:ty),* $(,)?) => {$(
-            impl CssEql for $t {
-                #[inline]
-                fn eql(&self, other: &Self) -> bool {
-                    // `.v()` borrows the parser arena (see `crate::arena_str`).
-                    bun_core::strings::eql(self.v(), other.v())
-                }
-            }
-        )*};
-    }
-    ident_eql_impl!(CustomIdent, DashedIdent, Ident);
-}
-
 // ───────────────────────────────────────────────────────────────────────────────
 // Bridge inherent eql/hash/deep_clone → trait impls
 //
-// Many CSS value types carry hand-rolled inherent `eql`/`hash`/`deep_clone`
-// (usually because a field is a raw `*const [u8]`
-// arena slice that the derive can't see through). The `#[derive(CssEql/…)]`
+// Many CSS value types have inherent `eql`/`hash`/`deep_clone`. The `#[derive(CssEql/…)]`
 // expansion on *containing* types dispatches via UFCS trait paths, so those
 // inherent methods alone don't satisfy the bound. These thin forwarding impls
 // close the gap without duplicating logic.
@@ -420,27 +332,32 @@ mod inherent_bridge {
     }
 
     use crate::values::ident::{CustomIdent, DashedIdent, DashedIdentReference, Ident};
-    bridge_hash!(CustomIdent, DashedIdent, Ident, DashedIdentReference);
-    bridge_eql!(DashedIdentReference);
-    bridge_deep_clone!(CustomIdent, DashedIdent, Ident, DashedIdentReference);
+    bridge_hash!(
+        CustomIdent<'_>,
+        DashedIdent<'_>,
+        Ident<'_>,
+        DashedIdentReference<'_>
+    );
+    bridge_eql!(DashedIdentReference<'_>);
+    bridge_deep_clone!(
+        CustomIdent<'bump>,
+        DashedIdent<'bump>,
+        Ident<'bump>,
+        DashedIdentReference<'bump>
+    );
 
     use crate::values::color::CssColor;
     bridge_hash!(CssColor);
     bridge_deep_clone!(CssColor);
 
     use crate::values::url::Url;
-    bridge_eql!(Url);
-    bridge_hash!(Url);
-    bridge_deep_clone!(Url);
-
-    use crate::properties::animation::AnimationName;
-    bridge_eql!(AnimationName);
-    bridge_hash!(AnimationName);
-    bridge_deep_clone!(AnimationName);
+    bridge_eql!(Url<'_>);
+    bridge_hash!(Url<'_>);
+    bridge_deep_clone!(Url<'bump>);
 
     use crate::properties::animation::Animation;
     // `CssEql` for `Animation` via `#[derive(CssEql)]` on the struct.
-    bridge_deep_clone!(Animation);
+    bridge_deep_clone!(Animation<'bump>);
 
     use crate::properties::custom::UAEnvironmentVariable;
     impl CssEql for UAEnvironmentVariable {
@@ -453,17 +370,20 @@ mod inherent_bridge {
     bridge_deep_clone_copy!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
-    use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
+    use crate::selectors::parser::{ViewTransitionPartSelector, WebKitScrollbarPseudoElement};
     impl CssEql for WebKitScrollbarPseudoElement {
         #[inline]
         fn eql(&self, other: &Self) -> bool {
             WebKitScrollbarPseudoElement::eql(*self, *other)
         }
     }
-    bridge_eql!(ViewTransitionPartName);
+    bridge_eql!(ViewTransitionPartSelector<'_>);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
-    bridge_hash!(ViewTransitionPartName);
-    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_hash!(ViewTransitionPartSelector<'_>);
+    bridge_deep_clone_copy!(
+        WebKitScrollbarPseudoElement,
+        ViewTransitionPartSelector<'bump>
+    );
 
     // ───────────────────────────────────────────────────────────────────────
     // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via
@@ -474,7 +394,7 @@ mod inherent_bridge {
     /// Forward `CssEql` to `PartialEq`.
     macro_rules! bridge_eql_partialeq {
         ($($t:ty),* $(,)?) => {$(
-            impl CssEql for $t {
+            impl<'bump> CssEql for $t {
                 #[inline]
                 fn eql(&self, other: &Self) -> bool { PartialEq::eq(self, other) }
             }
@@ -516,16 +436,16 @@ mod inherent_bridge {
         AnimationDirection,
         AnimationPlayState,
         AnimationFillMode,
-        AnimationTimeline,
+        AnimationTimeline<'_>,
     );
 
     use crate::values::alpha::AlphaValue;
     bridge_clone_partialeq!(AlphaValue);
 
     use crate::values::image::Image;
-    bridge_eql!(Image);
-    bridge_deep_clone!(Image);
-    bridge_is_compatible!(Image);
+    bridge_eql!(Image<'_>);
+    bridge_deep_clone!(Image<'bump>);
+    bridge_is_compatible!(Image<'_>);
     // Gradient payload structs only carry inherent `deep_clone`; bridge them so
     // `#[derive(css::DeepClone)]` on `Gradient` / `WebKitGradient` (UFCS trait
     // dispatch) resolves.
@@ -651,8 +571,8 @@ mod inherent_bridge {
     // derives — see border_image.rs), so route through bridge_deep_clone/eql.
     bridge_deep_clone!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
     bridge_eql!(BorderImageRepeat, BorderImageSlice);
-    bridge_deep_clone!(BorderImage);
-    bridge_eql!(BorderImage);
+    bridge_deep_clone!(BorderImage<'bump>);
+    bridge_eql!(BorderImage<'_>);
 
     use crate::properties::border_radius::BorderRadius;
     // BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
@@ -665,8 +585,8 @@ mod inherent_bridge {
         Background, BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundPosition,
         BackgroundRepeat, BackgroundSize,
     };
-    bridge_eql!(Background);
-    bridge_deep_clone!(Background, BackgroundSize, BackgroundPosition);
+    bridge_eql!(Background<'_>);
+    bridge_deep_clone!(Background<'bump>, BackgroundSize, BackgroundPosition);
     bridge_deep_clone_copy!(BackgroundRepeat);
     bridge_clone_partialeq!(BackgroundAttachment, BackgroundClip, BackgroundOrigin);
 
@@ -757,13 +677,13 @@ mod inherent_bridge {
             LineHeight::is_compatible(self, browsers)
         }
     }
-    impl super::IsCompatible for FontFamily {
+    impl super::IsCompatible for FontFamily<'_> {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontFamily::is_compatible(self, browsers)
         }
     }
-    bridge_clone_partialeq!(FontFamily);
+    bridge_clone_partialeq!(FontFamily<'bump>);
     // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
 
     // ── properties/size ──
@@ -804,8 +724,8 @@ mod inherent_bridge {
 
     // ── properties/transition ──
     use crate::properties::transition::Transition;
-    bridge_deep_clone!(Transition);
-    bridge_eql!(Transition);
+    bridge_deep_clone!(Transition<'bump>);
+    bridge_eql!(Transition<'_>);
 
     // ── properties/masking ──
     use crate::properties::masking::{
@@ -832,8 +752,8 @@ mod inherent_bridge {
 
     // ── properties/css_modules ──
     use crate::properties::css_modules::Composes;
-    bridge_deep_clone!(Composes);
-    bridge_eql!(Composes);
+    bridge_deep_clone!(Composes<'bump>);
+    bridge_eql!(Composes<'_>);
 
     // ── properties/margin_padding ──
     use crate::properties::margin_padding::{
@@ -861,8 +781,8 @@ mod inherent_bridge {
 
     // ── properties/properties_generated ──
     use crate::properties::PropertyId;
-    bridge_deep_clone_copy!(PropertyId);
-    bridge_eql_partialeq!(PropertyId);
+    bridge_deep_clone_copy!(PropertyId<'bump>);
+    bridge_eql_partialeq!(PropertyId<'_>);
 }
 
 // Packed bitfields are `bitflags!` types whose derived `PartialEq` already
@@ -890,21 +810,10 @@ pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
-    for item in this.iter() {
-        item.hash(hasher);
-    }
-}
-
 fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
-}
-
-impl CssHash for () {
-    #[inline]
-    fn hash(&self, _hasher: &mut Wyhash) {}
 }
 
 impl<T: CssHash> CssHash for Option<T> {
@@ -931,27 +840,6 @@ impl<T: CssHash> CssHash for [T] {
         for item in self {
             item.hash(hasher);
         }
-    }
-}
-
-impl<T: CssHash, const N: usize> CssHash for [T; N] {
-    fn hash(&self, hasher: &mut Wyhash) {
-        // Feed the raw bytes
-        // of the `usize` length into the hasher. `bun_core::write_any_to_hasher` exists
-        // but is `H: Hasher`-generic and routes through `Hasher::write`, which
-        // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
-        // here is byte-identical and avoids the trait hop.
-        hasher.update(&self.len().to_ne_bytes());
-        for item in self {
-            item.hash(hasher);
-        }
-    }
-}
-
-impl<'bump, T: CssHash> CssHash for ArrayList<'bump, T> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        hash_array_list(self, hasher)
     }
 }
 
@@ -1016,15 +904,6 @@ impl CssHash for VendorPrefix {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&[self.as_bits()]);
-    }
-}
-
-impl CssHash for bun_ast::Loc {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        // Providing a structural hash here lets `#[derive(CssHash)]` types
-        // include a `loc` field without `#[css(skip)]` if they want.
-        hasher.update(&self.start.to_ne_bytes());
     }
 }
 
@@ -1119,13 +998,6 @@ impl<T: IsCompatible> IsCompatible for [T] {
     }
 }
 
-impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
-    #[inline]
-    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-        self.as_slice().is_compatible(browsers)
-    }
-}
-
 impl<T: IsCompatible> IsCompatible for Vec<T> {
     #[inline]
     fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
@@ -1167,15 +1039,10 @@ is_compatible_container!(
 // or derives one via `#[derive(Parse)]` / `#[derive(DefineEnumProperty)]`; the
 // trait below is the uniform bound that `Property::parse` and the container
 // blanket impls (`SmallList`/`Vec`/`Option`/`Size2D`/`Rect`) need.
-//
-// `Parse` is intentionally lifetime-free: every value-type parser takes
-// `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.
-// `'bump` arena threading is a follow-up; until then the parser
-// holds the arena and arena-backed lists go through `from_list(Vec)`.
 
 /// `T::parse(&mut Parser) -> CssResult<T>`.
-pub trait Parse: Sized {
-    fn parse(input: &mut Parser) -> CssResult<Self>;
+pub trait Parse<'bump>: Sized {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self>;
 }
 
 /// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
@@ -1187,128 +1054,149 @@ pub trait Parse: Sized {
 /// that override the body. Instead the fallthrough lives in
 /// `impl_pwo_via_parse!`/`impl_parse_tocss_via_inherent!` and the container
 /// impls; every `ParseWithOptions` impl provides the method explicitly.
-pub trait ParseWithOptions: Sized {
-    fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>;
+pub trait ParseWithOptions<'bump>: Sized {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        options: &ParserOptions,
+    ) -> CssResult<'bump, Self>;
 }
 
 #[inline]
-pub fn parse_with_options<T: ParseWithOptions>(
-    input: &mut Parser,
+pub fn parse_with_options<'bump, T: ParseWithOptions<'bump>>(
+    input: &mut Parser<'_, 'bump>,
     options: &ParserOptions,
-) -> CssResult<T> {
+) -> CssResult<'bump, T> {
     T::parse_with_options(input, options)
 }
 
 // ── container / primitive Parse impls ────────────────────────────────────────
 
-impl<T: Parse> Parse for Option<T> {
+impl<'bump, T: Parse<'bump>> Parse<'bump> for Option<T> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         Ok(input.try_parse(T::parse).ok())
     }
 }
-impl<T: Parse> ParseWithOptions for Option<T> {
+impl<'bump, T: Parse<'bump>> ParseWithOptions<'bump> for Option<T> {
     #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        _options: &ParserOptions,
+    ) -> CssResult<'bump, Self> {
         <Self as Parse>::parse(input)
     }
 }
 
-impl<T: Parse> Parse for Vec<T> {
+impl<'bump, T: Parse<'bump>> Parse<'bump> for Vec<T> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         input.parse_comma_separated(T::parse)
     }
 }
-impl<T: Parse> ParseWithOptions for Vec<T> {
+impl<'bump, T: Parse<'bump>> ParseWithOptions<'bump> for Vec<T> {
     #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        _options: &ParserOptions,
+    ) -> CssResult<'bump, Self> {
         <Self as Parse>::parse(input)
     }
 }
 
 // Parse the pointee then heap-allocate.
-impl<T: Parse> Parse for Box<T> {
+impl<'bump, T: Parse<'bump>> Parse<'bump> for Box<T> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         T::parse(input).map(Box::new)
     }
 }
-impl<T: Parse> ParseWithOptions for Box<T> {
+impl<'bump, T: Parse<'bump>> ParseWithOptions<'bump> for Box<T> {
     #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        _options: &ParserOptions,
+    ) -> CssResult<'bump, Self> {
         <Self as Parse>::parse(input)
     }
 }
 
-impl<T: Parse, const N: usize> Parse for SmallList<T, N> {
+impl<'bump, T: Parse<'bump>, const N: usize> Parse<'bump> for SmallList<T, N> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         input
             .parse_comma_separated(T::parse)
             .map(SmallList::from_list)
     }
 }
-impl<T: Parse, const N: usize> ParseWithOptions for SmallList<T, N> {
+impl<'bump, T: Parse<'bump>, const N: usize> ParseWithOptions<'bump> for SmallList<T, N> {
     #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        _options: &ParserOptions,
+    ) -> CssResult<'bump, Self> {
         <Self as Parse>::parse(input)
     }
 }
 
-impl<T: Parse + Clone + PartialEq> Parse for Size2D<T> {
+impl<'bump, T: Parse<'bump> + Clone + PartialEq> Parse<'bump> for Size2D<T> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         Size2D::<T>::parse(input)
     }
 }
-impl<T: Parse + Clone + PartialEq> ParseWithOptions for Size2D<T> {
+impl<'bump, T: Parse<'bump> + Clone + PartialEq> ParseWithOptions<'bump> for Size2D<T> {
     #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        _options: &ParserOptions,
+    ) -> CssResult<'bump, Self> {
         Size2D::<T>::parse(input)
     }
 }
 
-impl<T: Parse + Clone> Parse for Rect<T> {
+impl<'bump, T: Parse<'bump> + Clone> Parse<'bump> for Rect<T> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         Rect::<T>::parse(input)
     }
 }
-impl<T: Parse + Clone> ParseWithOptions for Rect<T> {
+impl<'bump, T: Parse<'bump> + Clone> ParseWithOptions<'bump> for Rect<T> {
     #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        _options: &ParserOptions,
+    ) -> CssResult<'bump, Self> {
         Rect::<T>::parse(input)
     }
 }
 
-impl Parse for f32 {
+impl<'bump> Parse<'bump> for f32 {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         CSSNumberFns::parse(input)
     }
 }
-impl Parse for CSSInteger {
+impl<'bump> Parse<'bump> for CSSInteger {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         CSSIntegerFns::parse(input)
     }
 }
-impl Parse for CustomIdent {
+impl<'bump> Parse<'bump> for CustomIdent<'bump> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         CustomIdentFns::parse(input)
     }
 }
-impl Parse for DashedIdent {
+impl<'bump> Parse<'bump> for DashedIdent<'bump> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         DashedIdentFns::parse(input)
     }
 }
-impl Parse for Ident {
+impl<'bump> Parse<'bump> for Ident<'bump> {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         IdentFns::parse(input)
     }
 }
@@ -1348,13 +1236,6 @@ impl<T: ToCss> ToCss for Option<T> {
             return val.to_css(dest);
         }
         Ok(())
-    }
-}
-
-impl<'bump, T: ToCss> ToCss for ArrayList<'bump, T> {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::to_css::from_list(self.as_slice(), dest)
     }
 }
 
@@ -1398,24 +1279,6 @@ impl ToCss for CSSInteger {
         CSSIntegerFns::to_css(*self, dest)
     }
 }
-impl ToCss for CustomIdent {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CustomIdentFns::to_css(self, dest)
-    }
-}
-impl ToCss for DashedIdent {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        DashedIdentFns::to_css(self, dest)
-    }
-}
-impl ToCss for Ident {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        IdentFns::to_css(self, dest)
-    }
-}
 
 // ── leaf-type forwarding macros ──────────────────────────────────────────────
 // Every CSS leaf value type carries inherent `parse` / `to_css` (hand-written
@@ -1434,22 +1297,24 @@ impl ToCss for Ident {
 #[macro_export]
 macro_rules! impl_parse_tocss_via_inherent {
     ($($ty:ty),+ $(,)?) => {$(
-        impl $crate::generics::Parse for $ty {
+        impl<'bump> $crate::generics::Parse<'bump> for $ty {
             #[inline]
-            fn parse(input: &mut $crate::css_parser::Parser) -> $crate::css_parser::CssResult<Self> {
+            fn parse(
+                input: &mut $crate::css_parser::Parser<'_, 'bump>,
+            ) -> $crate::css_parser::CssResult<'bump, Self> {
                 <$ty>::parse(input)
             }
         }
-        impl $crate::generics::ParseWithOptions for $ty {
+        impl<'bump> $crate::generics::ParseWithOptions<'bump> for $ty {
             #[inline]
             fn parse_with_options(
-                input: &mut $crate::css_parser::Parser,
+                input: &mut $crate::css_parser::Parser<'_, 'bump>,
                 _options: &$crate::css_parser::ParserOptions,
-            ) -> $crate::css_parser::CssResult<Self> {
+            ) -> $crate::css_parser::CssResult<'bump, Self> {
                 <$ty>::parse(input)
             }
         }
-        impl $crate::generics::ToCss for $ty {
+        impl<'bump> $crate::generics::ToCss for $ty {
             #[inline]
             fn to_css(
                 &self,
@@ -1465,15 +1330,24 @@ macro_rules! impl_parse_tocss_via_inherent {
 /// listed once rather than duplicated per call site.
 macro_rules! impl_pwo_via_parse {
     ($($ty:ty),+ $(,)?) => {$(
-        impl ParseWithOptions for $ty {
+        impl<'bump> ParseWithOptions<'bump> for $ty {
             #[inline]
-            fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+            fn parse_with_options(
+                input: &mut Parser<'_, 'bump>,
+                _options: &ParserOptions,
+            ) -> CssResult<'bump, Self> {
                 <$ty as Parse>::parse(input)
             }
         }
     )+};
 }
-impl_pwo_via_parse!(f32, CSSInteger, CustomIdent, DashedIdent, Ident);
+impl_pwo_via_parse!(
+    f32,
+    CSSInteger,
+    CustomIdent<'bump>,
+    DashedIdent<'bump>,
+    Ident<'bump>
+);
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Numeric helpers (tryFromAngle / trySign / tryMap / tryOp / tryOpTo / partialCmp)
@@ -1572,12 +1446,6 @@ impl PartialCmp for f32 {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         partial_cmp_f32(*self, *rhs)
-    }
-}
-impl PartialCmp for CSSInteger {
-    #[inline]
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, rhs))
     }
 }
 

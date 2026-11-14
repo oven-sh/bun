@@ -22,6 +22,8 @@
         }                                                                                                          \
     } while (false)
 
+JSC_DECLARE_HOST_FUNCTION(NodeError_proto_toString);
+
 namespace Bun {
 
 // For a message that embeds text from JS: past `String::MaxLength` it records the overflow where a default `StringBuilder` calls `CRASH()`.
@@ -61,12 +63,6 @@ public:
     using Field = ErrorCode;
 
     DECLARE_EXPORT_INFO;
-
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(ErrorCodeCache);
-    }
 
     template<typename, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -111,6 +107,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
 // Appends the value the way Node's `%s` error-message substitution renders it: primitives
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
+
+// bun:internal-for-testing: from here on this process describes a rejected value without running code of the program.
+void describeRejectedValuesWithoutScriptForTesting();
 
 enum Bound {
     LOWER,
@@ -198,7 +197,6 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
 
 }
 
-void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode);
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope);
 
 }

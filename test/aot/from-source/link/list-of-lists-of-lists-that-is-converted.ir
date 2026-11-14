@@ -1,0 +1,63 @@
+# -- source: main.mjs
+# class Node { constructor(value) { this.value = value; } }
+# function make(node) {
+#   return [[[node], "inner"], "outer"];
+# }
+# const lists = make(new Node(3));
+# print(`${lists}`.length + lists[0][0][0].value);
+# -- end of source
+# The conversion of a list of lists asks what lies in them, however deep: objects that answer nothing stay in sight.
+# RUN(GONE): link why-gone L0
+# GONE: why-gone L0: it has not gone
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 position=6 constructor=f2 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=1
+variable g0 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=28
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g0 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v8 = Integer integer=3 @149
+    v9 = Construct v7, -, v8 calleeName="Node" @144 @140
+    v10 = Call v1, -, v9 calleeName="make" @135
+    v11 = Builtin builtin=GlobalThis @154
+    v12 = PropGet v11 key="print" [isFreeName] @154
+    v13 = ToString v10 @163
+    v14 = PropGet v13 key="length" @160
+    v15 = Integer @180
+    v16 = ElemGet v10, v15 @180
+    v17 = Integer @180
+    v18 = ElemGet v16, v17 @186
+    v19 = Integer @180
+    v20 = ElemGet v18, v19 @189
+    v21 = PropGet v20 key="value" @192
+    v22 = Add v14, v21 @160
+    v23 = Call v12, -, v22 calleeName="print" @154
+    v24 = Undefined @154
+    Return v24 @154
+}
+function f1 name="make" module=m0 position=58 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = NewArray v0 contents=anything @91
+    v2 = String string="inner" @99
+    v3 = NewArray v1, v2 contents=anything @90
+    v4 = String string="outer" @109
+    v5 = NewArray v3, v4 contents=anything @89
+    Return v5 @89
+}
+function f2 name="Node" module=m0 position=24 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @24
+    v3 = NewObject v2 layout=L0 @24
+    v4 = Convert v3 declared={type=L0} @24
+    PropSet v4, v1 key="value" @34
+    v6 = Undefined @34
+    Return v4 @34
+}

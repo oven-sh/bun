@@ -195,21 +195,16 @@ public:
         m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
-            // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
-            // One pass, no branching. Commands are typically <512B.
-            Latin1Character acc = 0;
-            for (auto c : s)
-                acc |= c;
-            if (!(acc & 0x80)) [[likely]] {
+            if (charactersAreAllASCII(s)) [[likely]] {
                 sink(reinterpret_cast<const char*>(s.data()), s.size());
                 sink("\0", 1);
                 return;
             }
         }
-        // Non-ASCII path: transcode. The CString has its own NUL terminator
-        // at data()[length()], so length()+1 covers the frame delimiter.
+        // Non-ASCII path: transcode. The NUL terminator is the frame delimiter.
         auto utf8 = m_sb.toString().utf8();
-        sink(utf8.data(), utf8.length() + 1);
+        auto bytes = byteCast<char>(utf8.spanIncludingNullTerminator());
+        sink(bytes.data(), bytes.size());
     }
 
 private:
@@ -237,9 +232,7 @@ enum class Method : uint8_t {
     TargetCreateTarget,
     TargetAttachToTarget,
     PageEnable,
-    RuntimeEnable,
     // User-facing ops — responses settle (or errors reject) a slot.
-    TargetCloseTarget,
     PageNavigate,
     PageReload,
     // Chained from Page.loadEventFired: Runtime.evaluate("document.title")
@@ -256,7 +249,6 @@ enum class Method : uint8_t {
     InputDispatchMouseEvent,
     InputDispatchKeyEvent,
     InputInsertText,
-    InputDispatchScrollEvent,
     EmulationSetDeviceMetricsOverride,
     // Selector ops — two-phase. Runtime.evaluate runs the rAF-polled
     // actionability check page-side; response chains into the actual
@@ -283,21 +275,25 @@ enum class Method : uint8_t {
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
 let last;
+document.querySelector(sel);
 for (;;) {
+  await new Promise(f => requestAnimationFrame(f));
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
+      const held = [];
+      for (let e = el; e; e = e.parentElement)
+        for (const a of e.getAnimations()) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
+      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height && !last.held.some(([a, t]) => a.playState === "running" && a.currentTime === t)) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) return [cx, cy];
       }
-      last = { l: r.left, t: r.top, w: r.width, h: r.height };
+      last = { l: r.left, t: r.top, w: r.width, h: r.height, held };
     } else last = undefined;
   } else last = undefined;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
 }
 }))js"_s;
 

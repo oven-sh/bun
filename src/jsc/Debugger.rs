@@ -11,12 +11,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
+use crate::{self as jsc, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -116,10 +116,10 @@ pub struct Debugger {
     // `'static` is genuine: borrowed from process-lifetime env-var storage;
     // default `""`.
     pub from_environment_variable: &'static [u8],
-    pub script_execution_context_id: u32,
-    pub next_debugger_id: u64,
+    pub script_execution_context_id: Cell<u32>,
+    pub next_debugger_id: Cell<u64>,
     pub poll_ref: KeepAlive,
-    pub wait_for_connection: Wait,
+    pub wait_for_connection: Cell<Wait>,
     // wait_for_connection: bool = false,
     pub set_breakpoint_on_first_line: bool,
     pub mode: Mode,
@@ -127,11 +127,9 @@ pub struct Debugger {
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
-    /// Reached through a shared `&Debugger` borrow; the slot's `Cell` fields
-    /// provide the interior mutability. JS-thread only.
     pub extension_agent: ErasedAgentSlot,
     pub http_server_agent: HTTPServerAgent,
-    pub must_block_until_connected: bool,
+    pub must_block_until_connected: Cell<bool>,
 }
 
 impl Default for Debugger {
@@ -139,10 +137,10 @@ impl Default for Debugger {
         Self {
             path_or_port: None,
             from_environment_variable: b"",
-            script_execution_context_id: 0,
-            next_debugger_id: 1,
+            script_execution_context_id: Cell::new(0),
+            next_debugger_id: Cell::new(1),
             poll_ref: KeepAlive::default(),
-            wait_for_connection: Wait::Off,
+            wait_for_connection: Cell::new(Wait::Off),
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
             protocol: Protocol::Jsc,
@@ -150,7 +148,7 @@ impl Default for Debugger {
             lifecycle_reporter_agent: LifecycleAgent::default(),
             extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
-            must_block_until_connected: false,
+            must_block_until_connected: Cell::new(false),
         }
     }
 }
@@ -189,36 +187,30 @@ impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
-    ///
-    /// Aliasing: `this.debugger` is read through a raw pointer
-    /// with fresh short-lived borrows because `event_loop().tick()` /
-    /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
-    /// and may form independent `&mut VirtualMachine` borrows. Holding a
-    /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
-    /// across those calls is UB.
-    pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
-        // `this` is the live per-thread VM; same allocation as
-        // `VirtualMachine::get()` — route through the safe thread-local
-        // accessor instead of open-coding the backref deref. All subsequent
-        // accesses form short-lived `&mut`s under the single-JS-thread
-        // invariant via safe `&VirtualMachine` accessors.
-        debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
-        let _ = this; // release: param otherwise unused
-        let this: &VirtualMachine = VirtualMachine::get();
-        let Some(dbg) = this.debugger_mut() else {
+    pub fn wait_for_debugger_if_necessary(this: &VirtualMachine) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
+    }
+
+    #[inline(never)]
+    fn wait_for_debugger(this: &VirtualMachine) {
+        let Some(dbg) = this.debugger.get() else {
             return;
         };
         bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
-        if !dbg.must_block_until_connected {
+        if !dbg.must_block_until_connected.get() {
             return;
         }
-        let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
+        let (ctx_id, wait) = (
+            dbg.script_execution_context_id.get(),
+            dbg.wait_for_connection.get(),
+        );
         // Reset `must_block_until_connected` on every exit path.
-        let _reset = scopeguard::guard((), |()| {
-            if let Some(d) = this.debugger_mut() {
-                d.must_block_until_connected = false;
-            }
-        });
+        scopeguard::defer! { dbg.must_block_until_connected.set(false); }
 
         bun_core::scoped_log!(debugger, "spin");
         // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
@@ -270,10 +262,7 @@ impl Debugger {
                 unsafe { (*timer).init(uv_loop) };
 
                 extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    // SAFETY: `vm` is the per-thread singleton; called on the
-                    // JS thread (libuv timer callback). Unwinding across
-                    // `extern "C"` is UB so we early-return if no debugger.
-                    if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
+                    if let Some(d) = VirtualMachine::get().debugger.get() {
                         d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                     }
                     // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
@@ -300,26 +289,12 @@ impl Debugger {
             }
         }
 
-        // Drop the long-lived `&mut Debugger` before re-entering JS — see
-        // the aliasing note on this fn. Each loop iteration re-fetches via `debugger_mut()`
-        // so re-entrant JS may independently borrow the VM.
-        loop {
-            let wait = match this.debugger.as_deref() {
-                Some(d) => d.wait_for_connection,
-                None => break,
-            };
-            if wait == Wait::Off {
-                break;
-            }
-            this.event_loop_mut().tick();
+        while dbg.wait_for_connection.get() != Wait::Off {
+            this.event_loop().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
-            let wait = match this.debugger.as_deref() {
-                Some(d) => d.wait_for_connection,
-                None => break,
-            };
-            match wait {
+            match dbg.wait_for_connection.get() {
                 Wait::Forever => {
-                    this.event_loop_mut().auto_tick_active();
+                    this.event_loop().auto_tick_active();
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -335,11 +310,11 @@ impl Debugger {
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            this.uws_loop_mut().unref_count(pending_unref);
+                            this.uws_loop().unref_count(pending_unref);
                         }
                     }
 
-                    this.uws_loop_mut()
+                    this.uws_loop()
                         .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {
@@ -353,9 +328,7 @@ impl Debugger {
                     let elapsed =
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        if let Some(d) = this.debugger_mut() {
-                            d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
-                        }
+                        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
                         break;
                     }
@@ -368,8 +341,19 @@ impl Debugger {
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
-    pub fn create(
-        this: *mut VirtualMachine,
+    pub fn create(this: &VirtualMachine, global_object: &JSGlobalObject) -> crate::CrateResult<()> {
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            this,
+            global_object
+        )
+    }
+
+    #[inline(never)]
+    fn create_debugger(
+        this: &VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> crate::CrateResult<()> {
         bun_core::scoped_log!(debugger, "create");
@@ -381,27 +365,20 @@ impl Debugger {
         // the exported `Bun__*Agent*` symbols, so no explicit keep-alive
         // references are needed.
 
-        // `this` is the live per-thread VM; same allocation as
-        // `VirtualMachine::get()` — route through the safe thread-local
-        // accessor. Safe accessors below form short-lived `&mut`s under the
-        // single-JS-thread invariant.
-        debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
-        let this_ref: &VirtualMachine = VirtualMachine::get();
-        let dbg = this_ref
-            .debugger_mut()
-            .expect("Debugger::create: vm.debugger is None");
-        dbg.script_execution_context_id = Bun__createJSDebugger(global_object);
+        let dbg = (this.debugger.get()).expect("Debugger::create: vm.debugger is None");
+        dbg.script_execution_context_id
+            .set(Bun__createJSDebugger(global_object));
 
-        if !this_ref.has_started_debugger {
-            this_ref.as_mut().has_started_debugger = true;
+        if !this.has_started_debugger.get() {
+            this.has_started_debugger.set(true);
             // Everything the debugger thread needs from this VM, copied here;
             // it reaches back only through the (uncounted) handle to wake us.
             // That includes the environment: the debugger VM builds its
             // `process.env` from this copy, not from this thread's loader.
-            let env_map = this_ref.env_loader().map.clone_with_allocator()?;
+            let env_map = this.env_loader().map.clone_with_allocator()?;
             let init = DebuggerThreadInit {
-                debuggee: this_ref.handle(),
-                ctx_id: dbg.script_execution_context_id,
+                debuggee: this.handle(),
+                ctx_id: dbg.script_execution_context_id.get(),
                 is_connect: dbg.mode == Mode::Connect,
                 is_node_inspector: dbg.protocol == Protocol::NodeInspector,
                 from_env: dbg.from_environment_variable,
@@ -417,13 +394,11 @@ impl Debugger {
                 .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
-        this_ref.event_loop_mut().ensure_waker();
+        this.event_loop().ensure_waker();
 
-        // Re-borrow after `ensure_waker` (which may touch `*this`).
-        let dbg = this_ref.debugger_mut().unwrap();
-        if dbg.wait_for_connection != Wait::Off {
+        if dbg.wait_for_connection.get() != Wait::Off {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-            dbg.must_block_until_connected = true;
+            dbg.must_block_until_connected.set(true);
         }
         Ok(())
     }
@@ -437,11 +412,14 @@ impl Debugger {
     /// It would reload the `.env` files and JSON-parse `NODE_ENV`, and its
     /// failure (say a stray `\r` in `NODE_ENV`) would abort the debuggee.
     fn start_js_debugger_thread(env_map: bun_dotenv::Map, init: DebuggerThreadInit) {
+        // This thread serves the inspector up to (and during) `process.exit()`,
+        // so it's never joined and its VM is never torn down.
+        bun_core::asan::disable_leak_checks_on_current_thread();
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
+        let vm = VirtualMachine::init(crate::virtual_machine::InitOptions {
             // Lives as long as the VM, which this thread never tears down.
             env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
                 env_map,
@@ -450,11 +428,7 @@ impl Debugger {
             ..Default::default()
         })
         .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
-        let _ = vm_ptr;
-        // `init` installs the freshly-boxed VM as this thread's singleton.
-        let vm = VirtualMachine::get().as_mut();
-        vm.is_main_thread = false;
-        vm.event_loop_mut().ensure_waker();
+        vm.event_loop().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
@@ -487,13 +461,13 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let url = BunString::borrow_utf8(from_env);
+            let url = StringView::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let url = BunString::borrow_utf8(path_or_port);
+            let url = StringView::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
@@ -517,19 +491,16 @@ impl Debugger {
         debuggee.wake();
         // `vm.event_loop` may have flipped between `regular_event_loop` and
         // `macro_event_loop` inside the re-entrant JS above;
-        // `event_loop_mut()` re-reads the slot.
-        this.event_loop_mut().tick();
+        // `event_loop()` re-reads the slot.
+        this.event_loop().tick();
         debuggee.wake();
 
         loop {
-            // Each call forms a fresh short-lived `&`/`&mut` (via the safe
-            // accessors) so re-entrant JS inside `tick()` may independently
-            // call `VirtualMachine::get()` without aliasing.
             while this.is_event_loop_alive() {
-                this.as_mut().tick();
-                this.event_loop_mut().auto_tick_active();
+                this.tick();
+                this.event_loop().auto_tick_active();
             }
-            this.event_loop_mut().tick_possibly_forever();
+            this.event_loop().tick_possibly_forever();
         }
     }
 }
@@ -541,30 +512,28 @@ impl Debugger {
 /// thread, or when the debugger thread could not be started.
 // HOST_EXPORT(Debugger__startNodeInspectorServer, c)
 pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: bool) -> bool {
-    // Short-lived borrows only — `Debugger::create` re-enters JS and forms its
-    // own `&mut VirtualMachine` (see the aliasing note on
-    // `wait_for_debugger_if_necessary`).
     let this: &VirtualMachine = VirtualMachine::get();
-    if !this.is_main_thread {
+    if !this.is_main_thread.get() {
         return false;
     }
-    if this.debugger.is_some() || HAS_CREATED_DEBUGGER.load(Ordering::Relaxed) {
+    if this.is_inspector_enabled() || HAS_CREATED_DEBUGGER.load(Ordering::Relaxed) {
         return false;
     }
 
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
     let url_bytes: &'static [u8] = Box::leak(url.to_owned_slice().into_boxed_slice());
-    this.as_mut().debugger = Some(Box::new(Debugger {
+    let dbg: &'static Debugger = Box::leak(Box::new(Debugger {
         path_or_port: Some(url_bytes),
-        wait_for_connection: if wait_for_connection {
+        wait_for_connection: Cell::new(if wait_for_connection {
             Wait::Forever
         } else {
             Wait::Off
-        },
+        }),
         protocol: Protocol::NodeInspector,
         ..Default::default()
     }));
+    this.debugger.set(Some(dbg));
 
     // Frontends need positions that map back to the original source, so stop
     // minifying and caching transpiled output for code loaded from now on.
@@ -572,18 +541,16 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     // reopen, so modules loaded between close() and a later open() must still
     // have unminified positions.
     crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
-    {
-        let opts = &mut this.as_mut().transpiler.options;
+    this.transpiler.with_mut(|transpiler| {
+        let opts = &mut transpiler.options;
         opts.minify_identifiers = false;
         opts.minify_syntax = false;
         opts.minify_whitespace = false;
         opts.debugger = true;
-    }
+    });
 
-    let global = this.global;
-    // SAFETY: `global` is set during `VirtualMachine::init` and outlives the VM.
-    if Debugger::create(VirtualMachine::get_mut_ptr(), unsafe { &*global }).is_err() {
-        this.as_mut().debugger = None;
+    if Debugger::create(this, this.global()).is_err() {
+        this.debugger.set(None);
         return false;
     }
 
@@ -591,11 +558,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     // connectFrontend() to JSC's default one; the waiting path's later call
     // from wait_for_debugger_if_necessary is then a bunControllerInstalled
     // no-op that only handles the block.
-    let ctx_id = match this.debugger.as_deref() {
-        Some(d) => d.script_execution_context_id,
-        None => return false,
-    };
-    Bun__ensureDebugger(ctx_id, false);
+    Bun__ensureDebugger(dbg.script_execution_context_id.get(), false);
 
     true
 }
@@ -609,17 +572,17 @@ pub fn wait_for_node_inspector_connection() {
     // previous wait — see test-inspector-wait-for-connection.js.
     let this = VirtualMachine::get();
     {
-        let Some(dbg) = this.debugger_mut() else {
+        let Some(dbg) = this.debugger.get() else {
             return;
         };
-        if dbg.wait_for_connection == Wait::Off {
+        if dbg.wait_for_connection.get() == Wait::Off {
             // Mirror `create()`: the ref pairs with the unref in `did_connect`.
-            dbg.wait_for_connection = Wait::Forever;
+            dbg.wait_for_connection.set(Wait::Forever);
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         }
-        dbg.must_block_until_connected = true;
+        dbg.must_block_until_connected.set(true);
     }
-    Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
+    Debugger::wait_for_debugger_if_necessary(this);
 }
 
 /// The debugger thread reported that `Bun.serve` failed (e.g. EADDRINUSE) —
@@ -627,29 +590,26 @@ pub fn wait_for_node_inspector_connection() {
 /// the ref leaks and the event loop never drains.
 // HOST_EXPORT(Debugger__abandonNodeInspectorWait, c)
 pub fn abandon_node_inspector_wait() {
-    let Some(dbg) = VirtualMachine::get().debugger_mut() else {
+    let Some(dbg) = VirtualMachine::get().debugger.get() else {
         return;
     };
-    if dbg.wait_for_connection != Wait::Off {
-        dbg.wait_for_connection = Wait::Off;
-        dbg.must_block_until_connected = false;
+    if dbg.wait_for_connection.get() != Wait::Off {
+        dbg.wait_for_connection.set(Wait::Off);
+        dbg.must_block_until_connected.set(false);
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
     }
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)
 pub fn did_connect() {
-    let this = VirtualMachine::get().as_mut();
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread. If the debugger is missing we early-return
-    // defensively (extern "C" — unwinding is UB).
-    let Some(dbg) = this.debugger.as_deref_mut() else {
+    let this = VirtualMachine::get();
+    let Some(dbg) = this.debugger.get() else {
         return;
     };
-    if dbg.wait_for_connection != Wait::Off {
-        dbg.wait_for_connection = Wait::Off;
+    if dbg.wait_for_connection.get() != Wait::Off {
+        dbg.wait_for_connection.set(Wait::Off);
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
-        this.event_loop_mut().wakeup();
+        this.event_loop().wakeup();
     }
 }
 
@@ -663,7 +623,7 @@ pub struct AsyncTaskTracker {
 }
 
 impl AsyncTaskTracker {
-    pub fn init(vm: &mut VirtualMachine) -> AsyncTaskTracker {
+    pub fn init(vm: &VirtualMachine) -> AsyncTaskTracker {
         AsyncTaskTracker {
             id: vm.next_async_task_id(),
         }
@@ -772,10 +732,10 @@ pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallT
 
 #[derive(Default)]
 pub struct TestReporterAgent {
-    pub(crate) handle: *mut TestReporterHandle,
+    handle: Cell<*mut TestReporterHandle>,
     /// Shared `describe`/`test` ID counter for both the live
     /// (`ScopeFunctions::call`) and retroactive reporting paths.
-    pub next_test_id: i32,
+    pub next_test_id: Cell<i32>,
 }
 
 /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
@@ -799,14 +759,13 @@ pub enum TestType {
 
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
-// SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
-// ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
+// SAFETY (safe fn): `TestReporterHandle` is an `opaque_ffi!`
+// ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
         agent: &mut TestReporterHandle,
-        call_frame: &CallFrame,
         test_id: c_int,
         name: &BunString,
         item_type: TestType,
@@ -833,15 +792,12 @@ unsafe extern "C" {
 impl TestReporterHandle {
     pub(crate) fn report_test_found(
         &mut self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
-        Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, name, item_type, parent_id,
-        );
+        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
     }
 
     pub fn report_test_found_with_location(
@@ -874,11 +830,9 @@ impl TestReporterHandle {
 
 // HOST_EXPORT(Bun__TestReporterAgentEnable, c)
 pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread.
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
+    if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(TestReporterAgent, "enable");
-        dbg.test_reporter_agent.handle = agent;
+        dbg.test_reporter_agent.handle.set(agent);
 
         // Retroactively report any tests that were already discovered before
         // the debugger connected.
@@ -887,24 +841,22 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            dbg.test_reporter_agent.next_test_id = unsafe {
+            dbg.test_reporter_agent.next_test_id.set(
                 (hooks.retroactively_report_discovered_tests)(
-                    dbg.test_reporter_agent.handle,
-                    dbg.test_reporter_agent.next_test_id,
-                )
-            };
+                    // SAFETY: `handle` is the live C++ agent just stored above.
+                    unsafe { &mut *dbg.test_reporter_agent.handle.get() },
+                    dbg.test_reporter_agent.next_test_id.get(),
+                ),
+            );
         }
     }
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentDisable, c)
 pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread.
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
+    if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(TestReporterAgent, "disable");
-        dbg.test_reporter_agent.handle = core::ptr::null_mut();
+        dbg.test_reporter_agent.handle.set(core::ptr::null_mut());
     }
 }
 
@@ -913,21 +865,21 @@ impl TestReporterAgent {
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {
-        debug_assert!(!self.handle.is_null());
+        debug_assert!(!self.handle.get().is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap
         // allocation owned by the inspector backend. `TestReporterHandle` is an
         // opaque ZST handle so the deref is the centralised `opaque_mut` proof.
-        TestReporterHandle::opaque_mut(self.handle)
+        TestReporterHandle::opaque_mut(self.handle.get())
     }
 
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
+    ///
+    /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
@@ -935,7 +887,7 @@ impl TestReporterAgent {
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         self.handle_mut()
-            .report_test_found(call_frame, test_id, name, item_type, parent_id);
+            .report_test_found(test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
@@ -952,7 +904,7 @@ impl TestReporterAgent {
     }
 
     pub fn is_enabled(&self) -> bool {
-        !self.handle.is_null()
+        !self.handle.get().is_null()
     }
 }
 
@@ -960,7 +912,7 @@ impl TestReporterAgent {
 
 #[derive(Default)]
 pub struct LifecycleAgent {
-    pub(crate) handle: *mut LifecycleHandle,
+    handle: Cell<*mut LifecycleHandle>,
 }
 
 bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
@@ -971,12 +923,23 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
 }
 
 impl LifecycleHandle {
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
+    }
+
+    #[inline(never)]
+    fn report_error_to_agent(&mut self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -984,35 +947,33 @@ impl LifecycleHandle {
 
 // HOST_EXPORT(Bun__LifecycleAgentEnable, c)
 pub fn lifecycle_agent_enable(agent: *mut LifecycleHandle) {
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread.
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
+    if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(LifecycleAgent, "enable");
-        dbg.lifecycle_reporter_agent.handle = agent;
+        dbg.lifecycle_reporter_agent.handle.set(agent);
     }
 }
 
 // HOST_EXPORT(Bun__LifecycleAgentDisable, c)
 pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle) {
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread.
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
+    if let Some(dbg) = VirtualMachine::get().debugger.get() {
         bun_core::scoped_log!(LifecycleAgent, "disable");
-        dbg.lifecycle_reporter_agent.handle = core::ptr::null_mut();
+        dbg.lifecycle_reporter_agent
+            .handle
+            .set(core::ptr::null_mut());
     }
 }
 
 impl LifecycleAgent {
     /// Safe optional accessor — wraps the null check + raw deref.
     #[inline]
-    fn handle_mut(&mut self) -> Option<&mut LifecycleHandle> {
+    fn handle_mut(&self) -> Option<&mut LifecycleHandle> {
         // `handle` is null or a live C++ heap allocation owned by the inspector
         // backend. `LifecycleHandle` is an opaque ZST handle so the deref is
         // the centralised `opaque_mut` proof.
-        core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
+        core::ptr::NonNull::new(self.handle.get()).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&self, exception: &mut ZigException<'_>) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }

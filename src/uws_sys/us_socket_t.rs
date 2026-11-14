@@ -84,6 +84,12 @@ impl us_socket_t {
         c::us_socket_resume(self);
     }
 
+    #[cfg(not(windows))]
+    pub(crate) fn read_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_read_now({:p})", self);
+        c::us_socket_read_now(self);
+    }
+
     pub fn close(&mut self, code: CloseCode) {
         bun_core::scoped_log!(
             uws,
@@ -95,6 +101,11 @@ impl us_socket_t {
             // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
+    }
+
+    pub(crate) fn close_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_close_now({:p})", self);
+        let _ = c::us_socket_close_now(self);
     }
 
     pub fn shutdown(&mut self) {
@@ -213,11 +224,8 @@ impl us_socket_t {
     /// Install a socket-level SNI resolver on an already-adopted server-side
     /// TLS socket (there is no listen socket to hang it off). Must run before
     /// the handshake is driven.
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
-    ) {
-        c::us_socket_on_server_name(self, cb);
+    pub fn on_server_name(&mut self) {
+        c::us_socket_on_server_name(self);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -242,14 +250,14 @@ impl us_socket_t {
         c::us_socket_ext(self).cast::<u8>()
     }
 
-    pub fn group(&mut self) -> &mut SocketGroup {
+    pub fn group(&mut self) -> &SocketGroup {
         unsafe {
             // SAFETY: us_socket_group never returns null for a live socket
-            &mut *c::us_socket_group(self)
+            &*c::us_socket_group(self)
         }
     }
     #[inline]
-    pub fn raw_group(&mut self) -> &mut SocketGroup {
+    pub fn raw_group(&mut self) -> &SocketGroup {
         self.group()
     }
 
@@ -272,7 +280,7 @@ impl us_socket_t {
     // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
     pub fn adopt_tls(
         &mut self,
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
@@ -304,6 +312,22 @@ impl us_socket_t {
     /// repointed before any handshake/close dispatch can fire.
     pub fn start_tls_handshake(&mut self) {
         c::us_socket_start_tls_handshake(self);
+    }
+
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. No-op on a server socket or after the handshake.
+    pub fn set_inline_reject(&mut self) {
+        c::us_socket_set_inline_reject(self);
+    }
+
+    /// Drop the handshake flight that is held across the handshake callback.
+    pub fn release_held_flight(&mut self) {
+        c::us_socket_release_held_flight(self);
+    }
+
+    /// A shutdown before the first handshake step sends its FIN after that step.
+    pub fn set_first_flight_before_fin(&mut self) {
+        c::us_socket_set_first_flight_before_fin(self);
     }
 
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
@@ -370,13 +394,6 @@ impl us_socket_t {
         );
         rc
     }
-    #[cfg(windows)]
-    pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // A `compile_error!` here would brick the windows build even with no
-        // callers (it is evaluated at item definition), so use a runtime trap
-        // instead; no current Windows call site.
-        unreachable!("us_socket_t::write_fd is not implemented on Windows")
-    }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {
@@ -438,6 +455,12 @@ impl us_socket_t {
         c::us_socket_sendfile_needs_more(self);
     }
 
+    /// SO_RCVBUF / SO_SNDBUF. `size == 0` reads the current value, non-zero sets it. Returns 0
+    /// and writes the resulting value to `out`, or the failing setsockopt/getsockopt result.
+    pub fn buffer_size(&mut self, is_recv: bool, size: i32, out: &mut c_int) -> c_int {
+        c::us_socket_buffer_size(self, is_recv as c_int, size, out)
+    }
+
     pub fn get_fd(&self) -> Fd {
         let raw = c::us_socket_get_fd(self);
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
@@ -463,6 +486,10 @@ impl us_socket_t {
 
     pub(crate) fn is_established(&self) -> bool {
         c::us_socket_is_established(self) > 0
+    }
+
+    pub(crate) fn ssl_send_rejected(&self) -> bool {
+        c::us_socket_ssl_send_rejected(self) > 0
     }
 
     pub(crate) fn queued_input(&self) -> QueuedInput {
@@ -513,14 +540,7 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(
-            s: &mut us_socket_t,
-            cb: extern "C" fn(
-                *mut us_socket_t,
-                *const core::ffi::c_char,
-                *mut c_int,
-            ) -> *mut SslCtx,
-        );
+        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -559,11 +579,14 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        #[cfg(not(windows))]
+        pub(super) safe fn us_socket_read_now(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
@@ -576,15 +599,22 @@ mod c {
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub(super) safe fn us_socket_buffer_size(
+            s: &mut us_socket_t,
+            is_recv: c_int,
+            size: c_int,
+            out: &mut c_int,
+        ) -> c_int;
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
-            group: *mut SocketGroup,
+            group: *const SocketGroup,
             kind: u8,
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
@@ -601,6 +631,9 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }
 

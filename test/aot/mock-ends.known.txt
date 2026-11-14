@@ -1,0 +1,2 @@
+# What the test file behind a sequence of mock events sees otherwise than under `bun test`. See mock-ends.test.ts.
+# `rejects+module+actual.js.late.awaits names` was lost since the compiler on Bun's main branch; the other two lines are older than that.

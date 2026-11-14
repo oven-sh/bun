@@ -1,0 +1,19 @@
+# f1 = counter
+# -- source: two-closures-over-one-variable.ts
+# function counter(start: number) {
+#   let count = start;
+#   return { read: () => count, add: (step: number) => { count += step; } };
+# }
+# declare const input: any;
+# const first = counter(+input);
+# const second = counter(+input);
+# first.add(+input);
+# second.add(+input);
+# (globalThis as any).answer = [first, second, first.read() + second.read()];
+# -- end of source
+# The compiler before this one: 15 instructions, 4 of them patches.
+# When the bound was taken: steps: operations 24, patches 5, moves 6, unlikely or rare 0.
+# RUN(X64): steps most:30 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 30

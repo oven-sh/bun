@@ -1,0 +1,13 @@
+# -- source: class-constructors-order-keys.js
+# class Emitter { on(type) { if (this.listeners === undefined) this.listeners = {}; this.listeners[type] = 1; } }
+# class Body extends Emitter { constructor(n) { super(); this.id = n; this.reset(); this.end = n; } reset() { this.force = 0; this.mass = 1; } }
+# class Fiber { constructor(context) { this.setContext(context); this.id = 1; this.count = 0; } setContext(context) { this.context = context; this.cache = context; } }
+# class Field { z = 1; constructor(n) { this.y = n; } }
+# export function make(n) { const body = new Body(n); body.on(n); return [body, new Fiber(n), new Field(n)]; }
+# export const leaked = [Emitter, Body, Fiber, Field];
+# print(make(1).map(object => Object.keys(object).join()).join(" "));
+# -- end of source
+# A class constructor creates the keys of its parent's constructor, of its fields, of the methods that it calls and its own, in their turn: that is an order of the layout. The declared order lists what Emitter's methods alone create first.
+# RUN: plan orders mechanisms=all
+# CHECK: order {{*}}: "id" "force" "mass" "end" "listeners"
+# CHECK: order {{*}}: "context" "cache" "id" "count"

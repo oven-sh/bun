@@ -1,0 +1,13 @@
+# `for (let place = 0; place < shelf.rows.length; place++) total = total + shelf.rows[place]`, `shelf` a constant of the file: the holder is read in the turn, so the slot that finds the list had no holder in front of the loop, and the loop stayed as written.
+# The holder is read in front of the loop, the slot is read off it there, and the list is told apart there. Both reads of `shelf.rows` in the turn take what was found.
+# -- source: the-list-of-a-holder-that-a-variable-of-the-file-names-is-told-apart-in-front-of-its-loop.cjs
+# class Shelf { constructor(rows) { this.rows = rows; } }
+# const shelf = new Shelf(JSON.parse("[1, 2, 3, 4.5]"));
+# function sum(start) { let total = start; for (let place = 0; place < shelf.rows.length; place++) total = total + shelf.rows[place]; return total; }
+# print(sum([].length + 1));
+# -- end of source
+# RUN(COUNT): compile ModuleConstantReadsHoisted ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ModuleConstantReadsHoisted 2
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11.5

@@ -1,0 +1,21 @@
+# DivideIntegers and RemainderOfIntegers choose their code by the told ranges of dividend and divisor: no test for nought where the divisor is told never to be nought, none for the least int32 by -1, narrow forms.
+# A range that is false would trap there. Under CheckProofsAtRunTime both operands are held to their ranges where the operation stands, and the process stops by name.
+# The stops are counted: the walk's own checks of what it has proven in the function (six in shared, two in parted) and one for the operation. A plain build and CheckBoundsAtRunTime have none of them.
+# f1 = shared, f2 = parted
+# RUN(SHARED): emit f1:Body mechanisms=all testing=CheckProofsAtRunTime
+# SHARED-COUNT-7: effects = Terminal
+# RUN(PARTED): emit f2:Body mechanisms=all testing=CheckProofsAtRunTime
+# PARTED-COUNT-3: effects = Terminal
+# RUN(PLAIN): emit f1:Body mechanisms=all
+# PLAIN-NOT: effects = Terminal
+# RUN(POSITIONS): emit f2:Body mechanisms=all testing=CheckBoundsAtRunTime
+# POSITIONS-NOT: effects = Terminal
+# RUN(ANSWERS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# ANSWERS: 33 8
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function shared(text: string, other: string): number { let sum = 0; for (let i = 0; i < 9; i++) sum += ((text.length + i) / (other.length + 1 + i)) | 0; return sum; }
+# function parted(n: number, b: number): number { let sum = 0; for (let i = 0; i < 9; i++) if (((n + i) | 0) % (((b + i) & 7) + 1)) sum++; return sum; }
+# print(shared(id("a text of some length"), id("ab")), parted(id(200), id(2)));
+# -- end of source

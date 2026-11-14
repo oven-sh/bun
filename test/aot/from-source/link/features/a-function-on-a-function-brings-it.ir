@@ -1,0 +1,6 @@
+# `parse` has no row: what is read off Bun.cron under it is a part of that function, and its call is a use of Bun.cron, on which the feature hangs
+# -- source: a-function-on-a-function-brings-it.ts
+# console.log(Bun.cron.parse("* * * * *"));
+# -- end of source
+# RUN: features
+# CHECK: by BunCron

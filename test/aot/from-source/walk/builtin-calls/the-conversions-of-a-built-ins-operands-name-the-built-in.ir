@@ -1,0 +1,19 @@
+# `Math.max(1, value)`: the call is made in line behind conversions of its operands. A conversion throws for a symbol and runs the program's valueOf for an object:
+# it names the built-in in whose place it stands, so that a stack lists `max`; written in tail position it bears the mark of the tail call, so that the function that left is not listed.
+# RUN(NAMED): walk f1:Body mechanisms=all
+# NAMED: = ToNumber {{*}}calledBuiltin=MathMax
+# RUN(LEFT): walk f2:Body mechanisms=all
+# LEFT: = ToNumber {{*}}calledBuiltin=MathFloor {{*}} tail
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: max,greatest floor,module code
+# SAID-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function greatest(value: unknown): number { const most = Math.max(1, value as number); return most + 1; }
+# function lowered(value: unknown): number { return Math.floor(value as number); }
+# const names = (error: unknown): string => String((error as Error).stack).split("\n").slice(0, 2).map(line => line.split("@")[0]).join();
+# let said = "";
+# try { greatest(Symbol("s")); } catch (error) { said = names(error); }
+# try { lowered(Symbol("s")); } catch (error) { said += " " + names(error); }
+# print(said);
+# -- end of source

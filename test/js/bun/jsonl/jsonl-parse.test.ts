@@ -595,6 +595,134 @@ describe("Bun.JSONL", () => {
     });
   });
 
+  describe("unexpected content after a value", () => {
+    const encoder = new TextEncoder();
+    // The emoji comes after the error. It makes the whole input UTF-16.
+    const inputs: [string, (s: string) => string | Uint8Array, (s: string) => number][] = [
+      ["string", s => s, s => s.length],
+      ["UTF-16 string", s => s + "🎉", s => s.length],
+      ["Uint8Array", s => encoder.encode(s), s => Buffer.byteLength(s)],
+      ["non-ASCII Uint8Array", s => encoder.encode(s + "🎉"), s => Buffer.byteLength(s)],
+    ];
+    const texts = [
+      "7",
+      "-1.5e3",
+      '"s"',
+      '""',
+      '"é"',
+      '"🎉"',
+      "true",
+      "false",
+      "null",
+      "{}",
+      '{"id":1}',
+      '{"k":"v","n":[1,{"x":null}],"t":true}',
+      '{"é":"🎉"}',
+      "[]",
+      "[1]",
+      "[\n7]",
+      '[{"a":"b"},\n["ü"]\n]',
+    ];
+    const before: [string, unknown[]][] = [
+      ["", []],
+      ["\n", []],
+      ["\n\n", []],
+      [" \r\n\t\n  ", []],
+      ['1\n{"a":2}\n', [1, { a: 2 }]],
+      ['["🎉"]\n\n\n', [["🎉"]]],
+    ];
+    const rest = ["", "\n"];
+    // The input up to the end of the last value, the rest of the input, the values.
+    type Case = [consumed: string, unexpected: string, values: unknown[]];
+
+    describe.each(inputs)("%s", (_, toInput, lengthOf) => {
+      function expectErrorAfter(cases: Case[]) {
+        expect(
+          cases.map(([consumed, unexpected]) => {
+            const input = toInput(consumed + unexpected);
+            return { source: consumed + unexpected, ...Bun.JSONL.parseChunk(input), parse: Bun.JSONL.parse(input) };
+          }),
+        ).toStrictEqual(
+          cases.map(([consumed, unexpected, values]) => ({
+            source: consumed + unexpected,
+            values,
+            read: lengthOf(consumed),
+            done: false,
+            error: expect.any(SyntaxError),
+            parse: values,
+          })),
+        );
+      }
+
+      test.each([",", "]", "}", " ,", "\t]", " \r}", "x"])("%j", unexpected => {
+        for (const text of texts) {
+          expectErrorAfter(
+            before.flatMap(([prefix, prefixValues]) =>
+              rest.map((tail): Case => [prefix + text, unexpected + tail, [...prefixValues, JSON.parse(text)]]),
+            ),
+          );
+        }
+      });
+
+      test("on a line after the value", () => {
+        expectErrorAfter([
+          ["7", "\n,\n", [7]],
+          ['"s"', " \n\t]\n", ["s"]],
+          ['{"a":1}', "\r\n\r\n}\n", [{ a: 1 }]],
+          ["1\n[2]", "\n\n\n,8\n", [1, [2]]],
+        ]);
+      });
+
+      test("many blank lines before the value", () => {
+        const blank = Buffer.alloc(10_000, "\n").toString();
+        for (const unexpected of [",", "]", "}"]) {
+          expect(Bun.JSONL.parseChunk(toInput(blank + "7" + unexpected + "\n")).values.length).toBe(1);
+          expectErrorAfter([[blank + "7", unexpected + "\n", [7]]]);
+        }
+      });
+
+      test("an object whose shape JSON.parse has cached", () => {
+        const text = '{"cachedShapeFirstKey":"v","cachedShapeSecondKey":"0123456789abcdef0123456789abcdef"}';
+        for (let i = 0; i < 8; i++) JSON.parse(text);
+        expectErrorAfter(
+          [",", "]", "}"].map((unexpected): Case => ["\n" + text, unexpected + "\n", [JSON.parse(text)]]),
+        );
+      });
+
+      test("start offset", () => {
+        const skipped = "🎉\n";
+        expect(Bun.JSONL.parseChunk(toInput(skipped + "\n7,"), lengthOf(skipped))).toStrictEqual({
+          values: [7],
+          read: lengthOf(skipped + "\n7"),
+          done: false,
+          error: expect.any(SyntaxError),
+        });
+      });
+    });
+
+    test("nesting deeper than the native stack", () => {
+      const depth = 50_000;
+      const text = Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
+      const { values, ...result } = Bun.JSONL.parseChunk("\n" + text + "]\n");
+      expect(values.length).toBe(1);
+      expect(result).toStrictEqual({ read: 1 + text.length, done: false, error: expect.any(SyntaxError) });
+    });
+
+    test("slicing at read never hands out the same value again", () => {
+      let buffer = '{"id":1}\n\n{"id":2},\n{"id":3}\n';
+      const first = Bun.JSONL.parseChunk(buffer);
+      expect(first.values).toStrictEqual([{ id: 1 }, { id: 2 }]);
+      buffer = buffer.slice(first.read);
+      expect(buffer).toBe(',\n{"id":3}\n');
+      expect(Bun.JSONL.parseChunk(buffer)).toStrictEqual({
+        values: [],
+        read: 0,
+        done: false,
+        error: expect.any(SyntaxError),
+      });
+    });
+  });
+
   describe("typed array input", () => {
     const encode = (s: string) => new TextEncoder().encode(s);
 
@@ -1070,7 +1198,7 @@ describe("Bun.JSONL", () => {
       });
 
       test("mixed valid and garbage lines", () => {
-        const lines = [];
+        const lines: string[] = [];
         for (let i = 0; i < 100; i++) {
           if (i % 3 === 0) lines.push(JSON.stringify({ i }));
           else lines.push("x".repeat(i) + "{[[[");

@@ -1,0 +1,18 @@
+# where nothing is written of a field, as in a file without types, its slot is held to what is seen stored in it: a text, null beside the object itself.
+# A field into which true and false alone are stored is held to booleans. A number is held to nothing: held, it would lie raw, which pays only where the readers know their receiver.
+# `any` is stored what nobody has seen made, so nothing is held there: the slot is boxed and takes every value.
+# -- source: where-nothing-is-written-a-slot-is-held-to-what-is-seen-stored.js
+# function Knot(tag, name) { this.tag = tag; this.name = name; this.open = false; this.up = null; this.any = null; }
+# function link(below, above) { below.up = above; below.open = true; below.tag |= 4; }
+# const first = new Knot(1, "a"), second = new Knot(2, "b");
+# link(first, second);
+# second.any = JSON.parse("1");
+# console.log(String(first.tag) + first.name + String(first.open) + String(first.up === second) + String(second.any));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "name" source=seen type=undefined|null|string slot=JSValue held=undefined|null|string
+# CHECK-NEXT: field {{*}} "open" source=seen type=boolean {{*}}held=undefined|null|boolean
+# CHECK-NEXT: field {{*}} "up" source=seen type=undefined|null|L{{*}} slot=JSValue held=undefined|null|L{{*}}
+# RUN(BOXED): facts enforced mechanisms=all
+# BOXED-NOT: "any"
+# BOXED-NOT: "tag"

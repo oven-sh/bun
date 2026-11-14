@@ -1,0 +1,28 @@
+# -- source: a-sum-out-of-a-loop-in-front-of-a-try-reaches-a-catch-that-reads-it.js
+# function k(x, z) {
+#   let d = 0, e = 0;
+#   for (let h = 0; h < x; h++) d = true;
+#   for (let i = 0; i < x; i++) {
+#     d = 1;
+#     e += z;
+#   }
+#   try {
+#     for (let i = 0; i < x; i++) d = (e + z) & 7;
+#   } catch (error) {
+#     e += 100;
+#   }
+#   return [d, e].join();
+# }
+# print(k(3, 2));
+# -- end of source
+# As a-sum-out-of-a-loop-in-front-of-a-try-reaches-the-finally-in-the-form-that-every-edge-brings.ir, with a catch that reads the sum.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0,6
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
+# FAILING: 0,6
+# FAILING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 0,6
+# HELD-NEXT: exited with 0

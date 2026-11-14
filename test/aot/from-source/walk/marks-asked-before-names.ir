@@ -1,0 +1,56 @@
+# -- source: marks.ts
+# // A comparison of two strings and a field that most objects lack: the field is asked first where that changes nothing. A getter, a prototype, a deleted field, a frozen object and a proxy are asked in order.
+# interface Symbol1 { flags: number; name?: string; parent?: Symbol1; mark?: Symbol1; count: number; exports?: number; members?: string }
+# function SymbolMaker(this: Symbol1, flags: number, name: string | undefined) { this.flags = flags; this.name = name; this.parent = undefined; this.mark = undefined; this.count = 0; }
+# const Symbol1 = SymbolMaker as unknown as { new (flags: number, name: string | undefined): Symbol1; prototype: any };
+# function make(flags: number, name: string | undefined): Symbol1 { const made = new Symbol1(flags, name); if (flags % 3 === 0) made.parent = made; return made; }
+# function makeNamed(name: string): Symbol1 { const made = new Symbol1(0, name); made.count = 1; return made; }
+# function fill(symbol: Symbol1, index: number): void { symbol.exports = index; if (index % 8 === 0) symbol.members = "m" + index; }
+# function forEachEntry<T>(map: Map<string, Symbol1>, callback: (symbol: Symbol1, key: string) => T | undefined): T | undefined {
+#   for (const [key, value] of map) { const result = callback(value, key); if (result) return result; }
+#   return undefined;
+# }
+# let asked = 0, log = makeNamed("x").name + " ";
+# function find(table: Map<string, Symbol1>, wanted: Symbol1): Symbol1 | undefined {
+#   return forEachEntry(table, symbol => {
+#     asked++;
+#     if (symbol.name === wanted.name && symbol.mark) return symbol.mark;
+#     return undefined;
+#   });
+# }
+# function touch(symbol: Symbol1, mark: Symbol1 | undefined): void { if (mark) symbol.mark = mark; }
+# function findTouched(table: Map<string, Symbol1>, wanted: Symbol1, mark: Symbol1 | undefined): number {
+#   return forEachEntry(table, symbol => {
+#     const isSame = symbol.name === wanted.name;
+#     touch(symbol, mark);
+#     if (isSame && symbol.mark) return symbol.flags + 1;
+#     return undefined;
+#   }) || 0;
+# }
+# (globalThis as any).touch = touch; (globalThis as any).findTouched = findTouched;
+# (globalThis as any).find = find; (globalThis as any).forEachEntry = forEachEntry; (globalThis as any).Symbol1 = Symbol1;
+# const table = new Map<string, Symbol1>(); const all: Symbol1[] = [];
+# for (let i = 0; i < 400; i++) { const s = make(i, i % 50 === 49 ? undefined : "name" + (i % 40)); all.push(s); table.set("key" + i, s); }
+# for (let i = 0; i < all.length; i += 4) fill(all[i], i);
+# for (let i = 0; i < all.length; i += 90) all[i].mark = all[i + 1];
+# let sum = 0;
+# for (const s of all) { const found = find(table, s); sum = (sum * 7 + (found ? found.flags : 3)) % 1000003; }
+# log += sum + " " + asked;
+# const second = new Map<string, Symbol1>(); for (let i = 0; i < 60; i++) second.set("k" + i, make(i, "s" + (i % 30)));
+# for (let i = 0; i < 40; i++) sum = (sum * 7 + (globalThis as any).findTouched(second, make(1, "s" + i), i === 25 ? all[1] : undefined)) % 1000003;
+# log += " " + sum;
+# const last = make(1000, "na" + "me" + String(3)); table.set("last", last);
+# const key: string = JSON.parse('["mark"]')[0], plain = JSON.parse('{"flags":2}'); plain[key] = all[2];
+# let got = 0; Object.defineProperty(all[5], key, { get() { got++; return undefined; }, configurable: true }); delete (all[6] as any)[key]; Object.freeze(all[7]);
+# (all[8] as any).extra = 1; Object.setPrototypeOf(all[9], plain); delete (all[9] as any)[key];
+# table.set("proxy", new Proxy(all[10], { get(target: any, key: any) { log += " " + String(key); return target[key]; } }));
+# sum = 0; asked = 0;
+# for (const s of [all[3], all[5], all[6], all[7], all[8], all[9], all[49], last]) { const found = find(table, s); sum = (sum * 7 + (found ? found.flags : 3)) % 1000003; }
+# (Symbol1.prototype as any)[key] = all[1];
+# for (const s of [all[6], all[9], last]) { const found = find(table, s); sum = (sum * 7 + (found ? found.flags : 3)) % 1000003; }
+# console.log(log, sum, asked, got);
+# -- end of source
+# The field of the extension is tested before the strings are compared: where it is empty, both conditions are known.
+# RUN: walk f11:Body mechanisms=all
+# CHECK: IsSlotFilled {{*}} key="mark" {{*}} [holdsDeclaredType]
+# CHECK: StrictEq {{*}} form=NullableStrings

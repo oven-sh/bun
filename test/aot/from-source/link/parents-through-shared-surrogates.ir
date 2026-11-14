@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# function F() {}
+# var G = function () {};
+# function inherit(y, w) { var t = y; F.prototype = w.prototype; y.prototype = new F; y.prototype.constructor = t; }
+# function inherits(child, parent) { G.prototype = parent.prototype; child.prototype = new G(); child.prototype.constructor = child; child.__super__ = parent.prototype; return child; }
+# function A(n) { this.n = n; }
+# A.prototype.get = function () { return this.n; };
+# function B(n) { this.m = n; }
+# B.prototype.get = function () { return this.m; };
+# function OfA(n) { A.call(this, n); this.k = 1; }
+# inherit(OfA, A);
+# function OfB(n) { B.call(this, n); }
+# inherit(OfB, B);
+# function Last(n) { A.call(this, n); this.l = 2; }
+# inherits(Last, A);
+# var all = [new OfA(1), new OfB(2), new Last(3)];
+# print(all[0].get() + all[0].k + all[1].get() + all[2].get() + all[2].l);
+# -- end of source
+# What the calls of a helper share holds no class of theirs.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L3 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L4 {{*}}changes=[] stays-with-compiled-code
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 9

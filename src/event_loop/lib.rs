@@ -1,15 +1,13 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case)]
 #![warn(unused_must_use)]
 pub mod AnyTaskWithExtraContext;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
-pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
-// The parent event loop is wired via the lower-tier `set_parent_raw(tag, ptr)`
-// + `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
+// `EventLoopHandle::set_as_parent_of` wires the parent. The Windows-only `uv_loop` projection
 // lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
 // gate-free.
 // ────────────────────────────────────────────────────────────────────────────
@@ -29,7 +27,7 @@ pub mod any_event_loop;
 // ─── public surface ─────────────────────────────────────────────────────────
 
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
-pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
+pub use ConcurrentTask::{ContextId, Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers avoid
 // the type/module namespace collision on the PascalCase form.
@@ -46,10 +44,12 @@ pub use bun_io::PipeReadScratch;
 // `bun_jsc::event_loop` provides the `Jsc` arm.
 bun_dispatch::link_interface! {
     pub JsEventLoop[Jsc] {
+        // Changes when the loop runs a task, a timer, or I/O, but not when it drains microtasks.
         fn iteration_number() -> u64;
         fn file_polls() -> *mut bun_io::file_poll::Store;
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
-        fn uws_loop() -> *mut bun_uws::Loop;
+        fn uws_loop() -> &'static bun_uws::Loop;
+        fn event_loop_ctx() -> bun_io::EventLoopCtx;
         fn tick();
         fn auto_tick();
         fn auto_tick_active();
@@ -63,7 +63,6 @@ bun_dispatch::link_interface! {
         fn enqueue_task_after_yield(task: Task);
         fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
-        fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
     }
 }

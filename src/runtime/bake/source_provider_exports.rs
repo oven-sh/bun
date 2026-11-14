@@ -7,7 +7,7 @@
 //!
 //! `#[unsafe(no_mangle)] extern "C"` thunks are emitted by
 //! `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
-//! markers; the bodies take safe `&mut VirtualMachine` / `&BunString` borrows.
+//! markers; the bodies take safe `&VirtualMachine` / `&BunString` borrows.
 
 use core::ffi::c_void;
 
@@ -33,28 +33,26 @@ struct DevServerSourceMapData {
 }
 
 unsafe extern "C" {
-    // The C++ accessors are read-only (`provider->source()` /
-    // `provider->sourceMapJSON()`). Taking `*const` avoids casting away const
-    // from the `&self` borrows below; any interior mutation lives behind the
-    // FFI boundary in C++-owned storage that Rust has no provenance over
-    // (these types are opaque ZST markers).
-    fn BakeSourceProvider__getSourceSlice(this: &BakeSourceProvider) -> bun_core::StringView<'_>;
-    fn DevServerSourceProvider__getSourceSlice(
+    // The provider accessors only read.
+    safe fn BakeSourceProvider__getSourceSlice(
+        this: &BakeSourceProvider,
+    ) -> bun_core::StringView<'_>;
+    safe fn BakeSourceProvider__getBunVM(this: &BakeSourceProvider) -> *mut core::ffi::c_void;
+    safe fn DevServerSourceProvider__getSourceSlice(
         this: &DevServerSourceProvider,
     ) -> bun_core::StringView<'_>;
-    fn DevServerSourceProvider__getSourceMapJSON(
-        this: *const DevServerSourceProvider,
+    safe fn DevServerSourceProvider__getSourceMapJSON(
+        this: &DevServerSourceProvider,
     ) -> DevServerSourceMapData;
-    fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-    fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
+    safe fn BakeGlobalObject__isBakeGlobalObject(global: &JSGlobalObject) -> bool;
+    fn BakeGlobalObject__getPerThreadData(global: &JSGlobalObject) -> *mut c_void;
 }
 
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
 
     fn get_source_slice(&self) -> bun_core::StringView<'_> {
-        // SAFETY: opaque FFI handle.
-        unsafe { BakeSourceProvider__getSourceSlice(self) }
+        BakeSourceProvider__getSourceSlice(self)
     }
 
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -65,9 +63,15 @@ impl SourceProvider for BakeSourceProvider {
     /// current global is a `Bake::GlobalObject`; `None` otherwise (caller
     /// falls back to reading `<source>.map` from disk).
     fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
-        let global = VirtualMachine::get().global;
-        // SAFETY: `global` is the live JSGlobalObject for this VM thread.
-        if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
+        // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
+        // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
+        // SAFETY: the provider does not outlive its VM, and the VM's `global` is live as long as the VM is.
+        let global = unsafe {
+            &*(*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>())
+                .global
+                .get()
+        };
+        if !BakeGlobalObject__isBakeGlobalObject(global) {
             return None;
         }
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
@@ -85,9 +89,7 @@ impl SourceProvider for BakeSourceProvider {
             // slice (which fails to parse as a map) rather than a disk fallback.
             return Some(b"");
         };
-        // The returned slice borrows `PerThread.bundled_outputs`, which lives
-        // for the bake build session and outlives this provider (the provider
-        // is created from a `bundled_outputs` entry).
+        // Borrows `PerThread.bundled_outputs`; `pt` is null once `PerThread` has dropped.
         Some(pt.bundled_outputs[idx.get() as usize].value.as_slice())
     }
 }
@@ -96,8 +98,7 @@ impl SourceProvider for DevServerSourceProvider {
     const HAS_SOURCE_MAP_JSON: bool = true;
 
     fn get_source_slice(&self) -> bun_core::StringView<'_> {
-        // SAFETY: opaque FFI handle.
-        unsafe { DevServerSourceProvider__getSourceSlice(self) }
+        DevServerSourceProvider__getSourceSlice(self)
     }
 
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -105,9 +106,7 @@ impl SourceProvider for DevServerSourceProvider {
     }
 
     fn get_source_map_json(&self) -> Option<&[u8]> {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does
-        // not write Rust-visible memory.
-        let d = unsafe { DevServerSourceProvider__getSourceMapJSON(self) };
+        let d = DevServerSourceProvider__getSourceMapJSON(self);
         if d.length == 0 {
             return None;
         }
@@ -125,8 +124,8 @@ impl SourceProvider for DevServerSourceProvider {
 }
 
 // HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub fn add_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
+pub(crate) fn add_bake_source_provider_source_map(
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -141,9 +140,20 @@ pub fn add_bake_source_provider_source_map(
     );
 }
 
+// HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
+pub(crate) fn remove_bake_source_provider_source_map(
+    vm: &VirtualMachine,
+    opaque_source_provider: *mut c_void,
+    specifier: &BunString,
+) {
+    let slice = specifier.to_utf8();
+    vm.source_mappings
+        .remove_source_provider(opaque_source_provider, slice.slice());
+}
+
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub fn add_dev_server_source_provider(
-    vm: &mut VirtualMachine,
+pub(crate) fn add_dev_server_source_provider(
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -159,8 +169,8 @@ pub fn add_dev_server_source_provider(
 }
 
 // HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
+pub(crate) fn remove_dev_server_source_provider(
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {

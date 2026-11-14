@@ -1,0 +1,21 @@
+# -- source: stored-function-name-is-found.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# function e() { return this.count + 5; }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + typeof box.count; }
+# const held = new Box(1);
+# function setName(named, name) { Object.defineProperty(named, "name", { value: name, enumerable: false, configurable: true }); }
+# for (let i = 0; i < 5; i++) setName(pick(i), held);
+# pick(hidden()).name.count = "text";
+# print(all(new Box(10)), typeof held.count);
+# -- end of source
+# L0 = Box. The value that the helper lays is an object of the program: whoever reads the name of one of the five finds it.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: "count" proven=i32 writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
+# ANSWERS: 11,12,13,14,15,10,number string

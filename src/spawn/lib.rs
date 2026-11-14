@@ -9,31 +9,11 @@
 //! `bun_runtime` re-exports them. The only non-leaf dependencies are
 //! `bun_io` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
-//! `bun_threading`, and `bun_crash_handler` — none of which depend back on
-//! this crate, so no cycle.
+//! and `bun_threading` — none of which depend back on this crate, so no cycle.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
-
-/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
-/// MOVE_DOWN: implementation now lives in `bun_spawn_sys`; re-exported here
-/// with the higher-tier `process::*` glue (`Process`/`Status`/`spawn_process`/
-/// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
-/// keep resolving.
-pub mod posix_spawn {
-    pub use bun_spawn_sys::posix_spawn::*;
-
-    pub mod bun_spawn {
-        pub use crate::process;
-        pub use crate::process::{
-            Process, SpawnOptions, SpawnProcessResult, Status, spawn_process, sync,
-        };
-        #[cfg(windows)]
-        pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
-        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
-    }
-}
 
 /// Ctrl+C handling for a process acting as a shell for foreground children.
 #[path = "ctrl_c.rs"]
@@ -60,10 +40,11 @@ pub use bun_event_loop::EventLoopHandle;
 pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
 pub use bun_spawn_sys::RusageFields;
+#[cfg(unix)]
+pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SignalCodeExt, SpawnEnv,
-    SpawnOptions, SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread,
-    spawn_process, spawn_process_cstr,
+    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
+    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -85,7 +66,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
+        fn on_process_exit(status: Status, rusage: &Rusage);
     }
 }
 
@@ -100,14 +81,14 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 #[cfg(windows)]
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+        on_process_exit(status, _rusage) =>
+            process::sync::SyncWindowsProcess::on_process_exit(this, status),
     }
 }
 #[cfg(not(windows))]
 link_impl_ProcessExit! {
     SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_process, _status, _rusage) =>
+        on_process_exit(_status, _rusage) =>
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }

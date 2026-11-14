@@ -22,6 +22,10 @@ impl Taskable for CppTask {
         // SAFETY: fn contract; every CppTask payload is a heap EventLoopTask.
         unsafe { Bun__deleteEventLoopTask(this) }
     }
+    /// A `WebCore::EventLoopTask`: C++ posted it to a context and checks that context there.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl CppTask {
@@ -84,7 +88,7 @@ extern "C" fn ConcurrentCppTask__createAndRun(
 ) {
     crate::mark_binding!();
     let vm = global.bun_vm();
-    vm.event_loop_shared().ref_keep_alive();
+    vm.event_loop().ref_keep_alive();
     let ticket = vm.ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,

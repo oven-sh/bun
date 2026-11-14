@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 // `bun build --compile` copies the whole bun binary (~1GB under debug+ASAN),
 // which blows the 5s default.
@@ -44,9 +44,6 @@ test(
         ...env,
         EXT_MOD: join(cwd, "extmod.cjs"),
         NODE_COMPILE_CACHE: join(cwd, "cache-standalone"),
-        // Debug ASAN builds embed an @executable_path rpath for asan-dyld-shim.dylib;
-        // the standalone exe lives elsewhere, so point dyld back at the build dir.
-        DYLD_FALLBACK_LIBRARY_PATH: dirname(bunExe()),
       },
       cwd,
     });

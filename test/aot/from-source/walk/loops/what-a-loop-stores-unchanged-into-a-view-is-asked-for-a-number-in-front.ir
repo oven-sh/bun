@@ -1,0 +1,24 @@
+# A store into a view of numbers converts what is stored. Of a value that nobody knows that may run code: the store tests the cell, the key and the value each turn, and nothing is taken in front of the loop.
+# `value` comes from in front of the loop and every turn stores it: in the copy of the loop for each kind of view it is asked for a number once, in front, and the store is the proven one.
+# What is no number runs the loop as it was. A list takes whatever comes: in its copy nothing is asked of `value`.
+# RUN(UNKNOWN): walk f1 mechanisms=all
+# UNKNOWN-LABEL: code f1:Body
+# UNKNOWN: = TypeTest {{*}} testedType=Float32Array #
+# UNKNOWN-NOT: testedType=number #
+# UNKNOWN: = PutArrayElement
+# UNKNOWN: = TypeTest {{*}} testedType=number #
+# UNKNOWN: = PutTypedArrayElement {{*}} typedArrayType=2 level=Proven
+# UNKNOWN: = TypeTest {{*}} testedType=number #
+# UNKNOWN: = PutTypedArrayElement {{*}} typedArrayType=10 level=Proven
+# UNKNOWN: = TypeTest {{*}} testedType=number #
+# UNKNOWN: = PutTypedArrayElement {{*}} typedArrayType=9 level=Proven
+# UNKNOWN: = ElemSet
+# A number or undefined is converted without code, and the store is the proven one as it stands: such a value is not asked.
+# RUN(PARTLY): walk f2 mechanisms=all
+# PARTLY-LABEL: code f2:Body
+# PARTLY-NOT: testedType=number #
+# -- source: main.js
+# function fill(make, value) { const into = make(); let sum = 0; for (let i = 0; i < 100; i++) { into[i] = value; sum += i; } return sum ? into : 0; }
+# function mark(make, flag) { const into = make(), value = flag ? 1.5 : undefined; for (let i = 0; i < 100; i++) into[i] = value; return into; }
+# globalThis.kept = [fill, mark];
+# -- end of source

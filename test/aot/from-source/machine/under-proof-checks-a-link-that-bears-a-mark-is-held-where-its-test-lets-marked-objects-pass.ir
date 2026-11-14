@@ -1,0 +1,29 @@
+# A link that a loop follows is restricted to its layout by a shape test that rejects marked objects. After that test, the reads of the iteration do not check whether a slot is filled. The store looks at its own slot.
+# Outside the loop, two fields of the middle node are deleted and one is added again. So that node carries a mark, and the slot that the iteration stores into is empty.
+# Fault injection, testing=AllowMarkedObjects: the shape test of the link lets marked objects pass. The store finds its slot empty and leaves the iteration, so the answers are right.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) what is remembered about the cell is checked again where it is relied on. If the check fails, the process crashes.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 2 2 tag,flags,up,seen flags,up,tag,seen tag,flags,up,seen
+# RIGHT-NEXT: exited with 0
+# RUN(PASSING): run-in-shell mechanisms=all testing=AllowMarkedObjects
+# PASSING: 2 2 tag,flags,up,seen flags,up,tag,seen tag,flags,up,seen
+# PASSING-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=AllowMarkedObjects,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed
+# HELD-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# HELD: crashed with SIGABRT
+# RUN(WALK): walk f2:Body mechanisms=all
+# WALK: = ShapeTest {{*}}rejectsMarkedObjects
+# WALK: : L{{*}} @Cell{{*}}isLoopHead=true
+# WALK-NOT: = IsSlotFilled
+# WALK: = IsSlotFilled {{*}}key="seen"
+# WALK-NOT: = IsSlotFilled
+# -- source: main.cjs
+# function Node(tag, up) { this.tag = tag; this.flags = tag * 3; this.up = up; this.seen = 0; }
+# function climb(from) { let sum = 0; for (let at = from; at !== null; at = at.up) { if (at.flags & 1) sum += at.tag; else sum -= at.tag; at.seen = 5; } return sum; }
+# const byName = { climb }, key = JSON.parse('"climb"');
+# const low = new Node(3, null), mid = new Node(2, low), top = new Node(1, mid);
+# const first = byName[key](top);
+# delete mid.seen; delete mid.tag; mid.tag = 2;
+# print(first, byName[key](top), Object.keys(top).join(), Object.keys(mid).join(), Object.keys(low).join());
+# -- end of source

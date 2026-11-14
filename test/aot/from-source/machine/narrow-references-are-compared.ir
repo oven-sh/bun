@@ -1,0 +1,15 @@
+# Two fields that hold narrow references are compared by their words, undecoded.
+# RUN(COMPARED): compile NarrowReferencesCompared mechanisms=all
+# COMPARED: statistic NarrowReferencesCompared 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 3 1 2 -1 107
+# -- source: main.js
+# class Node { constructor(key) { this.key = key; this.left = null; this.right = null; } }
+# class Tree { constructor() { this.root = null; } }
+# function add(tree, key) { let above = null; let node = tree.root; while (node) { above = node; if (key < node.key) node = node.left; else node = node.right; } const added = new Node(key); if (!above) tree.root = added; else if (key < above.key) above.left = added; else above.right = added; }
+# function depth(tree, key) { let depth = 0; for (let node = tree.root; node; ) { if (node.key === key) return depth; depth++; node = key < node.key ? node.left : node.right; } return -1; }
+# function leaves(tree) { let count = 0; for (let node = tree.root; node; node = node.right) count += node.left === node.right ? 1 : 0; return count; }
+# const tree = new Tree();
+# for (const key of [50, 20, 70, 10, 30, 60, 80, 65, 90]) add(tree, key);
+# print(depth(tree, 65), depth(tree, 20), depth(tree, 80), depth(tree, 81), depth(tree, 50) + leaves(tree) + 106);
+# -- end of source

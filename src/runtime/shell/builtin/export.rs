@@ -6,7 +6,7 @@ use crate::shell::yield_::Yield;
 use bun_collections::index_sort;
 
 #[derive(Default)]
-pub struct Export {
+pub(crate) struct Export {
     state: State,
 }
 
@@ -37,23 +37,21 @@ impl Export {
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
-            let label = EnvStr::dupe_ref_counted(name);
-            let val = EnvStr::dupe_ref_counted(value);
-            let shell = interp.as_cmd(cmd).base.shell;
-            // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
-            label.deref();
-            val.deref();
+            let label = EnvStr::init_ref_counted(name.into());
+            let val = EnvStr::init_ref_counted(value.into());
+            interp
+                .as_cmd_mut(cmd)
+                .base
+                .shell_mut()
+                .export_env
+                .insert(label, val);
         }
         Builtin::done(interp, cmd, 0)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut entries: Vec<(EnvStr, EnvStr)> = Builtin::shell(interp, cmd)
-            .export_env
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let mut entries: Vec<(&EnvStr, &EnvStr)> =
+            Builtin::shell(interp, cmd).export_env.iter().collect();
         index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
 
         let mut buf = Vec::new();

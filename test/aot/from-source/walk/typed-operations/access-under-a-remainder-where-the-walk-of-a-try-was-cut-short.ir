@@ -1,0 +1,20 @@
+# -- source: access-under-a-remainder-where-the-walk-of-a-try-was-cut-short.ts
+# declare function print(...values: unknown[]): void;
+# const count = Number((globalThis as any).COUNT ?? 3);
+# function makeJob(id: any) { const job: any = {}; job.meta = { id: id + 1 }; return job; }
+# function makeNote(id: any) { return { note: id }; }
+# const makers = [makeJob, makeNote];
+# (globalThis as any).seen = makers;
+# function next(seed: any, i: any) { return makers[i % makers.length](i); }
+# const made: any[] = [];
+# for (let i = 0; i < count; i++) made.push(next(makeJob(i), i));
+# print(JSON.stringify(made));
+# -- end of source
+# `makers[i % makers.length]`: the read is built where the divisor is not zero, and once more under NaN where it is.
+# The loop of the module is tried, and the walk of a try is cut short inside the first of the two.
+# The compiler died here: behind the cut a constant was nothing, the key was bound to it, and the type of nothing was asked for. A cut is taken up in front of the next operation of the input.
+# STATISTIC: LoopVisitsAborted >= 1
+# RUN: walk f0 mechanisms=all
+# CHECK: code f0:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: [{"meta":{"id":1}},{"note":1},{"meta":{"id":3}}]

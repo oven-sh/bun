@@ -1,0 +1,22 @@
+# Nobody knows what the stores go to. They name fields of the layouts that may hide behind such a value and of whose objects a written type declares the name.
+# No layout with objects is written as WideLinks: only a cast leads to it, so it speaks of the objects of the nearest type above it that some layout is written as. Nothing is written of `stranger`, and a method lies above the objects.
+# What some written type requires holds a value in whoever has it. What is optional everywhere is often stored undefined only to give the objects one shape, and takes no storage for that. Both lie in the cell, the truth value beside the word of the extra properties.
+# -- source: written-above-what-nobody-knows.ts
+# interface Links { seen?: boolean; method?(): void }
+# interface WideLinks extends Links { wide: number }
+# class Made implements Links { }
+# (globalThis as any).kept = new Made();
+# const links: Links = (globalThis as any).kept;
+# links.seen = true;
+# (links as WideLinks).wide = 2;
+# (links as any).stranger = 3;
+# -- end of source
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "seen" appended
+# CHECK-NEXT: field L0.1 "wide" appended
+# CHECK-NEXT: field L1.0
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject size=32
+# PLAN-NEXT: slot 0 "seen" appended OptionalBoolean Inline offset=20 record=0
+# PLAN-NEXT: slot 1 "wide" appended JSValue Inline offset=24 record=1
+# PLAN-NEXT: extra-properties

@@ -1,0 +1,27 @@
+# -- source: a-list-or-a-view-that-a-turn-reads-off-a-variable-is-told-apart-in-front-of-the-loop.ts
+# declare function sink(...values: unknown[]): void;
+# declare function given(): any;
+# const table = given();
+# let swapped = given();
+# function sumOfConstant(turns: number): number { let s = 0; for (let i = 0; i < turns; i++) s += table[i] * 2; return s; }
+# function sumWhileTheTurnStores(turns: number): number { let s = 0; for (let i = 0; i < turns; i++) { s += swapped[i] * 2; if (i === 1) swapped = given(); } return s; }
+# function makeReader(): (turns: number) => number { const held = given(); return (turns: number): number => { let s = 0; for (let i = 0; i < turns; i++) s += held[i] * 2; return s; }; }
+# sink(sumOfConstant, sumWhileTheTurnStores, makeReader());
+# -- end of source
+# `s += table[i] * 2`: the receiver is no value from in front of the loop: each turn reads it anew off a variable of the file or a captured one. Nothing is known of what the variable holds.
+# The front that tells a list of numbers from bytes and other views took only values that stand in front of the loop in the text, so such a loop had one copy, and every read went by the stub.
+# The variable is read in front of the loop, that value is told apart, and in each copy the proof stands for the variable as long as the state holds it. A variable that the loop's text stores gets no such front.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable
+# CHECK: = TypeTest {{*}}testedType=Array<number>
+# CHECK: = TypeTest {{*}}testedType=Uint8Array
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# CHECK: number @Double{{*}}isInLoop=true isLoopHead=true
+# RUN(STORED): walk f2 mechanisms=all
+# STORED-LABEL: code f2:Body
+# STORED-NOT: testedType=Uint8Array
+# RUN(CAPTURED): walk f4 mechanisms=all
+# CAPTURED-LABEL: code f4:Body
+# CAPTURED: = TypeTest {{*}}testedType=Array<number>
+# CAPTURED: = HasArrayStorage {{*}}arrayStorage=Double

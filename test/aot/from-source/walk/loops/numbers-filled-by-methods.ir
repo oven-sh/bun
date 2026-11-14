@@ -1,0 +1,16 @@
+# f1 = Channel
+# f3 = count
+# f4 = run
+# -- source: main.mjs
+# function Channel() { this.reset(4); }
+# Channel.prototype.reset = function (n) { this.left = n | 0; this.period = n | 0; this.turns = 0; };
+# Channel.prototype.count = function () { if (--this.left == 0) { this.left = this.period | 0; this.turns = this.turns + 1 | 0; } };
+# Channel.prototype.run = function (turns) { for (let turn = 0; turn < turns; turn++) this.count(); };
+# const channel = new Channel(); globalThis.unseen = [Channel, channel]; channel.run((0, eval)("9"));
+# print(channel.left, channel.turns);
+# -- end of source
+# A number that a method stores into a field is asked for like one that the constructor stores, where loops call the reader.
+# RUN: walk f3 mechanisms=all
+# CHECK: IsSlotFilled {{*}}key="left"
+# CHECK: TypeTest {{*}} testedType=i32
+# CHECK-NOT: GetSlotOrUndefined {{*}}key="left"

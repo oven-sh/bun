@@ -1,0 +1,18 @@
+# One arm of a turn hands on the object that came round, the other a new one. Each slot comes to the join out of the object of its way, so neither is made.
+# f2 reads the object in front of the join, f3 behind it.
+# -- source: object-that-some-turns-replace-is-never-made.js
+# function make(a, b) { return { a, b }; }
+# function before(n) { let q = make(0, 1), s = 0; for (let i = 0; i < n; i++) { s = (s + q.a + q.b) | 0; if (i & 1) q = make(i & 255, q.a); } return s; }
+# function behind(n) { let q = make(0, 1), s = 0; for (let i = 0; i < n; i++) { if (i & 1) q = make(i & 255, i & 7); s = (s + q.a + q.b) | 0; } return s; }
+# const size = process.argv.length;
+# console.log(before(size), behind(size));
+# -- end of source
+# RUN: walk f2 f3 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = GetSlot
+# CHECK-LABEL: code f3:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = GetSlot

@@ -1,0 +1,20 @@
+# `total += v` with a v read out of a dictionary: what is added stays unknown in the typed copy too, so a sum that is asked for a number in front is boxed, added by the stub, tested and unboxed in every turn: ten instructions a turn for nothing.
+# UNDO, NOT PREDICT: where what comes round in the typed copy is no proven number, the builds are undone, the rows that they made are forgotten (the typed copy's own row held `number`: the next build under the same key began there
+# and held the sum as a Double where a walk that never asked holds an i32), what they wrote into the loop's own row is put back, and the loop is walked and asked again as if no sum had ever been asked.
+# The first source of this file (a sum of sizes told by typeof) reaches the undo no longer: its sum is dropped before it is asked.
+# LIBRARY: own
+# -- source: main.js
+# function Store(limit) { this.map = Object.create(null); this.size = 0; this.limit = limit; }
+# Store.prototype.get = function (k) { return this.map[k]; };
+# Store.prototype.set = function (k, v) { if (!(k in this.map)) { if (this.size >= this.limit) { for (var old in this.map) { delete this.map[old]; this.size--; break; } } this.size++; } this.map[k] = v; };
+# function run(count) { var c = new Store(8), keys = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "ka", "kb"], total = 0; for (var i = 0; i < count; i++) { var k = keys[i % 6], v = c.get(k); if (v === undefined) c.set(k, i & 7); else total += v; } return total + c.size; }
+# publish(run);
+# -- end of source
+# RUN: compile LoopsRevisitedWithoutSumGuards mechanisms=all
+# CHECK: statistic LoopsRevisitedWithoutSumGuards 1
+# RUN(LOOP): walk f2 mechanisms=all
+# LOOP: code f2:Body
+# LOOP: (v{{*}}: i32 @Int32, v{{*}}) isInLoop=true isLoopHead=true
+# LOOP-NOT: (v{{*}}: number @Double, v{{*}}) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(0), run(1), run(12), run(13), run(1000)); };
+# SHELL: 0 1 21 21 2487

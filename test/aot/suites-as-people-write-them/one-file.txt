@@ -1,0 +1,520 @@
+=== hooks-order
++++ hooks.test.ts
+import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach } from "bun:test";
+const log: string[] = [];
+beforeAll(() => { log.push("A"); });
+afterAll(() => { console.log(log.join("")); });
+beforeEach(() => { log.push("e"); });
+afterEach(() => { log.push("x"); });
+describe("outer", () => {
+  beforeAll(() => { log.push("B"); });
+  beforeEach(() => { log.push("f"); });
+  test("one", () => { log.push("1"); expect(log.join("")).toBe("ABef1"); });
+  describe("inner", () => {
+    afterAll(() => { log.push("z"); });
+    beforeEach(async () => { await null; log.push("g"); });
+    test("two", () => { log.push("2"); expect(log.slice(-4).join("")).toBe("efg2"); });
+    test("three", () => { log.push("3"); });
+  });
+  afterAll(() => { log.push("Y"); });
+});
+test("last", () => { expect(log.at(-1)).toBe("e"); });
+=== hooks-that-fail
++++ fail.test.ts
+import { describe, test, expect, beforeEach, afterEach, beforeAll } from "bun:test";
+let n = 0;
+describe("each fails once", () => {
+  beforeEach(() => { if (++n === 2) throw new Error("second"); });
+  test("a", () => { expect(n).toBe(1); });
+  test("b", () => { expect(n).toBe(2); });
+  test("c", () => { expect(n).toBe(3); });
+});
+describe("after fails", () => {
+  afterEach(() => { throw new TypeError("after"); });
+  test("d", () => {});
+});
+describe("all fails", () => {
+  beforeAll(() => { throw new RangeError("all"); });
+  test("e", () => { console.log("not run"); });
+});
+test("f", () => { expect(n).toBe(3); });
+=== each-tables
++++ each.test.ts
+import { describe, test, expect } from "bun:test";
+test.each([[1, 1, 2], [2, 3, 5], [-1, 1, 0]])("add %i and %i is %i", (a, b, sum) => { expect(a + b).toBe(sum); });
+test.each([{ a: 1, name: "x" }, { a: 2, name: "y" }])("record $name of $a", ({ a, name }) => { expect(name).toBe(a === 1 ? "x" : "y"); });
+test.each(["p", "qq", ""])("text %s has %#", text => { expect(text.length).toBeLessThan(3); });
+describe.each([["sum", (a: number, b: number) => a + b, 7], ["product", (a: number, b: number) => a * b, 12]] as const)("%s", (name, call, result) => {
+  test("of 3 and 4", () => { expect(call(3, 4)).toBe(result); });
+  test.each([0, 1])("with %d", n => { expect(call(n, 0)).toBe(name === "sum" ? n : 0); });
+});
+test.each([[null], [undefined], [NaN]])("odd %p", value => { expect(value).toEqual(value); });
+=== each-that-fails
++++ each.test.js
+import { test, expect } from "bun:test";
+test.each([[1, 2], [2, 4], [3, 7]])("%d doubled is %d", (n, twice) => { expect(n * 2).toBe(twice); });
+test.each([{ list: [1, 2], sum: 3 }, { list: [5], sum: 6 }])("sum is $sum", ({ list, sum }) => { expect(list.reduce((a, b) => a + b, 0)).toEqual(sum); });
+=== nested-describes
++++ nested.test.ts
+import { describe, it, expect } from "bun:test";
+class Stack<T> {
+  #items: T[] = [];
+  push(item: T) { this.#items.push(item); return this; }
+  pop() { if (!this.#items.length) throw new RangeError("empty"); return this.#items.pop()!; }
+  get size() { return this.#items.length; }
+}
+describe("a stack", () => {
+  const stack = new Stack<number>();
+  it("is empty", () => { expect(stack.size).toBe(0); });
+  describe("after two pushes", () => {
+    stack.push(1).push(2);
+    it("has two", () => { expect(stack.size).toBe(2); });
+    describe("and a pop", () => {
+      it("gives the last", () => { expect(stack.pop()).toBe(2); });
+      it("has one", () => { expect(stack.size).toBe(1); });
+    });
+  });
+  it("throws at the end", () => { stack.pop(); expect(() => stack.pop()).toThrow(RangeError); expect(() => stack.pop()).toThrow("empty"); });
+});
+=== skip-todo-if
++++ skip.test.ts
+import { describe, test, expect } from "bun:test";
+test.skip("skipped", () => { throw new Error("no"); });
+test.todo("to be written");
+test.todo("written and failing", () => { expect(1).toBe(2); });
+test.if(1 + 1 === 2)("when true", () => { expect(true).toBe(true); });
+test.if(false)("when false", () => { throw new Error("no"); });
+test.skipIf(true)("skipped if", () => { throw new Error("no"); });
+test.todoIf(true)("todo if", () => { throw new Error("no"); });
+test.failing("fails as it should", () => { expect(1).toBe(2); });
+describe.skip("a group", () => { test("inside", () => { throw new Error("no"); }); });
+describe.todo("a later group");
+test("runs", () => { expect([1, 2]).toHaveLength(2); });
+=== timeouts
++++ late.test.ts
+import { test, expect } from "bun:test";
+test("too late", async () => { await new Promise(done => setTimeout(done, 3000)); }, 50);
+test("in time", async () => { await Bun.sleep(5); expect(1).toBe(1); }, 2000);
+test("never", () => new Promise(() => {}), 60);
+test("after them", () => { expect("x").toBe("x"); });
+=== done-callbacks
++++ done.test.js
+import { test, expect } from "bun:test";
+test("done at once", done => { expect(1).toBe(1); done(); });
+test("done later", done => { setTimeout(() => { expect(2).toBe(2); done(); }, 5); });
+test("done with an error", done => { done(new Error("by done")); });
+test("thrown before done", done => { setImmediate(done); throw new TypeError("sync"); });
+test("promise and done", async () => { await Promise.all([1, 2].map(n => Bun.sleep(n))); });
+=== assertions-counted
++++ count.test.ts
+import { test, expect } from "bun:test";
+test("two of two", () => { expect.assertions(2); expect(1).toBe(1); expect(2).toBe(2); });
+test("one of two", () => { expect.assertions(2); expect(1).toBe(1); });
+test("some", () => { expect.hasAssertions(); [1].forEach(n => expect(n).toBe(1)); });
+test("none", () => { expect.hasAssertions(); });
+test("in a callback", async () => { expect.assertions(1); await Promise.resolve(3).then(n => expect(n).toBe(3)); });
+=== rejected-tests
++++ rejected.test.ts
+import { test, expect } from "bun:test";
+const fail = async (n: number) => { await null; throw Object.assign(new RangeError("code " + n), { code: n }); };
+test("rejects with", async () => { await expect(fail(3)).rejects.toThrow("code 3"); await expect(fail(4)).rejects.toMatchObject({ code: 4 }); });
+test("resolves with", async () => { await expect(Promise.resolve([1])).resolves.toEqual([1]); expect(Promise.resolve(2)).resolves.toBe(2); });
+test("rejected", () => fail(5));
+test("thrown in an async test", async () => { const n = await Promise.resolve(6); throw new Error("after " + n); });
+test("wrong kind", async () => { await expect(Promise.resolve(1)).rejects.toThrow(); });
+test("after them", async () => { expect(await fail(7).catch(error => error.code)).toBe(7); });
+=== matchers-of-values
++++ values.test.ts
+import { test, expect } from "bun:test";
+test("equal", () => {
+  expect({ a: [1, { b: 2 }], c: undefined }).toEqual({ a: [1, { b: 2 }] });
+  expect({ a: 1, c: undefined }).not.toStrictEqual({ a: 1 });
+  expect(new Map([[1, new Set([2])]])).toEqual(new Map([[1, new Set([2])]]));
+  expect([1, , 3]).toEqual([1, undefined, 3]);
+  expect(new Date(5)).toEqual(new Date(5));
+  expect(/a/g).not.toEqual(/a/i);
+});
+test("numbers", () => { expect(0.1 + 0.2).toBeCloseTo(0.3, 5); expect(5).toBeGreaterThanOrEqual(5); expect(NaN).toBeNaN(); expect(-0).not.toBe(0); expect(10n).toBeGreaterThan(9n); });
+test("texts", () => { expect("hello").toMatch(/l+/); expect("hello").toContain("ell"); expect("abc").toStartWith("a"); expect("abc").toEndWith("c"); expect("ab ").toEqualIgnoringWhitespace("a b"); });
+test("kinds", () => { expect(new (class A {})()).toBeInstanceOf(Object); expect(null).toBeNull(); expect(undefined).toBeUndefined(); expect([]).toBeArray(); expect(() => {}).toBeFunction(); expect(1).toBeTypeOf("number"); });
+test("properties", () => { const o = { a: { b: [1, 2] } }; expect(o).toHaveProperty("a.b[1]", 2); expect(o).toHaveProperty(["a", "b"]); expect(o).not.toHaveProperty("x"); expect(["x", { y: 1 }]).toContainEqual({ y: 1 }); });
+test("throws", () => { const f = () => { throw new TypeError("bad kind"); }; expect(f).toThrow(TypeError); expect(f).toThrow(/kind/); expect(f).toThrow(new TypeError("bad kind")); expect(() => 1).not.toThrow(); });
+=== matchers-that-fail
++++ fail.test.ts
+import { test, expect } from "bun:test";
+test("objects differ", () => { expect({ a: 1, list: [1, 2, 3], deep: { x: "y" } }).toEqual({ a: 1, list: [1, 4, 3], deep: { x: "z" } }); });
+test("texts differ", () => { expect("one\ntwo\nthree").toBe("one\n2\nthree"); });
+test("instances differ", () => { class P { constructor(public x: number) {} } expect(new P(1)).toStrictEqual(new P(2)); });
+test("maps differ", () => { expect(new Map([["a", 1]])).toEqual(new Map([["a", 2]])); });
+test("not thrown", () => { expect(() => 5).toThrow("x"); });
+test("other error", () => { expect(() => { throw new RangeError("r"); }).toThrow(TypeError); });
+test("length", () => { expect([1, 2]).toHaveLength(3); });
+test("not contained", () => { expect(["a"]).toContain("b"); });
+=== asymmetric-matchers
++++ any.test.ts
+import { test, expect } from "bun:test";
+test("any and anything", () => { expect({ id: 5, at: new Date(), tags: ["a"], call() {} }).toEqual({ id: expect.any(Number), at: expect.any(Date), tags: expect.arrayContaining(["a"]), call: expect.any(Function) }); expect([null, 1]).toEqual([expect.not.anything?.() ?? null, expect.anything()]); });
+test("containing", () => { expect({ a: 1, b: { c: "text", d: 2 } }).toEqual(expect.objectContaining({ b: expect.objectContaining({ c: expect.stringContaining("ex") }) })); expect("abc1").toEqual(expect.stringMatching(/\d$/)); });
+test("close", () => { expect({ n: 0.30000001 }).toEqual({ n: expect.closeTo(0.3, 3) }); });
+test("not", () => { expect(["x"]).toEqual(expect.not.arrayContaining(["y"])); expect({ a: 1 }).toEqual(expect.not.objectContaining({ b: 1 })); });
+test("fails", () => { expect({ a: "5" }).toEqual({ a: expect.any(Number) }); });
+=== own-matchers
++++ extend.test.ts
+import { test, expect } from "bun:test";
+expect.extend({
+  toBeWithin(received: number, low: number, high: number) { const pass = received >= low && received <= high; return { pass, message: () => `expected ${received} ${this.isNot ? "outside" : "within"} ${low}..${high}` }; },
+  async toResolveTo(received: Promise<unknown>, value: unknown) { const got = await received; return { pass: this.equals(got, value), message: () => "got " + got }; },
+});
+test("within", () => { (expect(5) as any).toBeWithin(1, 10); (expect(50) as any).not.toBeWithin(1, 10); });
+test("not within", () => { (expect(50) as any).toBeWithin(1, 10); });
+test("within, but should not", () => { (expect(5) as any).not.toBeWithin(1, 10); });
+test("as a part", () => { expect({ n: 3 }).toEqual({ n: (expect as any).toBeWithin(1, 3) }); });
+test("async", async () => { await (expect(Promise.resolve([1])) as any).toResolveTo([1]); });
+=== fake-timers
++++ timers.test.ts
+import { test, expect, jest, beforeEach, afterEach } from "bun:test";
+beforeEach(() => { jest.useFakeTimers(); });
+afterEach(() => { jest.useRealTimers(); });
+test("a timeout", () => { const call = jest.fn(); setTimeout(call, 1000, "x"); expect(call).not.toHaveBeenCalled(); jest.advanceTimersByTime(999); expect(call).toHaveBeenCalledTimes(0); jest.advanceTimersByTime(1); expect(call).toHaveBeenCalledWith("x"); });
+test("an interval", () => { let n = 0; const id = setInterval(() => { if (++n === 3) clearInterval(id); }, 10); jest.advanceTimersByTime(100); expect(n).toBe(3); });
+test("run all", () => { const log: string[] = []; setTimeout(() => { log.push("b"); setTimeout(() => log.push("c"), 5); }, 20); setTimeout(() => log.push("a"), 10); jest.runAllTimers(); expect(log).toEqual(["a", "b", "c"]); });
+test("pending", () => { setTimeout(() => {}, 1); setTimeout(() => {}, 2); expect(jest.getTimerCount()).toBe(2); jest.clearAllTimers(); expect(jest.getTimerCount()).toBe(0); });
+=== fake-timers-over-a-module
++++ debounce.ts
+export function debounce<T extends unknown[]>(call: (...all: T) => void, wait: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let calls = 0;
+  const wrapped = (...all: T) => { calls++; clearTimeout(timer); timer = setTimeout(() => { timer = undefined; call(...all); }, wait); };
+  wrapped.pending = () => timer !== undefined;
+  wrapped.calls = () => calls;
+  return wrapped;
+}
++++ debounce.test.ts
+import { test, expect, jest, mock } from "bun:test";
+import { debounce } from "./debounce";
+test("calls once, with the last arguments", () => {
+  jest.useFakeTimers();
+  const call = mock((a: number, b: string) => {});
+  const debounced = debounce(call, 50);
+  for (let i = 0; i < 5; i++) { debounced(i, "n" + i); jest.advanceTimersByTime(20); }
+  expect(debounced.pending()).toBe(true);
+  jest.advanceTimersByTime(50);
+  expect(call.mock.calls).toEqual([[4, "n4"]]);
+  expect(debounced.pending()).toBe(false);
+  expect(debounced.calls()).toBe(5);
+  jest.useRealTimers();
+});
+test("real again", async () => { const call = mock(() => {}); debounce(call, 1)(); await Bun.sleep(20); expect(call).toHaveBeenCalledTimes(1); });
+=== system-time
++++ clock.test.ts
+import { test, expect, setSystemTime, afterEach } from "bun:test";
+const stamp = (now = new Date()) => now.toISOString().slice(0, 10);
+class Session { readonly start = Date.now(); get age() { return Date.now() - this.start; } }
+afterEach(() => { setSystemTime(); });
+test("a day", () => { setSystemTime(new Date("2026-11-12T10:00:00Z")); expect(stamp()).toBe("2026-11-12"); expect(Date.now()).toBe(Date.UTC(2026, 10, 12, 10)); });
+test("moves", () => { setSystemTime(new Date(1000)); const s = new Session(); setSystemTime(new Date(5000)); expect(s.age).toBe(4000); expect(new Date().getTime()).toBe(5000); });
+test("real", () => { expect(Date.now()).toBeGreaterThan(Date.UTC(2025, 0, 1)); });
+=== mock-functions
++++ mocks.test.ts
+import { test, expect, mock, jest } from "bun:test";
+test("records calls", () => { const f = mock((a: number, b = 2) => a * b); expect(f(3)).toBe(6); expect(f(3, 3)).toBe(9); expect(f.mock.calls).toEqual([[3], [3, 3]]); expect(f.mock.results.map(r => r.value)).toEqual([6, 9]); expect(f).toHaveBeenLastCalledWith(3, 3); expect(f).toHaveBeenNthCalledWith(1, 3); });
+test("once and after", () => { const f = jest.fn<(n?: number) => number>().mockReturnValueOnce(1).mockReturnValueOnce(2).mockReturnValue(9); expect([f(), f(), f(), f()]).toEqual([1, 2, 9, 9]); f.mockReset(); expect(f()).toBeUndefined(); });
+test("implementations", () => { const f = mock(() => "a").mockImplementationOnce(() => "b"); expect(f() + f()).toBe("ba"); f.mockImplementation(() => "c"); expect(f()).toBe("c"); f.mockClear(); expect(f).not.toHaveBeenCalled(); });
+test("promises", async () => { const f = jest.fn().mockResolvedValueOnce(1).mockRejectedValueOnce(new Error("no")); expect(await f()).toBe(1); await expect(f()).rejects.toThrow("no"); });
+test("this and new", () => { const f = mock(function (this: any, n: number) { this && (this.n = n); }); const o = { f }; o.f(4); expect(o).toMatchObject({ n: 4 }); expect(f.mock.contexts[0]).toBe(o); const one: any = new (f as any)(5); expect(one.n).toBe(5); expect(f.mock.instances.length).toBe(2); });
+test("throws", () => { const f = mock(() => { throw new RangeError("r"); }); expect(f).toThrow("r"); expect(f.mock.results[0].type).toBe("throw"); });
+=== spies-on-objects
++++ spies.test.ts
+import { test, expect, spyOn, afterEach, jest } from "bun:test";
+const store = { items: [1, 2], add(n: number) { this.items.push(n); return this.items.length; }, get size() { return this.items.length; } };
+class Service { static count = 0; call(n: number) { Service.count++; return this.twice(n); } twice(n: number) { return n * 2; } }
+afterEach(() => { jest.restoreAllMocks(); });
+test("through", () => { const spy = spyOn(store, "add"); expect(store.add(3)).toBe(3); expect(spy).toHaveBeenCalledWith(3); expect(store.items).toEqual([1, 2, 3]); });
+test("replaced", () => { spyOn(store, "add").mockImplementation(() => -1); expect(store.add(4)).toBe(-1); expect(store.items.length).toBe(3); });
+test("restored", () => { expect(store.add(5)).toBe(4); });
+test("on a prototype", () => { const spy = spyOn(Service.prototype, "twice").mockReturnValue(100); expect(new Service().call(1)).toBe(100); expect(spy.mock.calls).toEqual([[1]]); spy.mockRestore(); expect(new Service().call(1)).toBe(2); });
+test("on an instance", () => { const service = new Service(); spyOn(service, "twice").mockImplementation(n => n + 1); expect(service.call(1)).toBe(2); expect(new Service().call(5)).toBe(10); });
+test("on built-in methods of objects of its own", () => { const log: unknown[] = []; const spy = spyOn(console, "log").mockImplementation((...all) => { log.push(all); }); console.log("hidden", 1); spy.mockRestore(); expect(log).toEqual([["hidden", 1]]); });
+=== spies-on-es-modules
++++ math.ts
+export function add(a: number, b: number) { return a + b; }
+export const twice = (n: number) => add(n, n);
+export default { add, name: "math" };
++++ user.ts
+import { add, twice } from "./math";
+import * as math from "./math";
+export const direct = () => add(1, 2) + twice(5);
+export const through = () => math.add(1, 2) + math.twice(5);
++++ spies.test.ts
+import { test, expect, spyOn } from "bun:test";
+import * as math from "./math";
+import { direct, through } from "./user";
+test("before", () => { expect([direct(), through()]).toEqual([13, 13]); });
+test("a spy on the namespace", () => { const spy = spyOn(math, "add").mockReturnValue(100); const got = [direct(), through(), math.twice(1)]; expect(spy).toHaveBeenCalled(); spy.mockRestore(); expect(got).toMatchInlineSnapshot(`
+[
+  200,
+  200,
+  100,
+]
+`); });
+test("after", () => { expect([direct(), through(), math.default.add(1, 1)]).toEqual([13, 13, 2]); });
+test("on the default", () => { const spy = spyOn(math.default, "add"); expect(math.default.add(2, 3)).toBe(5); expect(spy).toHaveBeenCalledTimes(1); spy.mockRestore(); });
+=== spies-on-commonjs
++++ tools.js
+exports.load = function (name) { return "real " + name; };
+exports.both = function (name) { return exports.load(name) + "!" + module.exports.load(name); };
+exports.count = 0;
++++ user.js
+const tools = require("./tools");
+const { load } = require("./tools");
+module.exports = { kept: () => load("a"), live: () => tools.load("b"), both: () => tools.both("c") };
++++ spies.test.js
+const { test, expect, spyOn } = require("bun:test");
+const tools = require("./tools");
+const user = require("./user");
+test("before", () => { expect([user.kept(), user.live(), user.both()]).toEqual(["real a", "real b", "real c!real c"]); });
+test("spied", () => { const spy = spyOn(tools, "load").mockImplementation(name => "fake " + name); expect([user.kept(), user.live(), user.both()]).toEqual(["real a", "fake b", "fake c!fake c"]); expect(spy.mock.calls.flat()).toEqual(["b", "c", "c"]); spy.mockRestore(); });
+test("after", () => { expect(user.live()).toBe("real b"); tools.count++; expect(require("./tools").count).toBe(1); });
+=== mock-module-es
++++ api.ts
+export async function fetchUser(id: number) { return { id, name: "real" + id }; }
+export const version = "1.0";
++++ service.ts
+import { fetchUser, version } from "./api";
+export const greet = async (id: number) => `hello ${(await fetchUser(id)).name} (${version})`;
++++ service.test.ts
+import { test, expect, mock } from "bun:test";
+import { greet } from "./service";
+test("real", async () => { expect(await greet(1)).toBe("hello real1 (1.0)"); });
+test("mocked", async () => { const fetchUser = mock(async (id: number) => ({ id, name: "mock" + id })); await mock.module("./api", () => ({ fetchUser, version: "test" })); expect(await greet(2)).toBe("hello mock2 (test)"); expect(fetchUser).toHaveBeenCalledWith(2); });
+test("still mocked, and imported again", async () => { const api = await import("./api"); expect(api.version).toBe("test"); expect(await greet(3)).toContain("mock3"); });
+=== mock-module-before-import
++++ config.ts
+console.log("config is loaded");
+export const settings = { mode: "production", level: 1 };
++++ app.ts
+import { settings } from "./config";
+export const describeApp = () => settings.mode + settings.level;
+export const atLoad = settings.mode;
++++ app.test.ts
+import { test, expect, mock, beforeAll } from "bun:test";
+let app: typeof import("./app");
+beforeAll(async () => { mock.module("./config", () => ({ settings: { mode: "test", level: 9 } })); app = await import("./app"); });
+test("is mocked at its load", () => { expect(app.atLoad).toBe("test"); expect(app.describeApp()).toBe("test9"); });
+test("changes are seen", async () => { const { settings } = await import("./config"); settings.level = 10; expect(app.describeApp()).toBe("test10"); });
+=== mock-module-commonjs
++++ database.js
+console.log("database is loaded");
+module.exports = { query: sql => ["real", sql], close() { return "closed"; } };
++++ repository.js
+const database = require("./database");
+exports.find = id => database.query("find " + id);
+exports.close = () => require("./database").close();
++++ repository.test.js
+const { test, expect, mock } = require("bun:test");
+const repository = require("./repository");
+test("real", () => { expect(repository.find(1)).toEqual(["real", "find 1"]); });
+test("mocked", () => { mock.module("./database", () => ({ query: sql => ["mock", sql], close: () => "mock closed" })); expect(require("./database").query("x")).toEqual(["mock", "x"]); expect(repository.close()).toBe("mock closed"); expect(repository.find(2)[1]).toBe("find 2"); });
+test("later", () => { expect(Object.keys(require("./database"))).toEqual(["query", "close"]); });
+=== mock-module-of-a-package
++++ node_modules/made-up-mailer/package.json
+{ "name": "made-up-mailer", "version": "1.0.0", "main": "index.js" }
++++ node_modules/made-up-mailer/index.js
+exports.send = async to => { throw new Error("no network for " + to); };
+exports.name = "mailer";
++++ notify.ts
+import { send, name } from "made-up-mailer";
+export const notify = async (people: string[]) => (await Promise.all(people.map(person => send(person)))).join() + name;
++++ notify.test.ts
+import { test, expect, mock } from "bun:test";
+import { notify } from "./notify";
+test("real", async () => { await expect(notify(["a"])).rejects.toThrow("no network for a"); });
+test("mocked", async () => { const send = mock(async (to: string) => "sent " + to); mock.module("made-up-mailer", () => ({ send, name: "!" })); expect(await notify(["a", "b"])).toBe("sent a,sent b!"); expect(send).toHaveBeenCalledTimes(2); });
+=== mock-module-of-node
++++ reader.ts
+import { readFileSync } from "node:fs";
+import path from "node:path";
+export const readTitle = (file: string) => readFileSync(path.join("pages", file), "utf8").split("\n")[0];
++++ reader.test.ts
+import { test, expect, mock } from "bun:test";
+test("reads through a mock", async () => { mock.module("node:fs", () => ({ readFileSync: (file: string) => "# title of " + file + "\nbody", default: {} })); const { readTitle } = await import("./reader"); expect(readTitle("a.md")).toBe("# title of pages/a.md"); });
+=== mock-module-partly
++++ shapes.ts
+export const area = (w: number, h: number) => w * h;
+export const border = (w: number, h: number) => 2 * (w + h);
+export const both = (w: number, h: number) => [area(w, h), border(w, h)];
++++ shapes.test.ts
+import { test, expect, mock } from "bun:test";
+import * as shapes from "./shapes";
+const original = { ...shapes };
+test("one function is replaced", async () => { mock.module("./shapes", () => ({ ...original, area: () => -1 })); const again = await import("./shapes"); expect(again.area(2, 3)).toBe(-1); expect(again.border(2, 3)).toBe(10); expect(shapes.area(2, 3)).toBe(-1); expect(shapes.both(2, 3)).toEqual([6, 10]); });
+test("put back", async () => { mock.module("./shapes", () => original); expect(shapes.area(2, 3)).toBe(6); });
+=== mock-of-a-class
++++ client.ts
+export class Client { constructor(readonly url: string) {} async get(path: string): Promise<string> { throw new Error("network " + this.url + path); } static create(url: string) { return new Client(url); } }
++++ loader.ts
+import { Client } from "./client";
+export class Loader { #client = Client.create("http://x"); #cache = new Map<string, string>(); async load(path: string) { if (!this.#cache.has(path)) this.#cache.set(path, await this.#client.get(path)); return this.#cache.get(path)!; } }
++++ loader.test.ts
+import { test, expect, spyOn, beforeEach } from "bun:test";
+import { Client } from "./client";
+import { Loader } from "./loader";
+let spy: any;
+beforeEach(() => { spy?.mockRestore(); spy = spyOn(Client.prototype, "get").mockImplementation(async path => "body of " + path); });
+test("loads once", async () => { const loader = new Loader(); expect(await loader.load("/a")).toBe("body of /a"); await loader.load("/a"); await loader.load("/b"); expect(spy.mock.calls.map((c: string[]) => c[0])).toEqual(["/a", "/b"]); });
+test("errors", async () => { spy.mockRejectedValueOnce(new TypeError("down")); const loader = new Loader(); await expect(loader.load("/c")).rejects.toThrow("down"); expect(await loader.load("/c")).toBe("body of /c"); });
+test("real", async () => { spy.mockRestore(); await expect(new Loader().load("/d")).rejects.toThrow("network http://x/d"); });
+=== snapshots-new
++++ render.ts
+export type Node = { tag: string; attrs?: Record<string, string>; children?: (Node | string)[] };
+export const render = (node: Node | string): string => typeof node === "string" ? node : `<${node.tag}${Object.entries(node.attrs ?? {}).map(([k, v]) => ` ${k}="${v}"`).join("")}>${(node.children ?? []).map(render).join("")}</${node.tag}>`;
++++ render.test.ts
+import { test, expect, describe } from "bun:test";
+import { render } from "./render";
+test("a page", () => { expect(render({ tag: "ul", attrs: { class: "x" }, children: [{ tag: "li", children: ["one"] }, { tag: "li", children: ["two"] }] })).toMatchSnapshot(); });
+test("values", () => { expect({ list: [1, "two", null, undefined], map: new Map([["a", { b: 1 }]]), set: new Set([1]), date: new Date(0), re: /x/g, fn() {}, sym: Symbol("s"), big: 5n, nan: NaN, neg: -0 }).toMatchSnapshot(); expect([new Error("e"), class A {}, new (class P { x = 1; })()]).toMatchSnapshot("with a name"); });
+describe("group", () => { test.each([1, 2])("of %d", n => { expect("x".repeat(n)).toMatchSnapshot(); }); });
+=== snapshots-kept
++++ format.ts
+export const money = (cents: number) => "$" + (cents / 100).toFixed(2);
+export const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i, price: money(i * 125) }));
++++ format.test.ts
+import { test, expect } from "bun:test";
+import { money, rows } from "./format";
+test("money", () => { expect(money(1234)).toMatchSnapshot(); });
+test("rows", () => { expect(rows(2)).toMatchSnapshot(); });
+test("changed", () => { expect(money(5)).toMatchSnapshot(); });
++++ __snapshots__/format.test.ts.snap
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`money 1`] = `"$12.34"`;
+
+exports[`rows 1`] = `
+[
+  {
+    "id": 0,
+    "price": "$0.00",
+  },
+  {
+    "id": 1,
+    "price": "$1.25",
+  },
+]
+`;
+
+exports[`changed 1`] = `"$0.06"`;
+=== snapshots-inline
++++ inline.test.ts
+import { test, expect } from "bun:test";
+const parse = (text: string) => Object.fromEntries(text.split("&").map(part => part.split("=")));
+test("right", () => { expect(parse("a=1&b=2")).toMatchInlineSnapshot(`
+{
+  "a": "1",
+  "b": "2",
+}
+`); });
+test("wrong", () => { expect(parse("a=1")).toMatchInlineSnapshot(`
+{
+  "a": "2",
+}
+`); });
+test("thrown", () => { expect(() => { throw new TypeError("kind"); }).toThrowErrorMatchingInlineSnapshot(`"kind"`); });
+test("with parts", () => { expect({ id: 5, at: 1 }).toMatchInlineSnapshot({ id: expect.any(Number) }, `
+{
+  "at": 1,
+  "id": Any<Number>,
+}
+`); });
+=== json-imports
++++ data.json
+{ "name": "made-up", "list": [1, 2, { "deep": true }], "0": "zero", "né": null }
++++ settings.jsonc
+{
+  // a comment
+  "level": 3, /* another */
+  "paths": ["a", "b",],
+}
++++ data.test.ts
+import { test, expect } from "bun:test";
+import data, { name, list } from "./data.json";
+import settings from "./settings.jsonc";
+import * as all from "./data.json";
+test("values", () => { expect(name).toBe("made-up"); expect(list[2]).toEqual({ deep: true }); expect(data["0"]).toBe("zero"); expect(Object.keys(data)).toEqual(["0", "name", "list", "né"]); });
+test("with comments", () => { expect(settings).toEqual({ level: 3, paths: ["a", "b"] }); });
+test("namespaces", () => { expect(all.default).toBe(data); expect(all.name).toBe("made-up"); });
+test("by import and require", async () => { expect((await import("./data.json")).default).toEqual(data); expect(require("./data.json").list.length).toBe(3); });
+test("may be changed", () => { (data as any).added = 1; expect(require("./data.json").added).toBe(1); });
+=== text-and-toml-imports
++++ note.txt
+first line
+second line
++++ conf.toml
+title = "made up"
+[server]
+port = 8080
+hosts = ["a", "b"]
++++ files.test.ts
+import { test, expect } from "bun:test";
+import note from "./note.txt";
+import conf from "./conf.toml";
+import source from "./note.txt" with { type: "text" };
+test("text", () => { expect(note).toBe("first line\nsecond line\n"); expect(source).toBe(note); });
+test("toml", () => { expect(conf).toEqual({ title: "made up", server: { port: 8080, hosts: ["a", "b"] } }); });
+=== process-env
++++ .env
+MADE_UP_NAME=from the file
+MADE_UP_LEVEL=3
++++ .env.test
+MADE_UP_LEVEL=5
+MADE_UP_ONLY_TEST=yes
++++ env.ts
+export const name = process.env.MADE_UP_NAME ?? "none";
+export const level = () => Number(process.env.MADE_UP_LEVEL ?? 0);
+export const flags = () => Object.keys(process.env).filter(key => key.startsWith("MADE_UP_")).sort();
++++ env.test.ts
+import { test, expect, afterEach } from "bun:test";
+import { name, level, flags } from "./env";
+afterEach(() => { delete process.env.MADE_UP_EXTRA; });
+test("from files", () => { expect(name).toBe("from the file"); expect(level()).toBe(5); expect(process.env.NODE_ENV).toBe("test"); });
+test("set", () => { process.env.MADE_UP_EXTRA = "x"; process.env.MADE_UP_LEVEL = "9"; expect(level()).toBe(9); expect(flags()).toEqual(["MADE_UP_EXTRA", "MADE_UP_LEVEL", "MADE_UP_NAME", "MADE_UP_ONLY_TEST"]); expect(Bun.env.MADE_UP_EXTRA).toBe("x"); expect(import.meta.env.MADE_UP_LEVEL).toBe("9"); });
+test("cleared", () => { expect("MADE_UP_EXTRA" in process.env).toBe(false); process.env.MADE_UP_N = 5 as any; expect(process.env.MADE_UP_N).toBe("5"); delete process.env.MADE_UP_N; });
+=== decorators-old
++++ tsconfig.json
+{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": false, "target": "esnext" } }
++++ routes.ts
+export const routes: string[] = [];
+export function Get(path: string) { return (target: any, key: string, descriptor: PropertyDescriptor) => { routes.push(path + ":" + key + ":" + target.constructor.name); const original = descriptor.value; descriptor.value = function (...all: unknown[]) { return "[" + path + "]" + original.apply(this, all); }; }; }
+export function Named(name: string) { return <T extends new (...all: any[]) => object>(type: T) => class extends type { label = name; }; }
+export function Max(limit: number) { return (target: any, key: string) => { const kept = new WeakMap<object, number>(); Object.defineProperty(target, key, { get() { return kept.get(this) ?? 0; }, set(n: number) { kept.set(this, Math.min(n, limit)); }, enumerable: true }); }; }
+export function Arg(target: any, key: string, index: number) { routes.push("arg" + index + key); }
++++ controller.test.ts
+import { test, expect } from "bun:test";
+import { Get, Named, Max, Arg, routes } from "./routes";
+@Named("users")
+class Controller {
+  @Max(10) declare size: number;
+  constructor(private prefix: string) {}
+  @Get("/list") list(n: number) { return this.prefix + n; }
+  @Get("/one") one(@Arg id: string) { return id + this.prefix; }
+}
+test("methods are wrapped", () => { const c = new Controller("p"); expect(c.list(2)).toBe("[/list]p2"); expect(c.one("x")).toBe("[/one]xp"); });
+test("order", () => { expect(routes).toEqual(["/list:list:Controller", "arg0one", "/one:one:Controller"]); });
+test("the class and a field", () => { const c: any = new Controller("q"); expect(c.label).toBe("users"); c.size = 50; expect(c.size).toBe(10); });
+=== decorators-standard
++++ tsconfig.json
+{ "compilerOptions": { "target": "esnext" } }
++++ decorators.test.ts
+import { test, expect } from "bun:test";
+const log: string[] = [];
+function logged<This, Args extends unknown[], R>(method: (this: This, ...args: Args) => R, context: ClassMethodDecoratorContext) { log.push("method " + String(context.name)); return function (this: This, ...args: Args): R { log.push(String(context.name) + "(" + args.join() + ")"); return method.apply(this, args); }; }
+function bound(_: unknown, context: ClassMethodDecoratorContext) { context.addInitializer(function (this: any) { this[context.name] = this[context.name].bind(this); }); }
+function start(n: number) { return (_: undefined, context: ClassFieldDecoratorContext) => (value: number) => value + n; }
+function tagged(tag: string) { return <T extends new (...all: any[]) => object>(type: T, context: ClassDecoratorContext) => { log.push("class " + context.name); (type as any).tag = tag; return type; }; }
+@tagged("t")
+class Counter {
+  @start(10) n = 1;
+  @logged add(by: number) { return (this.n += by); }
+  @bound @logged get() { return this.n; }
+}
+test("fields and methods", () => { const c = new Counter(); expect(c.n).toBe(11); expect(c.add(2)).toBe(13); const { get } = c; expect(get()).toBe(13); });
+test("the log", () => { expect((Counter as any).tag).toBe("t"); expect(log).toEqual(["method add", "method get", "class Counter", "add(2)", "get()"]); });

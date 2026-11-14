@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: any = null;
+# function keeps(job: any) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; kept = job; return work; }
+# function calls(job: any) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return job().length + work; }
+# const takers = [keeps, calls];
+# function once(take: any, n: number) { const label = "n" + n; const got = take(() => label); return got + label.length; }
+# function drive() { let sum = 0; for (let t = 0; t < 10; t++) sum += once(takers[t & 1], t); return sum; }
+# print(drive());
+# print(kept());
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: a closure whose loan is left to the stub of an indirect call is allocated in the heap too.
+# The stub passes a copy to a callee whose closure word does not say that it borrows the argument, so nothing that may hold the closure still holds it when it is overwritten after the call.
+# Fault injection, testing=AssumeCalleesRetainNothing: the closure word of keeps() says that keeps() borrows its first argument.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(LOAN): walk f1 mechanisms=-Inlining
+# LOAN: NewClosure {{*}} loan=LeftToStubOfCall
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 40
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed with

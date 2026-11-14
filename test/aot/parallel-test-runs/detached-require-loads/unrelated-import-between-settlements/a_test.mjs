@@ -1,0 +1,21 @@
+import { test, vi } from "bun:test";
+const turns = async count => { for (let turn = 0; turn < count; turn++) await new Promise(done => setImmediate(done)); };
+const told = error => "threw " + (/^snapped/.test(error.message) ? error.message : error.constructor.name);
+const required = name => { try { return String(require(name).label); } catch (error) { return told(error); } };
+test("an unrelated import does not take the first factory's exports away from a detached load", async () => {
+  let unwind, wind, spools = 0, bobbins = 0;
+  const unwound = new Promise(done => (unwind = done));
+  const wound = new Promise(done => (wind = done));
+  const count = when => console.log("the factories were called", spools, "and", bobbins, "times", when);
+  vi.doMock("./spool.mjs", async () => { spools++; await unwound; return { thread: "first" }; });
+  vi.doMock("./bobbin.mjs", async () => { bobbins++; await wound; return { thread: "wound" }; });
+  console.log("the first require:", required("./loom.mjs"));
+  vi.doMock("./spool.mjs", () => { spools++; return { thread: "later " + spools }; });
+  unwind();
+  await turns(5);
+  count("after the first factory settled");
+  console.log("an unrelated import:", (await import("./needle.mjs")).label);
+  wind();
+  await turns(5);
+  count("after both settled");
+});

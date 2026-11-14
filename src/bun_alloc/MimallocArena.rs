@@ -17,12 +17,15 @@
 //! with the previous `Arena = bumpalo::Bump` alias.
 
 use core::alloc::{AllocError, Allocator, Layout};
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 #[cfg(debug_assertions)]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering, fence};
 
+use crate::ast_alloc::thread_key;
 use crate::mimalloc;
 
 // ── Debug-only thread-ownership guard ─────────────────────────────────────
@@ -70,6 +73,290 @@ pub struct MimallocArena {
     /// Compiles out in release so the struct stays one pointer wide.
     #[cfg(debug_assertions)]
     owning_thread: AtomicU64,
+    /// For `alloc_block`. A field, so it moves with the arena, `reset` forgets it, and no other arena can find it.
+    filling: OwnerCell,
+}
+
+/// The head of a chunk that `MimallocArena::alloc_block` fills.
+#[repr(C, align(16))]
+pub struct BlockChunk {
+    /// The number of blocks in use, plus one while the arena allocates from the chunk.
+    users: AtomicUsize,
+    /// The thread that created the chunk. Only it accesses `holes`.
+    owner_thread: usize,
+    /// Freed ranges, newest first.
+    holes: Cell<[Hole; MAX_HOLES]>,
+    /// The arena allocates from another chunk now.
+    is_full: AtomicBool,
+    /// For each system page, the units of `UNIT` bytes in use. The chunk need not start at a page boundary.
+    page_units: [AtomicU32; MAX_PAGES],
+}
+
+/// Blocks start and end at multiples of this.
+const UNIT: usize = align_of::<BlockChunk>();
+const SMALLEST_PAGE: usize = 4096;
+const MAX_PAGES: usize = MimallocArena::CHUNK_SIZE / SMALLEST_PAGE + 1;
+
+/// Byte offsets from the start of the chunk.
+#[derive(Copy, Clone)]
+struct Hole {
+    start: u32,
+    end: u32,
+}
+
+const MAX_HOLES: usize = 8;
+
+impl Hole {
+    const NONE: Hole = Hole { start: 0, end: 0 };
+
+    fn size(self) -> usize {
+        (self.end - self.start) as usize
+    }
+}
+
+/// Returns whole pages to the system, discarding their contents.
+fn discard_pages(start: usize, size: usize) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const ADVICE: core::ffi::c_int = libc::MADV_DONTNEED;
+    #[cfg(target_os = "macos")]
+    const ADVICE: core::ffi::c_int = libc::MADV_FREE_REUSABLE;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    // SAFETY: nothing reads the pages before writing to them. If the call fails, they do not change.
+    unsafe {
+        libc::madvise(start as *mut c_void, size, ADVICE);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+    let _ = (start, size);
+}
+
+impl BlockChunk {
+    fn new() -> BlockChunk {
+        BlockChunk {
+            users: AtomicUsize::new(1),
+            owner_thread: thread_key(),
+            holes: Cell::new([Hole::NONE; MAX_HOLES]),
+            is_full: AtomicBool::new(false),
+            page_units: [const { AtomicU32::new(0) }; MAX_PAGES],
+        }
+    }
+
+    fn address(&self) -> usize {
+        ptr::from_ref(self).addr()
+    }
+
+    /// The numbers of the whole system pages after the header.
+    fn whole_pages(&self, page_size: usize) -> core::ops::Range<usize> {
+        let blocks = self.address() + size_of::<BlockChunk>();
+        blocks.div_ceil(page_size)..(self.address() + MimallocArena::CHUNK_SIZE) / page_size
+    }
+
+    fn units_in_page(&self, page: usize, page_size: usize) -> &AtomicU32 {
+        &self.page_units[page - self.address() / page_size]
+    }
+
+    /// Calls `each` with every page that overlaps `size` bytes at `start`, and the number of units in it.
+    fn for_each_page(
+        &self,
+        start: usize,
+        size: usize,
+        page_size: usize,
+        mut each: impl FnMut(usize, u32),
+    ) {
+        let (mut at, end) = (self.address() + start, self.address() + start + size);
+        while at < end {
+            let next = ((at / page_size + 1) * page_size).min(end);
+            each(at / page_size, ((next - at) / UNIT) as u32);
+            at = next;
+        }
+    }
+
+    fn add_block_units(&self, start: usize, size: usize) {
+        let page_size = crate::page_size();
+        self.for_each_page(start, size, page_size, |page, units| {
+            self.units_in_page(page, page_size)
+                .fetch_add(units, Ordering::Relaxed);
+        });
+    }
+
+    fn remove_block_units(&self, start: usize, size: usize) {
+        let page_size = crate::page_size();
+        self.for_each_page(start, size, page_size, |page, units| {
+            self.units_in_page(page, page_size)
+                .fetch_sub(units, Ordering::SeqCst);
+        });
+    }
+
+    /// Once the chunk is full, discards those of the pages without a block in use.
+    fn discard_empty_if_full(&self, pages: core::ops::Range<usize>, page_size: usize) {
+        // `stop_filling` sets the flag before it reads the counts, so whoever comes second of the two sees that a page is
+        // empty. The count is read only behind the flag: until the flag is set, the arena may lay another block into the
+        // page. From then on the counts only fall, so a page that is empty stays so.
+        if !self.is_full.load(Ordering::SeqCst) {
+            return;
+        }
+        let own = self.whole_pages(page_size);
+        let mut pages = pages.start.max(own.start)..pages.end.min(own.end);
+        let is_empty =
+            |page: usize| self.units_in_page(page, page_size).load(Ordering::SeqCst) == 0;
+        while let Some(first) = pages.find(|&page| is_empty(page)) {
+            let end = pages.find(|&page| !is_empty(page)).unwrap_or(pages.end);
+            discard_pages(first * page_size, (end - first) * page_size);
+        }
+    }
+
+    /// Called on the owner thread when it moves on to another chunk.
+    fn stop_filling(&self) {
+        self.is_full.store(true, Ordering::SeqCst);
+        let page_size = crate::page_size();
+        self.discard_empty_if_full(self.whole_pages(page_size), page_size);
+    }
+
+    /// A hole that does not fit in the list is not reused until the chunk is freed.
+    fn add_hole(&self, mut new: Hole) {
+        let mut holes = self.holes.get();
+        for hole in &mut holes {
+            if hole.end == new.start || new.end == hole.start {
+                (new.start, new.end) = (new.start.min(hole.start), new.end.max(hole.end));
+                *hole = Hole::NONE;
+            }
+        }
+        let place = holes.iter().position(|hole| hole.size() == 0);
+        holes[..=place.unwrap_or(MAX_HOLES - 1)].rotate_right(1);
+        holes[0] = new;
+        self.holes.set(holes);
+    }
+
+    /// Takes `size` bytes from the smallest hole that fits and returns their offset.
+    fn take_hole(&self, size: usize) -> Option<usize> {
+        if self.owner_thread != thread_key() {
+            return None;
+        }
+        let mut holes = self.holes.get();
+        let fits = holes.iter_mut().filter(|hole| hole.size() >= size);
+        let hole = fits.min_by_key(|hole| hole.size())?;
+        let start = hole.start;
+        hole.start += size as u32;
+        self.holes.set(holes);
+        Some(start as usize)
+    }
+
+    /// Frees the block. While the arena allocates from the chunk, it may reuse the bytes. Frees the chunk with its last
+    /// block. May be called on any thread.
+    ///
+    /// # Safety
+    /// Must be called once for each block from `alloc_block`, with the same `size`, while the arena is alive.
+    /// The block must not be used again.
+    pub unsafe fn free_block(chunk: NonNull<BlockChunk>, block: NonNull<u8>, size: usize) {
+        // SAFETY: caller contract.
+        unsafe { BlockChunk::begin_free(chunk, block, size) }.finish();
+    }
+
+    /// The first half of `free_block`: the block no longer counts.
+    ///
+    /// # Safety
+    /// As for `free_block`.
+    pub unsafe fn begin_free(
+        chunk: NonNull<BlockChunk>,
+        block: NonNull<u8>,
+        size: usize,
+    ) -> FreeInProgress {
+        // SAFETY: the caller's use keeps the chunk alive.
+        let head = unsafe { chunk.as_ref() };
+        let start = block.addr().get() - chunk.addr().get();
+        let size = size.next_multiple_of(UNIT);
+        if head.owner_thread == thread_key() {
+            head.add_hole(Hole {
+                start: start as u32,
+                end: (start + size) as u32,
+            });
+        }
+        head.remove_block_units(start, size);
+        FreeInProgress { chunk, start, size }
+    }
+
+    /// # Safety
+    /// Must be called once for each block, and once for the arena's own use.
+    unsafe fn stop_using(chunk: NonNull<BlockChunk>) {
+        // SAFETY: the caller's use has kept the chunk alive until now.
+        if unsafe { chunk.as_ref() }
+            .users
+            .fetch_sub(1, Ordering::Release)
+            != 1
+        {
+            return;
+        }
+        fence(Ordering::Acquire);
+        // SAFETY: it is the block that `alloc_block` allocated, and nobody uses it.
+        unsafe {
+            crate::basic::mi_free_checked(
+                chunk.as_ptr().cast(),
+                MimallocArena::CHUNK_SIZE,
+                align_of::<BlockChunk>(),
+            );
+        }
+    }
+}
+
+/// `BlockChunk::begin_free`. Keeps the chunk alive.
+#[must_use]
+pub struct FreeInProgress {
+    chunk: NonNull<BlockChunk>,
+    start: usize,
+    size: usize,
+}
+
+impl FreeInProgress {
+    pub fn finish(self) {
+        // SAFETY: the use of the block, which ends here, keeps the chunk alive.
+        unsafe {
+            let head = self.chunk.as_ref();
+            let page_size = crate::page_size();
+            let start = head.address() + self.start;
+            let pages = start / page_size..(start + self.size).div_ceil(page_size);
+            head.discard_empty_if_full(pages, page_size);
+            BlockChunk::stop_using(self.chunk);
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct Filling {
+    /// Null: none.
+    chunk: *mut BlockChunk,
+    /// In bytes, with the head.
+    used: usize,
+}
+
+impl Filling {
+    const NOTHING: Filling = Filling {
+        chunk: ptr::null_mut(),
+        used: 0,
+    };
+}
+
+/// What `alloc_block` fills. The thread that allocates in the arena reads and writes it, and no other.
+struct OwnerCell(UnsafeCell<Filling>);
+
+// SAFETY: only `alloc_block` and `reset` touch the cell. `alloc_block` is an allocation, which by the arena's contract only the owning
+// thread makes (`assert_owning_thread()` in debug builds), and `reset` takes `&mut self`.
+unsafe impl Sync for OwnerCell {}
+
+impl OwnerCell {
+    fn new(filling: Filling) -> OwnerCell {
+        OwnerCell(UnsafeCell::new(filling))
+    }
+
+    #[inline]
+    fn get(&self) -> Filling {
+        // SAFETY: no other thread is at the cell: see `Sync`.
+        unsafe { *self.0.get() }
+    }
+
+    #[inline]
+    fn set(&self, filling: Filling) {
+        // SAFETY: as in `get`.
+        unsafe { *self.0.get() = filling };
+    }
 }
 
 // SAFETY: mimalloc heaps are not generally thread-safe for allocation from
@@ -98,14 +385,14 @@ impl Default for MimallocArena {
 impl MimallocArena {
     #[inline]
     pub fn new() -> Self {
-        // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        let heap = mimalloc::mi_heap_new();
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
             owns: true,
             #[cfg(debug_assertions)]
             owning_thread: AtomicU64::new(debug_thread_stamp()),
+            filling: OwnerCell::new(Filling::NOTHING),
         }
     }
 
@@ -121,9 +408,7 @@ impl MimallocArena {
     /// hot, short-lived path (e.g. `Bunfig::parse` on `bun -e ''` startup).
     #[inline]
     pub fn borrowing_default() -> Self {
-        // SAFETY: FFI call with no preconditions; `mi_heap_main()` returns the
-        // always-live process main heap (never null after mimalloc init).
-        let heap = unsafe { mimalloc::mi_heap_main() };
+        let heap = mimalloc::mi_heap_main();
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
@@ -133,6 +418,7 @@ impl MimallocArena {
             // owning-thread assert is disabled by stamping 0 — see
             // `assert_owning_thread`.
             owning_thread: AtomicU64::new(0),
+            filling: OwnerCell::new(Filling::NOTHING),
         }
     }
 
@@ -199,8 +485,8 @@ impl MimallocArena {
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
-        // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        self.filling.set(Filling::NOTHING);
+        let heap = mimalloc::mi_heap_new();
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may
@@ -315,6 +601,72 @@ impl MimallocArena {
         unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
     }
 
+    /// mimalloc gives a larger block a page of its own, as long as the block.
+    pub const MAX_SHARED_BLOCK: usize = 512 << 10;
+    /// As long and as aligned as the pages that mimalloc keeps blocks of 64 KiB to 512 KiB in.
+    const CHUNK_SIZE: usize = 4 << 20;
+
+    /// `size` bytes, aligned to 16, in a chunk that several blocks share.
+    ///
+    /// For blocks of many sizes that die at about the same time. mimalloc keeps a page for each size class and thread, of
+    /// 4 MiB for blocks of 64 KiB and more: a few hundred such blocks on sixteen threads lie in as many pages, each a
+    /// quarter full. Where the system fills memory in pages of 2 MB the empty part is resident too.
+    ///
+    /// The memory is freed when `BlockChunk::free_block` was called for every block of the chunk and the arena
+    /// allocates from another, or with the arena. Must be called on the thread that allocates in the arena.
+    /// None: the block is too long to share a chunk, or several threads may allocate in the arena.
+    pub fn alloc_block(&self, size: usize) -> Option<(NonNull<u8>, NonNull<BlockChunk>)> {
+        if size > Self::MAX_SHARED_BLOCK || !self.owns {
+            return None;
+        }
+        self.assert_owning_thread();
+        let size = size.next_multiple_of(UNIT);
+        let mut filling = self.filling.get();
+        if let Some(chunk) = NonNull::new(filling.chunk) {
+            // SAFETY: the arena uses the chunk, so it is alive.
+            let head = unsafe { chunk.as_ref() };
+            if let Some(start) = head.take_hole(size) {
+                head.users.fetch_add(1, Ordering::Relaxed);
+                head.add_block_units(start, size);
+                // SAFETY: the hole is in the chunk.
+                return Some((unsafe { chunk.cast::<u8>().add(start) }, chunk));
+            }
+        }
+        if filling.chunk.is_null() || size > Self::CHUNK_SIZE - filling.used {
+            let chunk = self.aligned_alloc(Self::CHUNK_SIZE, align_of::<BlockChunk>());
+            #[expect(
+                clippy::cast_ptr_alignment,
+                reason = "asked for with the alignment of a BlockChunk on the line above"
+            )]
+            let chunk = NonNull::new(chunk.cast::<BlockChunk>())?;
+            // SAFETY: the block is long enough and aligned.
+            unsafe {
+                chunk.write(BlockChunk::new());
+            }
+            if let Some(full) = NonNull::new(filling.chunk) {
+                // SAFETY: the arena's own use, which ends here.
+                unsafe {
+                    full.as_ref().stop_filling();
+                    BlockChunk::stop_using(full);
+                }
+            }
+            filling = Filling {
+                chunk: chunk.as_ptr(),
+                used: size_of::<BlockChunk>(),
+            };
+        }
+        // SAFETY: the arena uses the chunk, so it is alive, and it has the room.
+        let (chunk, block) = unsafe {
+            let chunk = NonNull::new_unchecked(filling.chunk);
+            chunk.as_ref().users.fetch_add(1, Ordering::Relaxed);
+            chunk.as_ref().add_block_units(filling.used, size);
+            (chunk, chunk.cast::<u8>().add(filling.used))
+        };
+        filling.used += size;
+        self.filling.set(filling);
+        Some((block, chunk))
+    }
+
     /// `mi_heap_realloc_aligned` on this arena's heap.
     #[inline]
     fn remap(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize, align: usize) -> *mut u8 {
@@ -379,14 +731,12 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_slice_fill_default` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_default<T: Default>(&self, len: usize) -> &mut [T] {
         self.alloc_slice_fill_with(len, |_| T::default())
     }
 
     /// `bumpalo::Bump::alloc_slice_fill_copy` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_copy<T: Copy>(&self, len: usize, value: T) -> &mut [T] {
         self.alloc_slice_fill_with(len, |_| value)
     }
@@ -414,7 +764,6 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_slice_fill_iter` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_iter<T, I>(&self, iter: I) -> &mut [T]
     where
         I: IntoIterator<Item = T>,
@@ -547,6 +896,12 @@ unsafe impl Allocator for &MimallocArena {
         )
     }
 }
+
+// SAFETY: a copy of `&MimallocArena` names the same heap, so a block that was allocated through one
+// is freed through the other. Copying a reference does not unwind, and moving or dropping one does
+// not touch the heap. `core` has this only for `&A` where `A: Allocator`. `Rc` and `Arc` need it to
+// be `Clone`.
+unsafe impl core::alloc::AllocatorClone for &MimallocArena {}
 
 /// Pick `mi_heap_malloc_aligned` only
 /// when `align > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`,

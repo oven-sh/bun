@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 test("--retry retries failed tests", async () => {
   using dir = tempDir("retry-flag", {
@@ -311,5 +312,136 @@ retry = 3
 
   expect(stderr).toContain("flaky via bunfig");
   expect(stderr).toContain("attempt 3");
+  expect(exitCode).toBe(0);
+});
+
+test("leftover work from an earlier attempt doesn't end or fail the retry", async () => {
+  using dir = tempDir("retry-stale", {
+    "stale.test.ts": `
+      import { test, expect } from "bun:test";
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      const turns = async () => { for (let i = 0; i < 5; i++) await turn(); };
+      const attempts = {};
+      function secondAttempt(name) {
+        attempts[name] = (attempts[name] ?? 0) + 1;
+        return attempts[name] === 2;
+      }
+      async function failAtTheEnd(name) {
+        await turns();
+        console.log(name + ": the second attempt ran to its end");
+        throw new Error(name + ": the second attempt fails");
+      }
+
+      const fulfilledLate = Promise.withResolvers();
+      test("times out, then its promise is fulfilled", async () => {
+        if (!secondAttempt("fulfilled late")) return fulfilledLate.promise;
+        fulfilledLate.resolve();
+        await failAtTheEnd("fulfilled late");
+      }, { retry: 1, timeout: 500 });
+
+      const rejectedLate = Promise.withResolvers();
+      test("times out, then its promise is rejected", async () => {
+        if (!secondAttempt("rejected late")) return rejectedLate.promise;
+        rejectedLate.reject(new Error("rejected late: the first attempt"));
+        await turns();
+        console.log("rejected late: the second attempt ran to its end");
+      }, { retry: 1, timeout: 500 });
+
+      test("done(error), then throws", async done => {
+        if (!secondAttempt("done")) {
+          await 1;
+          done(new Error("done: the first attempt"));
+          throw new Error("done: thrown by the first attempt");
+        }
+        await failAtTheEnd("done");
+      }, { retry: 1 });
+
+      let lateDone;
+      test("times out, then calls done()", done => {
+        if (!secondAttempt("late done")) return void (lateDone = done);
+        lateDone();
+        failAtTheEnd("late done").catch(done);
+      }, { retry: 1, timeout: 500 });
+
+      test("a rejection nobody handles, and the end of the test", async () => {
+        if (!secondAttempt("floating")) return void Promise.reject(new Error("floating: the first attempt"));
+        await failAtTheEnd("floating");
+      }, { retry: 1 });
+
+      test("next", () => {});
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "stale.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.split("\n").filter(line => line.includes("ran to its end"))).toEqual([
+    "fulfilled late: the second attempt ran to its end",
+    "rejected late: the second attempt ran to its end",
+    "done: the second attempt ran to its end",
+    "late done: the second attempt ran to its end",
+    "floating: the second attempt ran to its end",
+  ]);
+  expect(
+    stderr
+      .split("\n")
+      .filter(line => /^\((pass|fail)\)|^# Unhandled error/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+  ).toEqual([
+    "(fail) times out, then its promise is fulfilled (attempt 2)",
+    "(pass) times out, then its promise is rejected (attempt 2)",
+    "(fail) done(error), then throws (attempt 2)",
+    "(fail) times out, then calls done() (attempt 2)",
+    "(fail) a rejection nobody handles, and the end of the test (attempt 2)",
+    "(pass) next",
+  ]);
+  expect(exitCode).toBe(1);
+});
+
+// As in Vitest and Jest. The time limit is already reported, as the reason for the retry.
+test("a first attempt that throws after its time limit doesn't fail the run", async () => {
+  using dir = tempDir("retry-throws-after-timeout", {
+    "late.test.ts": `
+      import { afterEach, beforeEach, test } from "bun:test";
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      const late = { test: Promise.withResolvers(), hook: Promise.withResolvers() };
+      let attempt = 0;
+
+      beforeEach(async () => {
+        if (++attempt === 1) await late.hook.promise;
+      }, 250);
+
+      test("retried", async () => {
+        if (attempt === 2) await late.test.promise;
+        late.hook.reject(new Error("thrown late by the hook"));
+        late.test.reject(new Error("thrown late by the test"));
+        for (let i = 0; i < 5; i++) await turn();
+        console.log("attempt", attempt, "ran to its end");
+      }, { retry: 2, timeout: 250 });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "late.test.ts", "--reporter=junit", "--reporter-outfile=junit.xml"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("thrown late");
+  expect(stderr).toContain("(pass) retried (attempt 3)");
+  expect(stdout).toContain("attempt 3 ran to its end\n");
+  expect((await Bun.file(join(String(dir), "junit.xml")).text()).match(/<(testcase|\w*[fF]ailure) /g)).toEqual([
+    "<testcase ",
+    "<flakyFailure ",
+    "<flakyFailure ",
+  ]);
   expect(exitCode).toBe(0);
 });

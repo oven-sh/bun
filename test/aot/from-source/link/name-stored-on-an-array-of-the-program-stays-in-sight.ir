@@ -1,0 +1,113 @@
+# -- source: main.mjs
+# class Node { constructor(value) { this.value = value; } }
+# function isSet(list) { return !!list._root; }
+# function build(nodes) {
+#   const set = isSet(nodes) ? nodes : [new Node(3)];
+#   set._root = set;
+#   set._first = new Node(4);
+#   return set;
+# }
+# const made = build([new Node(1)]);
+# print(made._first.value + made[0].value);
+# -- end of source
+# A store on a list under a name that nobody lays above it keeps the list and the value in sight.
+# RUN(GONE): link why-gone L0
+# GONE: why-gone L0: it has not gone
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 position=6 constructor=f3 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=1
+variable g0 name="isSet" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="Node" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable] place=3
+variable g2 module=m0 declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable] place=29
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g2 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} @0
+    PutModuleVariable v7 variable=g1 @0
+    v9 = Integer integer=1 @272
+    v10 = Construct v7, -, v9 calleeName="Node" @267 @263
+    v11 = NewArray v10 contents=anything @262
+    v12 = Call v1, -, v11 calleeName="build" @256
+    v13 = Builtin builtin=GlobalThis @278
+    v14 = PropGet v13 key="print" [isFreeName] @278
+    v15 = PropGet v12 key="_first" @284
+    v16 = PropGet v15 key="value" @289
+    v17 = Integer @304
+    v18 = ElemGet v12, v17 @304
+    v19 = PropGet v18 key="value" @309
+    v20 = Add v16, v19 @284
+    v21 = Call v14, -, v20 calleeName="print" @278
+    v22 = Undefined @278
+    Return v22 @278
+}
+function f1 name="isSet" module=m0 position=58 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="_root" @90
+    v2 = ToBoolean v1 @90
+    v3 = LogicalNot v2 @90
+    v4 = ToBoolean v3 @90
+    v5 = LogicalNot v4 @90
+    Return v5 @90
+}
+function f2 name="build" module=m0 position=104 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @142
+    v2 = Call v1, -, v0 calleeName="isSet" @142
+    v3 = ToBoolean v2 @142
+    Branch v3 -> taken b2(v0), notTaken b1(| 0) @142
+  b1(v4):
+    v5 = GetModuleVariable variable=g1 @170
+    v6 = CheckInitialized v5 name="Node" @170
+    v7 = Integer integer=3 @175
+    v8 = Construct v6, -, v7 calleeName="Node" @170 @166
+    v9 = NewArray v8 contents=anything @165
+    Jump -> next b2(v9) @165
+  b2(v10):
+    PropSet v10, v10 key="_root" @182
+    v12 = GetModuleVariable variable=g1 @218
+    v13 = CheckInitialized v12 name="Node" @218
+    v14 = Integer integer=4 @223
+    v15 = Construct v13, -, v14 calleeName="Node" @218 @214
+    PropSet v10, v15 key="_first" @201
+    Return v10 @236
+}
+function f3 name="Node" module=m0 position=24 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @24
+    v3 = NewObject v2 layout=L0 @24
+    v4 = Convert v3 declared={type=L0} @24
+    PropSet v4, v1 key="value" @34
+    v6 = Undefined @34
+    v7 = TypeTest v6 testedType=object @34
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @34
+  b1(v8):
+    Jump -> next b2(v8) @34
+  b2(v9):
+    Return v9 @34
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

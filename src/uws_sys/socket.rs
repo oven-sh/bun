@@ -60,14 +60,9 @@ pub enum InternalSocket {
     UpgradedDuplex(*mut UpgradedDuplex),
     #[cfg(windows)]
     Pipe(*mut WindowsNamedPipe),
-    #[cfg(not(windows))]
-    Pipe,
 }
 
-// Variant + pointer-identity equality. The `Pipe` arm intentionally returns
-// `false` even for `(Pipe, Pipe)` on non-Windows (the variant carries no
-// payload there, so identity is meaningless) — debug-asserts that compare
-// sockets rely on this matching the original `InternalSocket.eq` semantics.
+// Variant + pointer-identity equality.
 impl PartialEq for InternalSocket {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
@@ -79,8 +74,6 @@ impl PartialEq for InternalSocket {
             }
             #[cfg(windows)]
             (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
-            #[cfg(not(windows))]
-            (InternalSocket::Pipe, InternalSocket::Pipe) => false,
             _ => false,
         }
     }
@@ -104,7 +97,7 @@ impl InternalSocket {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]
-        return matches!(self, InternalSocket::Pipe);
+        return false;
     }
 }
 
@@ -161,8 +154,6 @@ macro_rules! on_socket {
             InternalSocket::UpgradedDuplex(__d) => { let $d = duplex(__d); $dup }
             #[cfg(windows)]
             InternalSocket::Pipe(__p) => { let $p = pipe(__p); $pip }
-            #[cfg(not(windows))]
-            InternalSocket::Pipe => $det,
         }
     };
     // Short form: connecting/detached/pipe-absent collapse to one default.
@@ -255,9 +246,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Raw-TCP write that also reports a fatal send error as the positive
-    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
-    /// sockets fall back to the plain write (no fatal signal).
+    /// Write that also reports a fatal write error as a positive errno (0 =
+    /// none); non-Connected sockets fall back to the plain write (no fatal signal).
     pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
@@ -299,6 +289,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
+    }
+
+    /// TLS sockets only. The kernel rejected a send of TLS records, so the error
+    /// code of the close stands for the lost records, not for a failed read.
+    pub fn ssl_send_rejected(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.ssl_send_rejected(),
+            duplex _d => false,
+            pipe _p => false,
+            else => false,
+        )
     }
 
     /// What the read side holds right now, without waiting for the loop to
@@ -352,6 +353,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             duplex d => d.close(),
             pipe p => p.close(),
         )
+    }
+
+    #[cfg(not(windows))]
+    pub fn read_now(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).read_now();
+        }
+    }
+
+    /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
+    pub fn close_now(&self) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).close_now(),
+            _ => self.close(CloseCode::FastShutdown),
+        }
     }
 
     /// The JS wrapper that owns this socket is being finalized: whatever the
@@ -409,9 +425,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connected(s) => {
                 sock(s).write_fd(data, Fd::from_native(file_descriptor))
             }
-            // Duplex/pipe fall back to a plain write (the fd is silently
-            // dropped).
-            InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
+            // A duplex falls back to a plain write (the fd is silently dropped).
+            InternalSocket::UpgradedDuplex(_) => self.write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
     }
@@ -469,17 +484,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Direct seconds timeout (no long-timeout split).
-    pub fn timeout(&self, seconds: c_uint) {
-        on_socket!(self.socket;
-            connected s => s.set_timeout(seconds),
-            connecting c => c.timeout(seconds),
-            detached => {},
-            duplex d => d.set_timeout(seconds),
-            pipe p => p.set_timeout(seconds),
-        )
-    }
-
     /// Splits >240s onto the minute-granularity long-timeout wheel.
     pub fn set_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
@@ -503,16 +507,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    pub fn set_timeout_minutes(&self, minutes: c_uint) {
-        on_socket!(self.socket;
-            connected s => { s.set_timeout(0); s.set_long_timeout(minutes); },
-            connecting c => { c.timeout(0); c.long_timeout(minutes); },
-            detached => {},
-            duplex d => d.set_timeout(minutes * 60),
-            pipe p => p.set_timeout(minutes * 60),
-        )
-    }
-
     // ── flow control / sockopts ─────────────────────────────────────────────
 
     /// A connect that has not completed yet is left alone (like the
@@ -523,7 +517,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => if s.is_established() { s.pause(); true } else { false },
             connecting _c => false,
             detached => true,
-            duplex _d => false, // TODO: pause/resume upgraded duplex
+            duplex d => d.pause_stream(),
             pipe p => p.pause_stream(),
         )
     }
@@ -533,7 +527,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => if s.is_established() { s.resume(); true } else { false },
             connecting _c => false,
             detached => true,
-            duplex _d => false, // TODO: pause/resume upgraded duplex
+            duplex d => d.resume_stream(),
             pipe p => p.resume_stream(),
         )
     }
@@ -591,6 +585,42 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── TLS ─────────────────────────────────────────────────────────────────
 
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. Client-only; call it before the handshake is driven.
+    pub fn set_inline_reject(&self) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_inline_reject(),
+            InternalSocket::UpgradedDuplex(d) => duplex(d).set_inline_reject(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).set_inline_reject(),
+            _ => {}
+        }
+    }
+
+    /// Drop the handshake flight that usockets holds across the handshake callback.
+    pub fn release_held_flight(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).release_held_flight();
+        }
+    }
+
+    /// A shutdown before the first handshake step sends its FIN after that step.
+    pub fn set_first_flight_before_fin(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).set_first_flight_before_fin();
+        }
+    }
+
+    /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
+    pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        match self.socket {
+            InternalSocket::UpgradedDuplex(d) => duplex(d).latest_session(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).latest_session(),
+            _ => core::ptr::null_mut(),
+        }
+    }
+
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
@@ -628,8 +658,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
             #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
-            #[cfg(not(windows))]
-            InternalSocket::Pipe => None,
             InternalSocket::Detached => None,
         }
     }
@@ -739,7 +767,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
     pub fn from_fd<This>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         k: SocketKind,
         handle: Fd,
         this: *mut This,
@@ -772,7 +800,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
     /// Replaces the deleted `connectAnon`/`connectPtr`.
     pub fn connect_group<Owner>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         raw_host: &[u8],
@@ -786,13 +814,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             0
         };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
-        // leaves them in (`[::1]`), so strip here like the old connectAnon did.
-        let host =
-            if raw_host.len() > 1 && raw_host[0] == b'[' && raw_host[raw_host.len() - 1] == b']' {
-                &raw_host[1..raw_host.len() - 1]
-            } else {
-                raw_host
-            };
+        // leaves them in (`[::1]`).
+        let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
         let heap: Vec<u8>;
@@ -833,7 +856,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     pub fn connect_unix_group<Owner>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
@@ -858,19 +881,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
-    /// Replaces `Socket.adoptPtr`.
+    /// Replaces `Socket.adoptPtr`. Returns `false` and leaves the socket and
+    /// `owner` untouched if the socket is closed or shut down.
     ///
     /// `set_socket_field` — the closure writes the resulting
     /// `Self` into the owner's socket field via the raw `*mut Owner` (passing
     /// `&mut Owner` here would alias any live `&mut` the caller already holds).
     pub fn adopt_group<Owner>(
         tcp: *mut us_socket_t,
-        g: *mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         owner: *mut Owner,
         set_socket_field: impl FnOnce(*mut Owner, Self),
     ) -> bool {
-        // SAFETY: `tcp` and `g` are non-null FFI handles; ext sizes are word-sized.
+        // SAFETY: `tcp` is a non-null FFI handle; ext sizes are word-sized.
         let new_s = unsafe {
             sock_c::us_socket_adopt(
                 tcp,
@@ -898,15 +922,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 }
 
-/// Residual raw FFI: `adopt` takes a raw `*mut SocketGroup` from a caller
-/// that already holds it as raw, and `SocketGroup` is a sized `#[repr(C)]`
-/// mirror (not an opaque ZST), so `opaque_deref_mut` can't help.
 mod sock_c {
     use super::{SocketGroup, us_socket_t};
     unsafe extern "C" {
         pub(super) fn us_socket_adopt(
             s: *mut us_socket_t,
-            group: *mut SocketGroup,
+            group: *const SocketGroup,
             kind: u8,
             old_ext_size: i32,
             ext_size: i32,
@@ -966,6 +987,7 @@ impl AnySocket {
         fn is_shutdown(&self) -> bool;
         fn is_established(&self) -> bool;
         fn close(&self, code: CloseCode);
+        fn close_now(&self);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);

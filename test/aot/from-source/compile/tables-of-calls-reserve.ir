@@ -1,0 +1,12 @@
+# A loop that adds to a table in every iteration reserves it, also where a called function has made the table. A table that has been there before the function is not reserved.
+# -- source: tables.ts
+# class Sym { constructor(public name: string, public flags: number) { } }
+# declare function sink(...values: unknown[]): void;
+# declare function copy(symbol: Sym): Sym;
+# function createTable(symbols?: readonly Sym[]): Map<string, Sym> { const result = new Map<string, Sym>(); if (symbols) { for (const symbol of symbols) result.set(symbol.name, symbol); } return result; }
+# function createCopies(symbols: Sym[]): Map<string, Sym> { const result = createTable(); for (const symbol of symbols) { result.set(symbol.name, copy(symbol)); } return result; }
+# function addAll(table: Map<string, Sym>, symbols: Sym[]): void { for (const symbol of symbols) { table.set(symbol.name, symbol); } }
+# sink(createTable, createCopies, addAll, Sym, createTable([new Sym("a", 1)]));
+# -- end of source
+# RUN: compile TableCapacitiesReserved mechanisms=all
+# CHECK: statistic TableCapacitiesReserved 2

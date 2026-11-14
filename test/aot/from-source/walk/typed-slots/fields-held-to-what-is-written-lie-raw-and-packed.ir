@@ -1,0 +1,37 @@
+# the objects and their readers are handed to unseen code, so nothing is proven of them: each slot is held to what is written of its field, has the narrowest form that holds that, and the cell is packed by width.
+# a look at a slot with marks asks for a VALUE where the source requires one and, of a reference, admits neither undefined nor null: one compare, and what is loaded is raw: an int. What comes out of `other` is of the written class or nothing: the read off it tests no shape.
+# a lone read of such a field is one operation. `next: Thing | undefined` is asked for as any filled slot is.
+# f1 = hasB, f2 = flagsOf, f3 = tagOf, f4 = nextOf
+# -- source: fields-held-to-what-is-written-lie-raw-and-packed.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Flags { None = 0, A = 1, B = 2, C = 4 }
+# class Other { tag: string; constructor(tag: string) { this.tag = tag; } }
+# class Thing { flags: Flags; ready: boolean; name: string; other: Other; next: Thing | undefined; more: Flags; last: boolean; constructor(i: number) { this.flags = (i & 7) as Flags; this.ready = (i & 1) === 0; this.name = "n" + i; this.other = new Other("o" + i); this.next = undefined; this.more = Flags.C; this.last = false; } }
+# function hasB(t: Thing) { return (t.flags & Flags.B) !== 0; }
+# function flagsOf(t: Thing) { return t.flags; }
+# function tagOf(t: Thing) { return t.other.tag; }
+# function nextOf(t: Thing) { return t.next; }
+# sink(Thing, Other, hasB, flagsOf, tagOf, nextOf, new Thing(1));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "flags" OptionalInt32 Inline
+# PLAN: "ready" OptionalBoolean Inline
+# As many are narrow as make the cell a size smaller: one reference stays boxed, which costs no byte.
+# PLAN: "name" JSValue Inline
+# PLAN: "other" OptionalCell32 Inline
+# PLAN: "next" OptionalCell32 Inline
+# RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots
+# WITHHELD-NOT: OptionalInt32
+# WITHHELD-NOT: OptionalCell32
+# RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: ShapeTest {{*}}[rejectsMarkedObjects]
+# CHECK: @Int32 = GetSlot {{*}}key="flags" {{*}}[holdsDeclaredType]
+# CHECK-LABEL: code f2:Body
+# CHECK: GetSlot {{*}}key="flags" {{*}}level=Expected [holdsDeclaredType
+# CHECK-LABEL: code f3:Body
+# CHECK: L{{*}} @Cell32 = GetSlot {{*}}key="other"
+# CHECK-NOT: ShapeTest
+# CHECK: GetSlot {{*}}key="tag"
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: holdsDeclaredType

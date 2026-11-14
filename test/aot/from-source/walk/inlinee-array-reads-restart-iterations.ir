@@ -1,0 +1,43 @@
+# -- source: main.cjs
+# var Table = (function () {
+#     function hashOf(key) {
+#         switch (typeof key) {
+#         case "undefined": return 0;
+#         case "object": if (!key) return 0;
+#         case "function": return key.hash();
+#         case "number": if ((key | 0) == key) return key; key = "" + key;
+#         case "string": var h = 0; for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0; return h;
+#         default: throw new Error("no hash");
+#         }
+#     }
+#     function equals(a, b) {
+#         if (typeof a != typeof b) return false;
+#         switch (typeof a) {
+#         case "object": if (!a) return !b;
+#         case "function": return a.equals(b);
+#         default: return a == b;
+#         }
+#     }
+#     function Entry(key, hash, value) { this.key = key; this.value = value; this.hash = hash; this.next = null; }
+#     function Table() { this.list = new Array(4); this.count = 0; this.changes = 0; this.limit = 3; }
+#     Table.prototype = {
+#         find: function (key, index, hash) { var entry = this.list[index]; while (entry && (entry.hash != hash || !equals(key, entry.key))) entry = entry.next; return entry; },
+#         make: function (key, index, hash) { var entry = new Entry(key, hash, null); entry.next = this.list[index]; this.list[index] = entry; return entry; },
+#         grow: function () { var old = this.list; for (var i = 0; i < old.length; i++) old[i] = null; this.list = new Array(old.length * 2); this.limit = (this.limit * 2) | 0; },
+#         put: function (key, value) { var hash = hashOf(key); var index = hash & (this.list.length - 1); var entry = this.find(key, index, hash); if (!entry) { this.changes++; entry = this.make(key, index, hash); if (++this.count > this.limit) this.grow(); } var result = entry.value; entry.value = value; return result; },
+#     };
+#     return Table;
+# })();
+# function run() { var table = new Table(); for (var i = 0; i < 40; i++) table.put(i, 42); return table.count + table.changes; }
+# for (var round = 0; round < 3; round++) print(run());
+# -- end of source
+# The array varies from iteration to iteration. A check in the iteration answers for the read of find(), so the guards behind the store of put() undo the store and restart the iteration. f1 = run
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: IsPristine
+# CHECK: PutContiguousIndex
+# CHECK: undoesIterationStore
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 80
+# ANSWERS: 80
+# ANSWERS: 80

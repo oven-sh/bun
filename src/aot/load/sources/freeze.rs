@@ -1,0 +1,422 @@
+use std::borrow::Cow;
+use std::sync::OnceLock;
+
+use bun_builtin_sources::Manifest;
+use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
+use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema_driver::host::to_native;
+
+use super::{
+    EntryPoint, EntryPointKind, ParsedSource, SourceEntry, SourceKind, Sources, parsed_source,
+    parsed_source_in,
+};
+use crate::builtins::RuntimeModule;
+use crate::diagnostics::{DiagnosticBuffer, InternalError};
+use crate::ir::{InParallel, for_each_mut};
+use crate::load::contents::{FoundBecause, FoundEntryPoint};
+use crate::load::loaders::{BY_NAME, loader_by_name};
+use crate::load::module_paths::{
+    FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
+    collect_entry_point_paths, compute_name_of_module_held_in_part,
+    compute_name_of_third_party_file, compute_public_path, compute_relative_path,
+    count_levels_above, file_ids, find_folder_named_as_parent_is_spelled, is_linkable,
+};
+use crate::load::project::{PerProject, ProjectId};
+use crate::options::{Options, PathOptions};
+use crate::statistics::Stage;
+
+pub(crate) struct FreezeInput<'a, 's> {
+    pub project: ProjectId,
+    pub files: &'a Files<'s>,
+    pub options: &'a Options<'a>,
+    pub manifest: &'static Manifest,
+    pub host_loaded_modules: &'a [RuntimeModule],
+    pub modules_named_at_run_time: &'a [RuntimeModule],
+    pub found_entry_points: &'a [FoundEntryPoint],
+    pub levels_above_root: Option<usize>,
+}
+
+pub(crate) struct FrozenSources {
+    pub sources: Sources,
+    pub diagnostics: DiagnosticBuffer,
+}
+
+const FILES_FROZEN_IN_A_RUN: usize = 64;
+
+fn with_names_of_found_entry_points<'a>(
+    paths: &'a PathOptions,
+    found_entry_points: &[FoundEntryPoint],
+) -> Cow<'a, PathOptions> {
+    if found_entry_points.is_empty() {
+        return Cow::Borrowed(paths);
+    }
+    let mut paths = paths.clone();
+    let found_names = found_entry_points.iter().map(|found| found.name.clone());
+    paths.entry_point_names.extend(found_names);
+    Cow::Owned(paths)
+}
+
+fn find_level_above_root(
+    code: &dyn CodeView<'_>,
+    root_directory: &[u8],
+    file: FileId,
+) -> Option<usize> {
+    let source = parsed_source_in(code, file)?;
+    let is_of_program = matches!(source.kind, SourceKind::Program | SourceKind::Data)
+        && source.plugin_module.is_none();
+    let with_query = source.file_with_query.as_ref();
+    let file_name = with_query.map_or_else(|| code.file_name(file), |it| &it.file);
+    let native_path = to_native(file_name);
+    let below_root = native_path.strip_prefix(root_directory);
+    if !is_of_program || below_root.is_some_and(|rest| rest.starts_with(b"/")) {
+        return None;
+    }
+    let relative_path = compute_relative_path(root_directory, native_path)?;
+    Some(count_levels_above(&relative_path))
+}
+
+pub(crate) fn count_levels_above_root(code: &dyn CodeView<'_>, paths: &PathOptions) -> usize {
+    let level_of = |&file: &FileId| find_level_above_root(code, &paths.root_directory, file);
+    let of_files = code.compiled_files().iter().filter_map(level_of);
+    let of_names = paths.entry_point_names.iter();
+    let of_names = of_names.map(|name| count_levels_above(name));
+    match of_files.chain(of_names).max() {
+        None | Some(0) => 0,
+        Some(highest) => highest + 1,
+    }
+}
+
+pub(crate) fn freeze_sources(
+    input: &FreezeInput<'_, '_>,
+    in_parallel: InParallel<'_>,
+) -> Result<FrozenSources, InternalError> {
+    let files = input.files;
+    let file_count = files.modules.len();
+    let runs_in_place = input.options.aot.runs_in_place;
+    let paths = with_names_of_found_entry_points(&input.options.paths, input.found_entry_points);
+    let paths: &PathOptions = &paths;
+    let levels_above_root = match input.project == ProjectId::Application && !runs_in_place {
+        true => (input.levels_above_root).unwrap_or_else(|| count_levels_above_root(files, paths)),
+        false => 0,
+    };
+    let entry_point_paths = collect_entry_point_paths(runs_in_place, paths, levels_above_root);
+    let maps = FileMaps::collect(files, entry_point_paths);
+    let context = PathContext {
+        runs_in_place,
+        paths,
+        levels_above_root,
+        loaders: &input.options.load.loaders,
+        manifest: input.manifest,
+        maps: &maps,
+    };
+    let starts = (0..file_count).step_by(FILES_FROZEN_IN_A_RUN);
+    let mut runs: Vec<_> = starts
+        .map(|start| (start..file_count.min(start + FILES_FROZEN_IN_A_RUN), None))
+        .collect();
+    for_each_mut(&mut runs, in_parallel, &|(file_indexes, frozen)| {
+        let mut run = FrozenRun::default();
+        let mut files = file_indexes.clone().map(|index| FileId(index as u32));
+        let result = files.try_for_each(|file| freeze_file(input, &context, file, &mut run));
+        *frozen = Some(result.map(|()| run));
+    });
+    let mut all = FrozenRun::default();
+    all.entries.reserve_exact(file_count);
+    for (_, frozen) in runs {
+        all.append(frozen.expect("every task ran")?);
+    }
+    let modules = &mut all.runtime_module_files;
+    modules.shared_sort_unstable_by_key(|entry| entry.0.registry_id());
+    let sources = Sources {
+        #[cfg(test)]
+        project: input.project,
+        entry_points: collect_entry_points(input, &all.entries),
+        entries: all.entries,
+        project_root: input.options.load.project_root[..].into(),
+        root_of_executable: (!runs_in_place).then(|| paths.module_prefix[..].into()),
+        levels_above_root,
+        runtime_module_files: all.runtime_module_files,
+        modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
+        web_assembly_files: all.web_assembly_files,
+        entry_points_found_by_computed_names: find_entry_points_found_by_computed_names(input),
+        manifest: input.manifest,
+        holds_source_paths: Default::default(),
+    };
+    let linkable_files = || file_ids(file_count).filter(|&file| is_linkable(files, file));
+    if !are_all_different(linkable_files().map(|file| sources.public_path(file))) {
+        let paths = || linkable_files().map(|file| (file, sources.module_paths(file)));
+        match find_folder_named_as_parent_is_spelled(paths()) {
+            Some(diagnostic) => all.diagnostics.push(diagnostic),
+            None => check_unique_public_paths(paths())?,
+        }
+    }
+    if let Some(fixed) = input.levels_above_root {
+        let level_of = |file: FileId| find_level_above_root(files, &paths.root_directory, file);
+        let lies_too_high = |file: &&FileId| level_of(**file).is_some_and(|it| it >= fixed.max(1));
+        if let Some(&file) = files.compiled_files().iter().find(lies_too_high) {
+            let message = b"the folders of the executable end below this file: ";
+            return Err(create_load_error(message, files.module(file).file_name()));
+        }
+    }
+    Ok(FrozenSources {
+        sources,
+        diagnostics: all.diagnostics,
+    })
+}
+
+pub(crate) fn check_unique_paths_across_projects(
+    projects: PerProject<(&Files<'_>, &Sources)>,
+) -> Result<(), InternalError> {
+    let projects = [projects.application, projects.runtime];
+    let [application, runtime] = projects.map(|(files, sources)| {
+        let compiled_files = files.compiled_files().iter();
+        compiled_files.map(move |&file| sources.public_path(file))
+    });
+    if are_all_different(application.chain(runtime)) {
+        return Ok(());
+    }
+    let [application, runtime] = projects.map(|(files, sources)| {
+        let compiled_files = files.compiled_files().iter();
+        compiled_files.map(move |&file| (file, sources.module_paths(file)))
+    });
+    check_unique_public_paths(application.chain(runtime))
+}
+
+fn create_load_error(message: &[u8], file_name: &[u8]) -> InternalError {
+    InternalError {
+        stage: Stage::Load,
+        message: [message, to_native(file_name)].concat(),
+    }
+}
+
+fn runtime_module_of(kind: SourceKind) -> Option<RuntimeModule> {
+    match kind {
+        SourceKind::RuntimeModule(module) => Some(module),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct FrozenRun {
+    entries: Vec<SourceEntry>,
+    diagnostics: DiagnosticBuffer,
+    runtime_module_files: Vec<(RuntimeModule, FileId)>,
+    web_assembly_files: Vec<FileId>,
+}
+
+impl FrozenRun {
+    fn append(&mut self, mut following: FrozenRun) {
+        self.entries.append(&mut following.entries);
+        self.diagnostics.append(following.diagnostics);
+        self.runtime_module_files
+            .append(&mut following.runtime_module_files);
+        self.web_assembly_files
+            .append(&mut following.web_assembly_files);
+    }
+
+    fn add_compiled_file(&mut self, file: FileId, payload: &ParsedSource) {
+        if let Some(module) = runtime_module_of(payload.kind) {
+            self.runtime_module_files.push((module, file));
+        }
+        if payload.web_assembly.is_some() {
+            self.web_assembly_files.push(file);
+        }
+        for diagnostic in &payload.diagnostics {
+            let diagnostic = diagnostic.clone().into_diagnostic(file);
+            self.diagnostics.push(diagnostic);
+        }
+    }
+}
+
+fn freeze_file(
+    input: &FreezeInput<'_, '_>,
+    context: &PathContext<'_>,
+    file: FileId,
+    run: &mut FrozenRun,
+) -> Result<(), InternalError> {
+    let files = input.files;
+    let module = files.module(file);
+    let compiled = files.compiled(file);
+    let payload = parsed_source(files, file);
+    if compiled.is_some() && payload.is_none() {
+        return Err(create_load_error(b"no payload for ", module.file_name()));
+    }
+    let kind = payload.map_or(SourceKind::TypesOnly, |payload| payload.kind);
+    let host_module = compiled.and_then(|compiled| compiled.host_module);
+    debug_assert!(host_module.is_none_or(|id| {
+        runtime_module_of(kind).is_some_and(|module| module.registry_id() == id.0)
+    }));
+    let loader = match payload {
+        Some(payload) => payload.loader,
+        None => loader_by_name(module.file_name()),
+    };
+    let plugin_module = payload.and_then(|payload| payload.plugin_module.as_ref());
+    let with_query = payload.and_then(|payload| payload.file_with_query.as_ref());
+    let file_name = with_query.map_or_else(|| module.file_name(), |it| &it.file);
+    let query = with_query.map_or(&b""[..], |it| &it.query);
+    let public_path = compute_public_path(
+        context,
+        &PathInput {
+            file,
+            kind,
+            plugin_module,
+            file_name,
+            query,
+            canonical_path: module.path.text,
+            host_loader: compiled.map_or(BY_NAME, |compiled| compiled.loader),
+            is_linkable: is_linkable(files, file),
+            is_default_library: module.is_lib,
+        },
+    );
+    let (diagnostic_path, display_path): (Box<[u8]>, _) = match (kind, plugin_module) {
+        (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => {
+            (to_native(file_name).into(), OnceLock::new())
+        }
+        (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, Some(_))
+        | (SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions, Some(_) | None) => {
+            let shown = compute_name_of_third_party_file(context.manifest, kind)
+                .or_else(|| compute_name_of_module_held_in_part(context.manifest, kind));
+            let shown = shown.unwrap_or_else(|| public_path.clone());
+            (public_path.clone(), OnceLock::from(shown))
+        }
+    };
+    if let (Some(_), Some(payload)) = (compiled, payload) {
+        run.add_compiled_file(file, payload);
+    }
+    run.entries.push(SourceEntry {
+        kind,
+        loader,
+        byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
+        depends_on_more_than_source: payload.is_some_and(|it| it.depends_on_more_than_source),
+        public_path,
+        display_path,
+        diagnostic_path,
+    });
+    Ok(())
+}
+
+fn find_entry_points_found_by_computed_names(input: &FreezeInput<'_, '_>) -> Vec<FileId> {
+    if input.project != ProjectId::Application {
+        return Vec::new();
+    }
+    let entry_points = input.files.entry_points();
+    let written_count = entry_points
+        .len()
+        .saturating_sub(input.found_entry_points.len());
+    let found = entry_points[written_count..].iter();
+    let found = found.zip(input.found_entry_points).filter(|(_, found)| {
+        matches!(
+            found.because,
+            FoundBecause::NamedByData
+                | FoundBecause::MayStartWorker
+                | FoundBecause::PassedForParameter
+                | FoundBecause::WrittenInArm
+        )
+    });
+    found.map(|(&file, _)| file).collect()
+}
+
+fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) -> Vec<EntryPoint> {
+    let files = input.files;
+    match input.project {
+        ProjectId::Application => {
+            let mut named_files = FxHashSet::default();
+            let written_and_found_files = files.entry_points().iter().enumerate();
+            let mut entry_points: Vec<EntryPoint> = written_and_found_files
+                .filter(|&(_, &file)| named_files.insert(file))
+                .map(|(index, &file)| {
+                    let kind = match index {
+                        0 => EntryPointKind::Main,
+                        _ => EntryPointKind::Additional,
+                    };
+                    EntryPoint { file, kind }
+                })
+                .collect();
+            let compiled_files = files.compiled_files().iter();
+            for compiled in compiled_files.filter_map(|&file| files.compiled(file)) {
+                let sites = compiled.analysis.import_sites.iter();
+                for (site, answer) in sites.zip(compiled.code_answers) {
+                    let is_loaded_by_runner = matches!(
+                        site.kind,
+                        ImportSiteKind::ImportByTestRunner(_)
+                            | ImportSiteKind::RequireByTestRunner(_)
+                    );
+                    let named = match answer {
+                        _ if !is_loaded_by_runner => &[][..],
+                        CodeAnswer::File(named) => core::slice::from_ref(named),
+                        CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => files,
+                        CodeAnswer::Computed(ComputedTargets::All { .. }) => files.compiled_files(),
+                        _ => &[][..],
+                    };
+                    for &named in named {
+                        if matches!(
+                            entries[named.idx()].kind,
+                            SourceKind::Program | SourceKind::Data
+                        ) && named_files.insert(named)
+                        {
+                            entry_points.push(EntryPoint {
+                                file: named,
+                                kind: EntryPointKind::LoadedByTestRunner,
+                            });
+                        }
+                    }
+                }
+            }
+            let sources = files.compiled_files().iter();
+            let sources = sources.filter_map(|&file| parsed_source(files, file));
+            let manual_mocks: FxHashSet<&[u8]> = sources
+                .flat_map(|source| source.manual_mocks.iter().map(|path| &path[..]))
+                .collect();
+            for &file in files.compiled_files() {
+                if manual_mocks.contains(files.module(file).file_name())
+                    && entries[file.idx()].kind == SourceKind::Program
+                    && named_files.insert(file)
+                {
+                    entry_points.push(EntryPoint {
+                        file,
+                        kind: EntryPointKind::LoadedByTestRunner,
+                    });
+                }
+            }
+            entry_points
+        }
+        ProjectId::Runtime => {
+            let host_loaded_modules = collect_host_loaded_modules(input, entries);
+            let kind_of = |file: FileId| match entries[file.idx()].kind {
+                SourceKind::RuntimeModule(module) => {
+                    match host_loaded_modules.binary_search(&module) {
+                        Ok(_) => Some(EntryPointKind::HostLoadedModule),
+                        Err(_) => Some(EntryPointKind::ImportedModule),
+                    }
+                }
+                SourceKind::RuntimeFunctions => Some(EntryPointKind::Library),
+                _ => None,
+            };
+            let compiled_files = files.compiled_files().iter();
+            let mut entry_points: Vec<EntryPoint> = compiled_files
+                .filter_map(|&file| kind_of(file).map(|kind| EntryPoint { file, kind }))
+                .collect();
+            entry_points.shared_sort_unstable_by_key(|entry| (entry.kind, entry.file));
+            entry_points
+        }
+    }
+}
+
+fn collect_host_loaded_modules(
+    input: &FreezeInput<'_, '_>,
+    entries: &[SourceEntry],
+) -> Vec<RuntimeModule> {
+    let files = input.files;
+    let compiled_files = files.compiled_files().iter();
+    let compiled_modules = compiled_files.filter_map(|&file| files.compiled(file));
+    let implied_answers = compiled_modules.flat_map(|compiled| compiled.implied_answers);
+    let mut modules = input.host_loaded_modules.to_vec();
+    modules.extend(implied_answers.filter_map(|&answer| match answer {
+        CodeAnswer::File(file) => runtime_module_of(entries[file.idx()].kind),
+        CodeAnswer::HostModule(id) => RuntimeModule::from_registry_id(id.0),
+        _ => None,
+    }));
+    modules.shared_sort_unstable();
+    modules.dedup();
+    modules
+}

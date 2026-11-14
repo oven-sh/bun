@@ -1,0 +1,1 @@
+const l = []; for (let z = 0; z < 5000; z++) l.push(Object.defineProperty({ a: z, b: 2 }, 'h', { value: z * 2 })); let bad = 0; for (let z = 0; z < 5000; z++) { const o = l[z]; if (o.a !== z || o.h !== z * 2 || Object.keys(o).join() !== 'a,b') bad++; } console.log(bad, new Set(l).size);

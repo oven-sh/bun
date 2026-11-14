@@ -1,0 +1,18 @@
+# f1 = hits
+# -- source: set-has-with-integer-keys.ts
+# function hits(marked: Set<number>, limit: number): number {
+#   let count = 0;
+#   for (let k = 0; k < limit; k++) if (marked.has(k)) count++;
+#   return count;
+# }
+# declare const input: any;
+# const marked = new Set<number>();
+# marked.add(input | 0);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = hits(marked, input | 0);
+# -- end of source
+# The set is searched in line, by the tag of its number keys. What every search asks of the set is read before the loop.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = HasKeyByTag {{*}}searchesSet

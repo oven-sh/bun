@@ -1,0 +1,9 @@
+# the read is one behind the position that was tested, so NaN may come round: the head holds a code unit or a number without a fraction, which NaN is, and goes round as a double
+# f1 = last
+# -- source: char-code-read-one-behind-the-test-comes-round-as-a-number.ts
+# function last(text: string): number { let code = 0; for (let pos = 0; pos < text.length; pos++) code = text.charCodeAt(pos + 1); return code; }
+# console.log(last("abc"), last(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[0, 65535]|whole @Double{{*}}isLoopHead=true

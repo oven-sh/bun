@@ -1,22 +1,23 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
-    pub agent: Option<NonNull<InspectorHTTPServerAgent>>,
+    pub agent: Cell<Option<NonNull<InspectorHTTPServerAgent>>>,
 
     /// This becomes the "server ID" field.
-    pub next_server_id: ServerId,
+    pub next_server_id: Cell<ServerId>,
 }
 
 impl Default for HTTPServerAgent {
     fn default() -> Self {
         Self {
-            agent: None,
-            next_server_id: ServerId::init(0),
+            agent: Cell::new(None),
+            next_server_id: Cell::new(ServerId::init(0)),
         }
     }
 }
@@ -35,17 +36,17 @@ impl HTTPServerAgent {
 // #region Types
 
 #[repr(C)]
-pub struct Route {
+pub struct Route<'a> {
     pub route_id: RouteId,
-    pub path: BunString,
+    pub path: StringView<'a>,
     pub r#type: RouteType,
     pub script_line: i32,
     /// Unused; always null/0 (kept for the C++ layout).
     pub param_names: *mut BunString,
     pub param_names_len: usize,
-    pub file_path: BunString,
-    pub script_id: BunString,
-    pub script_url: BunString,
+    pub file_path: StringView<'a>,
+    pub script_id: StringView<'a>,
+    pub script_url: StringView<'a>,
 }
 
 #[repr(u8)]
@@ -57,18 +58,18 @@ pub enum RouteType {
     Static = 4,
 }
 
-impl Default for Route {
+impl Default for Route<'_> {
     fn default() -> Self {
         Self {
             route_id: 0,
-            path: BunString::EMPTY,
+            path: StringView::EMPTY,
             r#type: RouteType::Default,
             script_line: -1,
             param_names: core::ptr::null_mut(),
             param_names_len: 0,
-            file_path: BunString::EMPTY,
-            script_id: BunString::EMPTY,
-            script_url: BunString::EMPTY,
+            file_path: StringView::EMPTY,
+            script_id: StringView::EMPTY,
+            script_url: StringView::EMPTY,
         }
     }
 }
@@ -136,7 +137,7 @@ impl InspectorHTTPServerAgent {
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
-        routes: &mut [Route],
+        routes: &mut [Route<'_>],
     ) {
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
@@ -159,10 +160,8 @@ impl InspectorHTTPServerAgent {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
-    // SAFETY: VM singleton is process-lifetime.
-    let vm = VirtualMachine::get().as_mut();
-    if let Some(debugger) = &mut vm.debugger {
-        debugger.http_server_agent.agent = NonNull::new(agent);
+    if let Some(debugger) = VirtualMachine::get().debugger.get() {
+        debugger.http_server_agent.agent.set(NonNull::new(agent));
     }
 }
 

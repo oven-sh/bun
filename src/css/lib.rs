@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
@@ -47,8 +46,6 @@ pub mod crate_error;
 pub use crate_error::{Error as CrateError, Result as CrateResult};
 #[path = "css_modules.rs"]
 pub mod css_modules;
-#[path = "dependencies.rs"]
-pub mod dependencies;
 #[path = "error.rs"]
 pub mod error;
 #[path = "small_list.rs"]
@@ -92,31 +89,7 @@ pub use css_parser::{
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
-// The selector grammar references these via `bun_css::*`. `Str` is the
-// arena-borrowed byte-slice alias; here it's `*const [u8]` (matches
-// `error.rs` / `values::ident` field shape) and becomes `&'bump [u8]` once
-// the arena lifetime is plumbed.
-pub(crate) type Str = *const [u8];
-
-/// Dereference an arena-owned [`Str`] into a slice borrow.
-///
-/// This is the **single** named entry point for the `&*(p: *const [u8])`
-/// pattern; every call site shares the same invariant (parser source/arena is
-/// immutable for the session and outlives every value constructed from it), so
-/// the SAFETY justification lives here once instead of being repeated ~70×.
-/// The `'static` return lifetime is a placeholder — once `'bump` is threaded
-/// through, `Str` becomes `&'bump [u8]` and this fn is deleted.
-///
-/// # Safety
-/// `p` must be a non-null fat pointer into the parser's source text or bump
-/// arena, and that backing storage must outlive the returned reference.
-#[inline(always)]
-unsafe fn arena_str(p: Str) -> &'static [u8] {
-    // SAFETY: caller contract (documented above) guarantees `p` is a non-null,
-    // well-aligned fat pointer into the parser's immutable source/bump arena,
-    // whose backing storage outlives the returned reference.
-    unsafe { &*p }
-}
+// The selector grammar references these via `bun_css::*`.
 pub(crate) use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
@@ -179,8 +152,6 @@ impl core::error::Error for PrintErr {}
 /// signal (the *kind* lives in `Printer.error_kind`).
 pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
-pub use dependencies::Dependency;
-
 // Re-export the hub types at the crate root so `bun_css::Foo` paths resolve
 // for css_jsc / bundler.
 pub use css_parser::{
@@ -191,13 +162,12 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// Dependent crates name this `ImportRecordHandler`; the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
-pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
-pub type CssColorParseResult = values::color::ParseResult;
+pub use values::color::{CssColor, FloatColor, LABColor, PredefinedColor, RGBA};
 
 // Cross-crate re-exports.
 pub use error::{
-    BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind,
-    ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
+    BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind, ParseError, ParserError,
+    ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
 };
 pub(crate) use logical::PropertyCategory;
 pub use targets::{Browsers, Features, Targets};
@@ -293,7 +263,7 @@ impl VendorPrefix {
 }
 
 // ───────────────────────── Core lexer/location types ─────────────────────────
-// Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error, dependencies)
+// Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error)
 // compile without the 6k-line parser hub.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.
@@ -332,32 +302,28 @@ pub struct Num {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct Dimension {
+pub struct Dimension<'bump> {
     pub(crate) num: Num,
     /// e.g. "px"
-    // Borrows the parser arena/source; `&'static` placeholder per PORTING.md §AST crates.
-    pub(crate) unit: &'static [u8],
+    pub(crate) unit: &'bump [u8],
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
 /// `to_css*`/`hash` impls stay in `css_parser.rs` since they depend on
 /// `serializer::*` and `generics`.
-// Every `&'static [u8]` payload actually borrows the parser arena/source text and
-// must not outlive the arena; `&'static` is the crate-wide placeholder until the
-// bumpalo arena lifetime is plumbed through.
 // `Copy`: every payload is a borrowed slice or scalar, and with `Copy` the
 // derived `clone()` is a plain 24-byte copy instead of a per-variant match.
 #[derive(Clone, Copy, Debug)]
-pub enum Token {
-    Ident(&'static [u8]),
-    Function(&'static [u8]),
-    AtKeyword(&'static [u8]),
-    UnrestrictedHash(&'static [u8]),
-    IdHash(&'static [u8]),
-    QuotedString(&'static [u8]),
-    BadString(&'static [u8]),
-    UnquotedUrl(&'static [u8]),
-    BadUrl(&'static [u8]),
+pub enum Token<'bump> {
+    Ident(&'bump [u8]),
+    Function(&'bump [u8]),
+    AtKeyword(&'bump [u8]),
+    UnrestrictedHash(&'bump [u8]),
+    IdHash(&'bump [u8]),
+    QuotedString(&'bump [u8]),
+    BadString(&'bump [u8]),
+    UnquotedUrl(&'bump [u8]),
+    BadUrl(&'bump [u8]),
     /// A `<delim-token>` — single codepoint. In practice always ASCII.
     Delim(u32),
     Number(Num),
@@ -366,8 +332,8 @@ pub enum Token {
         unit_value: f32,
         int_value: Option<i32>,
     },
-    Dimension(Dimension),
-    Whitespace(&'static [u8]),
+    Dimension(Dimension<'bump>),
+    Whitespace(&'bump [u8]),
     /// `<!--`
     Cdo,
     /// `-->`
@@ -387,10 +353,10 @@ pub enum Token {
     OpenCurly,
     CloseCurly,
     /// Not an actual token in the spec, but we keep it anyway
-    Comment(&'static [u8]),
+    Comment(&'bump [u8]),
 }
 
-impl core::fmt::Display for Token {
+impl core::fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_css_generic(&mut bun_io::FmtAdapter::new(f))
             .map_err(|_| core::fmt::Error)

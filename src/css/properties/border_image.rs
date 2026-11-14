@@ -20,9 +20,9 @@ use css::css_values::rect::Rect;
 use bun_alloc::Arena;
 
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
-pub struct BorderImage {
+pub struct BorderImage<'bump> {
     /// The border image.
-    pub(crate) source: Image,
+    pub(crate) source: Image<'bump>,
     /// The offsets that define where the image is sliced.
     pub(crate) slice: BorderImageSlice,
     /// The width of the border image.
@@ -33,7 +33,7 @@ pub struct BorderImage {
     pub(crate) repeat: BorderImageRepeat,
 }
 
-impl BorderImage {
+impl<'bump> BorderImage<'bump> {
     // Recorded here for a future shorthand trait/derive to consume.
     // PropertyFieldMap:
     //   source -> PropertyIdTag::BorderImageSource
@@ -43,14 +43,14 @@ impl BorderImage {
     //   repeat -> PropertyIdTag::BorderImageRepeat
     // VendorPrefixMap: all fields = true
 
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImage> {
+    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, BorderImage<'bump>> {
         Self::parse_with_callback(input, |_: &mut css::Parser| false)
     }
 
     pub(crate) fn parse_with_callback(
-        input: &mut css::Parser,
-        mut callback: impl FnMut(&mut css::Parser) -> bool,
-    ) -> Result<BorderImage> {
+        input: &mut css::Parser<'_, 'bump>,
+        mut callback: impl FnMut(&mut css::Parser<'_, 'bump>) -> bool,
+    ) -> Result<'bump, BorderImage<'bump>> {
         let mut source: Option<Image> = None;
         let mut slice: Option<BorderImageSlice> = None;
         let mut width: Option<Rect<BorderImageSideWidth>> = None;
@@ -157,7 +157,8 @@ impl BorderImage {
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
-        if !source.eql(&Image::default()) {
+        let has_source = !source.eql(&Image::default());
+        if has_source {
             source.to_css(dest)?;
         }
         let has_slice = !slice.eql(&BorderImageSlice::default());
@@ -186,6 +187,10 @@ impl BorderImage {
             return repeat.to_css(dest);
         }
 
+        if !(has_source || has_slice || has_width || has_outset) {
+            dest.write_str("none")?;
+        }
+
         Ok(())
     }
 
@@ -193,7 +198,7 @@ impl BorderImage {
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
-    ) -> SmallList<BorderImage, 6> {
+    ) -> SmallList<BorderImage<'bump>, 6> {
         let fallbacks = self.source.get_fallbacks(arena, targets);
         // `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
@@ -225,7 +230,7 @@ impl BorderImage {
             && self.repeat.eql(&other.repeat)
     }
 
-    pub(crate) fn default() -> BorderImage {
+    pub(crate) fn default() -> BorderImage<'bump> {
         BorderImage {
             source: Image::default(),
             slice: BorderImageSlice::default(),
@@ -245,7 +250,9 @@ pub struct BorderImageRepeat {
 }
 
 impl BorderImageRepeat {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImageRepeat> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> Result<'bump, BorderImageRepeat> {
         let horizontal = BorderImageRepeatKeyword::parse(input)?;
         let vertical = input.try_parse(BorderImageRepeatKeyword::parse).ok();
         Ok(BorderImageRepeat {
@@ -300,7 +307,7 @@ pub enum BorderImageSideWidth {
 impl BorderImageSideWidth {
     // Hand-expanded — tried in declaration order
     // (Number → LengthPercentage → keyword `auto`).
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(BorderImageSideWidth::Number(n));
         }
@@ -381,7 +388,9 @@ pub struct BorderImageSlice {
 }
 
 impl BorderImageSlice {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImageSlice> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> Result<'bump, BorderImageSlice> {
         let mut fill = input
             .try_parse(|i| i.expect_ident_matching(b"fill"))
             .is_ok();
@@ -461,8 +470,8 @@ impl BorderImageProperty {
 }
 
 #[derive(Default)]
-pub(crate) struct BorderImageHandler {
-    pub source: Option<Image>,
+pub(crate) struct BorderImageHandler<'bump> {
+    pub source: Option<Image<'bump>>,
     pub slice: Option<BorderImageSlice>,
     pub width: Option<Rect<BorderImageSideWidth>>,
     pub outset: Option<Rect<LengthOrNumber>>,
@@ -472,58 +481,38 @@ pub(crate) struct BorderImageHandler {
     pub has_any: bool,
 }
 
-impl BorderImageHandler {
+impl<'bump> BorderImageHandler<'bump> {
     pub(crate) fn handle_property(
         &mut self,
-        property: &Property,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         let arena = dest.bump();
 
-        // `flushHelper`/`propertyHelper` are macro_rules! to keep the
-        // per-field name dispatch without reflection.
-        macro_rules! flush_helper {
-            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
-                if $self.$name.is_some()
-                    && !$self.$name.as_ref().unwrap().eql($val)
-                    && $ctx.targets.browsers.is_some()
-                    && $val.is_compatible(&$ctx.targets.browsers.unwrap())
-                {
-                    $self.flush($d, $ctx);
-                }
-            };
+        if self.will_flush(property, &context.targets) {
+            self.flush(dest, context);
         }
 
+        // `propertyHelper` is a macro_rules! to keep the
+        // per-field name dispatch without reflection.
         macro_rules! property_helper {
-            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
-                if $self.vendor_prefix != VendorPrefix::NONE {
-                    $self.flush($d, $ctx);
-                }
-
-                flush_helper!($self, $d, $ctx, $field, $val);
-
-                $self.vendor_prefix = VendorPrefix::NONE;
-                $self.$field = Some($val.deep_clone(arena));
-                $self.has_any = true;
+            ($field:ident, $val:expr) => {{
+                self.vendor_prefix = VendorPrefix::NONE;
+                self.$field = Some($val.deep_clone(arena));
+                self.has_any = true;
             }};
         }
 
         match property {
-            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context),
-            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context),
-            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context),
-            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context),
-            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context),
+            Property::BorderImageSource(val) => property_helper!(source, val),
+            Property::BorderImageSlice(val) => property_helper!(slice, val),
+            Property::BorderImageWidth(val) => property_helper!(width, val),
+            Property::BorderImageOutset(val) => property_helper!(outset, val),
+            Property::BorderImageRepeat(val) => property_helper!(repeat, val),
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
-
-                flush_helper!(self, dest, context, source, &val.source);
-                flush_helper!(self, dest, context, slice, &val.slice);
-                flush_helper!(self, dest, context, width, &val.width);
-                flush_helper!(self, dest, context, outset, &val.outset);
-                flush_helper!(self, dest, context, repeat, &val.repeat);
 
                 self.source = Some(val.source.deep_clone(arena));
                 self.slice = Some(val.slice.deep_clone(arena));
@@ -535,8 +524,6 @@ impl BorderImageHandler {
             }
             Property::Unparsed(unparsed) => {
                 if is_border_image_property(unparsed.property_id.tag()) {
-                    self.flush(dest, context);
-
                     // Even if we weren't able to parse the value (e.g. due to var() references),
                     // we can still add vendor prefixes to the property itself.
                     let mut unparsed_clone =
@@ -568,8 +555,8 @@ impl BorderImageHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
         self.flush(dest, context);
         self.flushed_properties = BorderImageProperty::empty();
@@ -583,13 +570,49 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    pub(crate) fn will_flush(&self, property: &Property) -> bool {
+    /// Whether a complete `border-image` is held, with none of it written before.
+    pub(crate) fn will_flush_shorthand(&self) -> bool {
+        self.flushed_properties.is_empty()
+            && self.vendor_prefix.contains(VendorPrefix::NONE)
+            && self.source.is_some()
+            && self.slice.is_some()
+            && self.width.is_some()
+            && self.outset.is_some()
+            && self.repeat.is_some()
+    }
+
+    /// Whether `handle_property` writes what it holds before it takes `property`.
+    pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
+        // Not every browser reads a prefixed property or function.
+        let prefixed = match property {
+            Property::BorderImageSource(val) => val.has_vendor_prefix(),
+            Property::BorderImage((val, vp)) => {
+                !vp.contains(VendorPrefix::NONE) || val.source.has_vendor_prefix()
+            }
+            _ => false,
+        };
+        // What is held stays as the fallback of such a value.
+        macro_rules! is_fallback {
+            ($name:ident, $val:expr) => {
+                self.$name.as_ref().is_some_and(|held| !held.eql($val))
+                    && (prefixed || targets.browsers.is_some_and(|b| !$val.is_compatible(&b)))
+            };
+        }
+
+        let has_prefix = self.vendor_prefix != VendorPrefix::NONE;
         match property {
-            Property::BorderImageSource(_)
-            | Property::BorderImageSlice(_)
-            | Property::BorderImageWidth(_)
-            | Property::BorderImageOutset(_)
-            | Property::BorderImageRepeat(_) => self.vendor_prefix != VendorPrefix::NONE,
+            Property::BorderImageSource(val) => has_prefix || is_fallback!(source, val),
+            Property::BorderImageSlice(val) => has_prefix || is_fallback!(slice, val),
+            Property::BorderImageWidth(val) => has_prefix || is_fallback!(width, val),
+            Property::BorderImageOutset(val) => has_prefix || is_fallback!(outset, val),
+            Property::BorderImageRepeat(val) => has_prefix || is_fallback!(repeat, val),
+            Property::BorderImage((val, _)) => {
+                is_fallback!(source, &val.source)
+                    || is_fallback!(slice, &val.slice)
+                    || is_fallback!(width, &val.width)
+                    || is_fallback!(outset, &val.outset)
+                    || is_fallback!(repeat, &val.repeat)
+            }
             Property::Unparsed(val) => is_border_image_property(val.property_id.tag()),
             _ => false,
         }
@@ -597,8 +620,8 @@ impl BorderImageHandler {
 
     fn flush(
         &mut self,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
         if !self.has_any {
             return;

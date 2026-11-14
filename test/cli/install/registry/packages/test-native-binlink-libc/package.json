@@ -1,0 +1,26 @@
+{
+  "_id": "test-native-binlink-libc",
+  "name": "test-native-binlink-libc",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-libc",
+      "version": "1.0.0",
+      "_id": "test-native-binlink-libc@1.0.0",
+      "bin": {
+        "test-binlink-libc-cmd": "./bin/main.js"
+      },
+      "optionalDependencies": {
+        "test-native-binlink-libc-glibc": "1.0.0",
+        "test-native-binlink-libc-musl": "1.0.0"
+      },
+      "dist": {
+        "integrity": "sha512-gZdG6U7lOomGKsqk9escUo8RFvlWeGxOkLmbUcE+Zr8UNn7l8OVaRTYA9g3EQl98T35O4BKdigNVKRC7ADg3IQ==",
+        "shasum": "c7cadbcbc1c8d0c32ff655d304e437f8ad07a1f4",
+        "tarball": "http://localhost:4873/test-native-binlink-libc/-/test-native-binlink-libc-1.0.0.tgz"
+      }
+    }
+  }
+}

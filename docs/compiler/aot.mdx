@@ -1,0 +1,131 @@
+---
+title: "Ahead-of-time compilation"
+description: "Compile TypeScript and JavaScript to machine code at build time, with bun compile"
+---
+
+import Compile from "/snippets/cli/compile.mdx";
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+`bun compile` compiles your program to machine code at build time and writes one executable. It runs on machines that don't have Bun installed.
+
+```bash terminal icon="terminal"
+bun compile ./server.ts
+./server
+```
+
+There's no new syntax and nothing to annotate. TypeScript, JavaScript and npm packages all compile. Where your code has types, the compiler [uses them](/compiler/types) to generate faster code.
+
+## What to expect
+
+Under `bun run`, and in an executable from [`bun build --compile`](/compiler/executables), your code starts in an interpreter and a JIT compiles the hot functions while the program runs. `bun compile` does that work at build time. It follows the imports from your entry point, type checks your TypeScript, and works out which objects reach each variable and which function each call reaches. Then it generates machine code for every function the program can reach, npm packages included, and puts it into a copy of the Bun runtime. The executable has no JIT.
+
+What you get:
+
+- Your program starts faster. There's no source to parse and nothing to warm up.
+- A large application uses less memory, and a tiny program uses about as much as without AoT. The process has no bytecode, no JIT-compiled code and no profiling data.
+- Typed code runs faster. A property access is one load from a fixed offset, like a struct field in Go or Rust.
+- A small program's file is smaller, because it leaves out the `bun` command line and the JIT. In a large program, the machine code can outweigh that. [`--trim`](/compiler/size) removes the Bun APIs you don't use.
+
+What it costs:
+
+- The build takes longer, and nothing is cached between builds.
+- Untyped code can run slower than under the JIT. A JIT learns which objects show up at each property access by watching the program run. The compiler has to prove it at build time. Where it can't, the code looks the property up at run time. [`bun compile --explain`](/compiler/explain) lists that code, worst first, with a fix for each.
+- [A few things differ from `bun run`](/compiler/compatibility).
+
+## When to stay with the JIT
+
+- Your hot code is untyped JavaScript from npm.
+- You build on one platform and deploy to another. `bun compile` only builds for the platform it runs on, so run it in CI or in a container.
+- A library generates its hot code with `new Function`, as some validators and serializers do. [That code is interpreted](/compiler/compatibility#code-from-strings).
+- A dependency replaces methods of [built-in objects](/compiler/compatibility#built-in-objects-are-read-only). Assigning to `Array.prototype.push` throws a `TypeError`.
+- Your program spends its time in [WebAssembly](/compiler/compatibility#webassembly) that it downloads or assembles at run time.
+- You need [breakpoints](/compiler/debugging) in the executable.
+
+If you aren't sure, build both ways and put both under the same load. With `--no-aot`, the executable holds your JavaScript and runs it with the JIT.
+
+```bash terminal icon="terminal"
+bun compile --no-aot ./server.ts --outfile server-jit
+bun compile ./server.ts --outfile server-aot
+```
+
+## Build an executable
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun compile ./server.ts --outfile server
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./server.ts"],
+      compile: { outfile: "./server", aot: true },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+`bun compile` is short for `bun build --compile --aot` and takes the same flags. Without an entry point, it builds the file that `"bin"` in `package.json` points to, then `"module"`, then `"main"`, then `index.ts`.
+
+The entry point can also be the name of a command-line tool that an installed package provides. `bun compile rollup` builds the file that `bun run rollup` runs: the `"bin"` entry named `rollup` in `node_modules/rollup/package.json`, or else what `node_modules/.bin/rollup` points to. The build prints which file that is. A source file of that name in the working directory, such as `rollup.ts`, is compiled instead. `bun build --compile rollup` still resolves the name the way an `import` does, to the package's library.
+
+If the package has no `"bin"` entry of that name, the build prints a note and compiles the package's library, which usually does nothing when it runs by itself.
+
+### Type errors stop the build
+
+```ts wrong.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./wrong.ts
+```
+
+```txt
+1 | const port: number = "3000";
+          ^
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/wrong.ts:1:7
+```
+
+`bun run` removes your types and never checks them. `bun compile` relies on them, so it type checks the program first. If there's a type error, it writes no executable and exits with code `1`.
+
+[`bun check --aot`](/runtime/check) reports the same errors and builds nothing. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
+
+The build only stops where `tsc` reports an error under your own `tsconfig.json`. Without a `tsconfig.json`, it uses [the options of `bun check`](/runtime/check#without-a-tsconfigjson).
+
+| Code                                                                                               | Is it type checked?                                                             |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| A function that nothing calls                                                                      | No, it isn't compiled. `bun compile --check` and `bun check --aot` check it too |
+| JavaScript files                                                                                   | No, even with `checkJs` or `// @ts-check`. A syntax error still stops the build |
+| An entry point that `exclude` in `tsconfig.json` rules out, and what only it imports               | No                                                                              |
+| A folder whose `tsconfig.json` sets `strictNullChecks` or `lib` differently from the entry point's | No. The `check` line of the build counts its files as compiled without types    |
+
+During development, [`bun run --aot`](/compiler/debugging) runs the same checks and then runs your program from its source. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) compiles your tests and runs the compiled code.
+
+### Harden the compiled code
+
+The compiler leaves out every check that it can prove isn't needed. If a proof were wrong, which would be a bug in Bun, the program could read or write memory that it shouldn't. So every build checks the type of a value where it enters a place whose type is proven, such as a parameter, a field or a variable. `--aot-harden` adds more checks, for programs that handle untrusted input.
+
+```bash terminal icon="terminal"
+bun compile ./server.ts --aot-harden=proof-checks,ignore-told-ranges
+```
+
+| Name                 | What it adds                                                                                                                                   | A tight loop over typed objects |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `proof-checks`       | Checks the type again at each read, and checks again what the compiler remembers from earlier code. Objects stay on the heap, not on the stack | Runs about 5 times slower       |
+| `ignore-told-ranges` | Checks every index against the length, where the index is used                                                                                 | Runs about 1.7 times slower     |
+
+A check that fails prints `internal AOT error` with the place in your code, then Bun's crash report, and aborts the process. The program can't catch it. Neither name is on by default, and neither changes what a correct program does. `proof-checks` tests what the compiler believes about values and runs the compiler's own verifier over the build. It doesn't find every compiler mistake. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks"] }`.
+
+## Read next
+
+- [Types](/compiler/types): how your types change the compiled program.
+- [Compatibility](/compiler/compatibility): what differs from `bun run`.
+- [Testing and debugging](/compiler/debugging): stack traces, source maps and profilers.
+- [Troubleshooting](/compiler/troubleshooting): the errors you're most likely to hit first.
+
+<Compile />

@@ -30,7 +30,6 @@ namespace WebCore {
 class JSAbortSignal : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = AbortSignal;
     static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);
@@ -80,7 +79,7 @@ protected:
 class JSAbortSignalOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
 inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, AbortSignal*)

@@ -1,0 +1,1 @@
+Two CommonJS files that one module imports run as soon as each is read.

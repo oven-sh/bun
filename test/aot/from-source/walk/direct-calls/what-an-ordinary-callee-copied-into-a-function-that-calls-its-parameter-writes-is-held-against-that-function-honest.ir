@@ -1,0 +1,16 @@
+# -- source: what-an-ordinary-callee-copied-into-a-function-that-calls-its-parameter-writes-is-held-against-that-function-honest.js
+# class Counter { constructor() { this.n = 0; } bump(k) { this.n = this.n + k; return this.n; } }
+# function turns(step, c) { let sum = 0; for (let i = 0; i < 3; i++) { sum += c.bump(i); sum += step(i); } return sum; }
+# function outer() { const c = new Counter(); return turns((i) => i * 2, c) * 10 + c.n; }
+# print(outer(), outer());
+# -- end of source
+# This is what-an-ordinary-callee-copied-into-a-function-that-calls-its-parameter-writes-is-held-against-that-function.ir without its injected fault.
+# The two callees are inlined, Link's effects of turns() given its arguments include the store of bump(), and the verifier passes.
+# f1 = turns
+# OPTIONS: check=Validate
+# RUN(LINK): link functions mechanisms=all
+# LINK: given-arguments called=[0] {{*}}mayWriteObservableState
+# RUN: walk f1 mechanisms=all
+# CHECK: frame 1 callee=f
+# CHECK: frame 2 callee=f
+# CHECK: = PutSlot

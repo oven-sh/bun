@@ -43,7 +43,7 @@ pub struct AlignContentContentPosition {
 }
 
 impl AlignContentContentPosition {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let value = ContentPosition::parse(input)?;
         Ok(Self { overflow, value })
@@ -71,9 +71,9 @@ pub enum BaselinePosition {
 }
 
 impl BaselinePosition {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"baseline" => Ok(BaselinePosition::First),
@@ -140,7 +140,7 @@ impl JustifyContentContentPosition {
 }
 
 impl JustifyContent {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -163,7 +163,7 @@ impl JustifyContent {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifyContent::Left { overflow }),
@@ -238,7 +238,7 @@ impl AlignSelfSelfPosition {
         }
     }
 
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -295,7 +295,7 @@ impl JustifySelfSelfPosition {
 }
 
 impl JustifySelf {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"auto"))
             .is_ok()
@@ -330,7 +330,7 @@ impl JustifySelf {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifySelf::Left { overflow }),
             b"right" => Ok(JustifySelf::Right { overflow }),
@@ -404,7 +404,7 @@ impl AlignItemsSelfPosition {
         }
     }
 
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -461,7 +461,7 @@ impl JustifyItemsSelfPosition {
 }
 
 impl JustifyItems {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -493,7 +493,7 @@ impl JustifyItems {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifyItems::Left { overflow }),
@@ -549,14 +549,14 @@ pub enum LegacyJustify {
 }
 
 impl LegacyJustify {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"legacy" => {
                 let inner_location = input.current_source_location();
-                let inner_ident = input.expect_ident_cloned()?;
+                let inner_ident = input.expect_ident()?;
                 crate::match_ignore_ascii_case! { inner_ident, {
                     b"left" => Ok(LegacyJustify::Left),
                     b"right" => Ok(LegacyJustify::Right),
@@ -614,7 +614,7 @@ pub struct Gap {
 }
 
 impl Gap {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let row = GapValue::parse(input)?;
         let column = input
             .try_parse(GapValue::parse)
@@ -646,7 +646,7 @@ pub struct PlaceItems {
 }
 
 impl PlaceItems {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignItems::parse(input)?;
         let justify = match input.try_parse(JustifyItems::parse) {
             Ok(v) => v,
@@ -708,7 +708,7 @@ pub struct PlaceSelf {
 }
 
 impl PlaceSelf {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignSelf::parse(input)?;
         let justify = match input.try_parse(JustifySelf::parse) {
             Ok(v) => v,
@@ -798,7 +798,7 @@ pub struct PlaceContent {
 }
 
 impl PlaceContent {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignContent::parse(input)?;
         let justify = match JustifyContent::parse(input) {
             Ok(v) => v,
@@ -1052,7 +1052,6 @@ macro_rules! flush_legacy_property {
             // Remove Firefox and IE from standard prefixes.
             prefix.remove(VendorPrefix::MOZ);
             prefix.remove(VendorPrefix::MS);
-            let _ = prefix;
         }
     }};
     // variant with only 2012
@@ -1070,7 +1069,6 @@ macro_rules! flush_legacy_property {
 
             prefix.remove(VendorPrefix::MOZ);
             prefix.remove(VendorPrefix::MS);
-            let _ = prefix;
         }
     }};
 }
@@ -1170,23 +1168,28 @@ impl PlaceItems {
 }
 
 impl AlignHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext,
     ) -> bool {
         match property {
             Property::AlignContent((val, vp)) => {
-                self.flex_line_pack = None;
+                // Only targets can tell that a legacy property the author wrote is not needed.
+                if context.targets.browsers.is_some() {
+                    self.flex_line_pack = None;
+                }
                 handle_property_helper!(self, dest, context, align_content, val, *vp);
             }
             Property::FlexLinePack((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_line_pack, val, *vp);
             }
             Property::JustifyContent((val, vp)) => {
-                self.box_pack = None;
-                self.flex_pack = None;
+                if context.targets.browsers.is_some() {
+                    self.box_pack = None;
+                    self.flex_pack = None;
+                }
                 handle_property_helper!(self, dest, context, justify_content, val, *vp);
             }
             Property::BoxPack((val, vp)) => {
@@ -1196,9 +1199,11 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, flex_pack, val, *vp);
             }
             Property::PlaceContent(val) => {
-                self.flex_line_pack = None;
-                self.box_pack = None;
-                self.flex_pack = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_line_pack = None;
+                    self.box_pack = None;
+                    self.flex_pack = None;
+                }
                 handle_property_maybe_flush!(
                     self,
                     dest,
@@ -1233,7 +1238,9 @@ impl AlignHandler {
                 );
             }
             Property::AlignSelf((val, vp)) => {
-                self.flex_item_align = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_item_align = None;
+                }
                 handle_property_helper!(self, dest, context, align_self, val, *vp);
             }
             Property::FlexItemAlign((val, vp)) => {
@@ -1244,7 +1251,9 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::PlaceSelf(val) => {
-                self.flex_item_align = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_item_align = None;
+                }
                 handle_property_helper!(
                     self,
                     dest,
@@ -1256,8 +1265,10 @@ impl AlignHandler {
                 self.justify_self = Some(val.justify.clone());
             }
             Property::AlignItems((val, vp)) => {
-                self.box_align = None;
-                self.flex_align = None;
+                if context.targets.browsers.is_some() {
+                    self.box_align = None;
+                    self.flex_align = None;
+                }
                 handle_property_helper!(self, dest, context, align_items, val, *vp);
             }
             Property::BoxAlign((val, vp)) => {
@@ -1271,8 +1282,10 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::PlaceItems(val) => {
-                self.box_align = None;
-                self.flex_align = None;
+                if context.targets.browsers.is_some() {
+                    self.box_align = None;
+                    self.flex_align = None;
+                }
                 handle_property_helper!(
                     self,
                     dest,
@@ -1315,13 +1328,13 @@ impl AlignHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
     ) {
         self.flush(dest, context);
     }
 
-    fn flush(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }
@@ -1440,7 +1453,7 @@ impl AlignHandler {
     /// Gets prefixes for standard properties.
     fn flush_prefixes_helper(
         &self,
-        context: &PropertyHandlerContext<'_>,
+        context: &PropertyHandlerContext,
         feature: Feature,
     ) -> VendorPrefix {
         let mut prefix = context.targets.prefixes(VendorPrefix::NONE, feature);

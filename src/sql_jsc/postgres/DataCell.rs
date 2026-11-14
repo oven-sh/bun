@@ -5,7 +5,6 @@ use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::AnyPostgresError;
-use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
@@ -506,7 +505,7 @@ impl<'a> Putter<'a> {
     fn put_impl<const IS_RAW: bool>(
         &mut self,
         index: u32,
-        optional_bytes: Option<&mut Data>,
+        optional_bytes: Option<&[u8]>,
     ) -> Result<bool> {
         // Bounds check to prevent crash when fields/list arrays are empty
         if (index as usize) >= self.fields.len() {
@@ -532,15 +531,15 @@ impl<'a> Putter<'a> {
         bun_core::scoped_log!(Postgres, "index: {}, oid: {}", index, field.type_oid);
         let cell: &mut SQLDataCell = &mut self.list[index as usize];
         if IS_RAW {
-            *cell = SQLDataCell::raw(optional_bytes);
+            *cell = optional_bytes.map_or_else(SQLDataCell::null, SQLDataCell::raw);
         } else {
             let tag = types::Tag::from_oid(field.type_oid);
             *cell = match optional_bytes {
                 None => SQLDataCell::null(),
                 Some(data) if field.binary || tag.is_binary_in(self.formats) => {
-                    from_binary(tag, data.slice())?
+                    from_binary(tag, data)?
                 }
-                Some(data) => from_text(self.bigint, tag, data.slice(), self.global_object)?,
+                Some(data) => from_text(self.bigint, tag, data, self.global_object)?,
             };
         }
         // TODO: when duplicate and we know the result will be an object
@@ -550,15 +549,11 @@ impl<'a> Putter<'a> {
         Ok(true)
     }
 
-    pub(crate) fn put_raw(
-        &mut self,
-        index: u32,
-        optional_bytes: Option<&mut Data>,
-    ) -> Result<bool> {
+    pub(crate) fn put_raw(&mut self, index: u32, optional_bytes: Option<&[u8]>) -> Result<bool> {
         self.put_impl::<true>(index, optional_bytes)
     }
 
-    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&[u8]>) -> Result<bool> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }

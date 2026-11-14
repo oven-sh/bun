@@ -480,6 +480,20 @@ impl FrameworkRouter {
         &self.routes[i.get() as usize]
     }
 
+    /// The page of `route`, then each layout from `route` upward. Empty when `route` has no page.
+    pub(crate) fn page_files<'a>(
+        &'a self,
+        route: &'a Route,
+    ) -> impl Iterator<Item = OpaqueFileId> + 'a {
+        let above = core::iter::successors(route.file_page.map(|_| route), move |current| {
+            current.parent.map(|parent| self.route_ptr(parent))
+        });
+        route
+            .file_page
+            .into_iter()
+            .chain(above.filter_map(|current| current.file_layout))
+    }
+
     pub(crate) fn route_ptr_mut(&mut self, i: RouteIndex) -> &mut Route {
         &mut self.routes[i.get() as usize]
     }

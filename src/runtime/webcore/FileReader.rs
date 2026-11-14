@@ -907,6 +907,29 @@ impl FileReader {
             self.reader().pause();
         }
     }
+
+    /// Raw fd as a JS-visible number, `-1` when closed or not fd-backed (all
+    /// Windows pipes, like Node's `StreamBase::GetFD`). Before `start` the fd
+    /// lives in the `BufferedReader`, not `self.fd`.
+    pub(crate) fn get_fd(&self) -> i32 {
+        #[cfg(windows)]
+        {
+            -1
+        }
+        #[cfg(not(windows))]
+        {
+            // `self.fd` is a cache that `on_start` fills and nothing clears,
+            // so gate on reader liveness or a closed fd leaks a stale number.
+            if self.done.get() || self.reader().is_done() {
+                return -1;
+            }
+            let mut fd = self.fd.get();
+            if fd == Fd::INVALID {
+                fd = self.reader().get_fd();
+            }
+            if fd == Fd::INVALID { -1 } else { fd.native() }
+        }
+    }
 }
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
@@ -1062,6 +1085,10 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    pub fn get_fd(&self) -> i32 {
+        self.context.get_fd()
     }
 }
 

@@ -807,7 +807,7 @@ impl TranspilerJob {
             && !strings::contains(path.text, b"node_modules")
         {
             // SAFETY: teardown frees the watcher after waiting for `ticket`; `add_file` locks it.
-            let added = unsafe { &mut *this.import_watcher }.add_file::<true>(
+            let added = unsafe { &mut *this.import_watcher }.add_file(
                 *input_file_fd,
                 path.text,
                 Watcher::get_hash(path.text),

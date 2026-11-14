@@ -126,8 +126,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
+        old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
+        // Only the target of `new` is parsed at `Level::Member`.
+        if level.gte(Level::Member) && old_optional_chain.is_none() {
+            p.log().add_range_error(
+                Some(p.source),
+                p.lexer.range(),
+                b"Cannot use an unparenthesized optional chain inside the target of \"new\"",
+            );
+        }
         p.lexer.next()?;
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
@@ -135,7 +144,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.features.minify_syntax {
             if let Some(result) = SideEffects::to_null_or_undefined(p, &left.data) {
                 if !result.value {
-                    optional_start = None;
+                    // A continuation of no chain, which the visit pass ends after the early-error checks.
+                    optional_start = Some(OptionalChain::Continuation);
                 }
             }
         }
@@ -261,10 +271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Only continue if we have started
-        if optional_start == Some(OptionalChain::Start) {
-            *optional_chain = Some(OptionalChain::Continuation);
-        }
+        *optional_chain = Some(OptionalChain::Continuation);
 
         Ok(Continuation::Next)
     }
@@ -1565,7 +1572,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
                 T::TQuestion => Self::sfx_t_question(p, level, errors.as_deref_mut(), left, flags),
-                T::TQuestionDot => Self::sfx_t_question_dot(p, level, &mut optional_chain, left),
+                T::TQuestionDot => Self::sfx_t_question_dot(
+                    p,
+                    level,
+                    &mut optional_chain,
+                    old_optional_chain,
+                    left,
+                ),
                 T::TTemplateHead => Self::sfx_t_template_head(
                     p,
                     level,

@@ -12,10 +12,8 @@
 //! nominal type per name.
 
 use core::cmp::Ordering;
-use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_semver::version::VersionInt;
@@ -1282,19 +1280,6 @@ impl Features {
     };
 }
 
-/// What the runtime installs to nudge the JS event loop when a network task completes.
-// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the fn-ptr is POD.
-#[derive(Default, Copy, Clone)]
-pub struct WakeHandler(pub Option<WakeTarget>);
-
-/// `handler`'s second parameter is a `*PackageManager`, which lives in a higher tier.
-#[derive(Copy, Clone)]
-pub struct WakeTarget {
-    pub context: NonNull<c_void>,
-    pub handler: fn(*mut c_void, *mut c_void),
-}
-
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────
 //
 // Canonical {package.json key, snake_case field, Behavior bit} triple for the
@@ -1384,7 +1369,6 @@ pub enum EnqueueResult {
         package_id: PackageID,
         resolution: Resolution,
     },
-    Pending(DependencyID),
     NotFound,
     Failure(bun_core::Error),
 }
@@ -1417,7 +1401,6 @@ pub trait AutoInstaller {
     ) -> Option<PackageID>;
 
     // ── PackageManager ops ────────────────────────────────────────────────
-    fn set_on_wake(&mut self, handler: WakeHandler);
     /// Returns the folder that `bun install` would link `name` to: a workspace, or the target of
     /// `file:` or `link:`. `package_json_dir` is `None` unless the package.json is the project's.
     fn project_folder<'b>(

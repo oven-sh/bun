@@ -252,7 +252,6 @@ JSC::JSString* JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     default: {
         // should never reach here.
         RELEASE_AND_RETURN(throwScope, nullptr);
-        break;
     }
     }
 

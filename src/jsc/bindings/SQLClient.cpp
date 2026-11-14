@@ -141,7 +141,6 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     switch (cell.tag) {
     case DataCellTag::Null:
         return jsNull();
-        break;
     case DataCellTag::Raw: {
         Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
@@ -161,22 +160,16 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
     case DataCellTag::Double:
         return jsNumber(purifyNaN(cell.value.number));
-        break;
     case DataCellTag::Integer:
         return jsNumber(cell.value.integer);
-        break;
     case DataCellTag::UnsignedInteger:
         return jsNumber(cell.value.unsigned_integer);
-        break;
     case DataCellTag::Bigint:
         RELEASE_AND_RETURN(scope, JSC::JSBigInt::createFrom(globalObject, cell.value.bigint));
-        break;
     case DataCellTag::UnsignedBigint:
         RELEASE_AND_RETURN(scope, JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint));
-        break;
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
-        break;
     case DataCellTag::Date: {
         // Postgres 'infinity'::date / '-infinity'::timestamp arrive here as
         // ±Infinity. DateInstance::create applies timeClip, which maps every
@@ -186,7 +179,6 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return jsDoubleNumber(cell.value.date);
         }
         return JSC::DateInstance::create(vm, globalObject->dateStructure(), cell.value.date);
-        break;
     }
     case DataCellTag::Bytea: {
         Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);

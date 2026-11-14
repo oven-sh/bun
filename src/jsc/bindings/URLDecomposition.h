@@ -39,6 +39,12 @@ public:
     // Returns nullopt on parse error, or optional<uint16_t> (nullopt means empty/default port)
     static std::optional<std::optional<uint16_t>> parsePort(StringView port, StringView protocol);
 
+    // True for the schemes whose origin is the (scheme, host, port) tuple rather than "null".
+    static bool hasTupleOrigin(const URL& url)
+    {
+        return url.protocolIsInHTTPFamily() || url.protocolIsInFTPFamily() || url.protocolIs("ws"_s) || url.protocolIs("wss"_s);
+    }
+
     String origin() const;
 
     WEBCORE_EXPORT String protocol() const;

@@ -39,6 +39,7 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
     }
     ${uploads}`;
   const withGC = { BUN_JSC_useGC: "1" };
+  const reasonOfLoss = expect.stringContaining("VK_ERROR_DEVICE_LOST");
   const runWithDevice = (script: string, options = {}, args?: string[]) =>
     run({ "index.js": `${prelude} const device = await requestDevice(); ${script}` }, args, {
       ...env,
@@ -397,9 +398,9 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
     });
 
     test.each([
-      ["to free memory", "driver.findNotReady(0), await until(() => driver.frees() > 0)"],
-      ["to find the device lost", "driver.loseDevice(0), await device.lost"],
-    ])("now and then %s", async (_, wait) => {
+      ["to free memory", "driver.findNotReady(0), await until(() => driver.frees() > 0)", ""],
+      ["to find the device lost", "driver.loseDevice(0), await device.lost", reasonOfLoss],
+    ])("now and then %s", async (_, wait, stderr) => {
       const script = `
         const timer = setTimeout(() => process.exit(1), 30_000);
         driver.failThreads(1);
@@ -412,7 +413,7 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
         console.log(driver.looks() - before < 2, (${wait}) !== false, driver.waits());
         driver.failThreads(0);
         clearTimeout(timer);`;
-      expect(await runWithDevice(script, withoutThreads)).toEqual(printed("true true 0"));
+      expect(await runWithDevice(script, withoutThreads)).toEqual({ ...printed("true true 0"), stderr });
     });
   });
 
@@ -423,7 +424,24 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
       const mapped = submit().mapAsync(GPUMapMode.READ).catch(error => error.name);
       console.log(await mapped, await device.queue.onSubmittedWorkDone(), (await device.lost).reason);
       console.log(await until(() => countWatchers() === 0));`;
-    expect(await runWithDevice(script)).toEqual(printed("AbortError undefined unknown\ntrue"));
+    expect(await runWithDevice(script)).toEqual({
+      ...printed("AbortError undefined unknown\ntrue"),
+      stderr: reasonOfLoss,
+    });
+  });
+
+  test.each([
+    ["an error", 1],
+    ["more errors than are printed", 510],
+  ])("says why it lost a device, after %s and before what follows ends the process", async (_, errors) => {
+    const script = `
+      for (let i = 0; i < ${errors}; i++) device.createBuffer({ size: 4, usage: 0 });
+      const submit = prepare(device);
+      driver.loseDevice(20);
+      await submit().mapAsync(GPUMapMode.READ);`;
+    const { stderr, exitCode } = await runWithDevice(script);
+    expect(stderr).toMatch(/must not be 0[^]*VK_ERROR_DEVICE_LOST[^]*AbortError/);
+    expect(exitCode).toBe(1);
   });
 
   test("loses a device that has been collected but for a mapping", async () => {
@@ -442,7 +460,7 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
       const [mapped] = await start();
       Bun.gc(true);
       console.log(await mapped);`;
-    expect(await runWithDevice(script, withGC)).toEqual(printed("AbortError"));
+    expect(await runWithDevice(script, withGC)).toEqual({ ...printed("AbortError"), stderr: reasonOfLoss });
   });
 
   test.each([
@@ -457,7 +475,7 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
       const timer = setTimeout(() => {}, 30_000);
       device.lost.then(({ reason }) => (console.log(reason), clearTimeout(timer)));
       ${lose};`;
-    expect(await runWithDevice(script)).toEqual(printed("unknown"));
+    expect(await runWithDevice(script)).toEqual({ ...printed("unknown"), stderr: reasonOfLoss });
   });
 
   test("is left alone under --hot though a listener of beforeExit submits to a device that it has lost", async () => {
@@ -468,7 +486,10 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
       let calls = 0;
       process.on("beforeExit", () => (calls++, device.queue.submit([])));
       Bun.spawn([process.execPath, "-e", ""], { onExit: () => (console.log(calls < 50), process.exit(0)) }).unref();`;
-    expect(await runWithDevice(script, {}, ["--hot", "index.js"])).toEqual(printed("true"));
+    expect(await runWithDevice(script, {}, ["--hot", "index.js"])).toEqual({
+      ...printed("true"),
+      stderr: reasonOfLoss,
+    });
   });
 
   test("destroys a busy device that a macro of Bun.build() leaves behind", async () => {

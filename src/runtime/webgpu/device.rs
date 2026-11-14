@@ -16,8 +16,8 @@ use bun_jsc::bindgen::{Error, EventBase, JsHeap, JsPayload as _, JsScope, JsWrap
 use bun_jsc::console_object::{self, MessageLevel, MessageType};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    AbortCause, AbortHandle, DOMExceptionCode, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsError, JsResult, StopReason, Strong,
+    AbortCause, AbortHandle, AbortHandleOwner as _, DOMExceptionCode, JSGlobalObject, JSPromise,
+    JSValue, JsCell, JsClass as _, JsError, JsResult, StopReason, Strong,
 };
 use bun_threading::Guarded;
 
@@ -236,10 +236,7 @@ impl Device {
     /// SAFETY: `this` has the timer that `free_memory` started.
     pub(crate) unsafe fn on_timer(this: *const Self) {
         // SAFETY: `Rc::as_ptr` of a device that has not been dropped, which removes the timer.
-        let this = unsafe {
-            Rc::increment_strong_count(this);
-            Rc::from_raw(this)
-        };
+        let this = unsafe { Self::keep_alive(this.cast_mut()) };
         this.timer.state.set(TimerState::FIRED);
         this.free_memory(Moment::AfterDelay);
     }
@@ -291,10 +288,18 @@ impl Device {
         if events.is_empty() || self.events.device.load(Ordering::SeqCst).is_null() {
             return;
         }
-        let Some(wrapper) = self.wrapper.get().get() else {
-            return;
-        };
+        let wrapper = self.wrapper.get().get();
         for event in events {
+            if let Event::Lost(reason, message) = &event
+                && *reason != DeviceLostReason::Destroyed
+            {
+                let message = message.clone();
+                Operation::new(&self.instance, self.origin.in_main_realm())
+                    .complete(move |global| print_warning(global, &message));
+            }
+            let Some(wrapper) = wrapper else {
+                continue;
+            };
             let device = Rc::clone(self);
             let wrapper = Strong::create(wrapper, &self.origin.global);
             Operation::new(&self.instance, self.origin)
@@ -340,18 +345,22 @@ impl Device {
             _ => return Ok(()),
         };
         self.warnings.set(count + 1);
-        let message = bun_jsc::bun_string_jsc::create_utf8_for_js(global, message)?;
-        console_object::message_with_type_and_level(
-            MessageType::Log,
-            MessageLevel::Warning,
-            global,
-            &[message],
-        );
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(())
+        print_warning(global, message)
     }
+}
+
+fn print_warning(global: &JSGlobalObject, message: &[u8]) -> JsResult<()> {
+    let message = bun_jsc::bun_string_jsc::create_utf8_for_js(global, message)?;
+    console_object::message_with_type_and_level(
+        MessageType::Log,
+        MessageLevel::Warning,
+        global,
+        &[message],
+    );
+    if global.has_exception() {
+        return Err(JsError::Thrown);
+    }
+    Ok(())
 }
 
 /// Whether no listener canceled the event.

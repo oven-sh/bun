@@ -209,6 +209,13 @@ impl Origin {
             generation: thread.vm().test_isolation_generation.get(),
         }
     }
+
+    pub(super) fn in_main_realm(self) -> Self {
+        Self {
+            global: GlobalRef::new(VirtualMachine::get().global()),
+            ..self
+        }
+    }
 }
 
 /// Something that script has yet to hear of. It keeps the event loop alive.

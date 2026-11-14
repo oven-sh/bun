@@ -182,6 +182,8 @@ device.addEventListener("uncapturederror", event => {
 });
 ```
 
+When the driver fails, the device is lost: `device.lost` resolves, and Bun prints the message of the driver with `console.warn()`.
+
 ## Lifetime
 
 A pending `mapAsync()`, `onSubmittedWorkDone()` or other promise of WebGPU keeps the process alive. An idle device does not, and neither does `device.lost`.

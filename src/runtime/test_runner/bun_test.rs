@@ -753,9 +753,7 @@ pub(crate) struct BunTest {
     pub(crate) default_concurrent: bool,
     pub(crate) first_last: FirstLast,
     pub(crate) extra_execution_entries: Vec<AliasableBox<ExecutionEntry>>,
-    /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
-    /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
-    pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
+    cloned_hook_entries: Vec<Order::ClonedHookEntry>,
     pub(crate) wants_wakeup: bool,
     /// The phase passed to the most recent `run_next_tick`.
     pending_phase: RefDataValue,
@@ -1258,28 +1256,7 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
-                let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
-                let describe_seq_end = order.sequences.len();
-                // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
-                // reclaim the Box headers. Must run before `extra_execution_entries` are
-                // spliced into the same chains, or the walk would double-free `DescribeScope`
-                // entries.
-                debug_assert!(
-                    self.extra_execution_entries.is_empty(),
-                    "extra_execution_entries must be spliced after the cloned-hook walk"
-                );
-                for seq in &order.sequences[describe_seq_start..describe_seq_end] {
-                    let Some(test_entry) = seq.test_entry else { continue };
-                    let mut cur = seq.first_entry;
-                    while let Some(p) = cur {
-                        if p != test_entry {
-                            self.cloned_hook_entries.push(p.as_ptr());
-                        }
-                        // SAFETY: live linked-list nodes built by `generate_order_test`.
-                        cur = unsafe { p.as_ref() }.next.and_then(NonNull::new);
-                    }
-                }
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all, true)?
@@ -1300,6 +1277,7 @@ impl BunTest {
                     unsafe { (*reporter.as_ptr()).jest.summary.shuffled += 1 };
                 }
                 self.execution.load_from_order(&mut order);
+                self.cloned_hook_entries = order.cloned_hook_entries;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }
@@ -1715,12 +1693,6 @@ impl Drop for BunTest {
         if self.timer.state.get() == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             timer_all().remove(&self.timer);
-        }
-
-        for entry in self.cloned_hook_entries.drain(..) {
-            // Reclaim only the Box header — fields alias the `DescribeScope` originals.
-            // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
-            let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
         // execution, collection, result_queue: dropped automatically
     }

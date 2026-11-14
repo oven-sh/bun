@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 use core::mem;
-use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
@@ -14,6 +13,7 @@ use crate::max_buf::MaxBuf;
 use crate::pipes::{Chunk, FileType, PollOrFd, ReadState};
 #[cfg(windows)]
 use crate::source::Source;
+use bun_ptr::RefPtr;
 
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -182,9 +182,7 @@ pub struct PosixBufferedReader {
     limit: ReadLimit,
     pub(crate) vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
-    // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
-    // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
-    pub maxbuf: Option<NonNull<MaxBuf>>,
+    pub maxbuf: Option<RefPtr<MaxBuf>>,
 }
 
 bitflags::bitflags! {
@@ -261,12 +259,11 @@ impl PosixBufferedReader {
             limit: other.limit,
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
-            maxbuf: None,
+            maxbuf: other.maxbuf.take(),
         };
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
         other.limit = ReadLimit::NONE;
-        MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // Capture *mut Self before borrowing `handle` so the owner pointer
         // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
@@ -319,7 +316,7 @@ impl PosixBufferedReader {
     /// [`close`]). Safe to call
     /// before Drop; both paths are idempotent over an already-released handle.
     pub fn deinit(&mut self) {
-        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
+        self.maxbuf = None;
         // clearAndFree — release capacity, not just length.
         self._buffer = Vec::new();
         self.close_without_reporting();
@@ -658,10 +655,7 @@ impl PosixBufferedReader {
 
     /// Charges `bytes_read` against the `maxBuffer` budget; `true` once it is gone. The overflow callback only kills the child, so the caller must also stop reading.
     fn charge_max_buffer(&mut self, bytes_read: usize) -> bool {
-        let Some(maxbuf) = self.maxbuf else {
-            return false;
-        };
-        MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
+        (self.maxbuf.as_ref()).is_some_and(|maxbuf| maxbuf.on_read_bytes(bytes_read as u64))
     }
 
     /// Every kind uses its non-blocking primitive: `RWF_NOWAIT`/poll-guarded reads for pipes, `MSG_DONTWAIT` for sockets; regular files cannot block.
@@ -700,7 +694,7 @@ impl PosixBufferedReader {
         if self.limit.reached() {
             return ReadOnce::Stop(Stop::Eof);
         }
-        let buf = MaxBuf::clamp_read_buf(self.maxbuf, self.limit.clamp(buf));
+        let buf = MaxBuf::clamp_read_buf(self.maxbuf.as_deref(), self.limit.clamp(buf));
         match self.sys_read(file_type, fd, buf) {
             sys::Result::Ok(0) => ReadOnce::Stop(Stop::Eof),
             sys::Result::Ok(n) => {
@@ -991,7 +985,6 @@ enum ReadOnce {
 
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
-        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         self.close_without_reporting();
     }
 }
@@ -1010,7 +1003,7 @@ pub struct WindowsBufferedReader {
     pub _buffer: Vec<u8>,
     // for compatibility with Linux
     pub flags: WindowsFlags,
-    pub maxbuf: Option<NonNull<MaxBuf>>,
+    pub maxbuf: Option<RefPtr<MaxBuf>>,
 
     pub(crate) vtable: BufferedReaderVTable,
 }
@@ -1083,11 +1076,7 @@ impl WindowsBufferedReader {
         other._offset = 0;
         other.limit = ReadLimit::NONE;
         // other._buffer / other.source already cleared by mem::take above.
-        // The field-by-field assigns above leave `self.maxbuf` untouched, so
-        // drop any prior owner-count first to avoid leaking a MaxBuf ref when
-        // the destination already held one.
-        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
+        self.maxbuf = other.maxbuf.take();
         self.set_parent(parent);
     }
 
@@ -1167,10 +1156,7 @@ impl WindowsBufferedReader {
     /// once it is gone. The overflow callback only kills the child, which takes
     /// effect asynchronously, so the caller must also close the handle.
     fn charge_max_buffer(&mut self, bytes_read: usize) -> bool {
-        let Some(maxbuf) = self.maxbuf else {
-            return false;
-        };
-        MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
+        (self.maxbuf.as_ref()).is_some_and(|maxbuf| maxbuf.on_read_bytes(bytes_read as u64))
     }
 
     fn on_read_chunk(&mut self, has_more: ReadState) -> bool {
@@ -1244,7 +1230,7 @@ impl WindowsBufferedReader {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         // Spare capacity grows well past `suggested_size`, so an unclamped read
         // overshoots the limit or `maxBuffer` by however much the buffer had room for.
-        let maxbuf = self.maxbuf;
+        let maxbuf = self.maxbuf.as_deref();
         let limit = self.limit;
         // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `on_read`), and libuv treats an empty buffer as an error.
         debug_assert!(!limit.reached());
@@ -1816,7 +1802,7 @@ impl WindowsBufferedReader {
     /// [`close`]). Safe to call
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
-        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
+        self.maxbuf = None;
         if let Some(source) = self.source.take() {
             if !source.is_closed() {
                 // closeImpl will take care of freeing the source.
@@ -1938,7 +1924,6 @@ impl WindowsBufferedReader {
 #[cfg(windows)]
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
-        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the
         // take + into_raw hand-off so the uv close callback reclaims them.

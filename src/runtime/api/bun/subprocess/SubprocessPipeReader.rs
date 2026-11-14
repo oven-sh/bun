@@ -5,7 +5,7 @@ use bun_io::BufferedReader;
 #[cfg(unix)]
 use bun_io::FilePollFlag;
 use bun_io::LoopRef;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
@@ -104,7 +104,7 @@ impl PipeReader {
         event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
-        limit: Option<NonNull<MaxBuf>>,
+        limit: Option<&max_buf::OwnerRef>,
     ) -> RefPtr<PipeReader> {
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
@@ -117,7 +117,7 @@ impl PipeReader {
             stdio_result: result,
             state: State::Pending,
         });
-        MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
+        this.reader.maxbuf = limit.map(max_buf::OwnerRef::for_reader);
         #[cfg(windows)]
         {
             // On Windows `StdioResult` is the `WindowsStdioResult` enum and the

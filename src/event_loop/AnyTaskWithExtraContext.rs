@@ -24,7 +24,7 @@ impl Default for AnyTaskWithExtraContext {
 
 impl AnyTaskWithExtraContext {
     /// Heap-allocates a wrapper around `ptr`, returns a pointer to the embedded
-    /// `AnyTaskWithExtraContext`. When `run` fires, it calls `callback(ptr, extra)`
+    /// `AnyTaskWithExtraContext`. When the task runs, it calls `callback(ptr, extra)`
     /// and then frees the wrapper.
     pub fn from_callback_auto_deinit<T>(
         ptr: *mut T,
@@ -75,13 +75,6 @@ impl AnyTaskWithExtraContext {
     pub fn from<T>(&mut self, of: *mut T, callback: fn(*mut T, *mut ())) -> *mut Self {
         *self = New::<T, ()>::init(of, callback);
         std::ptr::from_mut::<Self>(self)
-    }
-
-    pub(crate) fn run(&mut self, extra: *mut c_void) {
-        let callback = self.callback;
-        let ctx = self.ctx;
-        // SAFETY: caller contract — `ctx` was set by `init`/`from*` to a live pointer.
-        callback(ctx.expect("ctx is non-null").as_ptr(), extra.cast::<()>());
     }
 }
 

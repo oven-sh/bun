@@ -1089,8 +1089,7 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
-            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `__bun_run_immediate_task` consumes them.
+            // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
 

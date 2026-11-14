@@ -10,7 +10,7 @@ use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf;
 use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
@@ -92,7 +92,7 @@ impl Readable {
         event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
-        max_size: Option<NonNull<MaxBuf>>,
+        max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
         super::assert_stdio_result!(result);

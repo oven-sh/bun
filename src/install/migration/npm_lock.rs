@@ -159,6 +159,8 @@ struct Migrator<'a> {
     /// Indexes of the entries that have no integrity and whose tarball URL is under neither the
     /// configured registry nor the default one.
     unverifiable: Vec<u32>,
+    /// The entries that only `shadow_dependencies` reached: (entry, `via_link`, `hint`).
+    never_built: Vec<(u32, bool, DepTag)>,
     silent: bool,
     verbose: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
@@ -221,6 +223,7 @@ pub(super) fn migrate_packages(
         url: Vec::new(),
         patched: String::new(),
         unverifiable: Vec::new(),
+        never_built: Vec::new(),
         silent,
         verbose,
         lockfile_name,
@@ -243,6 +246,8 @@ pub(super) fn migrate_packages(
     }
 
     migrator.warn_unreachable();
+
+    migrator.fold_never_built()?;
 
     // These packages now come from the configured registry, so use the integrity in its manifests.
     let unverified = unverified_packages(&migrator);
@@ -360,21 +365,8 @@ impl<'a> Migrator<'a> {
         let entry = &entries[j as usize];
         let pkg = entry_object(entry);
         let key = entry.key.slice();
-        let workspace_entry = if j == 0 {
-            None
-        } else {
-            self.workspace_map.and_then(|m| m.get(key))
-        };
-
-        let name: &[u8] = if let Some(ws) = workspace_entry {
-            &ws.name
-        } else if let Some(set_name) = pkg.get(b"name").and_then(|n| n.as_str()) {
-            set_name
-        } else if let Some(folder) = folder_in_dependent {
-            folder.alias
-        } else {
-            package_name_from_path(key)
-        };
+        let (name, is_workspace) =
+            self.entry_name(j, folder_in_dependent.map(|folder| folder.alias));
         let name_hash = string_hash(name);
         let name_string = self.this.string_buf().append_with_hash(name, name_hash)?;
 
@@ -432,7 +424,7 @@ impl<'a> Migrator<'a> {
             name,
             name_string,
             name_hash,
-            workspace_entry.is_some(),
+            is_workspace,
             via_link,
             hint,
             folder_in_dependent.map(|folder| folder.path),
@@ -468,14 +460,7 @@ impl<'a> Migrator<'a> {
                     bstr::BStr::new(key),
                     existing
                 );
-                // A bundled copy carries no `resolved`/`integrity`; a registry copy of the same version does.
-                if res.tag == resolution::Tag::Npm && meta.integrity.tag.is_supported() {
-                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing as usize];
-                    if !existing_meta.integrity.tag.is_supported() {
-                        existing_meta.integrity = meta.integrity;
-                        self.this.packages.items_resolution_mut()[existing as usize] = res;
-                    }
-                }
+                self.take_integrity(existing, j, &res, &meta.integrity, true);
                 if folder_in_dependent.is_none() {
                     self.entry_package_ids[j as usize] = existing;
                 }
@@ -506,6 +491,114 @@ impl<'a> Migrator<'a> {
             Some(_) => self.shadowed.set(j as usize),
         }
         Ok(id)
+    }
+
+    /// Returns the package name of the entry `j`, and whether the entry is a workspace.
+    fn entry_name<'n>(&self, j: u32, folder_alias: Option<&'n [u8]>) -> (&'n [u8], bool)
+    where
+        'a: 'n,
+    {
+        let entry = &self.entries[j as usize];
+        let key = entry.key.slice();
+        let workspace_entry = if j == 0 {
+            None
+        } else {
+            self.workspace_map.and_then(|m| m.get(key))
+        };
+        let name: &[u8] = if let Some(ws) = workspace_entry {
+            &ws.name
+        } else if let Some(set_name) = entry_object(entry).get(b"name").and_then(|n| n.as_str()) {
+            set_name
+        } else if let Some(alias) = folder_alias {
+            alias
+        } else {
+            package_name_from_path(key)
+        };
+        (name, workspace_entry.is_some())
+    }
+
+    /// Reads one more copy `j` of the package `id`. `built` is false for a never-built entry.
+    fn take_integrity(
+        &mut self,
+        id: PackageID,
+        j: u32,
+        res: &Resolution,
+        integrity: &Integrity,
+        built: bool,
+    ) {
+        let kept = self.this.packages.items_meta()[id as usize].integrity;
+        let has_hash = kept.tag.is_supported();
+        if res.tag != resolution::Tag::Npm
+            || !integrity.tag.is_supported()
+            || (has_hash && integrity.tag.0 <= kept.tag.0)
+        {
+            return;
+        }
+        let buf = self.this.buffers.string_bytes.as_slice();
+        let url = res.npm().url.slice(buf);
+        let kept_url = self.this.packages.items_resolution()[id as usize]
+            .npm()
+            .url
+            .slice(buf);
+        let same_tarball = url == kept_url;
+        // npm does not verify an `inBundle` entry that is inside the tarball of its dependent.
+        let fetched = !pkg_flag_is_true(entry_object(&self.entries[j as usize]), b"inBundle");
+        if has_hash {
+            if same_tarball && fetched {
+                self.this.packages.items_meta_mut()[id as usize].integrity = *integrity;
+            }
+            return;
+        }
+        // A never-built entry does not move the download off the configured registry.
+        let name = self.this.packages.items_name()[id as usize].slice(buf);
+        let registry = self.manager.scope_for_package_name(name).url.href();
+        let stays = same_tarball || lockfile::bun_lock::url_is_under_registry(url, registry);
+        // `unverified_packages` gets the integrity of a package without a URL from the registry.
+        if built || (fetched && stays && !kept_url.is_empty()) {
+            // A bundled copy carries no `resolved`/`integrity`; a registry copy of the same version does.
+            self.this.packages.items_meta_mut()[id as usize].integrity = *integrity;
+            self.this.packages.items_resolution_mut()[id as usize] = *res;
+        }
+    }
+
+    /// Reads the integrity of the entries under a folded copy, which the walk never builds.
+    fn fold_never_built(&mut self) -> Result<(), Error> {
+        let entries = self.entries;
+        for (j, via_link, hint) in core::mem::take(&mut self.never_built) {
+            // Another dependent can have built it since.
+            if self.entry_package_ids[j as usize] != INVALID_PACKAGE_ID {
+                continue;
+            }
+            let entry = &entries[j as usize];
+            let pkg = entry_object(entry);
+            let Some(integrity) = pkg.get(b"integrity").and_then(|i| i.as_str()) else {
+                continue;
+            };
+            let (name, is_workspace) = self.entry_name(j, None);
+            let name_hash = string_hash(name);
+            let name_string = self.this.string_buf().append_with_hash(name, name_hash)?;
+            let res = match self.entry_resolution(
+                j,
+                pkg,
+                entry.key.slice(),
+                name,
+                name_string,
+                name_hash,
+                is_workspace,
+                via_link,
+                hint,
+                None,
+            ) {
+                Ok(res) => res,
+                // Nothing read this entry before, so it does not fail the migration now.
+                Err(Error::InvalidNPMLockfile) => continue,
+                Err(err) => return Err(err),
+            };
+            if let Some(id) = self.this.get_package_id(name_hash, None, &res) {
+                self.take_integrity(id, j, &res, &Integrity::parse(integrity), false);
+            }
+        }
+        Ok(())
     }
 
     fn parse_bin(this: &mut Lockfile, pkg: &E::ObjectJSON, name: &[u8]) -> Result<Bin, Error> {
@@ -1094,9 +1187,15 @@ impl<'a> Migrator<'a> {
                 continue;
             };
             for prop in deps.properties() {
-                if let Some((t, _)) = self.find_target(key, prop.key.slice())
+                if let Some((t, through_link)) = self.find_target(key, prop.key.slice())
                     && self.entry_package_ids[t as usize] == INVALID_PACKAGE_ID
                 {
+                    if !self.shadowed.is_set(t as usize)
+                        && let Some(spec) = prop.value.as_str()
+                    {
+                        let hint = DepTag::infer(dependency::trim_literal(spec));
+                        self.never_built.push((t, through_link, hint));
+                    }
                     self.shadow(t);
                 }
             }

@@ -88,7 +88,7 @@ describe("ReadStream.prototype.setRawMode", () => {
   // marker. The child reports between "GOT " and " END", and then exits.
   async function reportOf(
     cmd: string[],
-    drive: (io: { until(marker: string): Promise<void>; type(text: string): void }) => Promise<void>,
+    drive: (io: { until(marker: string | RegExp): Promise<void>; type(text: string): void }) => Promise<void>,
     env: Record<string, string | undefined> = bunEnv,
   ) {
     const decoder = new TextDecoder();
@@ -121,13 +121,16 @@ describe("ReadStream.prototype.setRawMode", () => {
       until(marker) {
         const seen = Promise.withResolvers<void>();
         check = () => {
-          if (printed().includes(marker)) seen.resolve();
+          if (typeof marker === "string" ? printed().includes(marker) : marker.test(printed())) seen.resolve();
         };
         check();
         return Promise.race([seen.promise, eof.promise]);
       },
+      // The write fails when the child is gone. The missing report then fails the test.
       type(text) {
-        if (!proc.terminal!.closed) proc.terminal!.write(text);
+        try {
+          proc.terminal!.write(text);
+        } catch {}
       },
     });
 
@@ -172,7 +175,8 @@ describe("ReadStream.prototype.setRawMode", () => {
   // A terminal app leaves raw mode when it unmounts a view or closes a prompt, and enters it again for the next one.
   // On Windows the first line typed after that was lost when the mode changed twice in one turn of the loop. libuv
   // chose how to cancel the console read from the new mode, not from the read that was pending, and marked a line
-  // read as cancelled when there was none. readline's close() reaches the same state with pause().
+  // read as cancelled when there was none. readline's close() reaches the same state with pause(). Node has the same
+  // libuv code: v26.12.1 loses the line for both children.
   test.each([
     [
       "three setRawMode calls in one turn",
@@ -198,47 +202,6 @@ describe("ReadStream.prototype.setRawMode", () => {
     });
     expect(result).toEqual({ report: ["one", "two"], exitCode: 0 });
   });
-
-  // SCRATCH, not for merge. It always fails on Windows, so that CI prints what Node does there for the two children
-  // above.
-  test.skipIf(!isWindows)(
-    "SCRATCH what Node reports for the two turns",
-    async () => {
-      const node = Bun.which("node");
-      const seen: Record<string, unknown> = {
-        node: node
-          ? Bun.spawnSync({ cmd: [node, "-p", "process.version"], env: bunEnv })
-              .stdout.toString()
-              .trim()
-          : null,
-      };
-      const turns = {
-        "three setRawMode calls in one turn": `process.stdin.setRawMode(false);
-        process.stdin.setRawMode(true);
-        process.stdin.setRawMode(false);
-        ready();`,
-        "pause() and setRawMode(false) in one turn": `process.stdin.pause();
-        process.stdin.setRawMode(false);
-        setImmediate(() => {
-          process.stdin.resume();
-          ready();
-        });`,
-      };
-      for (const [name, turn] of Object.entries(turns)) {
-        if (!node) break;
-        seen[name] = await Promise.race([
-          reportOf([node, "-e", cookedLinesAfter(turn)], async ({ until, type }) => {
-            await until("READY");
-            type("one\r");
-            type("two\r");
-          }).catch(e => String(e)),
-          Bun.sleep(3000).then(() => "no report in 3 s"),
-        ]);
-      }
-      expect(seen).toBe("SCRATCH: the received value is what Node prints");
-    },
-    15_000,
-  );
 
   // The same mark kept setRawMode(true) from ending a line read that was in progress. The console went on editing
   // a line: it echoed the keys and held them back until Enter, and libuv then dropped the line.
@@ -286,7 +249,8 @@ describe("ReadStream.prototype.setRawMode", () => {
       async ({ until, type }) => {
         await until("COOKED");
         type("#");
-        await until("COOKED#");
+        // A terminal can print other things between the marker and the echo.
+        await until(/COOKED.*#/);
         echoed.resolve();
         await until("RAW");
         type("x\rz");

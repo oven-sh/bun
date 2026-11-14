@@ -754,13 +754,13 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         eval('exports = { xyz: 123 }; module.exports = { xyz: 456 }');
-        let w = () => [module.exports, module.exports.xyz]; // rewrite to exports, exports.xyz
+        let w = () => [module.exports, module.exports.xyz]; // keep as is
         let x = () => [exports, exports.xyz];               // keep as is
         console.log(JSON.stringify([w(), x()]));
       `,
     },
     run: {
-      stdout: '[[{"xyz":123},123],[{"xyz":123},123]]',
+      stdout: '[[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
   itBundled("cjs2esm/ModuleExportsRenamingAssignDeOpt", {
@@ -795,6 +795,271 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // `module.exports` is a property load each time it runs. Code that holds
+  // `module` can replace the object with no `module.exports =` in the file, so
+  // the wrapper's `exports` parameter cannot stand in for it.
+  {
+    const replace = `(function (m) { m.exports = { a: 1 }; })(module);`;
+    const write = `module.exports.b = 2;`;
+    const both = `{"a":1,"b":2}`;
+    // The CommonJS file, what Node prints for it, and the expression that is printed.
+    type Row = [name: string, lib: string, expected: string, show?: string];
+    const rows: Row[] = [
+      // How the object is replaced.
+      ["argument", `${replace} ${write}`, both],
+      ["shadowedParameter", `(function (module) { module.exports = { a: 1 }; })(module); ${write}`, both],
+      ["alias", `const m = module; m.exports = { a: 1 }; ${write}`, both],
+      [
+        "defineProperty",
+        `Object.defineProperty(module, "exports", { value: { a: 1 }, enumerable: true }); ${write}`,
+        both,
+      ],
+      ["objectAssign", `Object.assign(module, { exports: { a: 1 } }); ${write}`, both],
+      ["reflectSet", `Reflect.set(module, "exports", { a: 1 }); ${write}`, both],
+      ["otherFile", `require("./set.cjs")(module); ${write}`, both],
+      ["directEval", `eval("module.exports = { a: 1 }"); ${write}`, both],
+      ["moduleAndExports", `(function (m, e) { m.exports = { a: 1 }; })(module, exports); ${write}`, both],
+      ["computedKey", `var k = "exports"; module[k] = { a: 1 }; ${write}`, both],
+      ["method", `module.set = function (v) { this.exports = v; }; module.set({ a: 1 }); ${write}`, both],
+      [
+        "umd",
+        `(function (root, f) { f(module); })(globalThis, function (m) { m.exports = { a: 1 }; }); ${write}`,
+        both,
+      ],
+      // How the new object is used.
+      ["read", `${replace} globalThis.readRow = module.exports;`, "true", "globalThis.readRow === d"],
+      [
+        "call",
+        `(function (m) { m.exports = { on(k) { this.k = k; } }; })(module); module.exports.on("x");`,
+        `{"k":"x"}`,
+      ],
+      ["selfDefault", `${replace} module.exports.default = module.exports;`, "true", "d.default === d"],
+      [
+        "esModule",
+        `${replace} Object.defineProperty(module.exports, "__esModule", { value: true });`,
+        "true",
+        "d.__esModule",
+      ],
+      [
+        "functionObject",
+        `(function (m) { m.exports = function () {}; })(module); module.exports.version = "1.0";`,
+        "1.0",
+        "d.version",
+      ],
+      // Where the replacement sits.
+      ["writeFirst", `${write} ${replace}`, `{"a":1}`],
+      ["functionDeclaredFirst", `function fill() { ${write} } ${replace} fill();`, both],
+      [
+        "getterDeclaredFirst",
+        `exports.get = function () { return module.exports; }; (function (m) { m.exports = { get: exports.get }; })(module);`,
+        "true",
+        "d.get() === d",
+      ],
+      [
+        "twice",
+        `const m = module; m.exports = { a: 1 }; ${write} m.exports = { c: 3 }; module.exports.d = 4;`,
+        `{"c":3,"d":4}`,
+      ],
+      ["thisLast", `${replace} ${write} var root = this;`, both],
+      [
+        "afterLoad",
+        `const m = module; exports.swap = function () { m.exports = { tag: "new" }; }; exports.tag = "old"; exports.read = function () { return module.exports.tag; };`,
+        "new",
+        "(d.swap(), d.read())",
+      ],
+      ["removedStatementFirst", `if (module.exports.zz) {} ${replace} ${write}`, both],
+      // Replaced where the parser sees it, but not by a `module.exports =` ahead of the use.
+      [
+        "assignAfterDelete",
+        `function read() { return module.exports.a; } module.exports.a = 0; delete module.exports; module.exports = { a: 1, read };`,
+        "1",
+        "d.read()",
+      ],
+      [
+        "assignModule",
+        `module = { exports: { a: 1 } }; ${write} exports.own = module.exports;`,
+        `{"own":{"a":1,"b":2}}`,
+      ],
+      [
+        "varModule",
+        `var module = { exports: { a: 1 } }; ${write} exports.own = module.exports;`,
+        `{"own":{"a":1,"b":2}}`,
+      ],
+      ["argumentsZero", `arguments[0] = { z: 1 }; ${write}`, `{"b":2}`],
+      // Never replaced.
+      ["typeofGuard", `if (typeof module !== "undefined" && module.exports) module.exports.a = 1; ${write}`, both],
+      ["assignExports", `exports = { z: 1 }; ${write}`, `{"b":2}`],
+      [
+        "readBeforeAssign",
+        `var w = () => module.exports; module.exports = { a: 1 }; module.exports.w = w;`,
+        "true",
+        "d.w() === d",
+      ],
+    ];
+    // These pass `require` as a value, which the iife format prints as an undeclared `__require`.
+    const passRequire: Row[] = [
+      [
+        "wrapper",
+        `(function (module, exports, require) { module.exports = { a: 1 }; })(module, exports, require); ${write}`,
+        both,
+      ],
+      [
+        "callWrapper",
+        `(function (module, exports, require) { module.exports = { a: 1 }; }).call(module.exports, module, module.exports, require); ${write}`,
+        both,
+      ],
+      [
+        "amd",
+        `function define(f) { f(require, exports, module); } define(function (require, exports, module) { module.exports = { a: 1 }; }); ${write}`,
+        both,
+      ],
+    ];
+    const minified = { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true };
+    for (const [variant, options, variantRows] of [
+      ["", {}, [...rows, ...passRequire]],
+      ["Minify", minified, [...rows, ...passRequire]],
+      ["Iife", { format: "iife" }, rows],
+      ["IifeMinify", { format: "iife", ...minified }, rows],
+    ] as const) {
+      itBundled(`cjs2esm/LiveModuleExports${variant}`, {
+        files: {
+          "/entry.mjs": variantRows
+            .map(
+              ([name, , , show = "JSON.stringify(d)"]) =>
+                `import ${name} from "./${name}.cjs";\n{ const d = ${name}; console.log("${name}", ${show}); }`,
+            )
+            .join("\n"),
+          "/set.cjs": `module.exports = function (m) { m.exports = { a: 1 }; };`,
+          ...Object.fromEntries(variantRows.map(([name, lib]) => [`/${name}.cjs`, lib])),
+        },
+        ...options,
+        run: { stdout: variantRows.map(([name, , expected]) => `${name} ${expected}`).join("\n") },
+      });
+    }
+    for (const [importer, entry] of [
+      ["Require", `const d = require("./lib.cjs");`],
+      ["DynamicImport", `const { default: d } = await import("./lib.cjs");`],
+    ]) {
+      itBundled(`cjs2esm/LiveModuleExports${importer}`, {
+        files: {
+          "/entry.mjs": `${entry} console.log(JSON.stringify(d));`,
+          "/lib.cjs": `${replace} ${write}`,
+        },
+        run: { stdout: both },
+      });
+    }
+    itBundled("cjs2esm/LiveModuleExportsEntryPoint", {
+      files: {
+        "/entry.cjs": `${replace} console.log(module.exports.a);`,
+      },
+      run: { stdout: "1" },
+    });
+    // TypeScript `export =` is a `module.exports =` that the parser builds itself.
+    itBundled("cjs2esm/LiveModuleExportsTypeScriptExportEquals", {
+      files: {
+        "/entry.mjs": `import d from "./lib.cts"; console.log(d.self() === d);`,
+        "/lib.cts": `const x = { a: 1, self() { return module.exports; } }; export = x;`,
+      },
+      run: { stdout: "true" },
+    });
+    // tsc emits `export =` as the last statement, so a read that runs right
+    // after it still sees the first object. Bun emits `export =` in place.
+    itBundled("cjs2esm/LiveModuleExportsTypeScriptExportEqualsThenRead", {
+      todo: true,
+      files: {
+        "/entry.mjs": `import "./lib.cts"; console.log(globalThis.seen);`,
+        "/lib.cts": `function f() {} export = f; globalThis.seen = typeof module.exports;`,
+      },
+      run: { stdout: "object" },
+    });
+    // `var module = require("react")` becomes an import, and the wrapper then
+    // has no `module` parameter to print.
+    itBundled("cjs2esm/LiveModuleExportsWrapperWithoutModuleParameter", {
+      files: {
+        "/entry.mjs": `import lib from "./lib.cjs"; console.log(JSON.stringify(lib));`,
+        "/lib.cjs": `module.exports.a = 1;\nvar module = require("react");`,
+        "/node_modules/react/index.js": `exports.x = 1;`,
+        "/node_modules/react/package.json": `{ "name": "react", "version": "18.3.1", "main": "index.js" }`,
+      },
+      run: { stdout: `{"a":1}` },
+    });
+    // An ES module has no module object and nothing of it was lifted, so
+    // `module` stays unbound there, for a read as for an assignment.
+    for (const format of ["esm", "iife"] as const) {
+      itBundled(`cjs2esm/ModuleExportsInAnESModule${format === "iife" ? "Iife" : ""}`, {
+        format,
+        files: {
+          "/entry.mjs": `
+            import * as probeThenAssign from "./probe-then-assign.mjs";
+            import * as probe from "./probe.mjs";
+            globalThis.keep = [probeThenAssign, probe];
+            console.log(JSON.stringify(probeThenAssign.default), probeThenAssign.seen, probe.seen);
+          `,
+          "/probe-then-assign.mjs": `
+            const api = { v: 1 };
+            export default api;
+            export let seen;
+            try { seen = typeof module.exports; } catch (e) { seen = e.name; }
+            if (seen === "object") module.exports = api;
+          `,
+          "/probe.mjs": `
+            export let seen;
+            try { seen = typeof module.exports; } catch (e) { seen = e.name; }
+          `,
+        },
+        run: { stdout: `{"v":1} ReferenceError ReferenceError` },
+      });
+    }
+    // The dev server's module format, for a dependency and for an entry point.
+    for (const [name, entryPoints] of [
+      ["Dependency", ["/entry.mjs"]],
+      ["EntryPoint", ["/lib.cjs"]],
+    ] as const) {
+      itBundled(`cjs2esm/LiveModuleExportsDevServer${name}`, {
+        format: "internal_bake_dev",
+        files: {
+          "/entry.mjs": `import d from "./lib.cjs"; console.log(d);`,
+          "/lib.cjs": `${replace} ${write} globalThis.seen = module.exports;`,
+        },
+        entryPoints: [...entryPoints],
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out).toContain('"lib.cjs"(hmr, module, exports) {');
+          expect(out).toContain("module.exports.b = 2;");
+          expect(out).toContain("globalThis.seen = module.exports;");
+        },
+      });
+    }
+    // When a fold or an inlined constant leaves `module.exports` as the whole
+    // call target, the call still passes no `this`: `(0, module.exports)()`.
+    for (const [variant, options] of [
+      ["", {}],
+      ["MinifySyntax", { minifySyntax: true }],
+    ] as const) {
+      itBundled(`cjs2esm/LiveModuleExportsFoldedCallTarget${variant}`, {
+        files: {
+          "/entry.mjs": `import "./lib.cjs";`,
+          "/lib.cjs": `
+            (function (m) { m.exports = function () { return this === module; }; })(module);
+            function inlined() { const f = module.exports; return f(); }
+            console.log(JSON.stringify([
+              (true ? module.exports : 0)(),
+              (false ? 0 : module.exports)(),
+              (false || module.exports)(),
+              (true && module.exports)(),
+              (null ?? module.exports)(),
+              (0, module.exports)(),
+              [module.exports][0](),
+              inlined(),
+              module.exports(),
+            ]));
+          `,
+        },
+        ...options,
+        run: { stdout: "[false,false,false,false,false,false,false,false,true]" },
+      });
+    }
+  }
   // `delete (null ?? exports.a)` evaluates to a value, so the result is `true`
   // with no effect on the property. Under cjs2esm, `exports.a` is rewritten to
   // an `ECommonjsExportIdentifier`; the printer has to re-wrap it as `(0, ...)`

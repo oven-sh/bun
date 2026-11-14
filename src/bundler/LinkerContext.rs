@@ -2289,6 +2289,11 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
+        // The dev server does not link, so it has no wrap verdict.
+        let has_module_object = flags.wrap == WrapKind::Cjs
+            || (self.options.output_format == Format::InternalBakeDev
+                && ast.exports_kind == ExportsKind::Cjs);
+
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
@@ -2300,10 +2305,10 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs,
-            commonjs_module_exports_assigned_deoptimized: ast
-                .flags
-                .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
+            commonjs_named_exports_deoptimized: has_module_object,
+            commonjs_module_exports_is_namespace: !has_module_object
+                && (ast.flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                    || ast.commonjs_named_exports.count() > 0),
             // .const_values = c.graph.const_values,
             ts_enums: Some(&self.graph.ts_enums),
             import_member_bindings: Some(&self.graph.import_member_bindings),

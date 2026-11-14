@@ -1133,6 +1133,14 @@ devTest("commonjs forms", {
       await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
     });
     await c.expectMessage({ field: "6" });
+    console.log("Eighth");
+    await c.expectReload(async () => {
+      await dev.write(
+        "cjs.js",
+        `let theModule = module; theModule.exports = { replaced: true }; module.exports.field = "7";`,
+      );
+    });
+    await c.expectMessage({ replaced: true, field: "7" });
   },
 });
 

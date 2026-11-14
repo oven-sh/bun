@@ -311,10 +311,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.ignore_usage(p.module_ref);
                             return Some(p.value_for_require(name_loc));
                         } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
-                            if identifier_opts.assign_target() != js_ast::AssignTarget::None {
-                                p.commonjs_module_exports_assigned_deoptimized = true;
-                            }
-
                             // Detect if we are doing
                             //
                             //  module.exports = {
@@ -437,7 +433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return None;
                             }
 
-                            // rewrite `module.exports` to `exports`
+                            // The lift can turn this node into the file's ESM namespace.
                             p.module_exports_rewrite_count += 1;
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),

@@ -196,6 +196,8 @@ pub struct SqlRuntimeHooks {
     pub ssl_config_server_name: unsafe fn(*const c_void) -> *const c_char,
     /// `SSLConfig.reject_unauthorized`.
     pub ssl_config_reject_unauthorized: unsafe fn(*const c_void) -> i32,
+    /// Frees every field of a boxed `SSLConfig` but `server_name` and `reject_unauthorized`.
+    pub ssl_config_retain_verification_only: unsafe fn(*mut c_void),
 }
 
 unsafe extern "Rust" {
@@ -397,6 +399,18 @@ pub mod api {
                 let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
                 let bracketed = bare.len() != name.to_bytes().len();
                 (!bracketed && !bun_core::ip_address::is_ip_host(bare)).then_some(name)
+            }
+
+            /// Keeps only what [`server_name`](Self::server_name) and
+            /// [`reject_unauthorized`](Self::reject_unauthorized) read. For after the `SSL_CTX` is
+            /// built: a `ca` list can be hundreds of KB, and a connection holds its config until
+            /// the GC finalizes it. Do not project it with `as_usockets_for_client_verification`
+            /// afterwards: without its `ca` it describes a context that trusts the default roots.
+            pub(crate) fn retain_verification_only(&mut self) {
+                if let Some(p) = self.0 {
+                    // SAFETY: live boxed SSLConfig, owned by `self`.
+                    unsafe { (hooks().ssl_config_retain_verification_only)(p.as_ptr()) }
+                }
             }
 
             pub(crate) fn from_js(

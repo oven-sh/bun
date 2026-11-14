@@ -216,6 +216,15 @@ mod sql_hooks {
         // SAFETY: `this` is a live boxed `SSLConfig`.
         unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
     }
+    unsafe fn ssl_config_retain_verification_only(this: *mut c_void) {
+        // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
+        let config = unsafe { &mut *this.cast::<crate::socket::SSLConfig>() };
+        let mut kept = crate::socket::SSLConfig::zero();
+        kept.server_name = core::mem::replace(&mut config.server_name, core::ptr::null());
+        kept.reject_unauthorized = config.reject_unauthorized;
+        // Drops the old config, which frees the rest.
+        *config = kept;
+    }
 
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
@@ -227,6 +236,7 @@ mod sql_hooks {
         ssl_config_as_usockets_client,
         ssl_config_server_name,
         ssl_config_reject_unauthorized,
+        ssl_config_retain_verification_only,
     };
 }
 

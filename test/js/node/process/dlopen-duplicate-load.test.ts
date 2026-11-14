@@ -1,10 +1,20 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
+import { copyFileSync, readFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  canBuildNodeAddons,
+  isLinux,
+  isWindows,
+  nodeExeMatchingAbi,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
-// These tests share one node-gyp build of two V8 addons (the compile
+// These tests share one node-gyp build of a few addons (the compile
 // dominates the wall time). They cover:
 // - duplicate loads: the second dlopen of the same module used to fail with
 //   "symbol 'napi_register_module_v1' not found" because static constructors
@@ -17,6 +27,15 @@ import { join } from "path";
 //   from an init function, must not steal the outer call's registration
 // - static constructor order: the init function must run after dlopen() returns,
 //   once the static constructors after the module registration have run
+// - concurrent loads: an addon registers its modules only on the thread that
+//   loads it first, and a thread that loads it at the same moment must still
+//   find all of them
+
+// How many modules registers_v8.node and registers_napi.node register. Saving this many takes long enough for another
+// thread to look while it is in progress.
+const registrations = 2000;
+// How many Workers concurrent-load-fixture.js starts.
+const concurrentWorkers = 4;
 
 describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
@@ -24,6 +43,14 @@ describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let workerFixturePath: string;
   // A copy of the same addon at a second path, which the loader treats as a different library.
   let addonCopyPath: string;
+  let registersV8Path: string;
+  let registersNapiPath: string;
+  let registersNapiOncePath: string;
+  let bySymbolPath: string;
+  let callsJsInConstructorPath: string;
+  let holdDlopenPath: string;
+  let concurrentLoadFixturePath: string;
+  let workerEndsDuringLoadFixturePath: string;
 
   beforeAll(() => {
     const addonSource = `
@@ -148,6 +175,213 @@ void Initialize(Local<Object> exports, Local<Value> module, void* priv) {
 NODE_MODULE(non_context_aware, demo::Initialize)
 `;
 
+    // Registers a context-aware V8 module REGISTRATIONS times. exports.inits counts the init calls of one load.
+    // Bun runs every registration of a library. Node.js keeps the last one only, so it runs one.
+    const registersV8Source = `
+#include <node.h>
+
+namespace demo {
+
+using v8::Context;
+using v8::Isolate;
+using v8::Local;
+using v8::Number;
+using v8::Object;
+using v8::String;
+using v8::Value;
+
+void Initialize(Local<Object> exports, Local<Value> module, Local<Context> context, void* priv) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<String> key = String::NewFromUtf8(isolate, "inits").ToLocalChecked();
+  Local<Value> inits = exports->Get(context, key).ToLocalChecked();
+  double count = inits->IsNumber() ? inits.As<Number>()->Value() : 0;
+  exports->Set(context, key, Number::New(isolate, count + 1)).Check();
+}
+
+static node::node_module registration = {
+  NODE_MODULE_VERSION, 0, nullptr, __FILE__, nullptr, Initialize, "registers_v8", nullptr, nullptr,
+};
+
+struct RegisterAll {
+  RegisterAll() {
+    for (int i = 0; i < REGISTRATIONS; i++) node::node_module_register(&registration);
+  }
+};
+static RegisterAll register_all;
+
+}  // namespace demo
+`;
+
+    // The same with napi_module_register, which addons built with older Node-API headers call from a static constructor.
+    const registersNapiSource = `
+#include <node_api.h>
+
+static napi_value Initialize(napi_env env, napi_value exports) {
+  bool has_inits = false;
+  int32_t count = 0;
+  napi_value inits;
+  napi_has_named_property(env, exports, "inits", &has_inits);
+  if (has_inits) {
+    napi_get_named_property(env, exports, "inits", &inits);
+    napi_get_value_int32(env, inits, &count);
+  }
+  napi_create_int32(env, count + 1, &inits);
+  napi_set_named_property(env, exports, "inits", inits);
+  return exports;
+}
+
+static napi_module registration = {
+  NAPI_MODULE_VERSION, 0, __FILE__, Initialize, "registers_napi", nullptr, {nullptr},
+};
+
+struct RegisterAll {
+  RegisterAll() {
+    for (int i = 0; i < REGISTRATIONS; i++) napi_module_register(&registration);
+  }
+};
+static RegisterAll register_all;
+`;
+
+    // Registers nothing: process.dlopen finds the init function by its symbol. It calls exports.duringInit() if the test set one.
+    const bySymbolSource = `
+#include <node_api.h>
+
+static napi_value Hello(napi_env env, napi_callback_info info) {
+  napi_value world;
+  napi_create_string_utf8(env, "world", NAPI_AUTO_LENGTH, &world);
+  return world;
+}
+
+NAPI_MODULE_INIT() {
+  napi_value during_init, result, hello;
+  napi_valuetype type;
+  napi_get_named_property(env, exports, "duringInit", &during_init);
+  napi_typeof(env, during_init, &type);
+  if (type == napi_function && napi_call_function(env, exports, during_init, 0, NULL, &result) != napi_ok) {
+    return NULL;
+  }
+  napi_create_function(env, "hello", NAPI_AUTO_LENGTH, Hello, NULL, &hello);
+  napi_set_named_property(env, exports, "hello", hello);
+  return exports;
+}
+`;
+
+    // Its static constructor, which runs inside dlopen(), calls globalThis.duringConstructor().
+    const callsJsInConstructorSource = `
+#include <node.h>
+
+namespace demo {
+
+using v8::Context;
+using v8::Function;
+using v8::FunctionCallbackInfo;
+using v8::HandleScope;
+using v8::Isolate;
+using v8::Local;
+using v8::Object;
+using v8::String;
+using v8::Value;
+
+void Hello(const FunctionCallbackInfo<Value>& args) {
+  args.GetReturnValue().Set(String::NewFromUtf8(args.GetIsolate(), "world").ToLocalChecked());
+}
+
+void Initialize(Local<Object> exports, Local<Value> module, Local<Context> context, void* priv) {
+  NODE_SET_METHOD(exports, "hello", Hello);
+}
+
+static node::node_module registration = {
+  NODE_MODULE_VERSION, 0, nullptr, __FILE__, nullptr, Initialize, "calls_js_in_constructor", nullptr, nullptr,
+};
+
+struct CallJS {
+  CallJS() {
+    node::node_module_register(&registration);
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+    Local<Context> context = isolate->GetCurrentContext();
+    Local<Object> global = context->Global();
+    Local<Value> callback =
+        global->Get(context, String::NewFromUtf8(isolate, "duringConstructor").ToLocalChecked()).ToLocalChecked();
+    if (callback->IsFunction()) callback.As<Function>()->Call(context, global, 0, nullptr).ToLocalChecked();
+  }
+};
+static CallJS call_js;
+
+}  // namespace demo
+`;
+
+    // An LD_PRELOAD library. It keeps the thread that first loads an addon in the directory $HOLD_DLOPEN_IN inside
+    // dlopen(), after the real dlopen() has returned.
+    //
+    // With $HOLD_DLOPEN_FIFO, until the test has opened that FIFO for writing and closed it.
+    //
+    // Without it, until $HOLD_DLOPEN_CALLS more dlopen() calls of that addon have returned. A process.dlopen that lets
+    // no other thread into dlopen() before the first one is done never gets there, so the wait also ends after 100 ms.
+    // It then appends the number of calls that did return to $HOLD_DLOPEN_REPORT.
+    const holdDlopenSource = `
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t returned = PTHREAD_COND_INITIALIZER;
+static struct { char* path; int calls; } addons[16];
+
+static int* calls_of(const char* path) {
+  int i = 0;
+  while (addons[i].path && strcmp(addons[i].path, path) != 0) i++;
+  if (!addons[i].path) addons[i].path = strdup(path);
+  return &addons[i].calls;
+}
+
+static void hold(int* calls) {
+  const char* fifo = getenv("HOLD_DLOPEN_FIFO");
+  if (fifo) {
+    pthread_mutex_unlock(&mutex);
+    int fd = open(fifo, O_RDONLY);
+    char byte;
+    while (read(fd, &byte, 1) > 0) {}
+    close(fd);
+    pthread_mutex_lock(&mutex);
+    return;
+  }
+  int others = atoi(getenv("HOLD_DLOPEN_CALLS"));
+  struct timespec deadline;
+  clock_gettime(CLOCK_REALTIME, &deadline);
+  deadline.tv_nsec += 100000000;
+  deadline.tv_sec += deadline.tv_nsec / 1000000000;
+  deadline.tv_nsec %= 1000000000;
+  while (*calls <= others && pthread_cond_timedwait(&returned, &mutex, &deadline) == 0) {}
+  FILE* report = fopen(getenv("HOLD_DLOPEN_REPORT"), "a");
+  fprintf(report, "%d\\n", *calls - 1);
+  fclose(report);
+}
+
+void* dlopen(const char* file, int mode) {
+  void* (*real_dlopen)(const char*, int) = (void* (*)(const char*, int))dlsym(RTLD_NEXT, "dlopen");
+  const char* directory = getenv("HOLD_DLOPEN_IN");
+  if (!file || !directory || strncmp(file, directory, strlen(directory)) != 0) return real_dlopen(file, mode);
+
+  // The mutex makes the thread that loads the addon the first one to count its call.
+  pthread_mutex_lock(&mutex);
+  void* handle = real_dlopen(file, mode);
+  int* calls = calls_of(file);
+  if ((*calls)++ == 0) hold(calls);
+  pthread_cond_broadcast(&returned);
+  pthread_mutex_unlock(&mutex);
+  return handle;
+}
+`;
+
     const bindingGyp = `
 {
   "targets": [
@@ -158,7 +392,40 @@ NODE_MODULE(non_context_aware, demo::Initialize)
     {
       "target_name": "non_context_aware",
       "sources": [ "non_context_aware.cpp" ]
+    },
+    {
+      "target_name": "registers_v8",
+      "sources": [ "registers_v8.cpp" ],
+      "defines": [ "REGISTRATIONS=${registrations}" ]
+    },
+    {
+      "target_name": "registers_napi",
+      "sources": [ "registers_napi.cpp" ],
+      "defines": [ "REGISTRATIONS=${registrations}" ]
+    },
+    {
+      "target_name": "registers_napi_once",
+      "sources": [ "registers_napi.cpp" ],
+      "defines": [ "REGISTRATIONS=1" ]
+    },
+    {
+      "target_name": "by_symbol",
+      "sources": [ "by_symbol.c" ]
+    },
+    {
+      "target_name": "calls_js_in_constructor",
+      "sources": [ "calls_js_in_constructor.cpp" ]
     }
+  ],
+  "conditions": [
+    ["OS=='linux'", {
+      "targets": [
+        {
+          "target_name": "hold_dlopen",
+          "sources": [ "hold_dlopen.c" ]
+        }
+      ]
+    }]
   ]
 }
 `;
@@ -225,10 +492,102 @@ if (!isMainThread) {
 }
 `;
 
+    // Every Worker loads the addons at $ADDON_PATHS (a JSON array), one per round. The Workers start a round at the
+    // same moment. Prints, for each round, how many loads had each result.
+    const concurrentLoadFixture = `
+const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+
+function load(path) {
+  const m = { exports: {} };
+  try {
+    process.dlopen(m, path);
+  } catch (e) {
+    return (e.code ?? e.name) + ": " + e.message.replace(path, "<addon>");
+  }
+  return m.exports.inits ?? "loaded";
+}
+
+if (!isMainThread) {
+  const { round, paths } = workerData;
+  let result = "ready";
+  // The last turn loads nothing. It keeps the Worker alive until the main thread has every result, because a Worker
+  // that ends gives up the non-context-aware addons that it owns.
+  for (let i = 0; i <= paths.length; i++) {
+    parentPort.postMessage(result);
+    // Blocks until the main thread starts round i.
+    Atomics.wait(round, 0, i);
+    if (i < paths.length) result = load(paths[i]);
+  }
+} else {
+  const paths = JSON.parse(process.env.ADDON_PATHS);
+  const round = new Int32Array(new SharedArrayBuffer(4));
+  const rounds = [];
+  let results = {};
+  let waiting = 0;
+  for (let i = 0; i < ${concurrentWorkers}; i++) {
+    const worker = new Worker(__filename, { workerData: { round, paths } });
+    worker.on("error", error => {
+      console.error(error);
+      process.exit(1);
+    });
+    worker.on("message", result => {
+      if (result !== "ready") results[result] = (results[result] ?? 0) + 1;
+      if (++waiting < ${concurrentWorkers}) return;
+      // Every Worker has reported its last load and waits for the next round.
+      waiting = 0;
+      if (Atomics.load(round, 0) > 0) rounds.push(results);
+      results = {};
+      if (Atomics.add(round, 0, 1) === paths.length) console.log(JSON.stringify(rounds));
+      Atomics.notify(round, 0);
+    });
+  }
+}
+`;
+
+    // A Worker loads the addon at $ADDON_PATH, and hold_dlopen.c keeps it inside process.dlopen until the FIFO at
+    // $HOLD_DLOPEN_FIFO has been opened for writing and closed. Another Worker ends during that time.
+    const workerEndsDuringLoadFixture = `
+const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+const { closeSync, openSync } = require("node:fs");
+
+if (isMainThread) {
+  const events = [];
+  const idle = new Worker(__filename);
+  idle.once("message", () => {
+    const loader = new Worker(__filename, { workerData: process.env.ADDON_PATH });
+    loader.once("message", result => {
+      events.push("the load ended: " + result);
+      console.log(JSON.stringify(events));
+    });
+    // Opening a FIFO for writing waits for a reader, so the other Worker is inside process.dlopen when this returns.
+    const fifo = openSync(process.env.HOLD_DLOPEN_FIFO, "w");
+    idle.once("exit", () => {
+      events.push("the other Worker ended");
+      closeSync(fifo);
+    });
+    idle.postMessage("end");
+  });
+} else if (workerData) {
+  const m = { exports: {} };
+  process.dlopen(m, workerData);
+  parentPort.postMessage(typeof m.exports.hello);
+} else {
+  parentPort.postMessage("ready");
+  parentPort.once("message", () => {});
+}
+`;
+
     const dir = tempDirWithFiles("dlopen-duplicate-test", {
       "addon.cpp": addonSource,
       "non_context_aware.cpp": nonContextAwareSource,
+      "registers_v8.cpp": registersV8Source,
+      "registers_napi.cpp": registersNapiSource,
+      "by_symbol.c": bySymbolSource,
+      "calls_js_in_constructor.cpp": callsJsInConstructorSource,
+      "hold_dlopen.c": holdDlopenSource,
       "worker-fixture.js": workerFixture,
+      "concurrent-load-fixture.js": concurrentLoadFixture,
+      "worker-ends-during-load-fixture.js": workerEndsDuringLoadFixture,
       "binding.gyp": bindingGyp,
       "package.json": JSON.stringify({
         name: "test",
@@ -267,6 +626,14 @@ if (!isMainThread) {
     workerFixturePath = join(dir, "worker-fixture.js");
     addonCopyPath = join(dir, "build", "Release", "addon-copy.node");
     copyFileSync(addonPath, addonCopyPath);
+    registersV8Path = join(dir, "build", "Release", "registers_v8.node");
+    registersNapiPath = join(dir, "build", "Release", "registers_napi.node");
+    registersNapiOncePath = join(dir, "build", "Release", "registers_napi_once.node");
+    bySymbolPath = join(dir, "build", "Release", "by_symbol.node");
+    callsJsInConstructorPath = join(dir, "build", "Release", "calls_js_in_constructor.node");
+    holdDlopenPath = join(dir, "build", "Release", "hold_dlopen.node");
+    concurrentLoadFixturePath = join(dir, "concurrent-load-fixture.js");
+    workerEndsDuringLoadFixturePath = join(dir, "worker-ends-during-load-fixture.js");
   }, 180_000);
 
   // Each test spawns an isolated child (dlopen state is process-global), so
@@ -456,6 +823,44 @@ if (!isMainThread) {
       expect(JSON.parse(stdout)).toEqual({ outer: "function", inner: "function" });
       expect(exitCode).toBe(0);
     });
+
+    // process.dlopen takes a lock to load the library. Every kind of init function can still load an addon.
+    test.each([
+      [
+        "the init function of an addon that is already loaded",
+        `process.dlopen({ exports: {} }, addon);
+         const outer = { exports: {}, duringInit() { process.dlopen(inner, addonCopy); } };
+         process.dlopen(outer, addon);`,
+      ],
+      [
+        // Node.js holds its lock while it runs this kind of init function, and the nested call never returns there.
+        "an init function that is found by its symbol",
+        `const outer = { exports: { duringInit() { process.dlopen(inner, addonCopy); } } };
+         process.dlopen(outer, bySymbol);`,
+      ],
+    ])("both modules get their exports when %s loads another addon", async (_, load) => {
+      const testScript = `
+      const addon = ${JSON.stringify(addonPath)};
+      const addonCopy = ${JSON.stringify(addonCopyPath)};
+      const bySymbol = ${JSON.stringify(bySymbolPath)};
+      const inner = { exports: {} };
+      ${load}
+      console.log(JSON.stringify({ outer: typeof outer.exports.hello, inner: typeof inner.exports.hello }));
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ outer: "function", inner: "function" });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe.concurrent("process.dlopen nested in the filename's toString()", () => {
@@ -572,19 +977,19 @@ if (!isMainThread) {
     });
   });
 
-  describe.concurrent("process.dlopen of an addon that is already loaded", () => {
-    async function runJsonFixture(cmd: string[], env: Record<string, string>) {
-      await using proc = Bun.spawn({
-        cmd,
-        env: { ...bunEnv, ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ exe: cmd[0], stderr, exitCode }).toEqual({ exe: cmd[0], stderr: "", exitCode: 0 });
-      return JSON.parse(stdout);
-    }
+  async function runJsonFixture(cmd: string[], env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exe: cmd[0], stderr, exitCode }).toEqual({ exe: cmd[0], stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
 
+  describe.concurrent("process.dlopen of an addon that is already loaded", () => {
     const selfRegisterError = {
       loaded: false,
       code: "ERR_DLOPEN_FAILED",
@@ -626,6 +1031,118 @@ if (!isMainThread) {
         first: { hello: "world", initCount: 1, instance: "object" },
         second: { hello: "world", initCount: 2, instance: "object" },
       });
+    });
+  });
+
+  // The two blocks below are not concurrent. A child of theirs can wait forever when its test fails, and the test
+  // runner ends the child of a test that timed out only if the tests run one at a time.
+
+  describe("process.dlopen nested in a static constructor", () => {
+    // A static constructor runs inside dlopen(), where process.dlopen holds its lock. The load that it starts from
+    // there must not wait for that lock. Node.js aborts on an assertion when a static constructor gets to process.dlopen.
+    // On Windows a static constructor runs inside DllMain, which must not load a library.
+    test.skipIf(isWindows)(
+      "both modules get their exports when a static constructor calls JS that loads another addon",
+      async () => {
+        // The static constructor calls V8 functions, which need a handle scope. An init function has one open.
+        const script = `
+          const inner = { exports: {} };
+          globalThis.duringConstructor = () => process.dlopen(inner, process.env.INNER);
+          const outer = { exports: {} };
+          const bySymbol = { exports: { duringInit: () => process.dlopen(outer, process.env.OUTER) } };
+          process.dlopen(bySymbol, process.env.BY_SYMBOL);
+          console.log(JSON.stringify({ outer: typeof outer.exports.hello, inner: typeof inner.exports.hello }));
+        `;
+        const env = { BY_SYMBOL: bySymbolPath, OUTER: callsJsInConstructorPath, INNER: addonCopyPath };
+        expect(await runJsonFixture([bunExe(), "-e", script], env)).toEqual({ outer: "function", inner: "function" });
+      },
+    );
+  });
+
+  describe("process.dlopen of one addon by several threads at the same moment", () => {
+    const everyWorker = (result: string | number) => ({ [result]: concurrentWorkers });
+    const oneWorker = {
+      loaded: 1,
+      "ERR_DLOPEN_FAILED: Module did not self-register: '<addon>'.": concurrentWorkers - 1,
+    };
+
+    // Every round loads a copy of an addon, which is a library that no thread has loaded yet. `held` preloads
+    // hold_dlopen.c, and the result then has what it reported: a line for each round.
+    async function loadInWorkers(exe: string, addons: string[], held = false) {
+      using copies = tempDir("dlopen-concurrent-test", {});
+      const directory = String(copies);
+      const paths = addons.map((_, round) => join(directory, `${round}.node`));
+      addons.forEach((addon, round) => copyFileSync(addon, paths[round]));
+      const env: Record<string, string> = { ADDON_PATHS: JSON.stringify(paths) };
+      if (held) {
+        env.LD_PRELOAD = bunEnv.LD_PRELOAD ? `${holdDlopenPath}:${bunEnv.LD_PRELOAD}` : holdDlopenPath;
+        env.HOLD_DLOPEN_IN = directory;
+        env.HOLD_DLOPEN_CALLS = String(concurrentWorkers - 1);
+        env.HOLD_DLOPEN_REPORT = join(directory, "report");
+      }
+      const rounds = await runJsonFixture([exe, concurrentLoadFixturePath], env);
+      return held ? { rounds, returnedWhileHeld: readFileSync(env.HOLD_DLOPEN_REPORT, "utf8") } : { rounds };
+    }
+
+    test.each([
+      { name: "every Worker loads a context-aware V8 addon", path: () => addonPath, round: everyWorker("loaded") },
+      {
+        name: "every Worker loads a Node-API addon that registers itself",
+        path: () => registersNapiOncePath,
+        round: everyWorker(1),
+      },
+      {
+        name: "one Worker of a round loads a non-context-aware addon",
+        path: () => nonContextAwarePath,
+        round: oneWorker,
+      },
+    ])("$name, as in Node.js", async ({ path, round }) => {
+      const addons = Array(20).fill(path());
+      const bun = await loadInWorkers(bunExe(), addons);
+      expect(bun).toEqual({ rounds: addons.map(() => round) });
+      expect(await loadInWorkers(await nodeExeMatchingAbi(), addons)).toEqual(bun);
+    });
+
+    // Node.js runs one registration of a library, so these two have no Node.js run.
+    test.each([
+      { api: "V8", path: () => registersV8Path },
+      { api: "Node-API", path: () => registersNapiPath },
+    ])("every Worker runs all of the $api modules that an addon registers", async ({ path }) => {
+      const addons = Array(5).fill(path());
+      expect(await loadInWorkers(bunExe(), addons)).toEqual({ rounds: addons.map(() => everyWorker(registrations)) });
+    });
+
+    // The two tests below preload hold_dlopen.c, which wraps the dlopen() of the C library.
+
+    // No other dlopen() call of an addon returns while hold_dlopen.c holds the first one.
+    test.skipIf(!isLinux)("no Worker gets a library before the first one has saved what it registered", async () => {
+      const addons = [addonPath, registersNapiOncePath, registersV8Path, registersNapiPath, nonContextAwarePath];
+      expect(await loadInWorkers(bunExe(), addons, true)).toEqual({
+        rounds: [
+          everyWorker("loaded"),
+          everyWorker(1),
+          everyWorker(registrations),
+          everyWorker(registrations),
+          oneWorker,
+        ],
+        returnedWhileHeld: "0\n0\n0\n0\n0\n",
+      });
+    });
+
+    // process.dlopen holds its lock while hold_dlopen.c holds the load. The end of a Worker must not wait for it.
+    test.skipIf(!isLinux)("a Worker ends while another thread is inside process.dlopen", async () => {
+      using held = tempDir("dlopen-held-test", {});
+      const addon = join(String(held), "addon.node");
+      copyFileSync(addonPath, addon);
+      const fifo = join(String(held), "fifo");
+      mkfifo(fifo);
+      const events = await runJsonFixture([bunExe(), workerEndsDuringLoadFixturePath], {
+        ADDON_PATH: addon,
+        LD_PRELOAD: bunEnv.LD_PRELOAD ? `${holdDlopenPath}:${bunEnv.LD_PRELOAD}` : holdDlopenPath,
+        HOLD_DLOPEN_IN: String(held),
+        HOLD_DLOPEN_FIFO: fifo,
+      });
+      expect(events).toEqual(["the other Worker ended", "the load ended: function"]);
     });
   });
 });

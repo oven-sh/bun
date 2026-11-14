@@ -13,6 +13,8 @@
 const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
 const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
 const { kEmptyObject } = require("internal/shared");
+// The class behind `fs.Dirent`, from the binding: a program can assign to `fs.Dirent`.
+const { Dirent } = require("internal/fs/binding");
 
 const isWindows = process.platform === "win32";
 const isMacOS = process.platform === "darwin";
@@ -58,15 +60,23 @@ function makeMatchersExclude(matchers: Minimatch[]) {
 function statForFileTypes(cache: Cache, root: string, path: string) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
 }
+// Without `cwd`, Node's root is "." and it names a result of globSync() from join(".", path). `root` is absolute here.
+function statForFileTypesWithoutCwd(cache: Cache, root: string, path: string) {
+  return isAbsolute(path) ? cache.statSync(path) : direntNamedFrom(cache.statSync(join(root, path)), path);
+}
+// The parent that `**/..` adds is the one result of glob() that Node names from its root.
+function statParentForFileTypes(cache: Cache, root: string, cwdOmitted: boolean, parent: string) {
+  const entry = cache.statSync(join(root, parent));
+  return cwdOmitted && !isAbsolute(parent) ? direntNamedFrom(entry, parent) : entry;
+}
 
 const kStats = Symbol("stats");
-let _DirentFromStats: (new (name: string, stats: Stats, path: string) => Dirent) | undefined;
+let _DirentFromStats: (new (name: string, stats: Stats | Dirent, path: string) => Dirent) | undefined;
 function lazyDirentFromStats() {
   if (_DirentFromStats === undefined) {
-    const { Dirent } = require("node:fs");
     class DirentFromStats extends Dirent {
-      declare [kStats]: Stats;
-      constructor(name: string, stats: Stats, path: string) {
+      declare [kStats]: Stats | Dirent;
+      constructor(name: string, stats: Stats | Dirent, path: string) {
         super(name, null!, path);
         this[kStats] = stats;
       }
@@ -87,6 +97,20 @@ function lazyDirentFromStats() {
     _DirentFromStats = DirentFromStats;
   }
   return _DirentFromStats;
+}
+
+// A copy of `entry` under the name of the relative `path`. The stat cache and the exclude callback hold `entry`.
+function direntNamedFrom(entry: (Dirent & { $data?: unknown; [kStats]?: Stats | Dirent }) | null, path: string) {
+  if (entry === null) {
+    return null;
+  }
+  $assert(!isAbsolute(path), "path is relative");
+  const type = entry.$data;
+  if (typeof type === "number") {
+    return new Dirent(basename(path), type, dirname(path));
+  }
+  // An entry of fs.lstat(), or one that a replaced fs.readdirSync() returned.
+  return new (lazyDirentFromStats())(basename(path), entry[kStats] ?? entry, dirname(path));
 }
 
 function toPathIfFileURL(url: string | URL | null | undefined): string | null | undefined {
@@ -384,6 +408,7 @@ class ResultSet extends Set<string> {
 
 class Glob {
   #root: string;
+  #cwdOmitted = false;
   #exclude: ((entry: Dirent | string) => boolean) | undefined;
   #cache = new Cache();
   #results = new ResultSet();
@@ -397,7 +422,10 @@ class Glob {
   constructor(pattern: string | string[], options: GlobOptions = kEmptyObject) {
     validateObject(options, "options");
     const { exclude, cwd, followSymlinks, withFileTypes } = options;
-    this.#root = toPathIfFileURL(cwd) ?? process.cwd();
+    const given = toPathIfFileURL(cwd);
+    // Node keeps "." here. Bun's path.resolve() does not see a replaced process.cwd (#42601), so the walk reads it now.
+    this.#root = given ?? process.cwd();
+    this.#cwdOmitted = given == null;
     if (followSymlinks != null) {
       validateBoolean(followSymlinks, "options.followSymlinks");
       this.#followSymlinks = followSymlinks;
@@ -453,7 +481,9 @@ class Glob {
     }
     return Array.from<string, Dirent | string | null>(
       this.#results,
-      this.#withFileTypes ? statForFileTypes.bind(null, this.#cache, this.#root) : undefined!,
+      this.#withFileTypes
+        ? (this.#cwdOmitted ? statForFileTypesWithoutCwd : statForFileTypes).bind(null, this.#cache, this.#root)
+        : undefined!,
     );
   }
   #isDirectorySync(path: string, stat: Dirent | null, pattern: Pattern) {
@@ -538,7 +568,8 @@ class Glob {
         // differs).
         const stat = this.#cache.statSync(fullpath);
         if (stat !== null) {
-          if (this.#exclude(stat)) {
+          // Without `cwd`, upstream's lookup of `path` finds the entry, and its Dirent has that name.
+          if (this.#exclude(this.#cwdOmitted && !isAbsolute(path) ? direntNamedFrom(stat, path)! : stat)) {
             return;
           }
         }
@@ -940,7 +971,9 @@ class Glob {
                 this.#cache.add(parent, pattern.child(new Set<number>().add(nextIndex)));
                 if (!this.#results.has(parent)) {
                   if (this.#results.add(parent)) {
-                    yield this.#withFileTypes ? this.#cache.statSync(join(this.#root, parent)) : parent;
+                    yield this.#withFileTypes
+                      ? statParentForFileTypes(this.#cache, this.#root, this.#cwdOmitted, parent)
+                      : parent;
                   }
                 }
               }

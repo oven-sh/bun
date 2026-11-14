@@ -303,10 +303,6 @@ impl<T> IntrusiveField<T> {
         self.child.get()
     }
 
-    pub fn prev(&self) -> *mut T {
-        self.prev.get()
-    }
-
     pub fn next(&self) -> *mut T {
         self.next.get()
     }

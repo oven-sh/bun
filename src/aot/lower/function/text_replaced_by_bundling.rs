@@ -323,10 +323,10 @@ impl Finder<'_, '_> {
             let FnBody::Block(statements) = function.body else {
                 continue;
             };
-            let first = hir.ids(statements).find(|&it| !hir.is_erased_statement(it));
-            let (Some(StmtKind::Expr(head)) | Some(StmtKind::Directive { expr: head, .. })) =
-                first.map(|first| hir[first].kind)
-            else {
+            let behind_prologue = hir.ids(statements).find(|&it| {
+                !hir.is_erased_statement(it) && !matches!(hir[it].kind, StmtKind::Directive { .. })
+            });
+            let Some(StmtKind::Expr(head)) = behind_prologue.map(|it| hir[it].kind) else {
                 continue;
             };
             if let Some(b'"' | b'\'') = self.find_first_byte(head) {

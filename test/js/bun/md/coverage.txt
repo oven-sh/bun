@@ -295,3 +295,29 @@ foo  bar → baz
 .
 --fcollapse-whitespace
 ````````````````````````````````
+
+
+## Flag `MD_FLAG_NOHTMLSPANS`
+
+This section is Bun's own: MD4C's `coverage.txt` has no example for the flag.
+
+The flag turns raw inline HTML off and nothing else. An autolink is still a
+link (https://github.com/mity/md4c/issues/61).
+
+```````````````````````````````` example
+<https://example.com> <me@example.com> <b>raw</b>
+.
+<p><a href="https://example.com">https://example.com</a> <a href="mailto:me@example.com">me@example.com</a> &lt;b&gt;raw&lt;/b&gt;</p>
+.
+--fno-html-spans
+````````````````````````````````
+
+The autolink still hides the markers in it. The tag does not.
+
+```````````````````````````````` example
+*a <https://example.com/*> b* <i title="*">c*
+.
+<p><em>a <a href="https://example.com/*">https://example.com/*</a> b</em> &lt;i title=&quot;<em>&quot;&gt;c</em></p>
+.
+--fno-html-spans
+````````````````````````````````

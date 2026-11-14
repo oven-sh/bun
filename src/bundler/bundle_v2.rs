@@ -2862,24 +2862,30 @@ pub mod bv2_impl {
             target: options::Target,
             loader: Option<Loader>,
         ) -> Result<Option<IndexInt>, Error> {
-            self.enqueue_entry_item_impl(result, is_entry_point, target, loader, true)
+            self.enqueue_entry_item_impl(
+                result,
+                is_entry_point,
+                target,
+                loader,
+                EntryPathSource::Resolver,
+            )
         }
 
-        /// `needs_absolute_path`: false for the path of an onResolve answer, which can be anything.
         fn enqueue_entry_item_impl(
             &mut self,
             result: &_resolver::Result<'_>,
             is_entry_point: bool,
             target: options::Target,
             loader: Option<Loader>,
-            needs_absolute_path: bool,
+            path_source: EntryPathSource,
         ) -> Result<Option<IndexInt>, Error> {
             let path = result.path_const().expect(
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
 
             // The path of a file in memory is its key in `files`, as the caller wrote it.
-            if needs_absolute_path && !self.file_map.is_some_and(|files| files.contains(path.text))
+            if path_source == EntryPathSource::Resolver
+                && !self.file_map.is_some_and(|files| files.contains(path.text))
             {
                 path.assert_file_path_is_absolute();
             }
@@ -3360,20 +3366,25 @@ pub mod bv2_impl {
             };
             // A file that a plugin resolved the record to instead keeps its own loader.
             let loader = record.loader.filter(|_| path.text == &*record.specifier);
-            let source_index =
-                match self.enqueue_entry_item_impl(answer, true, target, loader, false) {
-                    Ok(Some(source_index)) => {
-                        // It takes the place held for it, not the end of the list.
-                        self.graph.entry_points.pop();
-                        source_index
-                    }
-                    // An import made the module first. It is an entry point too.
-                    Ok(None) => match self.path_to_source_index_map(target).get_path(&path) {
-                        Some(source_index) => source_index,
-                        None => return,
-                    },
-                    Err(_) => return,
-                };
+            let source_index = match self.enqueue_entry_item_impl(
+                answer,
+                true,
+                target,
+                loader,
+                EntryPathSource::OnResolvePlugin,
+            ) {
+                Ok(Some(source_index)) => {
+                    // It takes the place held for it, not the end of the list.
+                    self.graph.entry_points.pop();
+                    source_index
+                }
+                // An import made the module first. It is an entry point too.
+                Ok(None) => match self.path_to_source_index_map(target).get_path(&path) {
+                    Some(source_index) => source_index,
+                    None => return,
+                },
+                Err(_) => return,
+            };
             if !self
                 .graph
                 .entry_points
@@ -6257,6 +6268,15 @@ pub mod bv2_impl {
 
     const DEV_SERVER_HTML_IMPORT_ERROR: &str = "Browser builds cannot import HTML files.";
 
+    /// Who named the path of an entry point.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum EntryPathSource {
+        /// The path is absolute, or a key of `files`.
+        Resolver,
+        /// The path can be anything.
+        OnResolvePlugin,
+    }
+
     /// What `enqueue_unmatched_entry_point` found for an entry point.
     pub(crate) enum EntryPointModule {
         /// `enqueue_entry_item` made the module and added it to `graph.entry_points`.
@@ -7051,7 +7071,7 @@ pub mod bv2_impl {
             // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
             let self_ptr = Some(bun_ptr::ParentRef::from_ref_mut(self));
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, key_loader, value) in resolve_queue.iter() {
+            for (key_namespace, key_text, key_loader, value) in resolve_queue.iter() {
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
                 // the arena outlives this loop.
                 let value = unsafe { &mut *value };
@@ -7070,7 +7090,9 @@ pub mod bv2_impl {
                 } else {
                     &mut self.graph.build_graphs[target]
                 };
-                let existing = map.get_or_put_key(key, key_loader).expect("oom");
+                let existing = map
+                    .get_or_put_key(key_namespace, key_text, key_loader)
+                    .expect("oom");
 
                 if !existing.found_existing {
                     let new_task: &mut ParseTask = value;
@@ -7177,7 +7199,7 @@ pub mod bv2_impl {
         pub(crate) fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,
-            ctx: PatchImportRecordsCtx,
+            ctx: &PatchImportRecordsCtx,
         ) {
             // Borrowck rejects holding a `&self.graph` alias
             // across the `&mut self.graph.build_graphs[...]` borrow
@@ -7321,7 +7343,7 @@ pub mod bv2_impl {
             if !has_module {
                 self.patch_import_record_source_indices(
                     &mut import_records,
-                    PatchImportRecordsCtx {
+                    &PatchImportRecordsCtx {
                         source_path: source.path,
                         source_key_loader: self.graph.input_files.items_key_loader()[idx],
                         loader,
@@ -7778,7 +7800,7 @@ pub mod bv2_impl {
                     );
                     this.patch_import_record_source_indices(
                         &mut import_records,
-                        PatchImportRecordsCtx {
+                        &PatchImportRecordsCtx {
                             source_path: this.graph.input_files.items_source()[result_source_index]
                                 .path,
                             source_key_loader: this.graph.input_files.items_key_loader()

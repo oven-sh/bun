@@ -7,10 +7,10 @@
 //!
 //! | upstream lines | submodule |
 //! |---|---|
-//! | 1–662, 4362–5509 | `helpers` (loc/op converters, `lower_identifier`, member-expr, assignment, optional-chain) |
+//! | 1–662, 4362–5509, 6514–6552 | `helpers` (loc/op converters, `lower_identifier`, member-expr, assignment, optional-chain, object key) |
 //! | 663–2303, 6553–6713 | `expr` (`lower_expression`, `lower_reorderable_expression`) |
 //! | 2304–4256 | `stmt` (`lower_statement`, `lower_block_statement*`) |
-//! | 5510–6241, 6469–6552 | `function` (`lower_function*`, `lower_inner`, object-method) |
+//! | 5510–6241, 6469–6513 | `function` (`lower_function*`, `lower_inner`, object-method) |
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 

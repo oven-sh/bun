@@ -4490,6 +4490,223 @@ describe("bundler", () => {
     },
   });
 
+  // The engine that runs the output names a numeric key: "1e+21" for 1e21, "Infinity" for 1e999.
+  for (const minify of [false, true] as const) {
+    itBundled(`react-compiler/NumericKeyStaysANumber${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          function Keys({ n }) {
+            const t = { 1e21: n, 1.5e21: n, 1e-7: n, 1e300: n, 5e-324: n, 1e999: n, 1795928673356736.2: n };
+            return <b>{Object.keys(t).join()}</b>;
+          }
+          // The input of the report.
+          function Card({ n }) {
+            const t = { 1e21: n };
+            return <b>{String(t[1e21])}</b>;
+          }
+          function Lookup({ exp }) {
+            const units = { 1e-9: { label: "nano" }, 1e-3: { label: "milli" } };
+            return <b>{units[exp].label}</b>;
+          }
+          function Pattern({ n }) {
+            const { 1e21: x = "none", 1e-7: y = "none", 1e999: z = "none" } = { [1e21]: n, [1e-7]: n, Infinity: n };
+            return <b>{[x, y, z].join()}</b>;
+          }
+          function Parameter({ 1e21: n = "none" }) {
+            return <b>{n}</b>;
+          }
+          function Rest({ n }) {
+            const { 1e21: x, ...rest } = { [1e21]: n, other: n };
+            return <b>{x + " " + Object.keys(rest).join()}</b>;
+          }
+          function Assignment({ n }) {
+            let x;
+            ({ 1e21: x } = { [1e21]: n });
+            return <b>{String(x)}</b>;
+          }
+          function Method({ n }) {
+            const t = {
+              id() {
+                return n;
+              },
+              "a-b"() {
+                return n;
+              },
+              7() {
+                return n;
+              },
+              1e21() {
+                return n;
+              },
+              1e999() {
+                return n;
+              },
+              inf() {
+                return n;
+              },
+            };
+            return <b>{Object.keys(t).join()}</b>;
+          }
+          // The parser inlines a spread object literal that is the only attribute into the props.
+          function OnlySpread({ n }) {
+            return <b {...{ 1e21: n, 1e-7: n }} />;
+          }
+          function SpreadAndAttribute({ n }) {
+            return <b {...{ 1e21: n }} id="a" />;
+          }
+          // The keys that the text of the number would be are other properties.
+          function BesideItsText({ n }) {
+            const t = { "1000000000000000000000": "text", 1e21: n, inf: "text", 1e999: n };
+            return <b>{Object.keys(t).join()}</b>;
+          }
+          function Unchanged({ n }) {
+            const t = { [1e21]: n, "1e21": n, 1e20: n, 1e-6: n, 0x10: n, 1.5: n, 0: n };
+            return <b>{Object.keys(t).join()}</b>;
+          }
+          const children = (Component, props = { n: 1 }) => Component(props).props.children;
+          const attributes = Component => Object.keys(Component({ n: 1 }).props).join();
+          console.log("Keys: " + children(Keys));
+          console.log("Card: " + children(Card));
+          console.log("Lookup: " + children(Lookup, { exp: 1e-9 }));
+          console.log("Pattern: " + children(Pattern));
+          console.log("Parameter: " + children(Parameter, { [1e21]: 1 }));
+          console.log("Rest: " + children(Rest));
+          console.log("Assignment: " + children(Assignment));
+          console.log("Method: " + children(Method));
+          console.log("OnlySpread: " + attributes(OnlySpread));
+          console.log("SpreadAndAttribute: " + attributes(SpreadAndAttribute));
+          console.log("BesideItsText: " + children(BesideItsText));
+          console.log("Unchanged: " + children(Unchanged));
+          console.log("compiled: " + globalThis.caches);
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `exports.createElement = (type, props) => ({ type, props });`,
+        "/node_modules/react/compiler-runtime.js": `
+          globalThis.caches = 0;
+          exports.c = n => (globalThis.caches++, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+        `,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      },
+      reactCompiler: true,
+      backend: minify ? "api" : "cli",
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      minifyIdentifiers: minify,
+      onAfterBundle(api) {
+        // The key is the number that a build without the compiler prints.
+        if (!minify) expect(api.readFile("/out.js")).toContain("1000000000000000000000: n,");
+      },
+      run: {
+        stdout: [
+          "Keys: 1e+21,1.5e+21,1e-7,1e+300,5e-324,Infinity,1795928673356736.2",
+          "Card: 1",
+          "Lookup: nano",
+          "Pattern: 1,1,1",
+          "Parameter: 1",
+          "Rest: 1 other",
+          "Assignment: 1",
+          "Method: 7,id,a-b,1e+21,Infinity,inf",
+          "OnlySpread: 1e+21,1e-7",
+          "SpreadAndAttribute: 1e+21,id",
+          "BesideItsText: 1000000000000000000000,1e+21,inf,Infinity",
+          "Unchanged: 0,16,1e+21,1e21,100000000000000000000,0.000001,1.5",
+          "compiled: 12",
+        ].join("\n"),
+      },
+    });
+  }
+
+  // Each line is the sizes of the caches that a component asks for. A state hook gives back [state, setter]: the setter
+  // under the key 1 is no dependency, as under the index 1, and a component that calls it while it renders is not
+  // compiled. Neither is one that renders what it reads from ref.current, by any key.
+  itBundled("react-compiler/NumericKeyOfAHookResult", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef, useState } from "react";
+        function ByKey({ step }) {
+          const { 0: count, 1: setCount } = useState(0);
+          const onClick = () => setCount(count + step);
+          return <button onClick={onClick}>{count}</button>;
+        }
+        function ByIndex({ step }) {
+          const [count, setCount] = useState(0);
+          const onClick = () => setCount(count + step);
+          return <button onClick={onClick}>{count}</button>;
+        }
+        // A member of the result has no type.
+        function ByMember({ step }) {
+          const state = useState(0);
+          const count = state[0];
+          const setCount = state[1];
+          const onClick = () => setCount(count + step);
+          return <button onClick={onClick}>{count}</button>;
+        }
+        function SetsWhileItRenders() {
+          const { 0: count, 1: setCount } = useState(0);
+          setCount(1);
+          return <b>{count}</b>;
+        }
+        function RefByName() {
+          const ref = useRef({});
+          const { a: x } = ref.current;
+          return <b>{x}</b>;
+        }
+        function RefByIndex() {
+          const ref = useRef({});
+          const { 7: x } = ref.current;
+          return <b>{x}</b>;
+        }
+        function RefByFraction() {
+          const ref = useRef({});
+          const { 1.5: x } = ref.current;
+          return <b>{x}</b>;
+        }
+        function RefByMember() {
+          const ref = useRef({});
+          const x = ref.current[1.5];
+          return <b>{x}</b>;
+        }
+        function NoRef({ value }) {
+          const { 1.5: x } = value;
+          return <b>{x}</b>;
+        }
+        const all = [ByKey, ByIndex, ByMember, SetsWhileItRenders, RefByName, RefByIndex, RefByFraction, RefByMember, NoRef];
+        for (const Component of all) {
+          globalThis.caches = [];
+          Component({ step: 1, value: {} });
+          console.log(Component.name + " " + JSON.stringify(globalThis.caches));
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.useState = value => [value, () => {}];
+        exports.useRef = current => ({ current });
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = n => (globalThis.caches.push(n), new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: {
+      stdout: [
+        "ByKey [6]",
+        "ByIndex [6]",
+        "ByMember [7]",
+        "SetsWhileItRenders []",
+        "RefByName []",
+        "RefByIndex []",
+        "RefByFraction []",
+        "RefByMember []",
+        "NoRef [2]",
+      ].join("\n"),
+    },
+  });
+
   // With `minify: { syntax: true }`, and always at runtime, the parser joins these into one template literal or string
   // before the compiler sees them. The joined text is a rope.
   itBundled("react-compiler/TextJoinedByTheParser", {

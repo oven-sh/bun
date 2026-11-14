@@ -1244,7 +1244,7 @@ impl EventLoop {
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
         match &self.isolated_poster {
-            Some(p) => crate::vm_handle::IsolatedPosterInner::to_js_poster(p),
+            Some(p) => std::sync::Arc::<crate::vm_handle::IsolatedPosterInner>::clone(p),
             None => self.vm_ref().js_poster(),
         }
     }

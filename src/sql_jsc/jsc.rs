@@ -16,7 +16,7 @@
 #![warn(unused_must_use)]
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
@@ -182,20 +182,8 @@ pub struct SqlRuntimeHooks {
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx>,
-    /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
-    /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
-    /// or null when the value contained no TLS config / threw (caller checks
-    /// `global.has_exception()`).
-    pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> *mut c_void,
-    /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
-    pub ssl_config_free: unsafe fn(*mut c_void),
-    /// `SSLConfig::asUSocketsForClientVerification`.
-    pub ssl_config_as_usockets_client:
-        unsafe fn(*const c_void) -> bun_uws::us_bun_socket_context_options_t,
-    /// `SSLConfig.server_name` — null when unset.
-    pub ssl_config_server_name: unsafe fn(*const c_void) -> *const c_char,
-    /// `SSLConfig.reject_unauthorized`.
-    pub ssl_config_reject_unauthorized: unsafe fn(*const c_void) -> i32,
+    /// `SSLConfig::fromJS` — parse a JS TLS-options object. `None` if it held no TLS config, or threw.
+    pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> Option<Box<bun_http::SSLConfig>>,
 }
 
 unsafe extern "Rust" {
@@ -328,87 +316,51 @@ pub(crate) trait AutoFlush: Sized {
     }
 }
 
-// The full `SSLConfig` is high-tier (it pulls in `node::fs` / `webcore::Blob`), so it lives in
-// `bun_runtime`. This side owns a pointer to it and reads what SQL needs through the hooks.
 pub mod api {
     use super::*;
     pub mod server_config {
         use super::*;
 
-        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
-        /// the default-constructed config — callers that pass
-        /// `tls: true` get an SSLConfig with no overrides.
+        /// `None`: no TLS options were given.
         #[derive(Default)]
-        pub struct SSLConfig(Option<NonNull<c_void>>);
-
-        impl Drop for SSLConfig {
-            fn drop(&mut self) {
-                if let Some(p) = self.0.take() {
-                    // SAFETY: `p` was returned by `ssl_config_from_js` and not
-                    // yet freed (Option::take guarantees single drop).
-                    unsafe { (hooks().ssl_config_free)(p.as_ptr()) }
-                }
-            }
-        }
+        pub struct SSLConfig(Option<Box<bun_http::SSLConfig>>);
 
         impl SSLConfig {
-            /// `SSLConfig.server_name` — the SNI hostname C string, or null
-            /// when unset / default.
+            /// The SNI hostname.
             #[inline]
-            pub(crate) fn server_name(&self) -> *const c_char {
-                match self.0 {
-                    None => core::ptr::null(),
-                    // SAFETY: live boxed SSLConfig; hook returns a borrow into
-                    // its `Option<CString>` field, valid for `self`'s lifetime.
-                    Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
-                }
+            fn server_name(&self) -> Option<&core::ffi::CStr> {
+                self.0.as_ref()?.server_name_cstr()
             }
 
             /// [`server_name`](Self::server_name) as the name a certificate carries: an IPv6 literal without its brackets. Empty when unset.
             pub(crate) fn server_name_bytes(&self) -> &[u8] {
-                let server_name = self.server_name();
-                if server_name.is_null() {
-                    return b"";
-                }
-                // SAFETY: NUL-terminated C string that the boxed SSLConfig owns.
-                let name = unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes();
+                let name = self.server_name().unwrap_or_default().to_bytes();
                 bun_core::ip_address::strip_ipv6_brackets(name)
             }
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {
-                match self.0 {
-                    None => 0,
-                    // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
-                }
+                self.0
+                    .as_ref()
+                    .map_or(0, |config| config.reject_unauthorized)
             }
 
             /// `server_name` as SNI. `None` when unset or an IP literal, bracketed or not (RFC 6066 section 3).
             pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
-                let server_name = self.server_name();
-                if server_name.is_null() {
-                    return None;
-                }
-                // SAFETY: NUL-terminated C string owned by the boxed SSLConfig
-                // for `self`'s lifetime.
-                let name = unsafe { bun_core::ffi::cstr(server_name) };
+                let name = self.server_name()?;
                 let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
                 let bracketed = bare.len() != name.to_bytes().len();
                 (!bracketed && !bun_core::ip_address::is_ip_host(bare)).then_some(name)
             }
 
-            pub(crate) fn from_js(
-                global: &JSGlobalObject,
-                value: JSValue,
-            ) -> JsResult<Option<Self>> {
-                let p = (hooks().ssl_config_from_js)(global, value);
+            pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+                let config = (hooks().ssl_config_from_js)(global, value);
                 if global.has_exception() {
-                    debug_assert!(p.is_null());
+                    debug_assert!(config.is_none());
                     return Err(JsError::Thrown);
                 }
-                Ok(NonNull::new(p).map(|p| Self(Some(p))))
+                Ok(Self(config))
             }
 
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
@@ -418,14 +370,13 @@ pub mod api {
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
             ) -> bun_uws::us_bun_socket_context_options_t {
-                match self.0 {
+                match &self.0 {
                     None => bun_uws::us_bun_socket_context_options_t {
                         request_cert: 1,
                         reject_unauthorized: 0,
                         ..Default::default()
                     },
-                    // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
+                    Some(config) => config.as_usockets_for_client_verification(),
                 }
             }
         }

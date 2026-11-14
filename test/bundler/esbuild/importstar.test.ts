@@ -459,7 +459,7 @@ describe.concurrent("bundler", () => {
     },
     runtimeFiles: {
       "/test.js": /* js */ `
-        import {x, y} from './entry.js'
+        import {x, y} from './out.js'
         import assert from 'assert'
         assert.strictEqual(x, 1)
         assert.strictEqual(y, 2)

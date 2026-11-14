@@ -300,4 +300,24 @@ new TextEncoder().encodeInto("hello");
 // @ts-expect-error - encodeInto throws ERR_MISSING_ARGS without arguments
 new TextEncoder().encodeInto();
 
+// The runtime ignores ASCII case and removes ASCII whitespace from both ends of a label.
+new TextDecoder("UTF-8");
+new TextDecoder(" utf-8 ");
+new TextDecoder("Shift_JIS", { fatal: true });
+new TextDecoderStream("LATIN1");
+
+function decoderFor<E extends Bun.Encoding>(encoding: E) {
+  return new TextDecoder(encoding);
+}
+decoderFor("utf-16le");
+
+function streamFor<E extends Bun.Encoding>(encoding: E) {
+  return new TextDecoderStream(encoding);
+}
+streamFor("utf-16le");
+
+// A subclass is assignable to the type of its base class.
+export const DecoderClass: typeof TextDecoder = class extends TextDecoder {};
+export const StreamClass: typeof TextDecoderStream = class extends TextDecoderStream {};
+
 export {};

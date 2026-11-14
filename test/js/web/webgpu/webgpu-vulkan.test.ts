@@ -1,3 +1,4 @@
+// Runs alone: it judges by how long memory has not been used.
 import { beforeAll, describe, expect, test } from "bun:test";
 import { compileFixture, isLinux, isMusl } from "harness";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
@@ -39,7 +40,7 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
     }
     ${uploads}`;
   const withGC = { BUN_JSC_useGC: "1" };
-  const reasonOfLoss = expect.stringContaining("VK_ERROR_DEVICE_LOST");
+  const reasonOfLoss = expect.stringMatching(/^.* VK_ERROR_DEVICE_LOST\n( .*\n)*\n$/);
   const runWithDevice = (script: string, options = {}, args?: string[]) =>
     run({ "index.js": `${prelude} const device = await requestDevice(); ${script}` }, args, {
       ...env,
@@ -253,27 +254,31 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
     ["Dawn submits", 6, "upload(4)"],
     ["the script submits", 6, "upload(3), queue.submit([])"],
     ["the script waits for", 6, "upload(3), await finish()"],
-    ["differ in size", 6, "uploadTexel(), await finish(), upload(1), await finish()"],
+    ["differ in size", 6, "uploadRows(1), await finish(), upload(1), await finish()"],
+    ["grow", 20, "uploadRows(600 + i * 20), await finish()"],
     // An idle device is looked at after 500 ms.
     ["pauses follow", 14, "upload(2), await finish(), await Bun.sleep(50)"],
   ])("has its staging buffers used again in a loop of uploads that %s", async (_, rounds, round) => {
     const script = `
       const { queue } = device;
       const upload = prepareUploads(device);
-      const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
-      const uploadTexel = () => queue.writeTexture({ texture }, pixels, {}, [1]);
+      const texture = device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
+      const uploadRows = rows => queue.writeTexture({ texture }, pixels, { bytesPerRow: 4096 }, [1024, rows]);
       const finish = () => (queue.submit([]), queue.onSubmittedWorkDone());
       for (let i = 0; i < 2; i++) driver.findNotReady(0), queue.submit([]);
-      const [blocks, frees] = [driver.memoryBlocks(), driver.frees()];
-      let longest = 0;
-      for (let i = 0; i < ${rounds}; i++) {
-        const start = performance.now();
-        driver.findNotReady(0), ${round};
-        longest = Math.max(longest, performance.now() - start);
-      }
-      // One can sit out a round, and is kept for 500 ms.
-      console.log(driver.memoryBlocks() - blocks < 8, driver.frees() === frees || longest > 250);`;
-    expect(await runWithDevice(script)).toEqual(printed("true true"));
+      const blocks = driver.memoryBlocks();
+      let frees, longest, attempts = 0;
+      do {
+        [frees, longest] = [driver.frees(), 0];
+        for (let i = 0; i < ${rounds}; i++) {
+          const start = performance.now();
+          driver.findNotReady(0), ${round};
+          longest = Math.max(longest, performance.now() - start);
+        }
+        // One can sit out a round, and is kept for 500 ms.
+      } while (driver.frees() > frees && longest > 250 && ++attempts < 5);
+      console.log(driver.memoryBlocks() - blocks < 8, driver.frees() - frees);`;
+    expect(await runWithDevice(script)).toEqual(printed("true 0"));
   });
 
   test.each([
@@ -442,10 +447,10 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
         await pause();
         const before = driver.looks();
         await pause();
-        console.log(driver.looks() - before < 2, (${wait}) !== false, driver.waits());
+        console.log(driver.looks() - before < 2, driver.waits(), (${wait}) !== false);
         driver.failThreads(0);
         clearTimeout(timer);`;
-      expect(await runWithDevice(script, withoutThreads)).toEqual({ ...printed("true true 0"), stderr });
+      expect(await runWithDevice(script, withoutThreads)).toEqual({ ...printed("true 0 true"), stderr });
     });
   });
 

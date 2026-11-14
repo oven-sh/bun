@@ -33,7 +33,7 @@ https://crbug.com/42240396
  }
  
  void DynamicUploader::Deallocate(ExecutionSerial lastCompletedSerial, bool freeAll) {
-@@ -168,14 +171,18 @@
+@@ -168,14 +171,20 @@
  
      // Reclaim memory within the ring buffers by ticking (or removing requests no longer
      // in-flight).
@@ -50,6 +50,8 @@ https://crbug.com/42240396
 +        ringBuffer.mAllocator.Deallocate(lastCompletedSerial);
 +        if (ringBuffer.mAllocator.Empty() && !ringBuffer.mEmptySince) {
 +            ringBuffer.mEmptySince = now;
++            // From the start, where the most fits.
++            ringBuffer.mAllocator = RingBufferAllocator(kRingBufferSize);
 +        }
 +
 +        const bool isOld = now - ringBuffer.mEmptySince.value_or(now) > kTimeToKeepRingBuffers;

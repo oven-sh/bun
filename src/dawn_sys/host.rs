@@ -132,7 +132,7 @@ unsafe extern "C" {
     safe fn BunDawn__createQueueWatcher(device: &Device) -> NonNull<QueueWatcher>;
     fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>, serial: Serial) -> bool;
     fn BunDawn__freeMemory(watcher: NonNull<QueueWatcher>, moment: Moment) -> bool;
-    safe fn BunDawn__willReleaseBuffer(buffer: &Buffer);
+    safe fn BunDawn__willReleaseMappableBuffer(buffer: &Buffer);
     safe fn BunDawn__serialOfLastUse(buffer: &Buffer) -> Serial;
     safe fn BunDawn__serialOfScheduledWork(queue: &Queue) -> Serial;
     fn BunDawn__destroyDevice(device: &Device, watcher: NonNull<QueueWatcher>);
@@ -409,8 +409,8 @@ impl Buffer {
         BunDawn__bufferMemorySize(self)
     }
 
-    pub fn will_be_released(&self) {
-        BunDawn__willReleaseBuffer(self);
+    pub fn will_release_mappable(&self) {
+        BunDawn__willReleaseMappableBuffer(self);
     }
 
     /// What the last `map_async` waits for.

@@ -53,10 +53,12 @@ bool QueueWatcher::arm(ExecutionSerial serial)
     ExecutionSerial completed = queue->GetCompletedCommandSerial();
     const bool nothingWaits = serial == kMaxExecutionSerial;
 
-    // Another thread found the device lost, and the next tick reports it.
+    // Another thread found the device lost. A tick reports it, ahead of the results that follow from it.
     DeviceBase::State state = m_device->GetState();
-    if (state == DeviceBase::State::Disconnecting)
+    if (state == DeviceBase::State::Disconnecting) {
+        m_device->APITick();
         return false;
+    }
     if (state != DeviceBase::State::Alive || submitted <= completed)
         return nothingWaits;
 
@@ -238,12 +240,11 @@ extern "C" bool BunDawn__freeMemory(QueueWatcher* watcher, Moment moment)
     return watcher->freeMemory(moment);
 }
 
-// With Vulkan, commands that have yet to be submitted hold the buffers that can be mapped.
-extern "C" void BunDawn__willReleaseBuffer(WGPUBuffer handle)
+// With Vulkan, commands that have yet to be submitted hold it.
+extern "C" void BunDawn__willReleaseMappableBuffer(WGPUBuffer buffer)
 {
-    BufferBase* buffer = FromAPI(handle);
-    QueueBase* queue = buffer->GetDevice()->GetQueue();
-    if (buffer->GetLastUsageSerial() > queue->GetLastSubmittedCommandSerial() && (buffer->GetInternalUsage() & kMappableBufferUsages))
+    QueueBase* queue = FromAPI(buffer)->GetDevice()->GetQueue();
+    if (FromAPI(buffer)->GetLastUsageSerial() > queue->GetLastSubmittedCommandSerial())
         queue->AwaitRecordedCommands();
 }
 

@@ -62,7 +62,7 @@ https://crbug.com/398193014
          mRingBuffers.emplace_back(std::unique_ptr<RingBuffer>(
              new RingBuffer{nullptr, RingBufferAllocator(kRingBufferSize)}));
  
-@@ -188,6 +189,10 @@
+@@ -190,6 +191,10 @@
              i++;
          }
      }

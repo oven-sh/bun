@@ -92,7 +92,9 @@ pub(crate) struct Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.handle.will_be_released();
+        if self.usage & (USAGE_MAP_READ | USAGE_MAP_WRITE) != 0 {
+            self.handle.will_release_mappable();
+        }
     }
 }
 

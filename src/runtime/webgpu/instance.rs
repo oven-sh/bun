@@ -210,6 +210,7 @@ impl Origin {
         }
     }
 
+    /// For who has no object to hold.
     pub(super) fn in_main_realm(self) -> Self {
         Self {
             global: GlobalRef::new(VirtualMachine::get().global()),
@@ -236,7 +237,7 @@ impl Operation {
         }
     }
 
-    /// `completion` runs in a task of its own. It holds an object of the realm it is handed.
+    /// `completion` runs in a task of its own. It keeps the realm of its [`Origin`] alive.
     pub(super) fn complete(
         self,
         completion: impl FnOnce(&JSGlobalObject) -> JsResult<()> + 'static,

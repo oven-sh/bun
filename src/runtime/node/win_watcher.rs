@@ -38,8 +38,7 @@ pub(crate) static fs_watch: bun_output::ScopedLogger =
 // PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
 // `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
 // (each Worker is its own OS thread + VM), so an unguarded read+write
-// would be a data race. Mirror the posix
-// `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
+// would be a data race. Every `DEFAULT_MANAGER` access holds the mutex.
 // `AtomicCell<*mut _>` (Acquire/Release on the pointer word) means even an
 // unsynchronized racing reader observes either null or a fully-published
 // pointer — and lets every load/store be safe code (`RacyCell` required an
@@ -141,6 +140,8 @@ impl PathWatcherManager {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+
+pub(crate) type Handle = *mut PathWatcher;
 
 pub(crate) struct PathWatcher {
     handle: uv::uv_fs_event_t,
@@ -438,10 +439,8 @@ impl PathWatcher {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
-    /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
-    /// caller in `node_fs_watcher.rs` is platform-agnostic.
-    pub(crate) fn detach(this: *mut PathWatcher, handler: *mut c_void) {
+    /// JS-thread entry point from `FSWatcher.detach()`.
+    pub(crate) fn detach(this: Handle, handler: *mut c_void) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let removed = unsafe { &*this }
@@ -511,7 +510,7 @@ pub(crate) fn watch(
     path: &ZStr,
     recursive: bool,
     ctx: *mut c_void,
-) -> sys::Result<*mut PathWatcher> {
+) -> sys::Result<Handle> {
     // DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX
     // (see static decl). The guard covers the whole registration — not just the
     // slot load — because `PathWatcher::init` below mutates the manager's

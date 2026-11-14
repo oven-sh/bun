@@ -21,9 +21,6 @@ use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
-#[cfg(unix)]
-use super::SizeType;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical data types from `bun_jsc`.
 // ──────────────────────────────────────────────────────────────────────────
@@ -51,10 +48,6 @@ pub(crate) trait StoreExt {
         pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
     ) -> Result<RefPtr<Store>, crate::Error>
-    where
-        Self: Sized;
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> RefPtr<Store>
     where
         Self: Sized;
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
@@ -88,14 +81,6 @@ pub(crate) trait FileExt {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
 }
 
-pub(crate) trait BytesExt {
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> Bytes
-    where
-        Self: Sized;
-    fn to_internal_blob(&mut self) -> super::Internal;
-}
-
 /// Shared mime-sniffing fallback for the `init_*` constructors below: derive a
 /// `MimeType` from the path's extension, returning `None` for empty paths or
 /// unknown extensions.
@@ -113,7 +98,7 @@ impl StoreExt for Store {
     fn to_any_blob(&mut self) -> Option<super::Any> {
         if self.has_one_ref() {
             if let Data::Bytes(bytes) = &mut self.data {
-                return Some(super::Any::InternalBlob(bytes.to_internal_blob()));
+                return Some(super::Any::from_owned_slice(bytes.take_vec()));
             }
         }
 
@@ -156,18 +141,6 @@ impl StoreExt for Store {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),
         }))
-    }
-
-    /// Adopt an mmap'd region — no copy. The store's `Bytes` payload owns the
-    /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> RefPtr<Store> {
-        RefPtr::new(Store {
-            data: Data::Bytes(Bytes::init_mmap(slice)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        })
     }
 
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
@@ -407,73 +380,6 @@ impl S3Ext for S3 {
         )?;
 
         Ok(value)
-    }
-}
-
-impl BytesExt for Bytes {
-    /// Adopt an mmap'd region. `Drop` (`allocator.free`) will `munmap` it.
-    #[cfg(unix)]
-    fn init_mmap(slice: &'static mut [u8]) -> Bytes {
-        // Stateless allocator vtable whose `free` munmap's. Same pattern as
-        // `LinuxMemFdAllocator` but without the stateful fd. Body is fully
-        // safe (`bun_sys::munmap` is a safe wrapper); the safe fn item coerces
-        // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
-        fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-            if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
-                bun_core::debug_warn!("Blob mmap-store munmap failed: {:?}", err);
-            }
-        }
-        static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable =
-            bun_alloc::AllocatorVTable::free_only(free);
-        // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
-        // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
-        // exactly the same range.
-        unsafe {
-            Bytes::from_raw_parts(
-                slice.as_mut_ptr(),
-                slice.len() as SizeType,
-                slice.len() as SizeType,
-                bun_alloc::StdAllocator {
-                    ptr: core::ptr::null_mut(),
-                    vtable: &MMAP_FREE_VTABLE,
-                },
-            )
-        }
-    }
-
-    fn to_internal_blob(&mut self) -> super::Internal {
-        // `Internal.bytes` is `Vec<u8>` (global allocator), so
-        // round-trip only when the storage *is* the global allocator; otherwise
-        // copy + free through the original allocator (e.g. memfd → munmap).
-        let bytes = if self.ptr.is_none() {
-            Vec::new()
-        } else if core::ptr::eq(
-            std::ptr::from_ref(self.allocator.vtable),
-            std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),
-        ) {
-            let len = self.len as usize;
-            let cap = self.cap as usize;
-            let ptr = self.ptr.take().unwrap();
-            // SAFETY: `init(Vec<u8>)` is the only path that stores
-            // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`
-            // from `Vec::into_raw_parts`-equivalent decomposition.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
-        } else {
-            // Non-global allocator (e.g. memfd → munmap): copy through the
-            // safe `Bytes::slice()` accessor, then free via the owning vtable
-            // — same path `Bytes::drop` takes (`allocator.free(allocated_slice())`).
-            let copy = self.slice().to_vec();
-            self.allocator.free(self.allocated_slice());
-            self.ptr = None;
-            copy
-        };
-        self.len = 0;
-        self.cap = 0;
-        self.allocator = bun_alloc::basic::C_ALLOCATOR;
-        super::Internal {
-            bytes,
-            was_string: false,
-        }
     }
 }
 

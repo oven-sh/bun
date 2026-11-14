@@ -1779,7 +1779,7 @@ impl PipelineTask {
                         },
                     )?,
                     Deliver::Blob => {
-                        // Blob.Store frees via an Allocator; dupe for that path.
+                        // Blob.Store owns a `Vec`; dupe for that path.
                         let owned = out_slice.to_vec();
                         drop(mem::ManuallyDrop::into_inner(out));
                         let blob = Blob::init(owned, global);

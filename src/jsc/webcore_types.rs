@@ -631,120 +631,106 @@ pub mod store {
     // Bytes
     // ────────────────────────────────────────────────────────────────────
 
-    /// Kept as `(ptr,len,cap,allocator)`
-    /// rather than `Vec<u8>` so the memfd-backed path
-    /// (`LinuxMemFdAllocator::create` → `mmap`'d region freed via `munmap`)
-    /// can carry its allocator vtable with the buffer.
     pub struct Bytes {
-        pub ptr: Option<NonNull<u8>>,
-        pub len: SizeType,
-        pub cap: SizeType,
-        pub allocator: bun_alloc::StdAllocator,
+        storage: Storage,
+        /// What `Storage::Mapped` maps, if it can be mapped again for a copy-on-write clone.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        memfd: Option<bun_sys::File>,
         /// Used by standalone module graph and the `File` constructor.
-        /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
         pub stored_name: Box<[u8]>,
     }
 
-    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw
-    // `NonNull<u8>` is uniquely owned (`ptr` is the sole alias) and
-    // `StdAllocator` is `Send + Sync`.
-    unsafe impl Send for Bytes {}
-    // SAFETY: `&Bytes` only reads the uniquely-owned slice via `slice()`; no
-    // interior mutability, so sharing references across threads is sound.
-    unsafe impl Sync for Bytes {}
+    enum Storage {
+        Heap(Vec<u8>),
+        Static(&'static [u8]),
+        #[cfg(unix)]
+        Mapped(Mapping),
+    }
+
+    /// An `mmap` region.
+    #[cfg(unix)]
+    struct Mapping(*mut [u8]);
+
+    #[cfg(unix)]
+    impl Drop for Mapping {
+        fn drop(&mut self) {
+            if let Err(err) = bun_sys::munmap(self.0.cast(), self.0.len()) {
+                bun_core::debug_warn!("Blob store munmap failed: {:?}", err);
+            }
+        }
+    }
 
     impl Bytes {
-        /// Takes ownership of `bytes` (allocated by the global mimalloc allocator).
+        fn new(storage: Storage) -> Bytes {
+            Bytes {
+                storage,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                memfd: None,
+                stored_name: Box::default(),
+            }
+        }
+
         pub fn init(bytes: Vec<u8>) -> Bytes {
-            let mut v = core::mem::ManuallyDrop::new(bytes);
-            let len = v.len();
-            let cap = v.capacity();
+            Self::new(Storage::Heap(bytes))
+        }
+
+        pub fn init_static(bytes: &'static [u8]) -> Bytes {
+            Self::new(Storage::Static(bytes))
+        }
+
+        /// SAFETY: `mapping` is a whole read-write `mmap` region, and nothing else unmaps it.
+        #[cfg(unix)]
+        pub unsafe fn from_mapping(mapping: *mut [u8]) -> Bytes {
+            Self::new(Storage::Mapped(Mapping(mapping)))
+        }
+
+        /// SAFETY: as [`Self::from_mapping`], and `mapping` maps `memfd` from its start.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub unsafe fn from_memfd_mapping(mapping: *mut [u8], memfd: bun_sys::File) -> Bytes {
             Bytes {
-                ptr: NonNull::new(v.as_mut_ptr()),
-                // We keep
-                // the real `cap` so `to_internal_blob` can soundly
-                // `Vec::from_raw_parts`.
-                len: len as SizeType,
-                cap: cap as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
+                memfd: Some(memfd),
+                ..Self::new(Storage::Mapped(Mapping(mapping)))
             }
         }
 
-        /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.
-        ///
-        /// # Safety
-        /// `ptr[..cap]` must be a live allocation owned by `allocator`'s vtable
-        /// and `len <= cap`. Ownership transfers to the returned `Bytes`.
-        pub unsafe fn from_raw_parts(
-            ptr: *mut u8,
-            len: SizeType,
-            cap: SizeType,
-            allocator: bun_alloc::StdAllocator,
-        ) -> Bytes {
-            Bytes {
-                ptr: NonNull::new(ptr),
-                len,
-                cap,
-                allocator,
-                stored_name: Box::default(),
-            }
-        }
-
-        #[inline]
-        pub fn allocator(&self) -> bun_alloc::StdAllocator {
-            self.allocator
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn memfd(&self) -> Option<bun_sys::Fd> {
+            self.memfd.as_ref().map(|file| file.handle)
         }
 
         #[inline]
         pub fn len(&self) -> SizeType {
-            self.len
+            self.slice().len() as SizeType
         }
 
         pub fn slice(&self) -> &[u8] {
-            match self.ptr {
-                // SAFETY: `ptr[..len]` is a live initialized region
-                // (init/from_raw_parts contract).
-                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
-                None => &[],
+            match &self.storage {
+                Storage::Heap(bytes) => bytes,
+                Storage::Static(bytes) => bytes,
+                // SAFETY: mapped until it is dropped.
+                #[cfg(unix)]
+                Storage::Mapped(mapping) => unsafe { &*mapping.0 },
             }
         }
 
-        pub fn allocated_slice(&self) -> &[u8] {
-            match self.ptr {
-                // SAFETY: `ptr[..cap]` is the full allocation; bytes in
-                // `[len..cap]` may be uninitialized.
-                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
-                None => &[],
+        /// The bytes of [`Self::init_static`] must not be written to.
+        pub fn as_mut_ptr(&mut self) -> *mut [u8] {
+            match &mut self.storage {
+                Storage::Heap(bytes) => {
+                    core::ptr::slice_from_raw_parts_mut(bytes.as_mut_ptr(), bytes.len())
+                }
+                Storage::Static(bytes) => core::ptr::from_ref(*bytes).cast_mut(),
+                #[cfg(unix)]
+                Storage::Mapped(mapping) => mapping.0,
             }
         }
 
-        pub fn as_array_list(&mut self) -> &mut [u8] {
-            self.as_array_list_leak()
-        }
-
-        pub fn as_array_list_leak(&mut self) -> &mut [u8] {
-            match self.ptr {
-                // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
-                Some(p) => unsafe {
-                    core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
-                },
-                None => &mut [],
+        /// Moves the bytes out if they are on the heap, and copies them otherwise.
+        pub fn take_vec(&mut self) -> Vec<u8> {
+            match &mut self.storage {
+                Storage::Heap(bytes) => core::mem::take(bytes),
+                _ => self.slice().to_vec(),
             }
-        }
-    }
-
-    impl Drop for Bytes {
-        fn drop(&mut self) {
-            // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
-            // only the custom-allocator buffer needs an explicit free here.
-            // Route through the existing accessor instead of re-deriving the
-            // slice from raw parts here: `allocated_slice` already encapsulates
-            // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
-            // case), and `StdAllocator::free` is `raw_free` with byte alignment
-            // plus an empty-slice early-out — identical to the previous
-            // open-coded `raw_free(.., Alignment::of::<u8>(), 0)`.
-            self.allocator.free(self.allocated_slice());
         }
     }
 

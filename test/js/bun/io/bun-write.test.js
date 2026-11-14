@@ -14,6 +14,7 @@ import {
 } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import { totalmem } from "node:os";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
@@ -1783,4 +1784,60 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+});
+
+// On Windows the length of one write request is 32 bits. Bun.write stored the
+// length of what was left to write in it with no bound, so with 2^32 bytes left
+// every request had a length of 0 and the promise never settled. The write
+// happens in a child, which holds the 4 GiB and is killed if it does not finish.
+describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("Bun.write of 2^32 bytes", () => {
+  it("writes every byte and resolves to the byte count", async () => {
+    using dir = tempDir("bun-write-4gib", {});
+    const file = join(String(dir), "out.bin");
+    // [offset, value]: both ends and the middle.
+    const marks = [
+      [0, 1],
+      [2 ** 31 - 1, 2],
+      [2 ** 31, 3],
+      [2 ** 32 - 1, 4],
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const bytes = new Uint8Array(2 ** 32);
+        for (const [at, value] of JSON.parse(process.env.MARKS)) bytes[at] = value;
+        console.log(JSON.stringify({ written: await Bun.write(process.env.OUT, bytes) }));
+        `,
+      ],
+      env: { ...bunEnv, OUT: file, MARKS: JSON.stringify(marks) },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 120_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const seen = [];
+    const fd = fs.openSync(file, "r");
+    try {
+      const byte = new Uint8Array(1);
+      for (const [at] of marks) seen.push(fs.readSync(fd, byte, 0, 1, at) === 1 ? byte[0] : -1);
+    } finally {
+      fs.closeSync(fd);
+    }
+    expect({
+      result: JSON.parse(stdout.trim() || "null"),
+      stderr,
+      exitCode,
+      size: fs.statSync(file).size,
+      seen,
+    }).toEqual({
+      result: { written: 2 ** 32 },
+      stderr: "",
+      exitCode: 0,
+      size: 2 ** 32,
+      seen: marks.map(([, value]) => value),
+    });
+  }, 180_000);
 });

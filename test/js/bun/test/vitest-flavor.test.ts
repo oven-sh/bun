@@ -5077,6 +5077,117 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
+  // Bun prints a `/*!` or `//!` comment after the statement it is in, so the text of an arrow function that Bun printed
+  // never holds one. Text that Bun does not print does: what eval() is given, and a file that starts with `// @bun`.
+  test.each([
+    ["/* c */", "// c"],
+    ["/*! c */", "//! c"],
+  ])("a callback whose text holds %s or %s is read like one with no comment", async (block, line) => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, describe } from "vitest";
+        const test = base.extend({ a: async ({}, use) => use("A"), perFile: [async ({}, use) => use("F"), { scope: "file" }] });
+        const made = text => (0, eval)(text);
+        describe("an object pattern", () => {
+          test("test, list, block", made("(${block} { a }) => console.log('test, list, block:', a)"));
+          test("test, list, line", made("(${line}\\n { a }) => console.log('test, list, line:', a)"));
+          test("test, body, block", made("({ a }) => ${block} console.log('test, body, block:', a)"));
+          test("test, body, line", made("({ a }) => ${line}\\n console.log('test, body, line:', a)"));
+          test.for([1])("test.for", made("(row, ${block} { a }) => console.log('test.for:', a)"));
+          test.extend({ b: made("async ({ a }, ${block} use) => use(a + 'B')") })("extend", ({ b }) => console.log("extend:", b));
+          class Holder {
+            #secret = "private";
+            arrow() { return eval("({ a }) => ${block} console.log('class:', a, this.#secret)"); }
+          }
+          test("class", new Holder().arrow());
+          describe("hooks", () => {
+            test.beforeAll(made("({ perFile }) => ${block} console.log('beforeAll:', perFile)"));
+            test.aroundAll(made("(runSuite, ${block} { perFile }) => (console.log('aroundAll:', perFile), runSuite())"));
+            test.aroundEach(made("(runTest, ${block} { a }) => (console.log('aroundEach:', a), runTest())"));
+            test.beforeEach(made("({ a }) => ${block} console.log('beforeEach:', a)"));
+            test.afterEach(made("({ a }) => ${block} console.log('afterEach:', a)"));
+            test.afterAll(made("({ perFile }) => ${block} console.log('afterAll:', perFile)"));
+            test("test", () => {});
+          });
+        });
+        describe("not a pattern", () => {
+          test("test, block", made("(${block} context) => 1"));
+          test("test, line", made("(${line}\\n context) => 1"));
+          test.for([1])("test.for", made("(row, ${block} context) => 1"));
+          describe("aroundEach", () => {
+            test.aroundEach(made("(${block} runTest, context) => runTest()"));
+            test("test", () => {});
+          });
+          describe("beforeAll", () => {
+            test.beforeAll(made("(${block} suite) => 1"));
+            test("test", () => {});
+          });
+          describe("aroundAll", () => {
+            test.aroundAll(made("(runSuite, ${block} suite) => runSuite()"));
+            test("test", () => {});
+          });
+          try { test.extend({ x: made("async (${block} context, use) => use(1)") }); } catch (error) { console.log("extend():", error.message); }
+        });
+      `,
+      "b.test.js": `// @bun
+        import { test as base } from "vitest";
+        const test = base.extend({ a: async ({}, use) => use("A") });
+        test("not printed by Bun, an object pattern", ({ a }) => ${block} console.log("not printed by Bun:", a));
+        test("not printed by Bun, not a pattern", (${line}
+          context) => 1);
+      `,
+    });
+    const why = "fixtures are chosen by the properties it destructures";
+    const notAPattern = `to be an object destructuring pattern, received "context": ${why}`;
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        `extend(): test.extend(): the first parameter of fixture "x" must be an object destructuring pattern, received "context"`,
+        "test, list, block: A",
+        "test, list, line: A",
+        "test, body, block: A",
+        "test, body, line: A",
+        "test.for: A",
+        "extend: AB",
+        "class: A private",
+        "aroundAll: F",
+        "beforeAll: F",
+        "aroundEach: A",
+        "beforeEach: A",
+        "afterEach: A",
+        "afterAll: F",
+        "not printed by Bun: A",
+      ],
+      results: [
+        "(pass) an object pattern > test, list, block",
+        "(pass) an object pattern > test, list, line",
+        "(pass) an object pattern > test, body, block",
+        "(pass) an object pattern > test, body, line",
+        "(pass) an object pattern > test.for",
+        "(pass) an object pattern > extend",
+        "(pass) an object pattern > class",
+        "(pass) an object pattern > hooks > test",
+        "(fail) not a pattern > test, block",
+        "(fail) not a pattern > test, line",
+        "(fail) not a pattern > test.for",
+        "(fail) not a pattern > aroundEach > test",
+        "(fail) not a pattern > beforeAll > (unnamed)",
+        "(fail) not a pattern > aroundAll > (unnamed)",
+        "(pass) not printed by Bun, an object pattern",
+        "(fail) not printed by Bun, not a pattern",
+      ],
+      errors: [
+        `error: test() expects the first parameter of its callback ${notAPattern}`,
+        `error: test() expects the first parameter of its callback ${notAPattern}`,
+        `error: test.for() expects the second parameter of its callback ${notAPattern}`,
+        `error: The parameter that fixtures are destructured from must be an object destructuring pattern, received "context"`,
+        `error: beforeAll() expects the first parameter of its callback to be an object destructuring pattern, received "suite". The suite is the second argument: beforeAll(({}, suite) => {})`,
+        `error: aroundAll() expects the second parameter of its callback to be an object destructuring pattern, received "suite". The suite is the third argument: aroundAll((runSuite, {}, suite) => {})`,
+        `error: test() expects the first parameter of its callback ${notAPattern}`,
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("a fixture can be named like an array index", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

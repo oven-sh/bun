@@ -1424,6 +1424,7 @@ impl<'a> Transpiler<'a> {
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
                     keep_directives: false,
+                    keep_legal_comments: true,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,

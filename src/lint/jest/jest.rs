@@ -22,7 +22,9 @@ use bun_lint_oxlint::ast_util::{
 };
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint_oxlint::hash_order::UnresolvedOrder;
-use bun_lint_oxlint::import::{common_js_require, import_entries};
+use bun_lint_oxlint::import::{
+    common_js_require, import_entries, is_require_call, is_type_export_declaration,
+};
 use bun_lint_oxlint::regex_flags::rust_regex;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -118,6 +120,20 @@ impl<'a> Ctx<'a, '_> {
             Declaration::Var(_) => is_required(),
             _ => false,
         })
+    }
+
+    /// Attaches `fix`, which writes `name` at `at` for the runner's function, if [`Self::can_write`] allows it. Only `--fix-dangerously` applies it where `name` doesn't [have its value](has_value) yet.
+    pub(crate) fn fix_writing(
+        &self,
+        report: Report<'a>,
+        name: &[u8],
+        at: Expr<'a>,
+        fix: impl FnOnce(Fixer<'a>) -> Fix,
+    ) -> Report<'a> {
+        report.fix_where_safe(
+            || has_value(name, at),
+            |fixer| self.can_write(name, at).then(|| fix(fixer)),
+        )
     }
 
     /// True if a fix may change a title. A snapshot stored in a separate file is looked up by the titles.
@@ -304,6 +320,12 @@ struct PerFile {
     is_bun: bool,
     /// The IDs of the identifiers named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
     named_like_jest: OnceCell<Vec<u32>>,
+    /// [`top_end`]
+    top_end: OnceCell<u32>,
+    /// [`opens_early`]
+    opens_early: OnceCell<bool>,
+    /// [`assigns_to_global`]: true if the file assigns to any name that it doesn't declare.
+    writes_globals: OnceCell<bool>,
     /// One for the `jest` and `vitest` rules, and one for the `bun:test` rules.
     per_runner: [PerRunner; 2],
 }
@@ -401,6 +423,9 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
             is_vitest: imports(is_vitest_import_source),
             is_bun: file.mentions_bit(const { mention_bit(BUN_TEST) }) && imports_bun_test(file),
             named_like_jest: OnceCell::new(),
+            top_end: OnceCell::new(),
+            opens_early: OnceCell::new(),
+            writes_globals: OnceCell::new(),
             per_runner: Default::default(),
         }
     })
@@ -419,6 +444,175 @@ fn require_binding(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
         _ => None,
     };
     Some((declarator.pat(), static_string(source?)?))
+}
+
+/// True for `require("a")`, for `await import("a")` and for a member of one of them: `require("a").b`.
+fn is_plain_require(mut value: Expr<'_>) -> bool {
+    while let ExprKind::Dot { obj, .. } = value.kind() {
+        value = obj;
+    }
+    let is_text = |it: Expr<'_>| match it.kind() {
+        ExprKind::String(_) => true,
+        ExprKind::Template(template) => template.exprs().is_empty(),
+        _ => false,
+    };
+    match value.kind() {
+        ExprKind::Call(call) => is_require_call(call) && call.args().iter().all(is_text),
+        ExprKind::Await(import) => {
+            matches!(import.kind(), ExprKind::ImportCall { args } if args.iter().all(is_text))
+        }
+        _ => false,
+    }
+}
+
+/// True if `pattern` only binds names. A default and a computed key run code.
+fn binds_only(pattern: Pat<'_>) -> bool {
+    match pattern.kind() {
+        PatKind::Ident(_) => true,
+        PatKind::Object(properties) => properties
+            .iter()
+            .all(|it| it.default().is_none() && !it.has_computed_key() && binds_only(it.value())),
+        PatKind::Array(elements) => elements
+            .iter()
+            .all(|it| it.default().is_none() && it.pat().is_none_or(binds_only)),
+        PatKind::Missing => false,
+    }
+}
+
+/// True if `file` has an `export` of a value.
+fn exports_value<'a>(file: &'a File<'a>) -> bool {
+    file.body().iter().any(|it| match it.tag() {
+        StmtTag::ExportNamed => it.as_export_named().is_some_and(|it| {
+            !it.has_from() && !it.is_type_only() && it.items().iter().any(|it| !it.is_type_only())
+        }),
+        StmtTag::ExportDefault => true,
+        _ => it.is_exported() && !is_type_export_declaration(it),
+    })
+}
+
+/// True if code of `file` can run before the lines at its top have run: the file exports a value, which a file that it imports can call, or it declares the `require` that those lines call.
+pub(crate) fn opens_early<'a>(file: &'a File<'a>) -> bool {
+    let find = || {
+        let scope = file.body().first().map(|it| Node::Stmt(it).scope());
+        scope.is_some_and(|it| it.resolve("require").is_some()) || exports_value(file)
+    };
+    match per_file(file) {
+        Some(it) => *it.opens_early.get_or_init(find),
+        None => find(),
+    }
+}
+
+/// Where the top of `file` ends: its directives, its imports and its plain `require()` lines, up to the first other code. No code of the file runs before these lines have run. 0 if the file [opens early](opens_early).
+fn top_end<'a>(file: &'a File<'a>) -> u32 {
+    if opens_early(file) {
+        return 0;
+    }
+    let mut end = 0;
+    for statement in file.body() {
+        match statement.kind() {
+            StmtKind::Import(_) => {}
+            StmtKind::ImportEquals(it) if matches!(it.target(), ImportEqualsTarget::Require(_)) => {
+            }
+            StmtKind::Expr(value) if statement.directive().is_some() || is_plain_require(value) => {
+            }
+            StmtKind::Var(declarators) => {
+                for declarator in declarators {
+                    let is_plain = declarator.init().is_some_and(is_plain_require);
+                    if !is_plain || !binds_only(declarator.pat()) {
+                        return end;
+                    }
+                    end = declarator.span().end;
+                }
+            }
+            _ => break,
+        }
+        end = statement.span().end;
+    }
+    end
+}
+
+/// True if `line`, a declarator or a statement, is one of the lines at the [top](top_end) of `file`.
+fn is_at_top<'a>(file: &'a File<'a>, line: Span) -> bool {
+    let end = match per_file(file) {
+        Some(it) => *it.top_end.get_or_init(|| top_end(file)),
+        None => top_end(file),
+    };
+    line.end <= end
+}
+
+/// True if a fix can add the names of more exports to `declarator`, a `const { .. } = require("a")`, and every read gets its value: the line is at the [top](top_end) of `file`, it isn't `.. = require("a").b`, and no `...rest` loses the names.
+pub(crate) fn takes_names<'a>(file: &'a File<'a>, declarator: VarDecl<'a>) -> bool {
+    let has_rest = match declarator.pat().kind() {
+        PatKind::Object(properties) => properties.iter().any(|it| it.is_rest()),
+        _ => false,
+    };
+    let is_member = declarator.init().is_some_and(|it| it.tag() == ExprTag::Dot);
+    is_at_top(file, declarator.span()) && !is_member && !has_rest
+}
+
+/// True if `name` has its value wherever the code at `at` runs, so a fix can write it there. `at` is the expression that the fix replaces: the name that its chain starts with is read there already.
+pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
+    let (file, read) = (at.file(), first_identifier_of_chain(at));
+    if read.is_some_and(|it| it.bytes() == name) || !file.mentions_bit(mention_bit(name)) {
+        return true;
+    }
+    let scope = Node::Expr(at).scope();
+    let Some(symbol) = scope.resolve_bytes(name) else {
+        return !assigns_to_global(file, [name]);
+    };
+    if symbol.has_modifying_references() {
+        return false;
+    }
+    // One `const` gives its names their values together: `it` has its value wherever the `xit` of the same line has one.
+    let line_of_read = read.and_then(|it| scope.resolve_name(it)?.declarations().next()?.node());
+    let is_ambient = |it: Stmt<'a>| it.flags().contains(Flags::AMBIENT);
+    // A file that this one imports can call an export of this one before a later `import` has its module. `bun:test` is there from the start.
+    let has_module =
+        |it: Import<'a>| it.is_type_only() || it.spec().bytes() == BUN_TEST || !opens_early(file);
+    symbol.declarations().all(|it| match it {
+        Declaration::Var(_) => match it.node() {
+            Some(Node::VarDecl(declarator)) if declarator.init().is_some() => {
+                let is_line_of_read = line_of_read == Some(Node::VarDecl(declarator))
+                    && declarator.var_kind() != VarKind::Var
+                    && binds_only(declarator.pat());
+                is_at_top(file, declarator.span()) || is_line_of_read
+            }
+            _ => true,
+        },
+        // Bun runs `import a = require("a")` as a `const`.
+        Declaration::ImportEquals(it) => {
+            it.flags().contains(Flags::TYPE_ONLY) || is_at_top(file, it.stmt().span())
+        }
+        Declaration::ImportSpec(it) => it.is_type_only() || has_module(it.import()),
+        Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => has_module(it),
+        Declaration::Class(class) => match Node::Class(class).parent() {
+            Node::Stmt(statement) => is_ambient(statement),
+            _ => true,
+        },
+        Declaration::Enum(it) => is_ambient(it.stmt()),
+        Declaration::Module(it) => is_ambient(it.stmt()),
+        Declaration::Param(_)
+        | Declaration::Fn(_)
+        | Declaration::Interface(_)
+        | Declaration::TypeAlias(_)
+        | Declaration::EnumMember(_)
+        | Declaration::TypeParam(_)
+        | Declaration::Other => true,
+    })
+}
+
+/// True if `file` assigns to one of the globals `names`. Nothing can assign to a name once a fix declares it with an `import` or a `const`, and an assigned name can be another thing than the runner's.
+pub(crate) fn assigns_to_global<'a, 'n>(
+    file: &'a File<'a>,
+    names: impl IntoIterator<Item = &'n [u8]>,
+) -> bool {
+    let writes = || file.unresolved_references().any(Reference::is_write);
+    let writes_globals = match per_file(file) {
+        Some(it) => *it.writes_globals.get_or_init(writes),
+        None => writes(),
+    };
+    let is_assigned = |it| (file.unresolved_references_to(it)).any(Reference::is_write);
+    writes_globals && names.into_iter().any(is_assigned)
 }
 
 /// Runs [`require_binding`] on every top-level variable declaration.
@@ -914,6 +1108,11 @@ impl<'a> ParsedExpectFnCall<'a> {
             }
             None => (b"expect", b")"),
         }
+    }
+
+    /// True if the name that [`Self::expect_prefix_and_suffix`] writes in place of `call` [has its value](has_value) there.
+    pub(crate) fn writes_expect_with_value(&self, runner: Runner, call: Expr<'a>) -> bool {
+        has_value(self.expect_prefix_and_suffix(runner).0, call)
     }
 
     /// In source order.

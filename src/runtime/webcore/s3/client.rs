@@ -616,22 +616,10 @@ impl S3UploadStreamWrapper {
         }
     }
 
-    /// Stream pump resolved (sink.end() already wrote EOF to the task).
-    /// Balances the +1 ref taken for the pump promise in `upload_stream`.
-    pub(crate) fn handle_resolve_stream(&mut self) {
-        bun_output::scoped_log!(S3UploadStream, "handleResolveStream");
-        self.detach_sink();
-        // SAFETY: `self` is a live Box allocation; this adopts the pump ref.
-        drop(unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) });
-    }
-
-    /// Stream pump rejected. Rejects the caller's end_promise, fails the upload,
-    /// and balances the +1 ref taken for the pump promise in `upload_stream`.
+    /// Stream pump rejected. Rejects the caller's end_promise and fails the upload, under the pump's ref.
     pub(crate) fn handle_reject_stream(&mut self, err: JSValue) {
         bun_output::scoped_log!(S3UploadStream, "handleRejectStream");
         self.detach_sink();
-        // SAFETY: adopts the pump ref; released at scope exit, after the borrows below.
-        let _pump_ref = unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) };
         if self.end_promise.has_value() && !err.is_empty_or_undefined_or_null() {
             // if we have a explicit error, reject the promise
             // if not when calling .fail will create a S3Error instance
@@ -740,23 +728,22 @@ impl S3UploadStreamWrapper {
 pub(crate) fn on_resolve_upload_stream(
     _: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    context: Option<NonNull<S3UploadStreamWrapper>>,
+    context: Option<RefPtr<S3UploadStreamWrapper>>,
 ) {
-    // The cell hands back the ref `upload_stream` gave it, which `handle_resolve_stream` balances.
+    // `sink.end()` already wrote EOF to the task.
     if let Some(this) = context {
-        // SAFETY: that ref keeps the wrapper alive.
-        unsafe { (*this.as_ptr()).handle_resolve_stream() };
+        // SAFETY: a reaction runs with no borrow of the wrapper below it.
+        unsafe { (*this.as_ptr()).detach_sink() };
     }
 }
 
 pub(crate) fn on_reject_upload_stream(
     _: &mut JsScope<'_>,
     err: JsLocal<'_>,
-    context: Option<NonNull<S3UploadStreamWrapper>>,
+    context: Option<RefPtr<S3UploadStreamWrapper>>,
 ) {
-    // As `on_resolve_upload_stream`; `handle_reject_stream` balances the ref.
     if let Some(this) = context {
-        // SAFETY: that ref keeps the wrapper alive.
+        // SAFETY: a reaction runs with no borrow of the wrapper below it.
         unsafe { (*this.as_ptr()).handle_reject_stream(err.to_js()) };
     }
 }
@@ -928,7 +915,7 @@ pub(crate) fn upload_stream(
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
-            ref_count: Cell::new(2), // +1 for the stream pump (released by the .then shim / handle_*_stream)
+            ref_count: Cell::new(2), // the upload's callback and the stream pump
             sink: None,
             callback,
             callback_context,
@@ -939,6 +926,8 @@ pub(crate) fn upload_stream(
             readable_stream_ref: ReadableStreamStrong::default(),
             global: global_static,
         }));
+    // SAFETY: one of the two initial refs.
+    let pump_ref = unsafe { RefPtr::from_raw(ctx_ptr) };
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
     task.callback_context.set(ctx_ptr.cast::<c_void>());
@@ -1006,7 +995,7 @@ pub(crate) fn upload_stream(
                         if !sink.ended {
                             let _ = sink.end(None);
                         }
-                        ctx.handle_resolve_stream();
+                        ctx.detach_sink();
                         return Ok(end_promise_value);
                     }
                     _ => {}
@@ -1018,14 +1007,17 @@ pub(crate) fn upload_stream(
                 if !sink.ended {
                     let _ = sink.end(None);
                 }
-                ctx.handle_resolve_stream();
-            } else if !byte_stream.sink_paused.get() {
-                // Wake the producer after the older bytes are in the sink.
-                byte_stream.signal_drained();
+                ctx.detach_sink();
+                return Ok(end_promise_value);
             }
             // `!had_last`: the stream-pump +1 (rc=2) is released by
             // `NetworkSink::end_from_stream` after the terminal write/fail so the
             // sink outlives the synchronous `resolve()` re-entry.
+            let _ = pump_ref.into_raw();
+            if !byte_stream.sink_paused.get() {
+                // Wake the producer after the older bytes are in the sink.
+                byte_stream.signal_drained();
+            }
             return Ok(end_promise_value);
         }
         // sink already attached: fall through to the JS pump.
@@ -1054,7 +1046,7 @@ pub(crate) fn upload_stream(
                         cx.global(),
                         crate::api::native_promise_context::create(
                             cx.global(),
-                            ctx_ptr,
+                            pump_ref,
                             JSValue::ZERO,
                         ),
                         Bun__S3UploadStream__onResolveStream,
@@ -1062,7 +1054,7 @@ pub(crate) fn upload_stream(
                     );
                 }
                 bun_jsc::js_promise::Status::Fulfilled => {
-                    ctx.handle_resolve_stream();
+                    ctx.detach_sink();
                 }
                 bun_jsc::js_promise::Status::Rejected => {
                     promise.set_handled(cx.global().vm());
@@ -1075,14 +1067,14 @@ pub(crate) fn upload_stream(
     }
 
     // The stream drained synchronously inside `assign_to_stream` (no promise
-    // returned). `handle_resolve_stream` destroys the sink, so re-borrow from
+    // returned). `detach_sink` destroys the sink, so re-borrow from
     // `ctx.sink` rather than the `sink` reference taken before assign_to_stream.
     if let Some(sink) = ctx.sink_mut() {
         if !sink.ended {
             let _ = sink.end(None);
         }
     }
-    ctx.handle_resolve_stream();
+    ctx.detach_sink();
     Ok(end_promise_value)
 }
 

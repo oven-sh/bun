@@ -396,11 +396,11 @@ pub(crate) fn run_task(
         }
         task_tag::HTMLRewriterBackgroundPull => feature_arm!(
             [HtmlRewriter],
-            |pipe: crate::api::html_rewriter::RewriterPipe| -> JsResult<()> {
-                crate::api::html_rewriter::RewriterPipe::run_background_pull(pipe)?;
-                Ok(())
+            |pipe: crate::api::html_rewriter::RewriterPipe| {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                unsafe { bun_ptr::RefPtr::from_raw(pipe) }.run_background_pull();
             }
-        )?,
+        ),
         task_tag::RunTestsTask => feature_arm!(
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> {

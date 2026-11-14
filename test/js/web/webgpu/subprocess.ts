@@ -87,8 +87,8 @@ export const uploads = `
   const pixels = new Uint8Array(4 << 20);
   function prepareUploads(device) {
     const texture = device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
-    const upload = count => {
-      while (count--) device.queue.writeTexture({ texture }, pixels, { bytesPerRow: 4096 }, [1024, 1024]);
+    const upload = (count, rows = 1024) => {
+      while (count--) device.queue.writeTexture({ texture }, pixels, { bytesPerRow: 4096 }, [1024, rows]);
     };
     upload(1);
     device.queue.submit([]);

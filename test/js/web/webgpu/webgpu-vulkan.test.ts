@@ -254,16 +254,14 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
     ["Dawn submits", 6, "upload(4)"],
     ["the script submits", 6, "upload(3), queue.submit([])"],
     ["the script waits for", 6, "upload(3), await finish()"],
-    ["differ in size", 6, "uploadRows(1), await finish(), upload(1), await finish()"],
-    ["grow", 20, "uploadRows(600 + i * 20), await finish()"],
+    ["differ in size", 6, "upload(1, 1), await finish(), upload(1), await finish()"],
+    ["grow", 20, "upload(1, 600 + i * 20), await finish()"],
     // An idle device is looked at after 500 ms.
     ["pauses follow", 14, "upload(2), await finish(), await Bun.sleep(50)"],
   ])("has its staging buffers used again in a loop of uploads that %s", async (_, rounds, round) => {
     const script = `
       const { queue } = device;
       const upload = prepareUploads(device);
-      const texture = device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
-      const uploadRows = rows => queue.writeTexture({ texture }, pixels, { bytesPerRow: 4096 }, [1024, rows]);
       const finish = () => (queue.submit([]), queue.onSubmittedWorkDone());
       for (let i = 0; i < 2; i++) driver.findNotReady(0), queue.submit([]);
       const blocks = driver.memoryBlocks();
@@ -334,18 +332,20 @@ describe.skipIf(!isLinux || !hasAdapter || !canCompileC).concurrent("the Vulkan 
   });
 
   test.each([
-    ["now and then while the script has results", "", "device.queue.onSubmittedWorkDone()", [4, 16]],
+    ["once the script has had its result", 1, "", "device.queue.onSubmittedWorkDone()", [0, 0]],
+    ["now and then while the script has results", 40, "", "device.queue.onSubmittedWorkDone()", [4, 16]],
     [
       "not while it is busy",
+      40,
       "driver.holdWaitsFrom(1), driver.findNotReady(1000), device.queue.submit([])",
       "pause()",
       [1, 1],
     ],
-  ])("gets the uploads that hold what is destroyed %s", async (_, start, wait, [least, most]) => {
+  ])("gets the uploads that hold what is destroyed %s", async (_, rounds, start, wait, [least, most]) => {
     const script = `
       const before = driver.images();
       ${start};
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < ${rounds}; i++) {
         const texture = device.createTexture({ size: [1], format: "r8unorm", usage: GPUTextureUsage.COPY_DST });
         device.queue.writeTexture({ texture }, pixels, {}, [1]);
         texture.destroy();

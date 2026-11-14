@@ -8133,6 +8133,7 @@ declare module "bun" {
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `Bun.file()`: The process writes to the file. Pass one `Bun.file()` to both `stdout` and `stderr` to write both streams to that file
        * - `number`: The process writes to the file descriptor
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
@@ -8166,6 +8167,7 @@ declare module "bun" {
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `Bun.file()`: The process writes to the file. Pass one `Bun.file()` to both `stdout` and `stderr` to write both streams to that file
        * - `number`: The process writes to the file descriptor
        *
        * @default "pipe"
@@ -8178,6 +8180,7 @@ declare module "bun" {
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `Bun.file()`: The process writes to the file. Pass one `Bun.file()` to both `stdout` and `stderr` to write both streams to that file
        * - `number`: The process writes to the file descriptor
        *
        * @default "inherit" for `spawn`

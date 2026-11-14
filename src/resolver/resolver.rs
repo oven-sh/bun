@@ -3269,8 +3269,7 @@ impl<'a> Resolver<'a> {
                         };
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
-                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name, true)
-                            {
+                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name) {
                                 continue;
                             }
 
@@ -4984,7 +4983,7 @@ impl<'a> Resolver<'a> {
                 .iter()
                 .zip(tsconfig.paths.values().iter())
             {
-                if strings::eql_long(key, path, true) {
+                if strings::eql_long(key, path) {
                     for original_path in value.iter() {
                         if self.is_type_only_tsconfig_path(original_path) {
                             continue;

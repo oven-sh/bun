@@ -1747,7 +1747,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache);
+        remove_from_older_places(manager, &places, cache.handle.fd());
         restore_tree(&mut manager.lockfile, saved);
     }
 }

@@ -14,12 +14,12 @@ use bun_threading::thread_pool::Task as ThreadPoolTask;
 use bun_threading::work_pool::OwnedTask;
 
 use crate::cache_publish::StagedEntry;
-use crate::package_manager;
+use crate::package_manager::{self, INBOX};
 use crate::resolution::{Resolution, Tag as ResolutionTag};
 use crate::{DependencyID, PackageID, PackageManager, lockfile::Package};
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
-// `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
+// process-wide cache/temp directory descriptors. Store the raw `Fd`
 // so the task's drop never closes a descriptor it doesn't own. Use
 // `Dir::borrow(&fd)` where a `&Dir` is needed.
 
@@ -238,15 +238,8 @@ impl OwnedTask for PatchTask {
                 bun_core::handle_oom(self.apply());
             }
         }
-        let mgr = package_manager::get();
-        // SAFETY: the manager lives as long as the process, and no reference to all of it is
-        // formed here.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(bun_core::heap::into_raw_nn(self));
-            PackageManager::wake_raw(mgr);
-        }
+        INBOX.patch_tasks.push(bun_core::heap::into_raw_nn(self));
+        INBOX.wake();
     }
 }
 

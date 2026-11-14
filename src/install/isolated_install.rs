@@ -1782,6 +1782,7 @@ pub(crate) fn install_isolated_packages(
                         pkg_names[pkg_id as usize].slice(string_buf)
                     };
                     lockfile.has_trusted_dependency(
+                        &manager.options,
                         dep_name,
                         pkg_names[pkg_id as usize].slice(string_buf),
                         pkg_res,
@@ -2005,9 +2006,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // <cache_dir>/links — created lazily by the first task that misses.
-            // getCacheDirectory() populates `cache_directory_path` as a side-effect.
-            let _ = manager.get_cache_directory();
-            let cache_dir_path = &manager.cache_directory_path;
+            let cache_dir_path = &package_manager::directories::open_cache_directory(manager).path;
             if cache_dir_path.is_empty() {
                 break 'global_store_path None;
             }
@@ -2234,7 +2233,7 @@ pub(crate) fn install_isolated_packages(
 
         // add the pending task count upfront
         installer
-            .manager_mut()
+            .manager()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         // `link:` entries go first, because `Installer::start_link_task` must run before the tasks
         // of their dependents start.

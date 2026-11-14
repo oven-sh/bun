@@ -161,11 +161,6 @@ impl AnyEventLoop {
     pub fn native_loop(&self) -> bun_io::LoopRef {
         bun_io::uws_to_native(self.r#loop())
     }
-
-    #[inline]
-    pub fn wakeup(&self) {
-        self.r#loop().wakeup();
-    }
 }
 
 // ─────────────────────────── EventLoopHandle ───────────────────────────────

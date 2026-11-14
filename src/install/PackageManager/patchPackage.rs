@@ -1087,7 +1087,7 @@ fn has_trusted_scripts(
     folder: &[u8],
 ) -> bool {
     if !manager.options.do_.run_scripts()
-        || !(manager.lockfile).has_trusted_dependency(name, name, &pkg.resolution)
+        || !(manager.lockfile).has_trusted_dependency(&manager.options, name, name, &pkg.resolution)
     {
         return false;
     }

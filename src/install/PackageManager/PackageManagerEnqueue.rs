@@ -23,7 +23,7 @@ use crate::lockfile::reachable;
 use crate::lockfile_real as Lockfile;
 use crate::network_task::{ForTarballError, add_error_or_warning, stored_string};
 use crate::package_manager_real::directories::{
-    try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
+    open_cache_directory, try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
 };
 use crate::package_manager_real::options::{Do, OfflineMode};
 use crate::package_manager_real::process_dependency_list::ListedDependencies;
@@ -559,6 +559,7 @@ pub unsafe fn enqueue_parse_npm_package(
     let job = Task::Job::PackageManifest {
         name,
         network,
+        save_through: this.manifest_cache_temporary_directory(),
         manifest: None,
     };
     let task = Task::Task::create(this, task_id, job);
@@ -775,7 +776,7 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
             }
 
             if verbose_install() && this.pending_task_count() > 0 {
-                if PackageManager::has_enough_time_passed_between_waiting_messages() {
+                if this.has_enough_time_passed_between_waiting_messages() {
                     bun_core::pretty_errorln!(
                         "<d>[PackageManager]<r> waiting for {} tasks\n",
                         this.pending_task_count()
@@ -2915,10 +2916,10 @@ fn enqueue_local_tarball(
 
     let job = Task::Job::Extract {
         tarball: ExtractTarball {
-            package_manager: bun_ptr::BackRef::new(this),
+            registry: None,
             name: stored_string(name),
             resolution: *resolution,
-            cache_dir: get_cache_directory(this),
+            cache_dir: open_cache_directory(this),
             temp_dir: get_temporary_directory(this).handle.fd(),
             dependency_id,
             integrity: locked_integrity.copied().unwrap_or_default(),
@@ -2926,7 +2927,7 @@ fn enqueue_local_tarball(
             url: stored_string(path),
             skip_verify: false,
             in_trusted_dependencies: false,
-            github_resolved: StringOrTinyString::EMPTY,
+            github_resolved: b"",
         },
         source: Task::TarballSource::Local {
             path: tarball_path,

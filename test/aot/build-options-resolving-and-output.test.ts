@@ -108,6 +108,28 @@ buildBothWays("compile/aot/options of Bun.build: resolving and output", {
     plugins: [tellEverything],
     interprets: true,
   },
+  "external: a name that is also a path of the tsconfig, with packages: external": {
+    files: {
+      "main.ts": `// @ts-nocheck\nimport { a } from "@lib/a"; console.log(a);`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "preserve",
+          moduleResolution: "bundler",
+          types: [],
+          paths: { "@lib/*": ["./src/lib/*"] },
+        },
+        exclude: ["build.ts"],
+      }),
+      "src/lib/a.ts": `export const a = "file at build time";`,
+      "node_modules/@lib/a/package.json": `{ "name": "@lib/a", "version": "1.0.0", "main": "./index.js" }`,
+      "node_modules/@lib/a/index.js": `exports.a = "package at run time";`,
+    },
+    options: `external: ["@lib/a"], packages: "external"`,
+    plugins: [tellEverything],
+    prints: "package at run time\n",
+    interprets: true,
+  },
   "drop: all of console": {
     files: { "main.ts": `console.log("dropped"); const held = console; held.log("kept");` },
     options: `drop: ["console"]`,

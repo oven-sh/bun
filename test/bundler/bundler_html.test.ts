@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -180,6 +181,36 @@ describe("bundler", () => {
       api.expectFile("out/index.html").toContain("https://cdn.example.com/style.css");
       api.expectFile("out/index.html").toContain("https://cdn.example.com/script.js");
       api.expectFile("out/index.html").toContain("https://cdn.example.com/image.jpg");
+    },
+  });
+
+  // The resolver decides a name of `external` before it looks beside the page. A URL with a
+  // short extension (logo.png) does not get that far: the scanner has made it a path by then.
+  itBundled("html/external-exact-names", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="site.webmanifest">
+  </head>
+  <body>
+    <img src="photo.jpeg">
+  </body>
+</html>`,
+      "/site.webmanifest": `{ "name": "site" }`,
+      "/photo.jpeg": "not an image",
+    },
+    entryPoints: ["/index.html"],
+    external: ["site.webmanifest", "photo.jpeg"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html.match(/<link[^>]*>|<img[^>]*>/g)).toEqual([
+        `<link rel="manifest" href="site.webmanifest">`,
+        `<img src="photo.jpeg">`,
+      ]);
+      expect(readdirSync(api.join("out")).filter(name => /\.(webmanifest|jpeg)$/.test(name))).toEqual([]);
     },
   });
 

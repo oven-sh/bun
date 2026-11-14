@@ -10,6 +10,7 @@
 
 pub use crate::tsconfig_json::options::jsx;
 pub(crate) use bun_ast::Target;
+use bun_core::strings;
 pub use bun_options_types::bundle_enums::ModuleType;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -23,7 +24,10 @@ pub enum Packages {
 pub struct ExternalModules {
     pub patterns: Vec<WildcardPattern>,
     pub abs_paths: StringSet,
+    /// The package names that the build was given and, under `--target=node`, the Node builtins.
     pub node_modules: StringSet,
+    /// The package names that the build was given, which are decided before any lookup.
+    pub user_names: ExternalNames,
 }
 impl Clone for ExternalModules {
     fn clone(&self) -> Self {
@@ -33,7 +37,75 @@ impl Clone for ExternalModules {
             patterns: self.patterns.clone(),
             abs_paths: self.abs_paths.clone().expect("oom"),
             node_modules: self.node_modules.clone().expect("oom"),
+            user_names: self.user_names.clone(),
         }
+    }
+}
+impl ExternalModules {
+    /// Adds a package name that the build was given.
+    pub fn add_user_name(&mut self, name: &[u8]) {
+        bun_core::handle_oom(self.node_modules.insert(name));
+        self.user_names.insert(name);
+    }
+}
+
+/// A set of package names, and the length of the longest one.
+#[derive(Default)]
+pub struct ExternalNames {
+    names: StringSet,
+    max_len: usize,
+}
+impl Clone for ExternalNames {
+    fn clone(&self) -> Self {
+        Self {
+            names: self.names.clone().expect("oom"),
+            max_len: self.max_len,
+        }
+    }
+}
+impl ExternalNames {
+    pub fn insert(&mut self, name: &[u8]) {
+        bun_core::handle_oom(self.names.insert(name));
+        self.max_len = self.max_len.max(name.len());
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.names.count() == 0
+    }
+
+    /// Whether `import_path` is one of the packages, or a path into one.
+    pub fn matches(&self, import_path: &[u8]) -> bool {
+        !self.is_empty()
+            && bun_paths::is_package_path(import_path)
+            && match_name(&self.names, self.max_len, import_path).is_some()
+    }
+}
+
+/// The key of `names` that is `import_path` or a package that holds it: `foo` for `foo/bar`.
+#[inline(always)] // As a call it costs `resolve_without_symlinks` instructions on every resolution.
+pub fn match_name<'a>(
+    names: &StringSet,
+    max_len: usize,
+    import_path: &'a [u8],
+) -> Option<&'a [u8]> {
+    // Imports like "process/" need to resolve to the filesystem, not a builtin
+    if import_path.ends_with(b"/") {
+        return None;
+    }
+    let mut query = import_path;
+    // No key is longer than `max_len`, so a megabyte `data:` URL is not hashed once for each `/`.
+    if query.len() > max_len {
+        let slash = strings::last_index_of_char(&query[..=max_len], b'/')?;
+        query = &query[..slash];
+    }
+    loop {
+        if names.contains(query) {
+            return Some(query);
+        }
+        // A path into an external module is external too: "foo/bar" for "foo".
+        let slash = strings::last_index_of_char(query, b'/')?;
+        query = &query[..slash];
     }
 }
 #[derive(Debug, Clone)]
@@ -227,5 +299,107 @@ impl BundleOptions {
             self.production = value;
             self.jsx.development = !value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bstr::BStr;
+
+    fn with_names(names: &[&[u8]]) -> ExternalModules {
+        let mut externals = ExternalModules::default();
+        for name in names {
+            externals.add_user_name(name);
+        }
+        externals
+    }
+
+    #[test]
+    fn user_name_includes_subpaths() {
+        let externals = with_names(&[b"@scope/pkg", b"foo"]);
+        let inside: [&[u8]; 5] = [
+            b"foo",
+            b"foo/bar",
+            b"foo/bar/baz.js",
+            b"@scope/pkg",
+            b"@scope/pkg/sub",
+        ];
+        for path in inside {
+            let is_external = externals.user_names.matches(path);
+            assert!(is_external, "{} is not external", BStr::new(path));
+        }
+        let outside: [&[u8]; 10] = [
+            b"foobar",
+            b"foo/",
+            b"foo/bar/",
+            b"fo",
+            b"@scope",
+            b"@scope/other",
+            b"./foo",
+            b"../foo/bar",
+            b"/foo",
+            b"",
+        ];
+        for path in outside {
+            let is_external = externals.user_names.matches(path);
+            assert!(!is_external, "{} is external", BStr::new(path));
+        }
+    }
+
+    #[test]
+    fn builtin_name_is_not_a_user_name() {
+        let mut externals = ExternalModules::default();
+        externals.node_modules.insert(b"fs").unwrap();
+        assert!(!externals.user_names.matches(b"fs"));
+        assert!(!externals.user_names.matches(b"fs/promises"));
+    }
+
+    #[test]
+    fn user_name_is_also_in_node_modules() {
+        let externals = with_names(&[b"foo"]);
+        assert_eq!(
+            match_name(&externals.node_modules, usize::MAX, b"foo/bar"),
+            Some(&b"foo"[..])
+        );
+    }
+
+    /// Every text of up to 8 bytes over `a`, `b` and `/`, and longer ones like a `data:` URL.
+    #[test]
+    fn bound_on_name_length_changes_no_match() {
+        let ExternalNames { names, max_len } =
+            with_names(&[b"a", b"a/b", b"ab/a/b", b"b/a", b"data:a"]).user_names;
+        assert_eq!(max_len, 6);
+
+        let mut paths: Vec<Vec<u8>> = vec![Vec::new()];
+        let mut start = 0;
+        for _ in 0..8 {
+            let end = paths.len();
+            for index in start..end {
+                for byte in *b"ab/" {
+                    let mut path = paths[index].clone();
+                    path.push(byte);
+                    paths.push(path);
+                }
+            }
+            start = end;
+        }
+        for slash in 0..64 {
+            let mut path = vec![b'a'; 64];
+            path[slash] = b'/';
+            paths.push(path);
+        }
+        for mime in [&b"data:a/b;base64,"[..], b"data:ab/a;base64,"] {
+            paths.push([mime, &b"ab/a+b/a".repeat(512)].concat());
+        }
+
+        let mut matched = 0;
+        for path in &paths {
+            let bounded = match_name(&names, max_len, path);
+            let unbounded = match_name(&names, usize::MAX, path);
+            assert_eq!(bounded, unbounded, "{}", BStr::new(path));
+            matched += usize::from(bounded.is_some());
+        }
+        assert!(matched > 0 && matched < paths.len());
     }
 }

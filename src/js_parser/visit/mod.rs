@@ -1499,6 +1499,87 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    /// `var a = f` for the Annex B `var` of block-level functions, or its assignment when the `var` moves to the top level.
+    fn annex_b_var_stmt(&mut self, decls: ListManaged<'a, G::Decl>) -> Option<Stmt> {
+        let relocated = self.maybe_relocate_vars_to_top_level(&decls, RelocateVarsMode::Normal);
+        if relocated.ok {
+            return relocated.stmt;
+        }
+        let decls = G::DeclList::from_bump_vec(decls);
+        let loc = decls.at(0).value.unwrap().loc;
+        Some(self.s(
+            S::Local {
+                kind: LocalKind::KVar,
+                decls,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    /// Puts `var twin = f`, the Annex B `var` of sloppy code, behind each declaration that stays in a case body.
+    pub(crate) fn finish_kept_case_fns(&mut self, cases: &mut [js_ast::Case]) {
+        let p = self;
+        let mut hoisting_scope = p.current_scope_ref();
+        while !hoisting_scope.kind_stops_hoisting() {
+            hoisting_scope = hoisting_scope.parent.unwrap();
+        }
+        // The visit has reached every direct eval of the switch now, also one that the parser could not see.
+        let has_direct_eval = p.current_scope().contains_direct_eval;
+        for case in cases {
+            let twin_of = |p: &Self, stmt: &Stmt| -> Option<(LocRef, Ref)> {
+                let StmtData::SFunction(declared) = stmt.data else {
+                    return None;
+                };
+                let name = declared.func.name?;
+                let twin = *p.hoisted_ref_for_sloppy_mode_block_fn.get(&name.ref_)?;
+                // The lowering already made the two one binding for a direct eval.
+                (p.symbols[twin.inner_index() as usize].link.get() != name.ref_)
+                    .then_some((name, twin))
+            };
+            if !case
+                .body
+                .slice()
+                .iter()
+                .any(|stmt| twin_of(p, stmt).is_some())
+            {
+                continue;
+            }
+            let mut body = ListManaged::with_capacity_in(case.body.len() + 1, p.arena);
+            for stmt in case.body.slice() {
+                body.push(*stmt);
+                let Some((name, twin)) = twin_of(p, stmt) else {
+                    continue;
+                };
+                if has_direct_eval {
+                    p.symbols[twin.inner_index() as usize].link.set(name.ref_);
+                    continue;
+                }
+                // A lexical binding of the name between the switch and the function stops the `var`: nothing reads the twin.
+                let twin_symbol = &p.symbols[twin.inner_index() as usize];
+                let original_name = twin_symbol.original_name.slice();
+                let is_var_of_function = twin_symbol.has_link()
+                    || hoisting_scope
+                        .get_member_with_hash(
+                            original_name,
+                            js_ast::Scope::get_member_hash(original_name),
+                        )
+                        .is_some_and(|member| member.ref_ == twin);
+                if !is_var_of_function {
+                    continue;
+                }
+                p.record_usage(name.ref_);
+                let mut decls = ListManaged::with_capacity_in(1, p.arena);
+                decls.push(G::Decl {
+                    binding: p.b(B::Identifier { r#ref: twin }, name.loc),
+                    value: Some(Expr::init_identifier(name.ref_, name.loc)),
+                });
+                body.extend(p.annex_b_var_stmt(decls));
+            }
+            case.body = js_ast::StmtNodeList::from_bump(body);
+        }
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1522,6 +1603,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
+        let mut keeps_case_fn = false;
 
         {
             // Save the current control-flow liveness. This represents if we are
@@ -1595,7 +1677,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
-                                break 'list_getter &mut before;
+                                let name = data.func.name.unwrap().ref_;
+                                let symbol = &p.symbols[name.inner_index() as usize];
+                                if kind == StmtsKind::SwitchStmt
+                                    && symbol.remove_overwritten_function_declaration()
+                                {
+                                    // Where this dropped declaration stands, Annex B assigns the `var` too.
+                                    p.case_fns_declared_twice.push(symbol.link.get());
+                                }
+                                // Another clause can call a function of a case clause (evanw/esbuild#4533).
+                                if kind != StmtsKind::SwitchStmt
+                                    || !p.keeps_case_clause_function(name)
+                                {
+                                    break 'list_getter &mut before;
+                                }
+                                // Like a generated temporary: no binding that the enclosing function can see takes its name.
+                                p.declare_temp_var(name);
+                                keeps_case_fn = true;
                             }
                         }
                         StmtData::SEnum(_) => {
@@ -1641,7 +1739,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let name = data.func.name.unwrap();
                             let name_ref = name.ref_;
                             // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if p.current_scope().contains_direct_eval {
+                            if p.current_scope().contains_direct_eval
+                                // The visit of a case clause has not reached a direct eval of a later clause.
+                                || (kind == StmtsKind::SwitchStmt && p.case_clause_eval_is_ahead(name_ref))
+                            {
                                 if let Some(hoisted_ref) =
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
                                 {
@@ -1720,24 +1821,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if var_decls.len() > 0 {
-                    let relocated =
-                        p.maybe_relocate_vars_to_top_level(&var_decls, RelocateVarsMode::Normal);
-                    if relocated.ok {
-                        if let Some(new) = relocated.stmt {
-                            before.push(new);
-                        }
-                    } else {
-                        let decls = G::DeclList::from_bump_vec(var_decls);
-                        let loc = decls.at(0).value.unwrap().loc;
-                        before.push(p.s(
-                            S::Local {
-                                kind: LocalKind::KVar,
-                                decls,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    }
+                    before.extend(p.annex_b_var_stmt(var_decls));
                 }
 
                 before.extend_from_slice(&non_fn_stmts);
@@ -1858,7 +1942,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // encounter the constant because we haven't encountered the eval() yet.
             // Inlined constants are not removed if they are in a top-level scope or
             // if they are exported (which could be in a nested TypeScript namespace).
-            if p.const_values.count() > 0 {
+            if p.const_values.count() > 0
+                // The `let` of a lowered function ends this scan at once. A declaration that stays does not.
+                && !keeps_case_fn
+            {
                 let items: &mut [Stmt] = stmts.as_mut_slice();
                 for stmt in items.iter_mut() {
                     match stmt.data {

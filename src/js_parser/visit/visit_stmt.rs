@@ -2263,6 +2263,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
+            if p.current_scope().members.len() != 0
+                && !p.hoisted_ref_for_sloppy_mode_block_fn.is_empty()
+            {
+                p.finish_kept_case_fns(cases);
+            }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
 
             for i in 0..cases.len() {

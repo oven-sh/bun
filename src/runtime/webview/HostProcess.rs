@@ -199,17 +199,16 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
     let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
-    let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
+    let host = bun_ptr::AliasableBox::new(HostProcess {
         process: spawned.to_process_handle(event_loop),
         retired: false,
-    }));
-    // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
-    // and outlives it.
+    });
+    // SAFETY: `host` owns `process` and outlives it.
     let process = unsafe {
-        let process = &(*self_ptr).process;
+        let process = &(*host.as_ptr()).process;
         bun_spawn::Process::set_exit_handler(
             process,
-            ProcessExit::new(ProcessExitKind::HostProcess, self_ptr),
+            ProcessExit::new(ProcessExitKind::HostProcess, host.as_ptr()),
         );
         process
     };
@@ -224,12 +223,10 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
         }
         Err(e) => {
             scoped_log!(WebViewHost, "watch failed: {}", e);
-            // SAFETY: reclaim the Box (drops our process ref).
-            drop(unsafe { bun_core::heap::take(self_ptr) });
             return Err(crate::Error::WatchFailed);
         }
     }
-    INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
+    INSTANCE.store(host.into_raw(), core::sync::atomic::Ordering::Relaxed);
     // fd handed to C++ which adopts it into usockets. Not stored here —
     // usockets owns the socket; Rust only owns process lifetime.
     Ok(parent_end.into_raw())

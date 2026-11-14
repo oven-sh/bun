@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
+use bun_ptr::AliasableBox;
 use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
@@ -407,9 +408,7 @@ impl FSEventsLoop {
     }
 
     pub(crate) fn init() -> crate::Result<&'static FSEventsLoop> {
-        // Owning raw pointer first, shared view second: the error paths below reclaim
-        // through `this_ptr`, which must not be derived from a shared reference.
-        let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
+        let owned = AliasableBox::new(FSEventsLoop {
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
             sem: Semaphore::default(),
@@ -421,9 +420,9 @@ impl FSEventsLoop {
                 has_scheduled_watchers: false,
                 stream: None,
             }),
-        }));
-        // SAFETY: just allocated and exclusively owned; the CF thread only sees it after spawn.
-        let this: &'static FSEventsLoop = unsafe { &*this_ptr };
+        });
+        // SAFETY: leaked once the CF thread has it, and not used after an early return.
+        let this: &'static FSEventsLoop = unsafe { &*owned.as_ptr() };
 
         let cf = CoreFoundation::get();
 
@@ -446,8 +445,6 @@ impl FSEventsLoop {
         let signal_source =
             unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
-            // SAFETY: nothing else has seen the allocation (published only on Ok).
-            drop(unsafe { bun_core::heap::take(this_ptr) });
             return Err(crate::Error::FailedToCreateCoreFoudationSourceLoop);
         }
         this.signal_source.store(signal_source, Ordering::Relaxed);
@@ -458,15 +455,12 @@ impl FSEventsLoop {
         {
             Ok(handle) => handle,
             Err(_) => {
-                // SAFETY: the source was never scheduled on a run loop and the allocation
-                // was never published, so both are exclusively owned here.
-                unsafe {
-                    (cf.release)(signal_source.cast());
-                    drop(bun_core::heap::take(this_ptr));
-                }
+                // SAFETY: the source was never scheduled on a run loop.
+                unsafe { (cf.release)(signal_source.cast()) };
                 return Err(crate::Error::FailedToSpawnFSEventsThread);
             }
         };
+        owned.into_raw();
         // SAFETY: `thread` is only touched by `init()`/`shutdown()` on the JS thread; the CF thread never accesses it.
         unsafe {
             *this.thread.get() = Some(handle);

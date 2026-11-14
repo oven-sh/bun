@@ -309,8 +309,10 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: the files of the chunk that were bundled again with the same output, in the chunk's order.
     /// After `settle_unchanged_files`, only those that left the chunk.
     pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
-    /// Client side: what a file of the bundle imports now and did not before. Empty if no file left the chunk.
-    pub(crate) newly_imported_files: Vec<FileIndex<SIDE>>,
+    /// Client side: the files of the chunk that no file imported, and that imported nothing, before this bundle.
+    pub(crate) first_bundled_files: Vec<FileIndex<SIDE>>,
+    /// Client side: `(importer, imported)` of each import that is new in this bundle. Empty if no file left the chunk.
+    pub(crate) new_imports: Vec<(FileIndex<SIDE>, FileIndex<SIDE>)>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -484,7 +486,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         self.current_chunk_parts.clear();
         self.unchanged_files.clear();
-        self.newly_imported_files.clear();
+        self.first_bundled_files.clear();
+        self.new_imports.clear();
     }
 
     /// Once every chunk is in, an unchanged module that imports no changed module of the chunk, at any depth, leaves it.
@@ -538,17 +541,27 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     /// Once the edges are up to date. A page whose file has a new import may never have loaded that module,
-    /// nor what the module imports, so they go back into the chunk.
+    /// nor what the module imports, so they go back into the chunk. The imports of a file that is new to the
+    /// graph do not count by themselves: an open page has that file only through a new import of another file.
     pub(crate) fn restore_newly_imported_files(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
     ) -> Result<(), bun_alloc::AllocError> {
         debug_assert!(matches!(SIDE, Side::Client));
-        if self.newly_imported_files.is_empty() {
+        if self.new_imports.is_empty() {
             return Ok(());
         }
+        let mut first_bundled = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
+        for file in &self.first_bundled_files {
+            first_bundled.set(file.get() as usize);
+        }
         let mut reached = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
-        let mut queue = core::mem::take(&mut self.newly_imported_files);
+        let mut queue: Vec<FileIndex<SIDE>> = Vec::new();
+        for (importer, imported) in self.new_imports.drain(..) {
+            if !first_bundled.is_set(importer.get() as usize) {
+                queue.push(imported);
+            }
+        }
         while let Some(file) = queue.pop() {
             if reached.is_set(file.get() as usize) {
                 continue;
@@ -796,6 +809,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
                     html_route_bundle_index = existing.html_route_bundle_index;
                     is_special_framework_file = existing.is_special_framework_file;
+                }
+                // Not decided by `existing`: a file that failed lost its content, and keeps its edges.
+                let edges = &self.edge_lists[file_index.get() as usize];
+                if edges.first_dep.is_none() && edges.first_import.is_none() {
+                    self.first_bundled_files.push(file_index);
                 }
 
                 let (new_content, new_source_map, code_len) = match content {
@@ -1233,7 +1251,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *new_imports = Some(edge);
             self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
             if !self.unchanged_files.is_empty() {
-                self.newly_imported_files.push(imported_file_index);
+                self.new_imports.push((file_index, imported_file_index));
             }
 
             self.dev_incremental_result().had_adjusted_edges = true;

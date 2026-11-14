@@ -464,6 +464,62 @@ devTest("virtual module that a page imports for the first time is in the hot upd
     await a.expectMessage("a one two");
   },
 });
+// The same, through a file that is new to the dev server.
+devTest("virtual module that a new file imports is in the hot update", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "virtual",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => {
+            return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => {
+            return { contents: "export const name = " + JSON.stringify(args.path) + ";", loader: "js" };
+          });
+        },
+      };
+    `,
+    "a.html": emptyHtmlFile({ scripts: ["a.ts"] }),
+    "a.ts": `
+      console.log("a");
+      import.meta.hot.accept();
+    `,
+    "b.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+    "b.ts": `
+      import { name } from "virtual:only-b";
+      console.log("b " + name);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/a").expect.toInclude("script");
+    {
+      await using b = await dev.client("/b");
+      await b.expectMessage("b only-b");
+    }
+    await using a = await dev.client("/a");
+    await a.expectMessage("a");
+    // The batch throws when the page reloads.
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("fresh.ts", `import { name } from "virtual:only-b"; export const fresh = "fresh " + name;`);
+      await dev.write(
+        "a.ts",
+        `
+          import { fresh } from "./fresh.ts";
+          console.log("a " + fresh);
+          import.meta.hot.accept();
+        `,
+      );
+    }
+    await a.expectMessage("a fresh only-b");
+  },
+});
 devTest("virtual json module shared by two importers is not re-sent when one importer changes", {
   files: {
     "bunfig.toml": `

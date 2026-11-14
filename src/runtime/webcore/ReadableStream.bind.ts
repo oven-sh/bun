@@ -62,6 +62,7 @@ export const FileInternalReadableStreamSource = b.class({
   proto: {
     cancel: members.cancel,
     drain: members.drain,
+    getFd: { returns: b.i32 },
     isClosed: members.isClosed,
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },

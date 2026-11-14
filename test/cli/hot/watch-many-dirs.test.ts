@@ -1,8 +1,22 @@
-import { spawn } from "bun";
+import { spawn, type Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+/** Events pile up until SIGCONT, so the watcher reads them at once. */
+async function stop(proc: Subprocess) {
+  proc.kill("SIGSTOP");
+  const tasks = `/proc/${proc.pid}/task`;
+  const isStopped = (task: string) => {
+    try {
+      return readFileSync(`${tasks}/${task}/status`, "utf8").includes("State:\tT");
+    } catch {
+      return true; // The thread has exited.
+    }
+  };
+  while (!readdirSync(tasks).every(isStopped)) await Bun.sleep(1);
+}
 
 describe("--hot with many directories", () => {
   // TODO: fix watcher thread exit handling so the main thread waits for the
@@ -98,6 +112,60 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     },
     30000,
   ); // 30 second timeout
+
+  test.skipIf(!isLinux)("keeps watching after more events than one read holds", async () => {
+    await using dir = tempDir("hot-event-burst", {
+      "entry.js": `console.log("first"); setInterval(() => {}, 1e6);`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      killSignal: "SIGKILL",
+    });
+    const iter = forEachLine(proc.stdout);
+    expect((await iter.next()).value).toBe("first");
+
+    await stop(proc);
+    // 272 bytes per event, which does not divide the size of the buffer.
+    for (let i = 0; i < 1000; i++) writeFileSync(join(dir, String(i).padStart(250, "x")), "");
+    writeFileSync(join(dir, "entry.js"), `console.log("second");`);
+    proc.kill("SIGCONT");
+
+    expect((await iter.next()).value).toBe("second");
+  });
+
+  test.skipIf(!isLinux)("a folder that was moved gets the names of its own files", async () => {
+    await using dir = tempDir("hot-moved-folder", {
+      "entry.js": `import "./a/x.js"; import "./b/y.js"; console.log("first"); setInterval(() => {}, 1e6);`,
+      "a/x.js": "",
+      "b/y.js": "",
+      "unwatched/trace.log": "",
+    });
+    const trace = join(dir, "unwatched/trace.log");
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      stdout: "pipe",
+      stderr: "inherit",
+      killSignal: "SIGKILL",
+    });
+    expect((await forEachLine(proc.stdout).next()).value).toBe("first");
+
+    await stop(proc);
+    mkdirSync(join(dir, "b/in-b"));
+    renameSync(join(dir, "a"), join(dir, "moved"));
+    mkdirSync(join(dir, "moved/in-a"));
+    proc.kill("SIGCONT");
+
+    while (!/in-a.*\n/.test(readFileSync(trace, "utf8"))) await Bun.sleep(1);
+    // The line has a key per event, so `JSON.parse` would keep only the last one of a folder.
+    const names = readFileSync(trace, "utf8").matchAll(/\/a\/":\{"events":\[[^\]]*\],"changed":\[([^\]]*)\]/g);
+    expect(Array.from(names, match => match[1])).toEqual([`"in-a"`, `"in-a"`]);
+  });
 
   // The watchlist owns one descriptor per watched file, closed only when the
   // entry is evicted or the watcher shuts down. Re-transpiles during a reload

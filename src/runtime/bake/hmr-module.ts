@@ -497,7 +497,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       ? Promise.all(list).then(
           list => finishLoadModuleAsync(mod, load, list, evaluation, hasTopLevelAwait),
           e => {
-            if (mod.evaluation !== evaluation) return mod;
+            if (mod.evaluation !== evaluation) {
+              return failReplaced(mod, e);
+            }
             mod.state = State.Stale;
             throw e;
           },
@@ -624,8 +626,8 @@ function evaluationView(mod: HMRModule, evaluation: number, late: HotDisposeFunc
       return typeof value === "function" && !Object.hasOwn(target, key) ? value.bind(target) : value;
     },
     set(target, key, value) {
-      // While the new body waits, a load that waits for this one still gets its exports.
-      if (isBodyReplaced() && key === "exports" && target.state !== State.Pending) return true;
+      // Until the new body is done, a load that waits for this one gets its exports.
+      if (key === "exports" && mod.evaluation !== evaluation && mod.state === State.Loaded) return true;
       return Reflect.set(target, key, value);
     },
   });
@@ -647,15 +649,22 @@ function finishLoadModuleAsync(
   isAsync: boolean,
 ) {
   // An update evaluated the module again while the imports of this body were loaded.
-  if (mod.evaluation !== evaluation) return mod;
+  const wasReplaced = mod.evaluation !== evaluation;
+  if (wasReplaced && hasExports(mod)) return mod;
   try {
-    const exportsBefore = mod.exports;
+    const { exports: exportsBefore, imports, updateImport } = mod;
     mod.imports = modules.map(getEsmExports);
-    clearHooks(mod);
+    if (!wasReplaced) clearHooks(mod);
     // A Proxy, so only for the bodies that can be replaced while they run.
-    const late: HotDisposeFunction[] | null = isAsync ? [] : null;
+    const late: HotDisposeFunction[] | null = isAsync || wasReplaced ? [] : null;
     const p = load(late ? evaluationView(mod, evaluation, late) : mod);
-    mod.imports = modules;
+    if (wasReplaced) {
+      // They belong to the new body.
+      mod.imports = imports;
+      mod.updateImport = updateImport;
+    } else {
+      mod.imports = modules;
+    }
     if (p) {
       return p.then(
         async () => {
@@ -669,7 +678,7 @@ function finishLoadModuleAsync(
         async e => {
           if (mod.evaluation !== evaluation) {
             await disposeLate(mod, late!);
-            return mod;
+            return failReplaced(mod, e);
           }
           mod.state = State.Error;
           mod.failure = e;
@@ -677,13 +686,31 @@ function finishLoadModuleAsync(
         },
       );
     }
+    if (wasReplaced) {
+      return disposeLate(mod, late!).then(() => mod);
+    }
     finishEvaluation(mod, exportsBefore);
     return mod;
   } catch (e) {
+    if (wasReplaced) return failReplaced(mod, e);
     mod.state = State.Error;
     mod.failure = e;
     throw e;
   }
+}
+
+/** The end of a body that failed after an update replaced it. */
+function failReplaced(mod: HMRModule, error: unknown) {
+  if (hasExports(mod)) return mod;
+  // Until the new body is done there is nothing else to get, and a module above would run with `null`.
+  mod.state = State.Error;
+  mod.failure = error;
+  throw error;
+}
+
+/** Whether a load that takes `mod` as it is gets the exports of some body of it. */
+function hasExports(mod: HMRModule) {
+  return mod.state === State.Loaded || mod.exports !== null;
 }
 
 type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
@@ -1004,7 +1031,7 @@ export async function replaceModules(
     const loads = saved.map(async mod => loadModuleAsync(mod.id, false, null));
     for (const mod of saved) evaluations.set(mod, mod.evaluation);
     await settle(loads, errors);
-    // An update that came meanwhile evaluates one of them again, and replaces the modules above it.
+    // An update that came meanwhile evaluates one of them again. The modules above are its part.
     let isOvertaken = false;
     for (const mod of saved) isOvertaken ||= mod.evaluation !== evaluations.get(mod);
     for (const mod of reached.keys()) isOvertaken ||= mod.state === State.Pending;

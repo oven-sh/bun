@@ -431,6 +431,26 @@ devTest("function that is assigned to should become a live binding", {
   },
 });
 
+// The browser target lowers `using`, which moves the statements of the module into a `try`.
+devTest("an `import a = b.c` of a type beside a top-level `using` leaves no code", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      namespace N { export type T = number; }
+      import T = N.T;
+      using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+      const x: T = 1;
+      console.log(x);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage(1, "disposed");
+  },
+});
+
 devTest("browser field is used", {
   files: {
     // Ensure the package.json gets parsed before the HTML is bundled.

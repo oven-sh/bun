@@ -285,12 +285,14 @@ WTF::String formatStackTrace(
 
                 sb.append("    at <parse> ("_s);
 
-                sb.append(remappedFrame.source_url.toWTFString());
+                WTF::String remappedSourceURL = remappedFrame.source_url.toWTFString();
+                sb.append(remappedSourceURL);
 
                 if (remappedFrame.remapped) {
                     errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
+                    sourceURL = WTF::move(remappedSourceURL);
                 }
 
                 if (remappedFrame.remapped) {

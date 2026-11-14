@@ -147,9 +147,10 @@ pub(super) fn format_embedded_js(
     let base_options = embedded_options(options, print_width);
     let trimmed = strings::trim_unicode_whitespace(code);
     if !trimmed.starts_with(b"{") {
-        // Try TSX first, because `getItem<number>(..)` means something else in JSX.
-        return parse_and_build(TSX, code, &base_options)
-            .or_else(|| parse_and_build(JSX, code, &base_options));
+        // Try TSX first, because `getItem<number>(..)` means something else in JSX. A hashbang is one only at the
+        // start, and the first line of an example keeps its indentation.
+        return parse_and_build(TSX, trimmed, &base_options)
+            .or_else(|| parse_and_build(JSX, trimmed, &base_options));
     }
     // An object literal, which would parse as a block with labels. prettier-plugin-jsdoc formats it as JSON, which
     // keeps quoted keys, so an object with quotes is left as is.

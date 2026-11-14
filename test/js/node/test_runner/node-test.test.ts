@@ -1,7 +1,21 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
+
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -343,6 +357,152 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  return { exitCode, stdout, stderr };
+}
+
+// The result lines and the error lines that `bun test` prints, without the times.
+function reportOf(stderr: string) {
+  const report = normalizeBunSnapshot(stderr);
+  return {
+    results: report.match(/^\((?:pass|fail)\) .*$/gm),
+    errors: report.match(/^error: .*$/gm),
+  };
+}
+
+// What a fixture recorded and printed when its process exited.
+function eventsOf(stdout: string): string[] | undefined {
+  const line = stdout.split("\n").find(line => line.startsWith("EVENTS "));
+  return line === undefined ? undefined : JSON.parse(line.slice("EVENTS ".length));
+}
+
+// Each of these tests starts a debug+ASAN bun process, and the tests run at the same time: they get the same headroom
+// as the tests of the largest fixtures above.
+describe.concurrent("a subtest that is created before its parent is finished", () => {
+  test("a hook creates it with t.test()", async () => {
+    const { exitCode, stderr } = await runTests(["39-subtests-in-hooks.js"]);
+    expect({ ...reportOf(stderr), exitCode }).toEqual({
+      results: [
+        "(pass) a subtest from an after hook",
+        "(pass) a subtest from an afterEach hook",
+        "(pass) hooks that an after hook registers",
+        "(pass) an after hook awaits a subtest for longer than the timeout of the test",
+        "(pass) an after hook that a subtest from an after hook registers",
+        "(pass) an after hook that a before hook from an after hook registers",
+        "(pass) an expected failure whose after hook registers a failing before hook",
+        "(pass) an after hook leaves a todo subtest that is not finished",
+        "(pass) an after hook registers a before hook that needs time",
+        "(pass) a subtest that is done or skipped is not one that a hook leaves",
+        "(pass) the hooks and their subtests ran",
+      ],
+      errors: null,
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  test("it fails its parent when it fails or when it is not finished", async () => {
+    const { exitCode, stderr } = await runTests(["39b-subtests-in-hooks-fail.js"]);
+    expect({ ...reportOf(stderr), exitCode }).toEqual({
+      results: [
+        "(fail) a failing subtest from an after hook",
+        "(fail) a failing subtest that the body creates after its own wait",
+        "(fail) a failing subtest that follows a subtest from an after hook",
+        "(fail) failing subtests from the body and from an after hook",
+        "(fail) a failing before hook that an after hook registers",
+        "(fail) the body throws and a subtest from an after hook fails",
+        "(fail) a subtest from an after hook that does not settle",
+        "(fail) a subtest from an after hook that reads a file",
+        "(fail) two subtests from an after hook that do not settle",
+        "(pass) a later test still runs",
+      ],
+      errors: [
+        "error: 1 subtest failed",
+        "error: from the after hook",
+        "error: 1 subtest failed",
+        "error: from the second subtest",
+        "error: 1 subtest failed",
+        "error: from the second subtest of the hook",
+        "error: 2 subtests failed",
+        "error: from the body",
+        "error: from the before hook",
+        "error: from the body",
+        "error: 1 subtest failed",
+        "error: test did not finish before its parent and was cancelled",
+        "error: 1 subtest failed",
+        "error: test did not finish before its parent and was cancelled",
+        "error: 2 subtests failed",
+        "error: test did not finish before its parent and was cancelled",
+      ],
+      exitCode: 1,
+    });
+  }, 30_000);
+
+  test("the hooks of a test run after a body that times out", async () => {
+    const { exitCode, stderr } = await runTests(["39c-failed-body-and-hooks.js"]);
+    expect({ ...reportOf(stderr), exitCode }).toEqual({
+      results: ["(fail) the body times out and leaves a subtest", "(pass) the hooks ran and the mock is gone"],
+      errors: ["error: test timed out after 50ms"],
+      exitCode: 1,
+    });
+  }, 30_000);
+
+  test("what stays different from node", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["39d-differences-from-node.js"]);
+    expect({ ...reportOf(stderr), events: eventsOf(stdout), exitCode }).toEqual({
+      results: [
+        "(pass) the after hook of a test calls the global test()",
+        "(pass) the after hook of a test calls the global describe()",
+        "(fail) the after hook of a failed test calls the global test()",
+        "(fail) t.describe() in an after hook",
+        "(fail) an after hook leaves a suite that is not finished",
+        "(pass) an after hook leaves a todo suite that is not finished",
+        "(pass) a suite that is done is not one that a hook leaves",
+        "(fail) an after hook closes what its subtest reads",
+        "(fail) an after hook creates a subtest after a body that threw",
+        "(pass) an expected failure whose after hook leaves a subtest",
+      ],
+      errors: [
+        "error: 1 subtest failed",
+        "error: from the body subtest",
+        "error: 1 subtest failed",
+        "error: from the suite of the hook",
+        "error: 1 subtest failed",
+        "error: test did not finish before its parent and was cancelled",
+        "error: 1 subtest failed",
+        "error: from the body",
+      ],
+      events: ["from the hook", "left by the body"],
+      exitCode: 1,
+    });
+  }, 30_000);
+
+  // [fixture, what the summary of node has, exit code, events]
+  const onNode: [string, string[], number, string[] | undefined][] = [
+    ["39-subtests-in-hooks.js", ["pass 18", "fail 0", "cancelled 0"], 0, undefined],
+    ["39b-subtests-in-hooks-fail.js", ["pass 3", "fail 15", "cancelled 4"], 1, undefined],
+    ["39c-failed-body-and-hooks.js", ["pass 2", "fail 0", "cancelled 2"], 1, undefined],
+    [
+      "39d-differences-from-node.js",
+      ["pass 8", "fail 7", "cancelled 0"],
+      1,
+      ["test from the global test()", "test from the global describe()", "left by the body", "from the hook"],
+    ],
+  ];
+  test.skipIf(!referenceNode).each(onNode)("%s on node", async (fixture, summary, code, events) => {
+    const { exitCode, stdout } = await runTestsOnNode([fixture]);
+    for (const line of summary) expect(stdout).toContain(line);
+    expect({ events: eventsOf(stdout), exitCode }).toEqual({ events, exitCode: code });
+  });
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

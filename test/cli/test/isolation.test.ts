@@ -1562,6 +1562,27 @@ describe.concurrent("bun test --isolate=modules", () => {
     );
   });
 
+  test.each([
+    ["a Proxy without traps", "ISOLATION_DELETED", "Object.setPrototypeOf(process.env, new Proxy({}, {}));"],
+    ["the setter of Object.prototype.__proto__", "__proto__", ""],
+    ["a frozen Object.prototype", "toString", "Object.freeze(Object.prototype);"],
+  ])("a variable that a file deleted is put back past %s", async (_, name, leave) => {
+    using dir = tempDir("isolate-modules-env-prototype", {
+      "a.test.js": `test("a", () => { delete process.env[${JSON.stringify(name)}]; ${leave} });`,
+      "b.test.js": `
+        test("b", () => {
+          expect(Object.hasOwn(process.env, ${JSON.stringify(name)}) && process.env[${JSON.stringify(name)}]).toBe("kept");
+        });
+      `,
+    });
+    // A computed key, so that `__proto__` is an own property and reaches the child as a variable.
+    const env = { ...bunEnv, [name]: "kept" };
+    const files = ["./a.test.js", "./b.test.js"];
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], files, env);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("every file finds the builtins as the first one did, whatever the files before it did to them", async () => {
     const state = `JSON.stringify([
       typeof Math.max, Math.PI, "extra" in Array.prototype.map, Array.prototype.map.name, Array.prototype[0], Object.keys(Math), process.title === title,

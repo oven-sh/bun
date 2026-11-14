@@ -666,22 +666,20 @@ describe("import.meta.env in a test file", () => {
     }
   });
 
-  // On Windows process.env is a Proxy whose set trap ignores the prototype chain.
-  test.skipIf(isWindows)("as the prototype of process.env, setting a new variable throws a RangeError", () => {
+  // A write to process.env asks no prototype. Through this one it would come back to process.env without end.
+  test("as the prototype of process.env, setting a new variable sets it on process.env", () => {
     Object.setPrototypeOf(realEnv, env);
     try {
       expect<unknown>([realEnv.MODE, realEnv.DEV, realEnv.IMPORT_META_ENV_TEST_A]).toEqual(["test", true, undefined]);
-      expect(() => {
-        realEnv.IMPORT_META_ENV_TEST_A = "value";
-      }).toThrow(RangeError);
-      expect(() => {
-        env.IMPORT_META_ENV_TEST_A = "value";
-      }).toThrow(RangeError);
+      realEnv.IMPORT_META_ENV_TEST_A = "value";
+      env.IMPORT_META_ENV_TEST_B = "through the view";
+      expect<unknown>([
+        Object.hasOwn(realEnv, "IMPORT_META_ENV_TEST_A") && realEnv.IMPORT_META_ENV_TEST_A,
+        Object.hasOwn(realEnv, "IMPORT_META_ENV_TEST_B") && realEnv.IMPORT_META_ENV_TEST_B,
+      ]).toEqual(["value", "through the view"]);
     } finally {
       Object.setPrototypeOf(realEnv, Object.prototype);
     }
-    env.IMPORT_META_ENV_TEST_A = "value";
-    expect(realEnv.IMPORT_META_ENV_TEST_A).toBe("value");
   });
 
   test("a write to an object that inherits from it stays on that object", () => {

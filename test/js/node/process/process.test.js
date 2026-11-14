@@ -110,12 +110,18 @@ it("process.title with UTF-16 characters", () => {
 });
 
 it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
+  const accessors = ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"];
   using dir = tempDir("load-env-accessors", {
-    ".env": "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
+    // Not ".env", which bun loads by itself.
+    "accessors.env":
+      "TZ=UTC\nNODE_TLS_REJECT_UNAUTHORIZED=1\nBUN_CONFIG_VERBOSE_FETCH=false\n" +
+      "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
     "index.js": `
-      process.loadEnvFile();
-      // HTTP_PROXY always exists on process.env as a custom accessor even
-      // when the variable is unset; loadEnvFile must still apply it.
+      const accessors = ${JSON.stringify(accessors)};
+      // process.env has an accessor for each of these names, set or not. It reads undefined while the variable is unset.
+      console.log(accessors.map(name => process.env[name]).join());
+      process.loadEnvFile("accessors.env");
+      console.log(accessors.map(name => process.env[name]).join());
       console.log(process.env.HTTP_PROXY);
       // An existing empty-string value takes precedence over the file.
       console.log(JSON.stringify(process.env.EMPTY_WINS));
@@ -124,8 +130,7 @@ it("process.loadEnvFile can set accessor-backed keys and respects empty values",
   });
 
   const env = { ...bunEnv, EMPTY_WINS: "" };
-  delete env.HTTP_PROXY;
-  delete env.http_proxy;
+  for (const name of ["HTTP_PROXY", "http_proxy", ...accessors]) delete env[name];
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env,
@@ -134,7 +139,90 @@ it("process.loadEnvFile can set accessor-backed keys and respects empty values",
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: 'http://from-dotenv:8080\n""\nfresh\n', exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({
+    stdout: ',,\nUTC,1,false\nhttp://from-dotenv:8080\n""\nfresh\n',
+    exitCode: 0,
+  });
+});
+
+it("process.loadEnvFile sets a variable that process.env only seems to have", async () => {
+  // Members of Object.prototype, and `toJSON`, a function that process.env has on Windows.
+  const names = ["toString", "constructor", "hasOwnProperty", "valueOf", "__proto__", "toJSON"];
+  using dir = tempDir("load-env-inherited-names", {
+    // Not ".env", which bun loads by itself.
+    "inherited-names.env": names.map(name => `${name}=from the file\n`).join(""),
+    "index.js": `
+      process.loadEnvFile("inherited-names.env");
+      console.log(JSON.stringify(${JSON.stringify(names)}.map(name => Object.hasOwn(process.env, name) && process.env[name])));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ set: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    set: names.map(() => "from the file"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Node fills the environment. Since v26.12.1 (nodejs/node#65325) its child with no `env` option gets the environment.
+// A child of Bun gets `process.env`, so the file fills the object that replaced it.
+it("process.loadEnvFile fills the object that replaced process.env", async () => {
+  using dir = tempDir("load-env-replaced", {
+    "copy.env": "COPY_NEW=file\n",
+    "overlay.env": "OVERLAY_SET=file\nOVERLAY_NEW=file\n",
+    "frozen.env": "toString=file\nFROZEN_NEW=file\n",
+    "index.cjs": `
+      const { spawnSync } = require("child_process");
+      const environment = process.env;
+      environment.OVERLAY_SET = "environment";
+      // What a child with no \`env\` option reads, and its exit code.
+      const child = name => {
+        const { stdout, status } = spawnSync(process.execPath, ["-e", "console.log(process.env." + name + ")"], { encoding: "utf8" });
+        return [stdout.trim(), status];
+      };
+      const out = {};
+
+      process.env = { ...environment };
+      process.loadEnvFile("copy.env");
+      out.copy = child("COPY_NEW");
+
+      process.env = Object.create(environment);
+      process.loadEnvFile("overlay.env");
+      out.overlay = [process.env.OVERLAY_SET, process.env.OVERLAY_NEW];
+
+      process.env = { ...environment };
+      Object.freeze(Object.prototype);
+      try {
+        process.loadEnvFile("frozen.env");
+        out.frozen = child("FROZEN_NEW");
+      } catch (e) {
+        out.frozen = e.name;
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { copy: ["file", 0], overlay: ["environment", "file"], frozen: ["file", 0] },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("process.env defineProperty matches assignment semantics", () => {
@@ -217,6 +305,133 @@ it("a write to an object that inherits from process.env changes nothing about th
   });
 });
 
+// Node's EnvSetter intercepts every write to process.env, so no prototype has a say in it.
+// The inherited names are in upper case, because Windows stores every name in upper case.
+describe.concurrent.each(["strict", "sloppy"])("a write of a new variable to process.env in %s mode", mode => {
+  it("defines it on process.env and asks no prototype", async () => {
+    using dir = tempDir("process-env-new-variable", {
+      // A CommonJS file, so that the directive alone decides the mode.
+      "index.cjs": `${mode === "strict" ? '"use strict";' : ""}
+        const out = { mode: (function () { return this === undefined ? "strict" : "sloppy"; })() };
+        const own = name => [Object.hasOwn(process.env, name), process.env[name]];
+        const full = value => ({ value, writable: true, enumerable: true, configurable: true });
+        const step = (name, fn) => {
+          try {
+            out[name] = fn();
+          } catch (e) {
+            out[name] = "threw " + e.name + ": " + e.message;
+          }
+        };
+
+        // No prototype is changed here: Object.prototype.__proto__ is a setter.
+        const prototype = Object.getPrototypeOf(process.env);
+        step("named __proto__", () => {
+          process.env.__proto__ = "x";
+          return [...own("__proto__"), Object.getPrototypeOf(process.env) === prototype, Object.keys(process.env).includes("__proto__")];
+        });
+        step("named __proto__, defined", () => {
+          delete process.env.__proto__;
+          Object.defineProperty(process.env, "__proto__", full("y"));
+          return own("__proto__");
+        });
+        step("named __proto__, deleted", () => {
+          delete process.env.__proto__;
+          return [Object.hasOwn(process.env, "__proto__"), process.env.__proto__ === prototype];
+        });
+
+        let setterCalls = 0;
+        const setter = { set() { setterCalls++; } };
+        const readOnly = { value: "inherited", writable: false };
+        Object.setPrototypeOf(process.env, Object.create(Object.prototype, {
+          ZZ_ASSIGNED: setter,
+          ZZ_LOGICAL: { get() {}, ...setter },
+          ZZ_REFLECT: setter,
+          ZZ_OBJECT_ASSIGN: setter,
+          ZZ_DEFINED: setter,
+          ZZ_READ_ONLY: readOnly,
+          ZZ_READ_ONLY_REFLECT: readOnly,
+          5: setter,
+          6: setter,
+          7: readOnly,
+        }));
+        step("assignment", () => { process.env.ZZ_ASSIGNED = 1; return own("ZZ_ASSIGNED"); });
+        step("??=", () => { process.env.ZZ_LOGICAL ??= 2; return own("ZZ_LOGICAL"); });
+        step("Reflect.set", () => [Reflect.set(process.env, "ZZ_REFLECT", 3), ...own("ZZ_REFLECT")]);
+        step("Object.assign", () => { Object.assign(process.env, { ZZ_OBJECT_ASSIGN: 4 }); return own("ZZ_OBJECT_ASSIGN"); });
+        step("Object.defineProperty", () => { Object.defineProperty(process.env, "ZZ_DEFINED", full(5)); return own("ZZ_DEFINED"); });
+        step("inherited read-only", () => { process.env.ZZ_READ_ONLY = 6; return own("ZZ_READ_ONLY"); });
+        step("inherited read-only, Reflect.set", () => [Reflect.set(process.env, "ZZ_READ_ONLY_REFLECT", 7), ...own("ZZ_READ_ONLY_REFLECT")]);
+        step("index", () => { process.env[5] = 8; return own(5); });
+        step("index as a string", () => { process.env["6"] = 9; return own(6); });
+        step("inherited read-only index", () => { process.env[7] = 10; return own(7); });
+        step("after a delete", () => { delete process.env.ZZ_ASSIGNED; process.env.ZZ_ASSIGNED = 11; return own("ZZ_ASSIGNED"); });
+        out.setterCalls = setterCalls;
+
+        let traps = 0;
+        const trap = () => { traps++; return true; };
+        Object.setPrototypeOf(process.env, new Proxy({}, { set: trap, defineProperty: trap }));
+        step("behind a Proxy", () => {
+          process.env.ZZ_PROXY = 12;
+          process.env[8] = 13;
+          Object.defineProperty(process.env, "ZZ_PROXY_DEFINED", full(14));
+          return [own("ZZ_PROXY"), own(8), own("ZZ_PROXY_DEFINED"), traps];
+        });
+        Object.setPrototypeOf(process.env, prototype);
+
+        let conversions = 0;
+        const value = { toString() { conversions++; return "converted"; } };
+        step("toString() of the value", () => {
+          process.env.ZZ_CONVERTED = value;
+          process.env[9] = value;
+          return [process.env.ZZ_CONVERTED, process.env[9], conversions];
+        });
+        // An accessor that process.env itself has still takes the write.
+        step("own accessor", () => { process.env.BUN_CONFIG_VERBOSE_FETCH = false; return own("BUN_CONFIG_VERBOSE_FETCH"); });
+
+        step("frozen Object.prototype", () => {
+          Object.freeze(Object.prototype);
+          process.env.toString = "ts";
+          return own("toString");
+        });
+        console.log(JSON.stringify(out));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      out: {
+        "mode": mode,
+        "named __proto__": [true, "x", true, true],
+        "named __proto__, defined": [true, "y"],
+        "named __proto__, deleted": [false, true],
+        "assignment": [true, "1"],
+        "??=": [true, "2"],
+        "Reflect.set": [true, true, "3"],
+        "Object.assign": [true, "4"],
+        "Object.defineProperty": [true, "5"],
+        "inherited read-only": [true, "6"],
+        "inherited read-only, Reflect.set": [true, true, "7"],
+        "index": [true, "8"],
+        "index as a string": [true, "9"],
+        "inherited read-only index": [true, "10"],
+        "after a delete": [true, "11"],
+        "setterCalls": 0,
+        "behind a Proxy": [[true, "12"], [true, "13"], [true, "14"], 0],
+        "toString() of the value": ["converted", "converted", 2],
+        "own accessor": [true, "false"],
+        "frozen Object.prototype": [true, "ts"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
   // Node does not intercept TZ in workers (only RealEnvStore::Set calls
   // DateTimeConfigurationChangeNotification, and every worker env is a
@@ -292,6 +507,9 @@ it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snap
           try { Object.defineProperty(process.env, "G", { get() {} }); out.accessor = "no-throw"; }
           catch (e) { out.accessor = e.code || String(e); }
           out.seeded = process.env.SEEDED;
+          // Object.prototype.__proto__ is a setter, and EnvSetter asks no prototype.
+          process.env.__proto__ = "own";
+          out.proto = Object.hasOwn(process.env, "__proto__") && process.env.__proto__;
           require("node:worker_threads").parentPort.postMessage(out);
           \`,
           { eval: true, env: { SEEDED: "yes" } },
@@ -306,7 +524,13 @@ it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snap
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-    out: { coerced: "42", symbol: "TypeError", accessor: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", seeded: "yes" },
+    out: {
+      coerced: "42",
+      symbol: "TypeError",
+      accessor: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+      seeded: "yes",
+      proto: "own",
+    },
     stderr: "",
     exitCode: 0,
   });

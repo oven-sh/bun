@@ -53,6 +53,13 @@ test("$$", async () => {
   expect((await $`echo $BUN`).stdout.toString()).toBe("bun2\n");
 });
 
+test("env() of a Shell passes a variable named `__proto__` to a command", async () => {
+  const $$ = new $.Shell();
+  // The computed key makes it an own property, as it is on process.env.
+  $$.env({ ...bunEnv, ["__proto__"]: "from env()" });
+  expect(await $$`${bunExe()} -e ${"console.log(process.env.__proto__)"}`.text()).toBe("from env()\n");
+});
+
 test("new (class extends $.Shell) returns an instance of the subclass", async () => {
   class GreetingShell extends $.Shell {
     greet(name: string) {

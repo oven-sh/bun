@@ -19,7 +19,7 @@ test("Bun.TOML.parse rejects JS-style \\u{XX} escapes (#30893, #32025, #30825)",
   }
   expect(err).toBeInstanceOf(SyntaxError);
   expect((err as SyntaxError).message).toBe(
-    "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+    "TOML Parse error: Invalid escape sequence '\\u' in basic string: a Unicode escape must be followed by exactly 4 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
   );
   // Arbitrarily long hex-digit runs, including ones that overflowed the old
   // parser's i64 accumulator, are rejected at the opening brace.
@@ -51,7 +51,9 @@ test("Bun.TOML.parse rejects trailing backslash-CR in multiline basic string (#3
     err = e;
   }
   expect(err).toBeInstanceOf(SyntaxError);
-  expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x0D)");
+  expect((err as SyntaxError).message).toBe(
+    "TOML Parse error: Invalid escape sequence (0x0D) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+  );
 });
 
 // The old parser swapped the `\t` / `\f` escape output codepoints; the spec

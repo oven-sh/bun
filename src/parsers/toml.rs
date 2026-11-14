@@ -1386,12 +1386,35 @@ impl<'a, 'log> Scanner<'a, 'log> {
             0 if self.at_eof() => {
                 return Err(self.err(escape_pos, b"Unterminated escape sequence"));
             }
-            _ => {
-                self.pos -= 1;
-                return Err(self.err_char(self.pos, "Invalid escape sequence:"));
-            }
+            _ => return Err(self.err_escape(escape_pos, format_args!(""))),
         }
         Ok(())
+    }
+
+    /// `Invalid escape sequence '\c' in basic string{detail}; <fix>`.
+    fn err_escape(&mut self, escape_pos: usize, detail: core::fmt::Arguments<'_>) -> PErr {
+        const FIX: &str =
+            "; for a literal backslash, use a literal string (single quotes) or write \\\\";
+        match self.src.get(escape_pos + 1).copied() {
+            Some(c) if !self.redact && c.is_ascii_graphic() => self.err_fmt(
+                escape_pos,
+                format_args!(
+                    "Invalid escape sequence '\\{}' in basic string{}{}",
+                    c as char, detail, FIX
+                ),
+            ),
+            Some(c) if !self.redact => self.err_fmt(
+                escape_pos,
+                format_args!(
+                    "Invalid escape sequence (0x{:02X}) in basic string{}{}",
+                    c, detail, FIX
+                ),
+            ),
+            _ => self.err_fmt(
+                escape_pos,
+                format_args!("Invalid escape sequence in basic string{}", FIX),
+            ),
+        }
     }
 
     fn read_hex_codepoint(
@@ -1403,10 +1426,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
         let mut value: u32 = 0;
         for _ in 0..digits {
             let Some(d) = bun_core::fmt::hex_digit_value_u32(u32::from(self.peek())) else {
-                return Err(self.err_fmt(
+                return Err(self.err_escape(
                     escape_pos,
                     format_args!(
-                        "A {} must be followed by exactly {} hex digits",
+                        ": a {} must be followed by exactly {} hex digits",
                         what, digits
                     ),
                 ));

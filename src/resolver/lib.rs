@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
 // bun_install -> bun_install_types::AutoInstaller trait; bun_standalone_graph ->

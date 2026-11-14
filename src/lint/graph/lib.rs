@@ -1368,6 +1368,7 @@ impl Modules for Graph<'_> {
             u8::from(language.jsx),
             u8::from(language.experimental_decorators),
             u8::from(language.eslint_8.is_some()),
+            u8::from(language.reads_jsx_spreads_like_acorn()),
         ];
         let edition = language.ecma_version.to_le_bytes();
         let key = [path, &how, &edition].concat();

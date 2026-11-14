@@ -391,9 +391,19 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// A property of an object literal.
+    /// A property of an object literal, or a JSX attribute.
     fn property(&mut self, prop: Prop<'a>, edition: u32) {
-        if prop.is_jsx_attribute() || prop.is_import_attribute() {
+        if prop.is_jsx_attribute() {
+            // acorn-jsx expects a `...` token after the `{` of a spread attribute, whatever the edition.
+            if prop.kind() == PropKind::Spread
+                && edition < 6
+                && let Some(dots) = self.token_after_if(prop.span().start + 1, b"...")
+            {
+                self.dots(dots, edition);
+            }
+            return;
+        }
+        if prop.is_import_attribute() {
             return;
         }
         if prop.kind() == PropKind::Spread {

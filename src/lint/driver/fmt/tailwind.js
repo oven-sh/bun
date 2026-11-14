@@ -24,41 +24,80 @@ function withConditions(target) {
   }
 }
 
+/** What `key` is in the `exports` or `imports` of a package, for a style sheet. The most specific pattern is final, as in Node. */
+function lookup(map, key) {
+  // A `.`, `..` or `node_modules` segment is not allowed in a `./` target, nor in what `*` stands for, as in Node.
+  const isPlain = path => !/(^|[\\/])(\.\.?|node_modules)([\\/]|$)/i.test(path);
+  let target;
+  if (Object.hasOwn(map, key) && !key.includes("*")) target = withConditions(map[key]);
+  else {
+    const patterns = Object.keys(map)
+      .filter(it => it.includes("*") && it.indexOf("*") === it.lastIndexOf("*"))
+      .sort((a, b) => b.indexOf("*") - a.indexOf("*") || b.length - a.length);
+    for (const pattern of patterns) {
+      const [before, behind] = pattern.split("*");
+      if (key.length < pattern.length || !key.startsWith(before) || !key.endsWith(behind)) continue;
+      const middle = key.slice(before.length, key.length - behind.length);
+      if (!isPlain(middle)) return;
+      target = withConditions(map[pattern])?.replaceAll("*", middle);
+      break;
+    }
+  }
+  if (target?.startsWith("./") && !isPlain(target.slice(2))) return;
+  return target;
+}
+
 /** The file that `@import "<id>"` in a style sheet in the directory `base` means. */
 function resolveStylesheet(id, base) {
   const orWithEnding = file => [file, `${file}.css`].find(it => fs.statSync(it, { throwIfNoEntry: false })?.isFile());
+  const cannot = () => new Error(`Can't resolve '${id}' in '${base}'`);
   if (id.startsWith(".") || isAbsolute(id)) {
     const file = orWithEnding(resolve(base, id));
     if (file) return file;
-    throw new Error(`Can't resolve '${id}' in '${base}'`);
+    throw cannot();
   }
-  const [, name, rest = ""] = /^((?:@[^/]+\/)?[^/]+)(?:\/(.*))?$/.exec(id);
+  if (id.startsWith("#")) {
+    // In the `imports` of the nearest package. `#` and a trailing `/` are not valid there.
+    if (id === "#" || id.endsWith("/")) throw cannot();
+    for (let directory = base; ; directory = dirname(directory)) {
+      if (fs.existsSync(join(directory, "package.json"))) {
+        const { imports } = JSON.parse(read(join(directory, "package.json")));
+        const target = imports != null && typeof imports === "object" ? lookup(imports, id) : undefined;
+        if (target == null) throw cannot();
+        if (target.startsWith("./")) {
+          const file = orWithEnding(join(directory, target));
+          if (file) return file;
+          throw cannot();
+        }
+        // A package. `#...`, `../...`, an absolute path and nothing are not valid targets.
+        if (!target || target.startsWith("#") || target.startsWith(".") || isAbsolute(target)) throw cannot();
+        return resolveStylesheet(target, directory);
+      }
+      if (directory === dirname(directory)) throw cannot();
+    }
+  }
+  const [, name, rest = ""] = /^((?:@[^/]+\/)?[^/]+)(?:\/(.*))?$/.exec(id) ?? [];
+  if (name === undefined) throw cannot();
   for (let directory = base; ; directory = dirname(directory)) {
     const root = join(directory, "node_modules", name);
     if (fs.existsSync(join(root, "package.json"))) {
       const description = JSON.parse(read(join(root, "package.json")));
       let target;
-      if (description.exports !== undefined) {
+      if (description.exports != null) {
         const exports = description.exports;
         const isMap =
-          typeof exports === "object" && !Array.isArray(exports) && Object.keys(exports)[0]?.startsWith(".");
-        const key = rest ? `./${rest}` : ".";
-        if (!isMap) target = rest ? undefined : withConditions(exports);
-        else if (key in exports) target = withConditions(exports[key]);
-        else {
-          for (const [pattern, value] of Object.entries(exports)) {
-            const [before, behind] = pattern.split("*");
-            if (behind === undefined || !key.startsWith(before) || !key.endsWith(behind)) continue;
-            const middle = key.slice(before.length, key.length - behind.length);
-            target = withConditions(value)?.replaceAll("*", middle);
-            if (target != null) break;
-          }
-        }
+          typeof exports === "object" &&
+          !Array.isArray(exports) &&
+          Object.keys(exports).every(it => it.startsWith("."));
+        if (isMap) target = lookup(exports, rest ? `./${rest}` : ".");
+        else target = rest ? undefined : lookup({ ".": exports }, ".");
       } else target = rest || description.style || "index";
+      // The nearest package is the answer, as in Node: not one further up that has the file.
       const file = target != null && orWithEnding(join(root, target));
       if (file) return file;
+      throw cannot();
     }
-    if (directory === dirname(directory)) throw new Error(`Can't resolve '${id}' in '${base}'`);
+    if (directory === dirname(directory)) throw cannot();
   }
 }
 

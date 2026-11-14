@@ -9,7 +9,6 @@ use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
-use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{append_without_url_credentials, append_without_url_userinfo};
 use bun_collections::ArrayHashMap;
 use bun_core::fmt::{escape_control_chars, escape_control_chars_multiline};
@@ -620,17 +619,9 @@ fn build_package_json(
                 append_without_url_credentials(&mut version, &resolved);
                 match tag {
                     ResolutionTag::Github => {
-                        let repository = pkg_res.github();
-                        let commit = if repository.resolved.is_empty() {
-                            repository.committish.slice(string_buf)
-                        } else {
-                            repository.resolved_commit(string_buf)
-                        };
                         append_without_url_credentials(
                             &mut tarball,
-                            &crate::package_manager_real::run_tasks::alloc_github_url_for_ref(
-                                manager, repository, commit,
-                            ),
+                            &manager.alloc_github_url(pkg_res.github()),
                         );
                     }
                     ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {

@@ -2956,11 +2956,14 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
-    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
+    // The struct-only `dealloc` below skips field Drop, so take the heap-owning
+    // fields that `on_parse_task_complete` doesn't always move out here.
     fn drop_result_owned_fields(result: &mut Result) {
         match &mut result.value {
-            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
+            ResultValue::Success(s) => {
+                drop(core::mem::take(&mut s.log));
+                drop(s.client_copy_options.take());
+            }
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
             ResultValue::Empty { .. } => {}
         }

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 ef0ab5af1cc8d4fcf67cd76b66f5de94fa1fc5f97196a69f274a6150fdfb6de5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -147,6 +147,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   let needsInternalReadRefresh = false;
+  // A read() on the current `reader` has not settled, so _read() is a no-op until it does.
+  let readInFlight = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
 
@@ -174,6 +176,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
+      readInFlight = false;
       $debug("released reader");
     }
     source?.updateRef?.(false);
@@ -241,9 +244,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   const originalRead = stream.read;
   stream.read = function (this: StdinStream, size?: number) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() must acquire the native reader: _read() without one only
-    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    // read(n) with no listener is a consumer that _read() cannot see. read(0) kicks never own.
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }
@@ -263,6 +264,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     let value;
     try {
       $assert(readerForThisRead);
+      readInFlight = true;
       ({ value } = await readerForThisRead.read());
     } catch (err) {
       if (readerForThisRead !== reader) {
@@ -272,9 +274,11 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
         triggerRead.$call(stream, undefined);
         return;
       }
+      readInFlight = false;
       stream.destroy(err as Error);
       return;
     }
+    if (readerForThisRead === reader) readInFlight = false;
 
     try {
       if (value) {
@@ -299,12 +303,16 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   function triggerRead(this: StdinStream, _size?: number) {
     $debug("_read();", reader);
 
+    if (readInFlight) return;
     if (reader) {
       internalRead(this);
-    } else {
-      // The stream has not been ref()ed yet. If it is ever ref()ed,
-      // run internalRead()
-      needsInternalReadRefresh = true;
+      return;
+    }
+
+    needsInternalReadRefresh = true;
+    // A live consumer takes the reader back, as net.Socket._read restarts its handle in Node.
+    if (!stream.destroyed && (stream.readableFlowing || stream._readableState.readableListening)) {
+      own();
     }
   }
   stream._read = triggerRead;

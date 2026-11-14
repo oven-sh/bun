@@ -128,6 +128,8 @@ export function getStdinStream(
   var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
 
   let needsInternalReadRefresh = false;
+  // A read() on the current `reader` has not settled, so _read() is a no-op until it does.
+  let readInFlight = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
 
@@ -155,6 +157,7 @@ export function getStdinStream(
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
+      readInFlight = false;
       $debug("released reader");
     }
     source?.updateRef?.(false);
@@ -222,9 +225,7 @@ export function getStdinStream(
   const originalRead = stream.read;
   stream.read = function (size) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() must acquire the native reader: _read() without one only
-    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    // read(n) with no listener is a consumer that _read() cannot see. read(0) kicks never own.
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }
@@ -244,6 +245,7 @@ export function getStdinStream(
     let value;
     try {
       $assert(readerForThisRead);
+      readInFlight = true;
       ({ value } = await readerForThisRead.read());
     } catch (err) {
       if (readerForThisRead !== reader) {
@@ -253,9 +255,11 @@ export function getStdinStream(
         triggerRead.$call(stream, undefined);
         return;
       }
+      readInFlight = false;
       stream.destroy(err);
       return;
     }
+    if (readerForThisRead === reader) readInFlight = false;
 
     try {
       if (value) {
@@ -280,12 +284,16 @@ export function getStdinStream(
   function triggerRead(_size) {
     $debug("_read();", reader);
 
+    if (readInFlight) return;
     if (reader) {
       internalRead(this);
-    } else {
-      // The stream has not been ref()ed yet. If it is ever ref()ed,
-      // run internalRead()
-      needsInternalReadRefresh = true;
+      return;
+    }
+
+    needsInternalReadRefresh = true;
+    // A live consumer takes the reader back, as net.Socket._read restarts its handle in Node.
+    if (!stream.destroyed && (stream.readableFlowing || stream._readableState.readableListening)) {
+      own();
     }
   }
   stream._read = triggerRead;

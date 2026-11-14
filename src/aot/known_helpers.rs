@@ -29,7 +29,7 @@ use crate::modules::ModuleGraph;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, FnId, NodeData};
-use bun_sema::program::{FileId, Files};
+use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::FxHashSet;
 use std::sync::OnceLock;
 
@@ -117,6 +117,15 @@ impl KnownHelpers {
             known.private_states.resize_with(file_count, OnceLock::new);
         }
         known
+    }
+
+    pub fn leave_replaceable_variables(&mut self, modules: &ModuleGraph) {
+        for (index, helpers) in self.files.iter_mut().enumerate() {
+            let file = FileId(index as u32);
+            if helpers.bindings().len() != 0 && modules.holds_replaceable_variable(file) {
+                helpers.leave_replaceable_variables(&|id| modules.is_replaceable(Sym { file, id }));
+            }
+        }
     }
 
     pub fn has_bindings(&self) -> bool {

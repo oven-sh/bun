@@ -15,6 +15,7 @@ const scenes: Record<string, { flags: string[]; says: string }> = {
   "3088-json-required-in-a-fresh-realm": { flags: ["--isolate"], says: "R " },
   "3092-module-written-by-a-test-then-imported-by-a-literal": { flags: [], says: "SAID" },
   "3625-a-name-that-a-file-of-the-ring-hands-on-while-its-own-file-has-not-begun": { flags: [], says: "SAID" },
+  "6056-helpers-that-tests-replace-where-their-own-file-calls-them": { flags: [], says: "SAID" },
 };
 const stored = join(import.meta.dir, "closed-bugs-in-test-runs");
 
@@ -43,6 +44,7 @@ for (const [scene, { flags, says }] of Object.entries(scenes)) {
       }
       const plain = await report();
       expect(plain.said.length).toBeGreaterThan(0);
+      expect(plain.exitCode).toBe(0);
       expect(await report("--aot")).toEqual(plain);
     },
     300_000,

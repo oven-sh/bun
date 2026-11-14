@@ -4,7 +4,7 @@ use super::module_cache::{is_function_that_loader_calls, is_module_cache, is_tab
 use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver, evaluates_text};
 use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
 use super::written_members::holder_of;
-use crate::builtins::runtime_uses::is_evaluator;
+use crate::builtins::runtime_uses::{holds_name_of_member_with_code, is_evaluator};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, CallsForTexts, Intrinsic, Prototype,
     QuietCall, Scope, WrittenOperand,
@@ -207,7 +207,14 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn expose(&mut self, id: BuiltinId) {
+        self.note_escaped_object(id);
         expose_in(&mut self.output.called, &mut self.output.exposed, id);
+    }
+
+    fn note_escaped_object(&mut self, id: BuiltinId) {
+        if holds_name_of_member_with_code(id) {
+            self.output.escaped_objects.push(table::canonical_id(id));
+        }
     }
 
     pub(super) fn may_be_global_object(&self, this: ExprId) -> bool {
@@ -649,7 +656,13 @@ impl Resolver<'_, '_> {
             self.expose(holder);
         }
         self.mention_members_read_under_written_keys(expr);
-        match self.classify_use(expr) {
+        let mention_use = self.classify_use(expr);
+        let changes_member = self.is_stored_to_member(expr)
+            && !table::has_flag(table::canonical_id(id), BuiltinFlags::IS_GLOBAL_OBJECT);
+        if matches!(mention_use, MentionUse::Exposed) || self.is_stored_to(expr) || changes_member {
+            self.note_escaped_object(id);
+        }
+        match mention_use {
             MentionUse::Called(call) if self.is_import_site(call) => {}
             MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
             MentionUse::Called(call) => {
@@ -695,6 +708,15 @@ impl Resolver<'_, '_> {
                 }
             }
         }
+    }
+
+    fn is_stored_to_member(&self, object: ExprId) -> bool {
+        let object = self.outermost_assertion_of(object);
+        let Parent::Expr(member) = self.input.bound.parent_of_expr(object) else {
+            return false;
+        };
+        let holder = self.input.hir.member_key(member).map(|read| read.0);
+        holder == Some(object) && (self.is_stored_to(member) || self.is_deleted(member))
     }
 
     /// `Reflect.get(Bun, "ModuleGraph")`, `Object.getOwnPropertyDescriptor(Bun, "ModuleGraph")` and `Bun["Module" + "Graph"]` read

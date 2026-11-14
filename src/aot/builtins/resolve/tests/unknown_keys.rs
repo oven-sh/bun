@@ -29,6 +29,10 @@ const SPELL_WHAT_NO_BINDING_STANDS_FOR: &[(&str, BuiltinId)] = &[
         BuiltinId::ArrayIteratorPrototypeNext,
     ),
     (
+        "const steps = Symbol?.iterator; f[steps];",
+        BuiltinId::ArrayIteratorPrototypeNext,
+    ),
+    (
         "const steps = Symbol.iterator; const { [steps]: taken } = f;",
         BuiltinId::ArrayIteratorPrototypeNext,
     ),
@@ -125,6 +129,9 @@ const KEYS_THAT_NOBODY_KNOWS: &[&str] = &[
     "let i = 0; i++; let taken; ({ [i]: taken } = f);",
     "var steps = Symbol.iterator; f[steps];",
     "var steps = Symbol.iterator; const again = steps; f[again];",
+    "f[globalThis.Symbol?.iterator];",
+    "const steps = globalThis?.Symbol.iterator; f[steps];",
+    "const Marks = globalThis.Symbol; const steps = Marks?.iterator; f[steps];",
     "let i = 0; i = g(); f[i];",
     "let i = 0, j = g(); i = j + 1; j = i + 1; f[i];",
     "for (var k = 0 in g) f[k];",
@@ -299,6 +306,8 @@ fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
         assert_eq!(asked.exports_read, not_asked.exports_read, "{source}");
         let AsksOfText {
             members_read,
+            members_named: _,
+            escaped_objects: _,
             reads_by_unknown_key,
             syntax,
             may_hand_values_to_natives: _,
@@ -307,6 +316,74 @@ fn a_text_that_is_not_asked_names_the_entries_that_it_names_when_it_is_asked() {
             members_read.is_empty() && !reads_by_unknown_key && syntax.is_empty(),
             "{source}"
         );
+    }
+}
+
+const PROGRAMS_THAT_CHANGE_THE_HOLDER: &[&str] = &[
+    "Object.freeze(Temporal);",
+    "Object.defineProperty(Temporal, 1, { value: 5 });",
+    "Object.defineProperty(Temporal, 'zone', { value: 5 });",
+    "Object.defineProperties(Temporal, { zone: { value: 5 } });",
+    "Object.setPrototypeOf(Temporal, null);",
+    "Temporal.zone = 1;",
+    "Temporal[1] = 1;",
+    "delete Temporal.zone;",
+    "globalThis.Temporal = 5;",
+    "globalThis.Temporal ??= {};",
+    "if (!globalThis.Temporal) globalThis.Temporal = [];",
+    "Temporal = 5;",
+    "const g = globalThis; g.Temporal = 5;",
+    "globalThis['Temporal'] = 5;",
+    "globalThis.Temporal.PlainTime = f();",
+    "const copy = { ...Temporal };",
+    "for (const name in Temporal) f(name);",
+    "f(Temporal);",
+    "Object.freeze(Temporal.PlainTime);",
+    "const { PlainTime } = Temporal; Object.freeze(PlainTime);",
+    "const Times = Temporal; Times.zone = 1;",
+];
+
+/// What such a store lays on the global object may read it as its `this`, and a delete hands it on.
+const HAND_THE_GLOBAL_OBJECT_ON: &[&str] = &[
+    "globalThis.Temporal = f();",
+    "globalThis.Temporal ??= f();",
+    "if (!globalThis.Temporal) globalThis.Temporal = f();",
+    "delete globalThis.Temporal;",
+];
+
+const CHANGE_NO_BUILT_IN: &[&str] = &[
+    "Object.freeze(Math);",
+    "globalThis.__DEV__ = true;",
+    "globalThis.__DEV__ ??= {};",
+    "globalThis.count = (globalThis.count ?? 0) + 1;",
+    "globalThis['__DEV__'] = [];",
+    "const g = globalThis; g.__DEV__ = true;",
+];
+
+#[test]
+fn a_member_of_an_object_that_the_program_changes_asks_for_its_name() {
+    for source in HAND_THE_GLOBAL_OBJECT_ON {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+    }
+    let holds_from = |asks: &AsksOfText| {
+        let uses = RuntimeUses::of_asks(asks, Platforms::LINUX);
+        holds_code_of(&uses, BuiltinId::IteratorFrom)
+    };
+    const CALL: &str = "Temporal.PlainTime.from(a);";
+    let of_call = with_case(PROGRAM, CALL, |case| case.resolved.uses().asks.clone());
+    assert!(!holds_from(&of_call));
+    for source in PROGRAMS_THAT_CHANGE_THE_HOLDER {
+        let mut asks = with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+        assert!(!holds_from(&asks), "{source}");
+        asks.add(&of_call);
+        assert!(holds_from(&asks), "{source}");
+    }
+    for source in CHANGE_NO_BUILT_IN {
+        let mut asks = with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+        asks.add(&of_call);
+        assert!(!holds_from(&asks), "{source}");
     }
 }
 

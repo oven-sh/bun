@@ -248,9 +248,7 @@ pub mod lexer_step {
     #[cold]
     #[inline(never)]
     pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
-        let len = contents.len();
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
-        let avail = len - *current;
 
         // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
         // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
@@ -258,23 +256,13 @@ pub mod lexer_step {
         // arm instead of silently emitting TEndOfFile mid-stream.
         let code_point: CodePoint = if cp_len == 1 {
             first as CodePoint
-        } else if avail < cp_len {
+        } else if let Some(bytes) = contents.get(*current..*current + cp_len) {
+            let mut quad = [0u8; 4];
+            quad[..cp_len].copy_from_slice(bytes);
+            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
+        } else {
             // truncated multibyte at EOF
             -1
-        } else {
-            let mut quad = [0u8; 4];
-            // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
-            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
-            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
-            // never read.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    contents.as_ptr().add(*current),
-                    quad.as_mut_ptr(),
-                    cp_len,
-                );
-            }
-            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
         };
 
         *current += if code_point != UNICODE_REPLACEMENT as CodePoint {

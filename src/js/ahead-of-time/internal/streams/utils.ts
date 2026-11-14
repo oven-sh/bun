@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/utils.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 66049638ddf6855cd42ef94d2cdc6b387c5b7ceac70f287da22b463b552a58b0.
+// Written against that file with the SHA-256 7ea9526e6b331935feb11e99e971eda42966cbc071c112f8d256c74a6450d1f4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -38,6 +38,8 @@ const kIsReadable = Symbol.for("nodejs.stream.readable");
 const kIsWritable = Symbol.for("nodejs.stream.writable");
 const kIsDisturbed = Symbol.for("nodejs.stream.disturbed");
 
+const kWriteOperation = Symbol("kWriteOperation");
+const kWriteOperationEncoding = "bun:write-operation";
 const kIsClosedPromise = Symbol.for("nodejs.webstream.isClosedPromise");
 const kControllerErrorFunction = Symbol.for("nodejs.webstream.controllerErrorFunction");
 
@@ -491,6 +493,8 @@ function isErrored(stream) {
 }
 
 export default {
+  kWriteOperation,
+  kWriteOperationEncoding,
   isDestroyed,
   kIsDestroyed,
   isDisturbed,

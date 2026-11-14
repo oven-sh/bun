@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/writable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c4f69041e727ea49f8d66fa3f8f67afdeb35bed13010cbc51b1284fa631e851b.
+// Written against that file with the SHA-256 11d21cb43a00cacaafca5cf017a5c7bdab03efcaacbd6245ba151134c720c03a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // A bit simpler than readable streams.
@@ -13,6 +13,9 @@ const { Stream } = require("internal/streams/legacy");
 const destroyImpl = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
+const streamUtils = require("internal/streams/utils");
+const kWriteOperation: typeof streamUtils.kWriteOperation = streamUtils.kWriteOperation;
+const kWriteOperationEncoding = streamUtils.kWriteOperationEncoding;
 const streamState = require("internal/streams/state");
 const { WritableState, resetBuffer, isReadableState, isWritableState, flagsOf, addFlags, removeFlags, internals, nop } =
   streamState;
@@ -245,6 +248,19 @@ function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, c
   state.pendingcb!++;
   return writeOrBuffer(stream, state, chunk, encoding, cb, 1);
 }
+
+// Internal byte-counted operations share the byte stream's queue and lifecycle.
+Writable.prototype[kWriteOperation] = function (operation, callback) {
+  const state: WritableState = this._writableState;
+  const cb: WriteCallback = callback ?? nop;
+  if ((state[kState] & Flag.EndingOrDestroyed) !== 0) {
+    const err = (state[kState] & Flag.Ending) !== 0 ? $ERR_STREAM_WRITE_AFTER_END() : $ERR_STREAM_DESTROYED("write");
+    writeAfterEnd(this, err, cb);
+    return false;
+  }
+  state.pendingcb!++;
+  return writeOrBuffer(this, state, operation, kWriteOperationEncoding, cb, operation.length);
+};
 
 const writeBytes = function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, cb: WriteCallback) {
   if (!encoding) {

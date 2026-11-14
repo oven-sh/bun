@@ -73,6 +73,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
+#include "RunnerLoadFetcher.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
@@ -1737,6 +1738,26 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 }
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
+// The same for a module that the loader runs right before it links the graph that imports it.
+static JSC::SourceCode deferredCommonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*, JSCommonJSModule*);
+
+#ifdef BUN_DEBUG
+extern "C" void Bun__logCommonJSProviderKind(const BunString* key, bool deferred);
+#endif
+
+// `key` is what the loader fetched. Under `bun test`, a static import of the test file or preload being loaded runs once that whole graph has loaded.
+static ALWAYS_INLINE JSC::SourceCode commonJSModuleSourceCodeForLoad(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSCommonJSModule* moduleObject, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL)
+{
+    auto* runnerLoad = liveRunnerLoad(globalObject, graph);
+    bool isDeferred = runnerLoad && runnerLoad->holds(key->tryGetValue().data);
+#ifdef BUN_DEBUG
+    BunString loggedKey = Bun::toString(key->tryGetValue().data);
+    Bun__logCommonJSProviderKind(&loggedKey, isDeferred);
+#endif
+    if (isDeferred) [[unlikely]]
+        return deferredCommonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, moduleObject);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+}
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1760,10 +1781,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
     }
 
+    JSString* filename = requireMapKey;
     if (!moduleObject) {
         size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
-        JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1807,7 +1828,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSourceCodeForLoad(globalObject, graph, filename, moduleObject, sourceOrigin, sourceURL);
 }
 
 // The module is the entry for the record's key in the require cache of the loader that fetched
@@ -1892,10 +1913,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
     }
 
+    JSString* filename = requireMapKey;
     if (!moduleObject) {
         size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
-        JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1922,7 +1943,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSourceCodeForLoad(globalObject, graph, filename, moduleObject, sourceOrigin, sourceURL);
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* requestingModule)

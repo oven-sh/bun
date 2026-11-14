@@ -1,8 +1,6 @@
 //! `bun.sys.File` — high-level file handle.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
-//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
-//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
+//! Owns the fd; Drop is [`FdExt::close`]. Use [`File::into_raw`] to hand it off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
 
@@ -16,9 +14,7 @@ pub struct File {
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
-        if self.handle != Fd::INVALID && !self.handle.is_stdio() {
-            let _ = close(self.handle);
-        }
+        self.handle.close();
     }
 }
 
@@ -33,7 +29,7 @@ pub struct ReadToEndResult {
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
     // ── construction / identity ──────────────────────────────────────────
-    /// Wrap an existing fd. See also the `From` impls below.
+    /// Take ownership of an open fd.
     #[inline]
     pub fn from_fd(fd: Fd) -> Self {
         Self { handle: fd }
@@ -59,19 +55,6 @@ impl File {
     pub fn borrow(fd: &Fd) -> &File {
         // SAFETY: `File` is `#[repr(transparent)]` over `Fd`.
         unsafe { &*(core::ptr::from_ref(fd).cast::<File>()) }
-    }
-    /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
-    #[inline]
-    pub fn stdin() -> Self {
-        Self {
-            handle: Fd::stdin(),
-        }
-    }
-    #[inline]
-    pub fn stdout() -> Self {
-        Self {
-            handle: Fd::stdout(),
-        }
     }
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
@@ -306,15 +289,6 @@ impl File {
             })
         }
     }
-    /// Close now. Equivalent to dropping `self` but the syscall result is
-    /// observable. Skips the same sentinels as `Drop`.
-    pub fn close(self) -> Maybe<()> {
-        let fd = self.into_raw();
-        if fd == Fd::INVALID || fd.is_stdio() {
-            return Ok(());
-        }
-        close(fd)
-    }
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
     /// closing the handle after the rename so `move_file_z_with_handle`'s
     /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
@@ -324,9 +298,7 @@ impl File {
     /// into the EXDEV fallback.)
     pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Maybe<()> {
         let cwd = Fd::cwd();
-        let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
-        let _ = self.close(); // close error is non-actionable; discarded
-        result
+        move_file_z_with_handle(self.handle, cwd, src, cwd, dest)
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
@@ -413,21 +385,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn close_disarms_drop() {
-        let _g = FD_TEST_LOCK.lock();
-        let f = open_cwd();
-        f.close().unwrap();
-    }
-
-    #[test]
-    fn close_skips_invalid_sentinel() {
-        let _g = FD_TEST_LOCK.lock();
-        // `File::close()` must not call the syscall on `Fd::INVALID`.
-        let f = File::from_fd(Fd::INVALID);
-        assert!(f.close().is_ok());
-    }
-
-    #[test]
     fn into_raw_disarms_drop() {
         let _g = FD_TEST_LOCK.lock();
         let f = open_cwd();
@@ -451,21 +408,7 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` wrap process-shared descriptors that
-        // the caller does not own. Dropping the wrapper must not tear down the
-        // test harness's output.
-        for _ in 0..16 {
-            let _ = File::stdin();
-            let _ = File::stdout();
-        }
+        drop(File::from_fd(Fd::stdout()));
         assert!(fstat(Fd::stdout()).is_ok());
-    }
-
-    #[test]
-    fn dropping_invalid_fd_is_safe() {
-        let _g = FD_TEST_LOCK.lock();
-        for _ in 0..16 {
-            let _ = File::from_fd(Fd::INVALID);
-        }
     }
 }

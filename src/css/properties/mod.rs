@@ -28,7 +28,9 @@
 macro_rules! impl_rect_shorthand {
     ($T:ident, $V:ty) => {
         impl $T {
-            pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
+            pub fn parse<'bump>(
+                input: &mut $crate::css_parser::Parser<'_, 'bump>,
+            ) -> $crate::Result<'bump, Self> {
                 let r = $crate::css_values::rect::Rect::<$V>::parse(input)?;
                 Ok(Self {
                     top: r.top,
@@ -81,7 +83,9 @@ macro_rules! define_rect_shorthand {
 macro_rules! impl_size_shorthand {
     ($T:ident, $V:ty, $start:ident, $end:ident) => {
         impl $T {
-            pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
+            pub fn parse<'bump>(
+                input: &mut $crate::css_parser::Parser<'_, 'bump>,
+            ) -> $crate::Result<'bump, Self> {
                 let s = $crate::css_values::size::Size2D::<$V>::parse(input)?;
                 Ok(Self {
                     $start: s.a,
@@ -178,7 +182,7 @@ mod generic_registrations {
     // hand-written inherent `parse`/`to_css`, so forward via the macro.
     impl_parse_tocss_via_inherent!(
         css_values::alpha::AlphaValue,
-        css_values::image::Image,
+        css_values::image::Image<'bump>,
         css_values::length::LengthPercentage,
         css_values::easing::EasingFunction,
         css_values::time::Time,
@@ -186,30 +190,34 @@ mod generic_registrations {
         css_values::position::HorizontalPosition,
         css_values::position::VerticalPosition,
         css_values::percentage::NumberOrPercentage,
-        css_values::ident::NoneOrCustomIdentList,
+        css_values::ident::NoneOrCustomIdentList<'bump>,
     );
 
     // Length derives `css::ToCss` only (custom Calc-unwrapping `parse` is
     // inherent); CssColor has a hand-written `generics::ToCss` in
     // `values/color.rs`. Supply `Parse` / `ParseWithOptions` only for both.
-    impl crate::generics::Parse for css_values::length::Length {
+    impl<'bump> crate::generics::Parse<'bump> for css_values::length::Length {
         #[inline]
-        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+        fn parse(
+            input: &mut crate::css_parser::Parser<'_, 'bump>,
+        ) -> crate::css_parser::CssResult<'bump, Self> {
             css_values::length::Length::parse(input)
         }
     }
-    impl crate::generics::Parse for css_values::color::CssColor {
+    impl<'bump> crate::generics::Parse<'bump> for css_values::color::CssColor {
         #[inline]
-        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+        fn parse(
+            input: &mut crate::css_parser::Parser<'_, 'bump>,
+        ) -> crate::css_parser::CssResult<'bump, Self> {
             css_values::color::CssColor::parse(input)
         }
     }
-    impl crate::generics::ParseWithOptions for css_values::color::CssColor {
+    impl<'bump> crate::generics::ParseWithOptions<'bump> for css_values::color::CssColor {
         #[inline]
         fn parse_with_options(
-            input: &mut crate::css_parser::Parser,
+            input: &mut crate::css_parser::Parser<'_, 'bump>,
             _o: &crate::css_parser::ParserOptions,
-        ) -> crate::css_parser::CssResult<Self> {
+        ) -> crate::css_parser::CssResult<'bump, Self> {
             css_values::color::CssColor::parse(input)
         }
     }
@@ -229,12 +237,12 @@ mod generic_registrations {
         align::PlaceItems,
         align::PlaceSelf,
         // background
-        background::Background,
+        background::Background<'bump>,
         background::BackgroundPosition,
         background::BackgroundRepeat,
         background::BackgroundSize,
         // border_image
-        border_image::BorderImage,
+        border_image::BorderImage<'bump>,
         border_image::BorderImageRepeat,
         border_image::BorderImageSlice,
         border_image::BorderImageSideWidth,
@@ -243,22 +251,22 @@ mod generic_registrations {
         // box_shadow
         box_shadow::BoxShadow,
         // css_modules
-        css_modules::Composes,
+        css_modules::Composes<'bump>,
         // display
         display::Display,
         // flex
         flex::Flex,
         flex::FlexFlow,
         // font
-        font::Font,
-        font::FontFamily,
+        font::Font<'bump>,
+        font::FontFamily<'bump>,
         font::FontStretch,
         font::FontStyle,
         font::FontWeight,
         font::LineHeight,
         // masking
-        masking::Mask,
-        masking::MaskBorder,
+        masking::Mask<'bump>,
+        masking::MaskBorder<'bump>,
         // overflow
         overflow::Overflow,
         // position
@@ -276,27 +284,27 @@ mod generic_registrations {
         transform::TransformList,
         transform::Translate,
         // transition
-        transition::Transition,
+        transition::Transition<'bump>,
         // animation
-        animation::Animation,
-        animation::AnimationName,
+        animation::Animation<'bump>,
+        animation::AnimationName<'bump>,
         // ui
         ui::ColorScheme,
         // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
-        properties_generated::PropertyId,
+        properties_generated::PropertyId<'bump>,
     );
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
     // inherent impl block bounds `S` on the protocol traits; mirror here.
-    impl<S, const P: u8> crate::generics::ParseWithOptions for GenericBorder<S, P>
+    impl<'bump, S, const P: u8> crate::generics::ParseWithOptions<'bump> for GenericBorder<S, P>
     where
         GenericBorder<S, P>: GenericBorderImpl,
     {
         #[inline]
         fn parse_with_options(
-            input: &mut crate::css_parser::Parser,
+            input: &mut crate::css_parser::Parser<'_, 'bump>,
             _o: &crate::css_parser::ParserOptions,
-        ) -> crate::css_parser::CssResult<Self> {
+        ) -> crate::css_parser::CssResult<'bump, Self> {
             <Self as GenericBorderImpl>::parse(input)
         }
     }
@@ -317,7 +325,9 @@ mod generic_registrations {
     /// repeat `GenericBorder`'s `S`-bounds (which name the same protocol
     /// traits and would otherwise create a coherence cycle).
     pub(crate) trait GenericBorderImpl: Sized {
-        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self>;
+        fn parse<'bump>(
+            input: &mut crate::css_parser::Parser<'_, 'bump>,
+        ) -> crate::css_parser::CssResult<'bump, Self>;
         fn to_css(
             &self,
             dest: &mut crate::printer::Printer,

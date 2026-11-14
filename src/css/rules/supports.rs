@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRuleList, Location, MinifyContext, StyleContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
@@ -7,42 +7,39 @@ use bun_alloc::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
-// String payloads borrow the parser input/arena; currently `&'static [u8]`
-// per the rules/mod.rs lifetime-erasure note.
-// TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
-pub enum SupportsCondition {
+pub enum SupportsCondition<'bump> {
     /// A `not` expression.
-    Not(Box<SupportsCondition, ArenaPtr>),
+    Not(Box<SupportsCondition<'bump>, ArenaPtr<'bump>>),
 
     /// An `and` expression.
-    And(Vec<SupportsCondition, ArenaPtr>),
+    And(Vec<SupportsCondition<'bump>, ArenaPtr<'bump>>),
 
     /// An `or` expression.
-    Or(Vec<SupportsCondition, ArenaPtr>),
+    Or(Vec<SupportsCondition<'bump>, ArenaPtr<'bump>>),
 
     /// A declaration to evaluate.
-    Declaration(Declaration),
+    Declaration(Declaration<'bump>),
 
     /// A selector to evaluate.
-    Selector(&'static [u8]),
+    Selector(&'bump [u8]),
 
     /// An unknown condition.
-    Unknown(&'static [u8]),
+    Unknown(&'bump [u8]),
 }
 
 // Named payload type for `SupportsCondition::Declaration` (enum variants
 // cannot carry inherent methods).
-pub struct Declaration {
+pub struct Declaration<'bump> {
     /// The property id for the declaration.
-    pub(crate) property_id: PropertyId,
+    pub(crate) property_id: PropertyId<'bump>,
     /// The raw value of the declaration.
     ///
     /// What happens if the value is a URL? A URL in this context does nothing
     /// e.g. `@supports (background-image: url('example.png'))`
-    pub(crate) value: &'static [u8],
+    pub(crate) value: &'bump [u8],
 }
 
-impl Declaration {
+impl Declaration<'_> {
     fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // `PropertyId` is `Copy`; `value` is an arena-owned slice → identity copy.
         Self {
@@ -52,18 +49,14 @@ impl Declaration {
     }
 }
 
-impl Declaration {
+impl Declaration<'_> {
     fn eql(&self, other: &Self) -> bool {
         self.property_id == other.property_id && self.value == other.value
     }
 }
 
-impl SupportsCondition {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
-        // Hand-rolled variant-walk —
-        // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
-        // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
-        // with a fresh `'__bump`).
+impl<'bump> SupportsCondition<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> SupportsCondition<'bump> {
         let alloc = ArenaPtr::new(bump);
         match self {
             Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
@@ -76,18 +69,18 @@ impl SupportsCondition {
     }
 
     fn clone_vec_in(
-        v: &[SupportsCondition],
-        bump: &bun_alloc::Arena,
-        alloc: ArenaPtr,
-    ) -> Vec<SupportsCondition, ArenaPtr> {
+        v: &[SupportsCondition<'bump>],
+        bump: &'bump bun_alloc::Arena,
+        alloc: ArenaPtr<'bump>,
+    ) -> Vec<SupportsCondition<'bump>, ArenaPtr<'bump>> {
         let mut out = Vec::with_capacity_in(v.len(), alloc);
         out.extend(v.iter().map(|c| c.deep_clone(bump)));
         out
     }
 }
 
-impl SupportsCondition {
-    pub fn eql(&self, other: &SupportsCondition) -> bool {
+impl<'bump> SupportsCondition<'bump> {
+    pub fn eql(&self, other: &SupportsCondition<'bump>) -> bool {
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -101,7 +94,7 @@ impl SupportsCondition {
     }
 }
 
-impl SupportsCondition {
+impl SupportsCondition<'_> {
     /// The color features that every browser in which the condition holds has.
     fn tested_color_features(&self, arena: &bun_alloc::Arena) -> css::Features {
         use css::css_values::color::{CssColor, LABColor, PredefinedColor};
@@ -252,8 +245,10 @@ impl SupportsCondition {
 }
 
 // ─── parse bodies ─────────────────────────────────────────────────────────
-impl SupportsCondition {
-    pub fn parse(input: &mut css::Parser) -> css::Result<SupportsCondition> {
+impl<'bump> SupportsCondition<'bump> {
+    pub fn parse(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, SupportsCondition<'bump>> {
         use bun_collections::ArrayHashMap;
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
@@ -353,7 +348,9 @@ impl SupportsCondition {
         Ok(in_parens)
     }
 
-    pub(crate) fn parse_declaration(input: &mut css::Parser) -> css::Result<SupportsCondition> {
+    pub(crate) fn parse_declaration(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, SupportsCondition<'bump>> {
         let property_id = PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
@@ -366,7 +363,9 @@ impl SupportsCondition {
         }))
     }
 
-    fn parse_in_parens(input: &mut css::Parser) -> css::Result<SupportsCondition> {
+    fn parse_in_parens(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, SupportsCondition<'bump>> {
         use bun_core::strings;
         input.skip_whitespace();
         let location = input.current_source_location();
@@ -406,9 +405,9 @@ impl SupportsCondition {
 
 // Dedup key for `@supports` declaration conditions; manual Hash/PartialEq
 // (wrapping_add of string hash and enum int).
-struct SeenDeclKey(PropertyId, &'static [u8]);
+struct SeenDeclKey<'bump>(PropertyId<'bump>, &'bump [u8]);
 
-impl core::hash::Hash for SeenDeclKey {
+impl core::hash::Hash for SeenDeclKey<'_> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // wyhash of the value bytes +% the property-id tag.
         // `hash_string` returns u32 directly — no narrowing cast.
@@ -417,38 +416,38 @@ impl core::hash::Hash for SeenDeclKey {
     }
 }
 
-impl PartialEq for SeenDeclKey {
+impl PartialEq for SeenDeclKey<'_> {
     fn eq(&self, other: &Self) -> bool {
         // Tag-only equality + slice byte equality.
         self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
     }
 }
-impl Eq for SeenDeclKey {}
+impl Eq for SeenDeclKey<'_> {}
 
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.
-pub struct SupportsRule<R> {
+pub struct SupportsRule<'bump, R> {
     /// The supports condition.
-    pub condition: SupportsCondition,
+    pub condition: SupportsCondition<'bump>,
     /// The rules within the `@supports` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> SupportsRule<R> {
+impl<'bump, R> SupportsRule<'bump, R> {
     pub(crate) fn minify(
         &mut self,
-        context: &mut MinifyContext,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
     ) -> core::result::Result<(), MinifyErr>
     where
-        R: for<'b> crate::generics::DeepClone<'b>,
+        R: crate::generics::DeepClone<'bump>,
     {
         // The condition-merge/dedup port is still pending, but the nested rules
         // must be minified so compiling nesting away for the targets stays
         // bounded by `MAX_SELECTOR_EXPANSION`. `@supports` preserves the `&`
         // resolution context at print time (`to_css` below recurses into
-        // `self.rules` without clearing `dest.ctx`), so style rules nested
+        // `self.rules` without clearing the style context), so style rules nested
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
@@ -461,8 +460,12 @@ impl<R> SupportsRule<R> {
     }
 }
 
-impl<R> SupportsRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+impl<'bump, R> SupportsRule<'bump, R> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -470,13 +473,13 @@ impl<R> SupportsRule<R> {
         self.condition.to_css(dest)?;
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }
 
-impl<R> SupportsRule<R> {
-    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<'bump, R> SupportsRule<'bump, R> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

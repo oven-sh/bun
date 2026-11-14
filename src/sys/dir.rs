@@ -1,6 +1,6 @@
 //! `bun.sys.Dir` — directory handle + helpers.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
+//! Owns the descriptor; closes it on Drop (even 0-2 on POSIX, but not the
 //! `AT_FDCWD` sentinel). Use [`Dir::into_raw`] to hand the fd off,
 //! [`Dir::borrow`] for a non-owning `&Dir` view of someone else's fd.
 
@@ -14,7 +14,7 @@ pub struct Dir {
 impl Drop for Dir {
     #[inline]
     fn drop(&mut self) {
-        if self.fd != Fd::INVALID && self.fd != Fd::cwd() {
+        if self.fd != Fd::cwd() {
             let _ = close(self.fd);
         }
     }
@@ -67,12 +67,6 @@ impl Dir {
     #[inline]
     pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
         get_fd_path(self.fd, buf)
-    }
-    /// Close now. Equivalent to dropping `self` but discards the syscall
-    /// result.
-    #[inline]
-    pub fn close(self) {
-        drop(self);
     }
     /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over
     /// the descriptor's lifecycle.
@@ -138,12 +132,12 @@ impl Dir {
             parent_dir: Fd,
             iter: dir_iterator::WrappedIterator,
         }
-        // Ensure every still-open iterator dir is closed on early return.
-        let mut stack = scopeguard::guard(Vec::<StackItem>::with_capacity(16), |mut s| {
-            for item in s.drain(..) {
-                let _ = close(item.iter.dir());
+        impl Drop for StackItem {
+            fn drop(&mut self) {
+                let _ = close(self.iter.dir());
             }
-        });
+        }
+        let mut stack = Vec::<StackItem>::with_capacity(16);
         stack.push(StackItem {
             name: sub_path.to_vec(),
             parent_dir: self.fd,
@@ -209,13 +203,9 @@ impl Dir {
 
             // Reached the end of the directory entries — exhausted; remove the
             // directory itself. On Windows we must close before removing.
-            let dir_fd = top.iter.dir();
             let parent_dir = top.parent_dir;
             let name = core::mem::take(&mut top.name);
-            // Pop before closing so the cleanup guard doesn't double-close on
-            // an error from `unlinkat_a`.
-            stack.pop();
-            let _ = close(dir_fd);
+            stack.truncate(stack.len() - 1);
 
             let mut need_to_retry = false;
             match unlinkat_a(parent_dir, &name, AT_REMOVEDIR) {
@@ -260,7 +250,6 @@ impl Dir {
                 continue 'process_stack;
             }
         }
-        scopeguard::ScopeGuard::into_inner(stack);
         Ok(())
     }
 
@@ -475,17 +464,6 @@ mod tests {
     }
 
     #[test]
-    fn close_disarms_drop() {
-        let _g = FD_TEST_LOCK.lock();
-        let dir = open_cwd();
-        let raw = dir.fd();
-        dir.close();
-        let canary = open_cwd();
-        assert!(fstat(canary.fd()).is_ok());
-        let _ = raw;
-    }
-
-    #[test]
     fn into_raw_disarms_drop() {
         let _g = FD_TEST_LOCK.lock();
         let dir = open_cwd();
@@ -519,13 +497,5 @@ mod tests {
         }
         // Still able to open files relative to cwd.
         assert!(Dir::cwd().open_at(b".").is_ok());
-    }
-
-    #[test]
-    fn dropping_invalid_fd_is_safe() {
-        let _g = FD_TEST_LOCK.lock();
-        for _ in 0..16 {
-            let _ = Dir::from_fd(Fd::INVALID);
-        }
     }
 }

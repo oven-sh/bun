@@ -82,12 +82,7 @@ yourself with Bun.serve().
         args.push(resolved);
       }
     } else {
-      let resolved = arg;
-      try {
-        resolved = Bun.resolveSync(arg, cwd);
-      } catch {
-        resolved = Bun.resolveSync("./" + arg, cwd);
-      }
+      const resolved = Bun.resolveSync(arg.startsWith("file://") ? arg : path.resolve(cwd, arg), cwd);
 
       if (resolved.includes(path.sep + "node_modules" + path.sep)) {
         continue;

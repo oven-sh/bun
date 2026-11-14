@@ -86,7 +86,7 @@ impl HotReloaderCtx for VirtualMachine {
         Some(self.handle())
     }
 
-    fn bun_watcher_mut(&mut self) -> &mut Watcher {
+    fn bun_watcher(&self) -> *mut Watcher {
         // `VirtualMachine.bun_watcher` is the
         // `*mut ImportWatcher` (see the field comment in
         // VirtualMachine.rs), and `get_context` only runs after
@@ -94,21 +94,22 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
         // running. The cast recovers the concrete type the field was erased to.
-        match unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() } {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
+        match unsafe { &mut *self.bun_watcher.get().cast::<ImportWatcher>() } {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
         }
     }
 
-    fn reload(&mut self) {
+    fn reload(&self) {
         VirtualMachine::reload(self, None);
     }
 
-    fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-        VirtualMachine::bust_dir_cache(self, path)
+    unsafe fn bust_dir_cache(this: *mut Self, path: &[u8]) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*(*this).transpiler.as_ptr()).resolver.bust_dir_cache(path) }
     }
 
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
-        &self.transpiler.options.loaders
+        &self.transpiler.get().options.loaders
     }
 
     fn log_level_at_least_info(&self) -> bool {
@@ -127,8 +128,8 @@ impl HotReloaderCtx for VirtualMachine {
         self.top_level_dir()
     }
 
-    fn install_bun_watcher(
-        &mut self,
+    unsafe fn install_bun_watcher(
+        this: *mut Self,
         watcher: Box<Watcher>,
         reload_immediately: bool,
     ) -> *mut Watcher {
@@ -140,15 +141,16 @@ impl HotReloaderCtx for VirtualMachine {
         let watcher_ptr: *mut Watcher = match &mut *iw {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
         };
-        self.bun_watcher = bun_core::heap::into_raw(iw);
-
         // Wire the resolver's directory-watch callback at the same time.
         // `Watcher::get_resolve_watcher` erases the `*mut Watcher` into the
         // resolver's `AnyResolveWatcher` vtable (re-exported from
         // `bun_watcher`, so it's the same type).
-        // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
-        // via `heap::alloc` and is live for the VM's lifetime.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        // SAFETY: fn contract; `watcher_ptr` is in the box installed here, live for the VM's lifetime.
+        unsafe {
+            (*this).bun_watcher.set(bun_core::heap::into_raw(iw));
+            (*this).transpiler.get_mut().resolver.watcher =
+                Some((*watcher_ptr).get_resolve_watcher());
+        }
 
         watcher_ptr
     }
@@ -179,13 +181,14 @@ pub trait HotReloaderCtx {
     fn reload_handle(&self) -> Option<crate::VmHandle>;
 
     /// Implementor returns the live `Watcher` regardless of how it's stored.
-    fn bun_watcher_mut(&mut self) -> &mut Watcher;
+    fn bun_watcher(&self) -> *mut Watcher;
 
     /// Called from `Task::run` to perform the actual reload.
-    fn reload(&mut self);
+    fn reload(&self);
 
     /// Returns whether anything was busted.
-    fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
+    /// SAFETY: `this` is live. Borrows its resolver on the watcher thread; only locked caches change.
+    unsafe fn bust_dir_cache(this: *mut Self, path: &[u8]) -> bool;
 
     /// `&transpiler.options.loaders`.
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable;
@@ -204,8 +207,9 @@ pub trait HotReloaderCtx {
 
     /// Installs the watcher and wires the resolver's watch callback.
     /// Returns the now-installed `*mut Watcher` so the caller can `start()` it.
-    fn install_bun_watcher(
-        &mut self,
+    /// SAFETY: `this` is live, on its own thread, and its transpiler is not borrowed.
+    unsafe fn install_bun_watcher(
+        this: *mut Self,
         watcher: Box<Watcher>,
         reload_immediately: bool,
     ) -> *mut Watcher;
@@ -337,6 +341,9 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// created this reloader. Set once at init and never reassigned; the
     /// context outlives the reloader (and every `Task` it spawns).
     pub ctx: bun_ptr::BackRef<Ctx, bun_ptr::Mut>,
+    /// A copy for the watcher thread: the transpiler belongs to the thread of `ctx`.
+    #[cfg(not(windows))]
+    loaders: bun_ast::LoaderHashTable,
     pub(crate) verbose: bool,
     pub(crate) pending_count: AtomicU32,
 
@@ -683,7 +690,7 @@ where
     /// # Safety
     /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)
     /// that outlives the leaked `NewHotReloader` allocated here — i.e. for the
-    /// process lifetime.
+    /// process lifetime. Called on its own thread, with its transpiler not borrowed.
     pub unsafe fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
         // SAFETY: precondition — `this` is the live owning `Ctx`; it outlives
         // the reloader allocated below. Borrows are scoped per access.
@@ -691,9 +698,12 @@ where
             return;
         }
 
+        // SAFETY: `this` is the live owning context; it outlives the reloader.
+        let ctx = unsafe { bun_ptr::BackRef::from_raw_mut(this) };
         let reloader = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: `this` is the live owning context; it outlives the reloader.
-            ctx: unsafe { bun_ptr::BackRef::from_raw_mut(this) },
+            ctx,
+            #[cfg(not(windows))]
+            loaders: bun_core::handle_oom(ctx.get_loaders().clone()),
             // SAFETY: see above.
             verbose: unsafe { (*this).log_level_at_least_info() },
             pending_count: AtomicU32::new(0),
@@ -719,7 +729,7 @@ where
         };
 
         // SAFETY: see above.
-        let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
+        let watcher_ptr = unsafe { Ctx::install_bun_watcher(this, watcher, RELOAD_IMMEDIATELY) };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(
@@ -774,20 +784,14 @@ where
         }
     }
 
-    /// Single audited `&mut Ctx` reborrow through the [`BackRef`]. The owning
-    /// context outlives this reloader (set once at init, never reassigned —
-    /// see field doc), and `&mut self` ensures no other reborrow through this
-    /// reloader is live. Centralizes the per-call-site `BackRef::get_mut`
-    /// deref previously open-coded at each `bust_dir_cache` site.
-    #[inline]
-    fn ctx_mut(&mut self) -> &mut Ctx {
-        // SAFETY: BACKREF invariant — ctx outlives the reloader; `&mut self`
-        // gives exclusivity for the returned borrow's duration.
-        unsafe { self.ctx.get_mut() }
+    fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        // SAFETY: BACKREF invariant — ctx outlives the reloader, which runs on the watcher thread.
+        unsafe { Ctx::bust_dir_cache(self.ctx.as_ptr(), path) }
     }
 
     pub(crate) fn get_context(&mut self) -> &mut Watcher {
-        self.ctx_mut().bun_watcher_mut()
+        // SAFETY: the box `install_bun_watcher` leaked, whose thread this is.
+        unsafe { &mut *self.ctx.bun_watcher() }
     }
 
     #[inline(never)]
@@ -914,7 +918,7 @@ where
                         // on windows we receive file events for all items affected by a directory change
                         // so we only need to clear the directory cache. all other effects will be handled
                         // by the file events
-                        let _ = self.ctx_mut().bust_dir_cache(
+                        let _ = self.bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
                         continue;
@@ -1032,7 +1036,7 @@ where
                             }
                         }
 
-                        let _ = self.ctx_mut().bust_dir_cache(
+                        let _ = self.bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
@@ -1106,10 +1110,8 @@ where
                                     continue;
                                 }
 
-                                // `ctx` is a BACKREF that outlives the reloader.
                                 let loader = self
-                                    .ctx
-                                    .get_loaders()
+                                    .loaders
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_ast::Loader::File);
@@ -1294,24 +1296,21 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         None
     }
 
-    fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        let handle = self
-            .bun_watcher
-            .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
-        // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
-        // live for the process (BundleV2 is leaked under --watch — see
-        // `generate_from_cli`).
-        unsafe { &mut *handle.as_ptr() }
+    fn bun_watcher(&self) -> *mut Watcher {
+        self.bun_watcher
+            .expect("bun_watcher on un-enabled BundleV2 reloader")
+            .as_ptr()
     }
 
-    fn reload(&mut self) {
+    fn reload(&self) {
         // RELOAD_IMMEDIATELY=true never enqueues `Task::run` for BundleV2
         // (diverges or kill-signal branch; no listeners registered there).
         unreachable!()
     }
 
-    fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-        bun_bundler::BundleV2::bust_dir_cache(self, path)
+    unsafe fn bust_dir_cache(this: *mut Self, path: &[u8]) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*this).bust_dir_cache(path) }
     }
 
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
@@ -1331,8 +1330,8 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         FileSystem::get().top_level_dir()
     }
 
-    fn install_bun_watcher(
-        &mut self,
+    unsafe fn install_bun_watcher(
+        this: *mut Self,
         watcher: Box<Watcher>,
         _reload_immediately: bool,
     ) -> *mut Watcher {
@@ -1340,9 +1339,11 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
         let watcher_nn = bun_core::heap::into_raw_nn(watcher);
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
-        self.bun_watcher = Some(watcher_nn);
-        // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        // SAFETY: fn contract; `watcher_ptr` is live for the process.
+        unsafe {
+            (*this).bun_watcher = Some(watcher_nn);
+            (*this).transpiler.resolver.watcher = Some((*watcher_ptr).get_resolve_watcher());
+        }
         watcher_ptr
     }
 

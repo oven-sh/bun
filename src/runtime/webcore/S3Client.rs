@@ -274,8 +274,8 @@ impl S3Client {
         let env_creds = crate::webcore::fetch::s3_credentials_from_env(
             global
                 .bun_vm()
-                .as_mut()
                 .transpiler
+                .get()
                 .env_mut()
                 .get_s3_credentials(),
         );
@@ -702,8 +702,8 @@ impl S3Client {
         let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
             global
                 .bun_vm()
-                .as_mut()
                 .transpiler
+                .get()
                 .env_mut()
                 .get_s3_credentials(),
         );

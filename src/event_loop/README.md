@@ -16,8 +16,8 @@ A tagged pointer union containing various async task types (file I/O, network re
 
 Two separate queues for `setImmediate()`:
 
-- **`immediate_tasks`**: Tasks to run on the current tick
-- **`next_immediate_tasks`**: Tasks to run on the next tick
+- **`immediate_tasks`**: What `setImmediate` pushes to, and the next tick takes
+- **`next_immediate_tasks`**: The empty buffer that replaces it then
 
 This prevents infinite loops when `setImmediate` is called within a `setImmediate` callback.
 
@@ -319,16 +319,16 @@ This is because:
 The event loop uses a counter to track when to drain microtasks:
 
 ```rust
-pub fn enter(&mut self) {
-    self.entered_event_loop_count += 1;
+pub fn enter(&self) {
+    self.entered_event_loop_count.update(|count| count + 1);
 }
 
-pub fn exit(&mut self) {
-    let count = self.entered_event_loop_count;
+pub fn exit(&self) {
+    let count = self.entered_event_loop_count.get();
     if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
         let _ = self.drain_microtasks();
     }
-    self.entered_event_loop_count -= 1;
+    self.entered_event_loop_count.update(|count| count - 1);
 }
 ```
 

@@ -1,4 +1,3 @@
-use crate as css;
 use crate::css_rules::Location;
 use crate::css_rules::layer::LayerName;
 use crate::css_rules::supports::SupportsCondition;
@@ -9,14 +8,14 @@ use bun_alloc::Arena;
 
 /// Layer slot of `ImportConditions.layer`.
 #[derive(Default)]
-pub struct Layer {
+pub struct Layer<'bump> {
     /// PERF: null pointer optimizaiton, nullable
-    pub v: Option<LayerName>,
+    pub v: Option<LayerName<'bump>>,
     /// Set by the bundler. Each visit of a bare `layer` import is a layer of its own.
     pub anonymous_id: u32,
 }
 
-impl Layer {
+impl Layer<'_> {
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
@@ -35,23 +34,23 @@ impl Layer {
 
 /// The conditions of an [`ImportRule`].
 #[derive(Default)]
-pub struct ImportConditions {
+pub struct ImportConditions<'bump> {
     /// An optional cascade layer name, or `None` for an anonymous layer.
-    pub layer: Option<Layer>,
+    pub layer: Option<Layer<'bump>>,
 
     /// An optional `supports()` condition.
-    pub supports: Option<SupportsCondition>,
+    pub supports: Option<SupportsCondition<'bump>>,
 
     /// A media query.
-    pub media: MediaList,
+    pub media: MediaList<'bump>,
 }
 
-impl ImportConditions {
+impl<'bump> ImportConditions<'bump> {
     pub fn has_anonymous_layer(&self) -> bool {
         matches!(&self.layer, Some(l) if l.v.is_none())
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         Self {
             layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),
             supports: self.supports.as_ref().map(|s| s.deep_clone(bump)),
@@ -105,13 +104,12 @@ impl ImportConditions {
 }
 
 /// A [@import](https://drafts.csswg.org/css-cascade/#at-import) rule.
-pub struct ImportRule {
+pub struct ImportRule<'bump> {
     /// The url to import.
-    // TODO: arena lifetime — `&'bump [u8]` once crate-wide thread lands.
-    pub url: &'static [u8],
+    pub url: &'bump [u8],
 
     /// The layer, `supports()` condition and media query.
-    pub conditions: ImportConditions,
+    pub conditions: ImportConditions<'bump>,
 
     /// This is default initialized to 2^32 - 1 when parsing.
     /// If we are bundling, this will be set to the index of the corresponding ImportRecord
@@ -122,7 +120,7 @@ pub struct ImportRule {
     pub loc: Location,
 }
 
-impl Default for ImportRule {
+impl Default for ImportRule<'_> {
     fn default() -> Self {
         Self {
             url: b"",
@@ -133,8 +131,8 @@ impl Default for ImportRule {
     }
 }
 
-impl ImportRule {
-    pub fn from_url_and_import_record_idx(url: &'static [u8], import_record_idx: u32) -> Self {
+impl<'bump> ImportRule<'bump> {
+    pub fn from_url_and_import_record_idx(url: &'bump [u8], import_record_idx: u32) -> Self {
         Self {
             url,
             import_record_idx,
@@ -148,8 +146,7 @@ impl ImportRule {
             || !self.conditions.media.media_queries.is_empty()
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
-        // `url: &'static [u8]` is an arena-owned slice → identity copy.
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         Self {
             url: self.url,
             conditions: self.conditions.deep_clone(bump),
@@ -159,32 +156,11 @@ impl ImportRule {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
-            Some(css::dependencies::ImportDependency::new(
-                dest.arena,
-                self,
-                dest.filename(),
-            ))
-        } else {
-            None
-        };
-
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         dest.write_str("@import ")?;
-        if let Some(d) = dep {
-            // SAFETY: `placeholder` is arena-allocated by `css_modules::hash`
-            // and outlives this print call.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-
-            if let Some(deps) = &mut dest.dependencies {
-                deps.push(css::Dependency::Import(d));
-            }
-        } else {
-            dest.serialize_string(self.url)?;
-        }
+        dest.serialize_string(self.url)?;
 
         self.conditions.to_css(dest)?;
         dest.write_str(";")

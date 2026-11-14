@@ -3,7 +3,7 @@
 use bun_jsc::bindgen::{JsHeap, JsScope};
 use bun_jsc::{JsResult, SysErrorJsc};
 use bun_patch::{ApplyError, ParseErr, ParseErrAt, PatchFile, git_diff_internal, parse_patch_file};
-use bun_sys::{Fd, FdExt};
+use bun_sys::{Fd, File};
 
 pub(crate) fn make_diff(
     cx: &mut JsScope<'_>,
@@ -14,8 +14,8 @@ pub(crate) fn make_diff(
     // `git_diff_internal` routes through `bun_spawn::sync`, which on
     // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
     // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-    let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
-    let diff = match git_diff_internal(old_folder, new_folder, &mut loop_) {
+    let loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop_ptr());
+    let diff = match git_diff_internal(old_folder, new_folder, &loop_) {
         Ok(d) => d,
         Err(e) => return Err(global.throw_error(e, "failed to make diff")),
     };
@@ -42,10 +42,10 @@ pub(crate) fn apply(cx: &mut JsScope<'_>, patchfile: &[u8], dir: Option<&[u8]>) 
                     let js_err = SysErrorJsc::to_js(&e.with_path(path.as_bytes()), global);
                     return Err(global.throw_value(js_err));
                 }
-                Ok(fd) => ApplyDir(fd),
+                Ok(fd) => Some(File::from_fd(fd)),
             }
         }
-        None => ApplyDir(Fd::cwd()),
+        None => None,
     };
 
     let patchfile: PatchFile<'_> = match parse_patch_file(patchfile) {
@@ -55,7 +55,7 @@ pub(crate) fn apply(cx: &mut JsScope<'_>, patchfile: &[u8], dir: Option<&[u8]>) 
         }
     };
 
-    match patchfile.apply(dir.0) {
+    match patchfile.apply(dir.as_ref().map_or_else(Fd::cwd, File::fd)) {
         Ok(()) => {}
         Err(ApplyError::Sys(err)) => {
             return Err(global.throw_value(SysErrorJsc::to_js(&err, global)));
@@ -91,15 +91,4 @@ pub(crate) fn parse(heap: &JsHeap<'_>, patchfile_src: &[u8]) -> JsResult<Vec<u8>
         write!(&mut str, "{}", bun_patch::json_fmt(&patchfile)).expect("unreachable");
     }
     Ok(str)
-}
-
-struct ApplyDir(Fd);
-
-impl Drop for ApplyDir {
-    fn drop(&mut self) {
-        // TODO: HAVE @zackradisic REVIEW THIS DIFF
-        if Fd::cwd() != self.0 {
-            self.0.close();
-        }
-    }
 }

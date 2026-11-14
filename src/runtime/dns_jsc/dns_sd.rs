@@ -397,7 +397,7 @@ pub(crate) struct SharedConnection {
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
     /// Early-out timer (JS threads only; the daemon timeout backstops other loops).
-    pub(crate) early_out_timer: JsCell<EventLoopTimer>,
+    pub(crate) early_out_timer: EventLoopTimer,
     /// Deadline the timer is currently armed for (0 = disarmed).
     early_out_armed_for: Cell<i64>,
 }
@@ -445,9 +445,7 @@ impl SharedConnection {
             ctx,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
-            early_out_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::DnsSdConnection,
-            )),
+            early_out_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
             early_out_armed_for: Cell::new(0),
         });
         let poll_ptr = FilePoll::init(
@@ -461,10 +459,8 @@ impl SharedConnection {
         );
         // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
         let poll = unsafe { &mut *poll_ptr };
-        // SAFETY: the event loop outlives every lookup made on it.
-        let loop_ = unsafe { &*ctx.loop_() };
         let rc = poll.register_with_fd(
-            loop_,
+            ctx.loop_(),
             Async::PollKind::Readable,
             Async::posix_event_loop::OneShotFlag::None,
             fd,
@@ -633,7 +629,7 @@ impl SharedConnection {
 
     /// Arm the timer for the nearest early-out deadline (JS thread only; daemon timeout otherwise).
     fn arm_early_out(&mut self) {
-        if VirtualMachine::get_or_null().is_none() {
+        if !VirtualMachine::is_loaded() {
             return;
         }
         let mut min_deadline: Option<i64> = None;
@@ -652,19 +648,7 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.
-        unsafe {
-            (*state).timer.update(
-                core::ptr::addr_of!(self.early_out_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-                &ElTimespec {
-                    sec: next.sec,
-                    nsec: next.nsec,
-                },
-            )
-        };
+        crate::jsc_hooks::timer_all().update(&raw const self.early_out_timer, &next);
         self.early_out_armed_for.set(deadline);
     }
 
@@ -678,7 +662,8 @@ impl SharedConnection {
             // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
             (*this)
                 .early_out_timer
-                .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+                .state
+                .set(EventLoopTimerState::FIRED);
             (*this).early_out_armed_for.set(0);
             let now = now_ms();
             let ready = (*this).take_ready(|q| {
@@ -701,15 +686,10 @@ impl SharedConnection {
         // SAFETY: caller contract.
         let conn = unsafe { bun_core::heap::take(this) };
         debug_assert!(conn.inflight.is_empty());
-        if conn.early_out_timer.get().state == EventLoopTimerState::ACTIVE
-            && VirtualMachine::get_or_null().is_some()
+        if conn.early_out_timer.state.get() == EventLoopTimerState::ACTIVE
+            && VirtualMachine::is_loaded()
         {
-            // SAFETY: this thread's live RuntimeState owns the timer heap.
-            unsafe {
-                (*crate::jsc_hooks::runtime_state())
-                    .timer
-                    .remove(conn.early_out_timer.as_ptr())
-            };
+            crate::jsc_hooks::timer_all().remove(&conn.early_out_timer);
         }
         // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
         unsafe { (*conn.file_poll.as_ptr()).deinit() };
@@ -790,9 +770,8 @@ impl SharedConnection {
     }
 }
 
-fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard> {
-    // SAFETY: the current thread's VM, if any, is live for the callback.
-    VirtualMachine::get_or_null().map(|vm| unsafe { (*vm).enter_event_loop_scope() })
+fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static>> {
+    VirtualMachine::get_or_null().map(VirtualMachine::enter_event_loop_scope)
 }
 
 pub(crate) fn lookup(

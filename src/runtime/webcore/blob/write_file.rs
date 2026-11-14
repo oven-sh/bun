@@ -580,7 +580,7 @@ mod windows_impl {
         pub(crate) fd: uv::uv_file,
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
-        pub(crate) event_loop: *mut EventLoop,
+        pub(crate) event_loop: &'static EventLoop,
         pub poll_ref: KeepAlive,
 
         pub(crate) owned_fd: bool,
@@ -630,7 +630,7 @@ mod windows_impl {
 
     impl WriteFileWindows {
         pub(crate) fn create(
-            event_loop: *mut EventLoop,
+            event_loop: &'static EventLoop,
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
@@ -673,7 +673,7 @@ mod windows_impl {
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
             // local would dangle once `deinit` reclaims the Box).
             unsafe {
-                (*write_file).io_request.loop_ = (*event_loop).uv_loop();
+                (*write_file).io_request.loop_ = event_loop.uv_loop();
                 (*write_file).io_request.data = write_file.cast::<c_void>();
 
                 match &(*write_file)
@@ -691,30 +691,27 @@ mod windows_impl {
                     }
                     PathOrFileDescriptor::Fd(fd) => {
                         (*write_file).fd = 'brk: {
-                            // `EventLoop.virtual_machine` is `Option<NonNull<VirtualMachine>>`;
                             // `RareData::std{out,err,in}_store` is type-erased
                             // `Option<NonNull<c_void>>` — compare on raw pointer identity.
-                            if let Some(vm) = (*event_loop).virtual_machine {
-                                if let Some(rare) = (*vm.as_ptr()).rare_data.as_ref() {
-                                    let store_ptr = (*write_file)
-                                        .file_blob
-                                        .store
-                                        .get()
-                                        .as_ref()
-                                        .unwrap()
-                                        .as_ptr()
-                                        .cast::<c_void>();
-                                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                                        break 'brk 1;
-                                    } else if rare.stderr_store.map(|p| p.as_ptr())
-                                        == Some(store_ptr)
-                                    {
-                                        break 'brk 2;
-                                    } else if rare.stdin_store.map(|p| p.as_ptr())
-                                        == Some(store_ptr)
-                                    {
-                                        break 'brk 0;
-                                    }
+                            if let Some(rare) = event_loop.vm_ref().rare_data.get() {
+                                let store_ptr = (*write_file)
+                                    .file_blob
+                                    .store
+                                    .get()
+                                    .as_ref()
+                                    .unwrap()
+                                    .as_ptr()
+                                    .cast::<c_void>();
+                                if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
+                                    break 'brk 1;
+                                } else if rare.stderr_store.get().map(|p| p.as_ptr())
+                                    == Some(store_ptr)
+                                {
+                                    break 'brk 2;
+                                } else if rare.stdin_store.get().map(|p| p.as_ptr())
+                                    == Some(store_ptr)
+                                {
+                                    break 'brk 0;
                                 }
                             }
 
@@ -726,22 +723,14 @@ mod windows_impl {
                     }
                 }
 
-                (*write_file)
-                    .poll_ref
-                    .ref_(jsc::VirtualMachineRef::event_loop_ctx(
-                        (*(*write_file).event_loop)
-                            .virtual_machine
-                            .unwrap()
-                            .as_ptr(),
-                    ));
+                (*write_file).poll_ref.ref_(event_loop.event_loop_ctx());
             }
             Ok(write_file)
         }
 
         #[inline]
         pub(crate) fn loop_(&self) -> *mut uv::Loop {
-            // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
-            unsafe { (*self.event_loop).uv_loop() }
+            self.event_loop.uv_loop()
         }
 
         /// # Safety
@@ -1014,10 +1003,8 @@ mod windows_impl {
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
         /// On return, `*this` has been freed and must not be accessed again.
         pub(crate) unsafe fn on_finish(this: *mut Self) -> WriteFileWindowsError {
-            // SAFETY: VM-owned EventLoop lives for process lifetime; the guard
-            // forms short-lived `&mut` only at the enter/exit call sites (see
-            // EventLoopEnterGuard docs) so it does not alias `*this`.
-            let _exit = unsafe { jsc::event_loop::EventLoop::enter_scope((*this).event_loop) };
+            // SAFETY: caller contract — `this` is live.
+            let _exit = unsafe { (*this).event_loop }.enter_scope();
 
             // We don't need to enqueue task since this is already in a task.
             // SAFETY: caller contract — `this` is live; consumed here.

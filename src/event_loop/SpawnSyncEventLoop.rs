@@ -45,9 +45,12 @@ pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 unsafe extern "Rust" {
     /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, running
     /// on `uws_loop`. Returns erased `*mut jsc::EventLoop`.
-    safe fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut ();
+    safe fn __bun_spawn_sync_create_event_loop(
+        vm: *mut (),
+        uws_loop: &'static uws::Loop,
+    ) -> *mut ();
     safe fn __bun_spawn_sync_destroy_event_loop(el: *mut ());
-    /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
+    /// Re-bind `event_loop.global` to `vm`'s (prepare path).
     safe fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ());
     safe fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
     #[cfg(windows)]
@@ -135,15 +138,19 @@ mod handler {
 
 impl SpawnSyncEventLoop {
     /// `None` if the isolated loop cannot be created. Boxed: the Windows timeout timer keeps the address.
-    pub fn init(vm: *mut () /* SAFETY: erased *mut VirtualMachine */) -> Option<Box<Self>> {
+    ///
+    /// SAFETY: `vm` is this thread's `VirtualMachine`, and the result is dropped only with it.
+    pub unsafe fn init(vm: *mut ()) -> Option<Box<Self>> {
         // `uws::Loop::create` takes a `LoopHandler` impl with associated-const fn ptrs.
-        let loop_ = uws::Loop::create::<handler::Handler>()?;
+        let uws_loop = uws::Loop::create::<handler::Handler>()?;
+        // SAFETY: freed with the VM, and a call takes what it put on the loop off again.
+        let loop_ = unsafe { uws_loop.as_ref() };
 
         // A fresh `jsc::EventLoop` whose `uws_loop` is the isolated loop.
-        let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr());
+        let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_);
 
         let this = Box::new(Self {
-            uws_loop: loop_,
+            uws_loop,
             #[cfg(windows)]
             uv_timer: Cell::new(None),
             did_timeout: Cell::new(false),
@@ -152,15 +159,12 @@ impl SpawnSyncEventLoop {
         });
 
         // Set up the loop's internal data to point to this isolated event loop
-        // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS, tag 2 = mini.
         // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
         // returned by `__bun_spawn_sync_create_event_loop` immediately above —
         // never null on a successful create.
         debug_assert!(!this.event_loop.is_null(), "spawn-sync event loop alloc");
-        let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
-        let loop_data = &this.uws_loop().internal_loop_data;
-        loop_data.set_parent_raw(tag, ptr);
-        loop_data.jsc_vm.set(core::ptr::null());
+        EventLoopHandle::init(this.event_loop).set_as_parent_of(loop_);
+        loop_.internal_loop_data.jsc_vm.set(core::ptr::null());
         Some(this)
     }
 
@@ -177,8 +181,7 @@ impl SpawnSyncEventLoop {
         self.event_loop
     }
 
-    /// The isolated `uws::Loop`. Private: `create` makes it without uWS's `LoopData`, which
-    /// `update_date` and `flush_pending_writes` need.
+    /// The isolated `uws::Loop`.
     #[inline]
     fn uws_loop(&self) -> &uws::Loop {
         // SAFETY: set in `init` and freed only in `Drop`.

@@ -35,7 +35,7 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         ),
         ..Default::default()
     }
@@ -792,7 +792,7 @@ impl UpgradeCommand {
                     );
                     Global::exit(1);
                 }
-                let _ = zip_file.close();
+                drop(zip_file);
             }
 
             {
@@ -1130,11 +1130,8 @@ impl UpgradeCommand {
                     let target_hash = hash(
                         match target_dir
                             .open_file(target_filename.as_bytes(), sys::O::RDONLY, 0)
-                            .and_then(|f| {
-                                let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable
-                                n
-                            }) {
+                            .and_then(|f| f.read_all(&mut input_buf))
+                        {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1148,11 +1145,10 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(|f| {
-                            let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable
-                            n
-                        }) {
+                        match save_dir
+                            .open_file(exe, sys::O::RDONLY, 0)
+                            .and_then(|f| f.read_all(&mut input_buf))
+                        {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);

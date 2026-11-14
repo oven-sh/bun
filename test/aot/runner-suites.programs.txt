@@ -39,8 +39,6 @@ test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.mjs
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/c` inside node_modules resolves to null
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/m` inside node_modules resolves to null
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > an exact target with no extension is not probed
-# These tests make their temporary folders below an empty node_modules folder, where Bun installs nothing: there `bun run` says "Cannot find package" too. Without that folder the compiled program says what `bun run` says.
-test/js/bun/resolve/resolve.test.ts: auto-install init failure from an unreadable cwd is a catchable error
 test/js/bun/resolve/resolve.test.ts: can resolve with source directories that do not exist
 test/js/bun/resolve/resolve.test.ts: file url in await import resolves
 test/js/bun/resolve/resolve.test.ts: file url in import resolves

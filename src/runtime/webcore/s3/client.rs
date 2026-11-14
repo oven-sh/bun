@@ -442,11 +442,7 @@ pub(crate) fn writable_stream(
             .expect("NetworkSink.global_this set at construction");
         let global = global.get();
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
-            // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
-            let event_loop = global.bun_vm().as_mut().event_loop();
-            // SAFETY: event_loop is initialised for the lifetime of the VM.
-            // RAII: `enter()` now, `exit()` on drop.
-            let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+            let _exit_guard = global.bun_vm().enter_event_loop_scope();
             match result {
                 S3UploadResult::Success => {
                     if sink.flush_promise.has_value() {
@@ -514,7 +510,7 @@ pub(crate) fn writable_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -541,8 +537,7 @@ pub(crate) fn writable_stream(
     let task = unsafe { &*task_ptr };
     task.root.set(core::ptr::NonNull::new(task_ptr));
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
@@ -901,7 +896,7 @@ pub(crate) fn upload_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -927,8 +922,7 @@ pub(crate) fn upload_stream(
     let task = unsafe { &*task_ptr };
     task.root.set(core::ptr::NonNull::new(task_ptr));
 
-    task.poll_ref
-        .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 

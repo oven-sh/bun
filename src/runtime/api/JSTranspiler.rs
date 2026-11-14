@@ -281,13 +281,17 @@ impl Config {
                 self.tsconfig_buf = out.to_owned_slice().into();
 
                 // TODO: JSC -> Ast conversion
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
-                    &mut self.log,
-                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
-                    &mut vm.transpiler.resolver.caches.json,
-                ) {
+                let parsed = VirtualMachine::get().transpiler.with_mut(|t| {
+                    TSConfigJSON::parse(
+                        &mut self.log,
+                        &bun_ast::Source::init_path_string(
+                            b"tsconfig.json",
+                            &self.tsconfig_buf[..],
+                        ),
+                        &mut t.resolver.caches.json,
+                    )
+                });
+                if let Ok(Some(parsed_tsconfig)) = parsed {
                     self.tsconfig = Some(parsed_tsconfig);
                 }
             }
@@ -326,13 +330,14 @@ impl Config {
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
-                    &mut self.log,
-                    &source,
-                    bun_resolver::tsconfig_json::JsonMode::Json,
-                ) else {
+                let parsed = VirtualMachine::get().transpiler.with_mut(|t| {
+                    t.resolver.caches.json.parse_json(
+                        &mut self.log,
+                        &source,
+                        bun_resolver::tsconfig_json::JsonMode::Json,
+                    )
+                });
+                let Ok(Some(json)) = parsed else {
                     break 'macros;
                 };
                 self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
@@ -919,13 +924,12 @@ impl JSTranspiler {
             ));
         }
 
-        // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
         let transpiler = match Transpiler::Transpiler::init(
             arena_ref,
             &raw mut config.log,
             config.transform.clone(),
-            Some(vm.transpiler.env),
+            Some(vm.transpiler.get().env),
         ) {
             Ok(t) => t,
             Err(err) => {

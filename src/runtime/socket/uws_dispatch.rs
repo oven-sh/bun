@@ -112,10 +112,7 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
         | SocketKind::UwsHttp
         | SocketKind::UwsHttpTls
         | SocketKind::UwsWs
-        | SocketKind::UwsWsTls => {
-            // `raw_group()` already returns `&mut SocketGroup` for `us_socket_t`.
-            s.raw_group().vtable.expect("group vtable")
-        }
+        | SocketKind::UwsWsTls => s.raw_group().vtable.get().expect("group vtable"),
         _ => TABLES[kind as usize].expect("kind vtable"),
     }
 }
@@ -136,7 +133,7 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
         | SocketKind::UwsWs
         | SocketKind::UwsWsTls => {
             // SAFETY: raw_group() is non-null for any socket with a valid kind.
-            unsafe { (*c.raw_group()).vtable.expect("group vtable") }
+            unsafe { (*c.raw_group()).vtable.get().expect("group vtable") }
         }
         _ => TABLES[kind as usize].expect("kind vtable"),
     }

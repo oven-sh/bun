@@ -20,8 +20,6 @@ use enumset::{EnumSet, EnumSetType};
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
 // platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
 use crate::api::bun::Terminal;
-#[cfg(windows)]
-use crate::api::bun_process as spawn_process;
 #[cfg(not(windows))]
 use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::{Process, Rusage, Status};
@@ -128,11 +126,8 @@ pub struct Subprocess<'a> {
     pub(crate) context: bun_jsc::ContextId,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
-    /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
-    /// to the timer heap; `JsCell` is `#[repr(transparent)]` so
-    /// `from_field_ptr!(Subprocess, event_loop_timer, t)` in
-    /// `dispatch.rs` still recovers the correct container address.
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    /// Intrusive timer node; `dispatch.rs` recovers the container from it.
+    pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) kill_signal: SignalCode,
 
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
@@ -167,16 +162,6 @@ impl<'a> Subprocess<'a> {
     #[inline]
     pub(crate) fn process(&self) -> &Process {
         &self.process
-    }
-
-    /// Mutably borrow the [`Process`]. Caller must be on the owning JS thread
-    /// with no other live `&mut Process`.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: single JS-mutator thread; `Process` lives in a separate
-        // allocation so the returned `&mut` never aliases `*self`.
-        unsafe { &mut *self.process.as_ptr() }
     }
 
     /// Borrow the stored JSC global. The global is guaranteed to outlive
@@ -282,11 +267,7 @@ bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, caus
 
 bun_spawn::link_impl_ProcessExit! {
     Subprocess for Subprocess<'static> => |this| {
-        // `process` forwarded raw (not reborrowed) so `on_process_exit` can
-        // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
-        // provenance cast.
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(NonNull::from(process), &status, rusage),
+        on_process_exit(status, rusage) => (*this).on_process_exit(&status, rusage),
     }
 }
 
@@ -312,13 +293,7 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                let rusage =
-                    if let spawn_process::Poller::Uv(uv_proc) = &mut self.process_mut().poller {
-                        Some(spawn_process::uv_getrusage(uv_proc))
-                    } else {
-                        None
-                    };
-                if let Some(r) = rusage {
+                if let Some(r) = self.process.rusage() {
                     self.pid_rusage.set(Some(r));
                     break 'brk r;
                 }
@@ -459,7 +434,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn do_ref(&self) {
-        self.process_mut().enable_keeping_event_loop_alive();
+        self.process().enable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
             self.stdin.with_mut(|s| s.r#ref());
@@ -478,7 +453,7 @@ impl Subprocess<'_> {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub(crate) fn do_unref(&self) {
-        self.process_mut().disable_keeping_event_loop_alive();
+        self.process().disable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
             self.stdin.with_mut(|s| s.unref());
@@ -567,28 +542,23 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd.set(refd);
-        let uws_loop = self.global_this().bun_vm().uws_loop_ref();
+        let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        Self::timer_all().increment_timer_ref(delta, uws_loop);
-    }
-
-    #[inline]
-    fn timer_all() -> &'static mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+        crate::jsc_hooks::timer_all().increment_timer_ref(delta, uws_loop);
     }
 
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
-        if self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED {
+        if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
             return;
         }
         if self.has_exited() {
             self.event_loop_timer
-                .with_mut(|t| t.state = EventLoopTimerState::CANCELLED);
+                .state
+                .set(EventLoopTimerState::CANCELLED);
             return;
         }
-        self.event_loop_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         let _ = self.try_kill(self.kill_signal);
     }
 
@@ -670,7 +640,7 @@ impl Subprocess<'_> {
         if self.has_exited() {
             return bun_sys::Result::Ok(());
         }
-        self.process_mut().kill(sig.0)
+        self.process().kill(sig.0)
     }
 
     fn has_called_getter(&self, getter: ObservableGetter) -> bool {
@@ -684,7 +654,7 @@ impl Subprocess<'_> {
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            self.process_mut().close();
+            self.process().close();
         }
     }
 
@@ -735,11 +705,6 @@ impl Subprocess<'_> {
             context,
             self.pid() as u32,
         )
-    }
-
-    pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
-        let Some(ipc_data) = self.ipc() else { return };
-        ipc_data.close_socket_next_tick(next_tick);
     }
 
     pub(crate) fn disconnect(&self) {
@@ -846,37 +811,29 @@ impl Subprocess<'_> {
             + self.stderr.get().memory_cost()
     }
 
-    /// `process` is the live `Process` threaded from the
-    /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
-    /// duration of the call).
-    pub(crate) fn on_process_exit(
-        &self,
-        process: NonNull<Process>,
-        status: &Status,
-        rusage: &Rusage,
-    ) {
+    pub(crate) fn on_process_exit(&self, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
         let global_this = global_this.get();
-        let jsc_vm = global_this.bun_vm().as_mut();
+        let jsc_vm = global_this.bun_vm();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage.set(Some(*rusage));
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        // `deref()` and `disconnect_ipc(true)` run at the tail of this body.
+        // `close_after_exit()` and `deref()` run at the tail of this body.
         // R-2: now that both take `&self`, scopeguard would no longer alias —
         // kept explicit at the tail for now (no early returns in this body).
 
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         }
         self.set_event_loop_timer_refd(false);
 
-        jsc_vm.on_subprocess_exit(process);
+        jsc_vm.on_subprocess_exit(&self.process);
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
             // Deliver EOF to the terminal reader without closing the Terminal.
@@ -969,7 +926,7 @@ impl Subprocess<'_> {
         // When Bun itself killed the child (timeout/maxBuffer/AbortSignal) stop
         // waiting on pipe EOF after the drain above: a grandchild may still
         // hold the write end and the caller already opted into a bounded wait.
-        if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
+        if self.event_loop_timer.state.get() == EventLoopTimerState::FIRED
             || self.exited_due_to_maxbuf.get().is_some()
             || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
         {
@@ -1016,18 +973,14 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        // Kept as raw `*mut` so the enter guard and the body can both call
-        // `&mut`-taking methods without tripping borrowck.
-        let event_loop = (*jsc_vm).event_loop();
+        let event_loop = jsc_vm.event_loop();
 
         // The exit is reported to the script that spawned the child.
-        let _context = (*jsc_vm).enter_context(self.context);
+        let _context = jsc_vm.enter_context(self.context);
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
-                    // SAFETY: event_loop points into the live VM and outlives this scope.
-                    let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                    let _exit_guard = event_loop.enter_scope();
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1094,16 +1047,7 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
-                    // SAFETY: event_loop points into the live VM.
-                    unsafe {
-                        (*event_loop).run_callback(
-                            self.context,
-                            callback,
-                            global_this,
-                            this_value,
-                            &args,
-                        )
-                    };
+                    event_loop.run_callback(self.context, callback, global_this, this_value, &args);
                 }
             }
         }
@@ -1111,7 +1055,9 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
-        self.disconnect_ipc(true);
+        if let Some(ipc_data) = self.ipc() {
+            ipc_data.close_after_exit();
+        }
         self.deref();
     }
 
@@ -1240,13 +1186,13 @@ impl Subprocess<'_> {
             self.deref();
         }
 
-        let exit_handler_pending = self.process().exit_handler.is_some();
-        self.process_mut().detach();
+        let exit_handler_pending = self.process().has_exit_handler();
+        self.process().detach();
         if exit_handler_pending {
             self.deref();
         }
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1280,15 +1226,15 @@ impl Subprocess<'_> {
         }
 
         let global_this = cx.global();
-        match &self.process().status {
-            Status::Exited(exit) => {
+        match self.process().status() {
+            Some(Status::Exited(exit)) => {
                 JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
             }
-            Status::Signaled(signal) => JSPromise::resolved_promise_value(
+            Some(Status::Signaled(signal)) => JSPromise::resolved_promise_value(
                 global_this,
                 JSValue::js_number(bun_sys::SignalCode(*signal).to_exit_code() as f64),
             ),
-            Status::Err(err) => {
+            Some(Status::Err(err)) => {
                 let js_err = err.to_js(global_this);
                 JSPromise::rejected_promise(global_this, js_err).to_js()
             }
@@ -1301,7 +1247,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn get_exit_code(&self) -> Option<u8> {
-        if let Status::Exited(exited) = &self.process().status {
+        if let Some(Status::Exited(exited)) = self.process().status() {
             return Some(exited.code);
         }
         None
@@ -1319,7 +1265,7 @@ impl Subprocess<'_> {
 
     /// The name of the signal that ended the process, its number if it has no name, else `null`.
     pub(crate) fn signal_code_to_js(&self, global: &JSGlobalObject) -> JSValue {
-        let Some(signal) = self.process().status.signal() else {
+        let Some(signal) = self.process().status().and_then(Status::signal) else {
             return JSValue::NULL;
         };
         match signal.name() {
@@ -1350,18 +1296,13 @@ impl Subprocess<'_> {
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
-                        let event_loop = global_this.bun_vm().as_mut().event_loop();
-                        // SAFETY: `event_loop` is the live VM's owned event loop,
-                        // accessed on the single JS mutator thread.
-                        unsafe {
-                            (*event_loop).run_callback(
-                                self.context,
-                                cb,
-                                global_this,
-                                this_jsvalue,
-                                &[*data, this_jsvalue, handle],
-                            )
-                        };
+                        global_this.bun_vm().event_loop().run_callback(
+                            self.context,
+                            cb,
+                            global_this,
+                            this_jsvalue,
+                            &[*data, this_jsvalue, handle],
+                        );
                     }
                 }
             }
@@ -1392,18 +1333,13 @@ impl Subprocess<'_> {
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
-                let event_loop = global_this.bun_vm().as_mut().event_loop();
-                // SAFETY: `event_loop` is the live VM's owned event loop,
-                // accessed on the single JS mutator thread.
-                unsafe {
-                    (*event_loop).run_callback(
-                        self.context,
-                        callback,
-                        global_this,
-                        this_jsvalue,
-                        &[JSValue::TRUE],
-                    )
-                };
+                global_this.bun_vm().event_loop().run_callback(
+                    self.context,
+                    callback,
+                    global_this,
+                    this_jsvalue,
+                    &[JSValue::TRUE],
+                );
             }
         }
     }

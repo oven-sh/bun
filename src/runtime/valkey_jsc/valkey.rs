@@ -195,7 +195,7 @@ impl Address {
     pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
-        group: &mut SocketGroup,
+        group: &SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, crate::Error> {
@@ -312,7 +312,7 @@ impl DeferredFailure {
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         VirtualMachine::get()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(self));
     }
 }
@@ -908,8 +908,6 @@ impl ValkeyClient {
         let global_this = self.global_object();
 
         debug!("Handling a subscribe response: {}", value);
-        // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
-        // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
         let _exit = self.vm.enter_event_loop_scope();
 
         match value {

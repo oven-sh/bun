@@ -15,6 +15,7 @@ pub mod decoder;
 pub mod error;
 pub mod gzip;
 mod header;
+mod npm;
 mod num;
 pub mod output;
 pub mod reader;

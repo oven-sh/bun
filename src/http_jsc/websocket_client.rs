@@ -11,11 +11,13 @@ use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::net::IpAddr;
+use std::collections::VecDeque;
+use std::rc::Rc;
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, String as BunString, UnwrapOrOom, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -154,6 +156,23 @@ enum Outcome {
     Failed(ErrorCode, BunString),
 }
 
+struct BufferedInput {
+    data: Rc<InitialData>,
+    offset: usize,
+}
+
+impl BufferedInput {
+    fn copy(data: &[u8]) -> Self {
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(data.len()).unwrap_or_oom();
+        bytes.extend_from_slice(data);
+        Self {
+            data: Rc::new(InitialData(bytes)),
+            offset: 0,
+        }
+    }
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocket<const SSL: bool> {
     pub(crate) ref_count: Cell<u32>,
@@ -198,12 +217,11 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// Bytes not parsed yet. Either bytes that arrived with the 101, held until after `open`
-    /// (or until `resume()` if an `open` listener paused the socket), or bytes from a
-    /// re-entrant `feed`, held until the outer `feed` finishes.
+    /// Upgrade bytes held until after `open`, or `resume()` when initially paused.
     initial_data: Cell<Option<Box<InitialData>>>,
-    /// A `feed` call is on the stack.
-    parsing: Cell<bool>,
+    pending_input: RefCell<VecDeque<BufferedInput>>,
+    pending_input_scheduled: Cell<bool>,
+    feeding: Cell<bool>,
     options: ConnectedOptions,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
@@ -281,6 +299,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
         self.initial_data.set(None);
+        self.pending_input.borrow_mut().clear();
+        self.pending_input_scheduled.set(false);
         self.control_frame_started.set(false);
         self.control_payload_len.set(0);
         self.receiving_compressed.set(false);
@@ -579,8 +599,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         if is_final && frame_complete {
             // Whole message in one read: dispatch it without copying into `receive_buffer`.
             if self.receive_buffer.borrow().readable_length() == 0 {
-                self.dispatch_data(data, kind);
                 self.message_is_compressed.set(false);
+                self.dispatch_data(data, kind);
                 return data.len();
             }
             if data.is_empty() {
@@ -624,24 +644,29 @@ impl<const SSL: bool> WebSocket<SSL> {
         data.len()
     }
 
-    /// Dispatch the message accumulated in `receive_buffer`, then reset the per-message state.
     fn dispatch_buffered_message(&self, kind: Opcode, compressed: bool) {
-        // Take the fifo first: `dispatch_*` can reach `clear_receive_buffers(true)` and free the readable slice.
-        let buf = self
+        let mut buf = self
             .receive_buffer
             .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-        if compressed {
-            self.dispatch_compressed_data(buf.readable_slice(0), kind);
-        } else {
-            self.dispatch_data(buf.readable_slice(0), kind);
-        }
-        // Restore the taken fifo so its capacity is kept for the next message.
-        self.receive_buffer.replace(buf);
         self.clear_receive_buffers(false);
         if compressed {
             self.receiving_compressed.set(false);
         }
         self.message_is_compressed.set(false);
+        if compressed {
+            self.dispatch_compressed_data(buf.readable_slice(0), kind);
+        } else {
+            self.dispatch_data(buf.readable_slice(0), kind);
+        }
+        buf.discard(buf.readable_length());
+        buf.reset_head_if_empty();
+        let mut current = self.receive_buffer.borrow_mut();
+        if self.receive_state.get() != ReceiveState::Closed
+            && current.readable_length() == 0
+            && current.capacity() < buf.capacity()
+        {
+            *current = buf;
+        }
     }
 
     // There is no `socket` parameter: the dispatch thunk wraps the same
@@ -651,31 +676,108 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = RefPtr::from_this(this);
 
-        this.parse_initial_data();
-        this.handle_data_loop(data);
+        this.receive_data(data);
     }
 
     /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
-        if this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
-            this.parse_initial_data();
+        this.pending_input_scheduled.set(false);
+        if let Some(ws) = this.cpp_websocket() {
+            if ws.is_paused() {
+                return;
+            }
+            this.enqueue_initial_data();
+        }
+        this.drain_pending_input();
+    }
+
+    fn enqueue_initial_data(&self) {
+        if let Some(data) = self.initial_data.take() {
+            self.pending_input.borrow_mut().push_front(BufferedInput {
+                data: Rc::from(data),
+                offset: 0,
+            });
         }
     }
 
     fn parse_initial_data(&self) {
-        if let Some(initial_data) = self.initial_data.take() {
-            self.handle_data_loop(&initial_data.0);
+        self.enqueue_initial_data();
+        self.drain_pending_input();
+    }
+
+    fn receive_data(&self, data: &[u8]) {
+        self.enqueue_initial_data();
+        // Pausing stops future transport reads, but a TLS tunnel can still
+        // finish an active SSL pass with input deferred by a nested JS wait.
+        // Keep that input behind the upgrade bytes until resume's delivery
+        // task. Close paths deliberately drain through parse_initial_data.
+        if self.cpp_websocket().is_some_and(|ws| ws.is_paused()) {
+            if !data.is_empty() {
+                self.pending_input
+                    .borrow_mut()
+                    .push_back(BufferedInput::copy(data));
+            }
+            return;
+        }
+        let queued = !self.pending_input.borrow().is_empty();
+        if queued {
+            if !data.is_empty() {
+                self.pending_input
+                    .borrow_mut()
+                    .push_back(BufferedInput::copy(data));
+            }
+        } else if !data.is_empty() {
+            self.handle_data_loop(data, None);
+        }
+        self.drain_pending_input();
+    }
+
+    fn drain_pending_input(&self) {
+        loop {
+            let next = self.pending_input.borrow_mut().pop_front();
+            let Some(BufferedInput { data, offset }) = next else {
+                break;
+            };
+            let was_feeding = self.feeding.replace(true);
+            self.handle_data_loop(&data.0[offset..], Some(&data));
+            self.feeding.set(was_feeding);
         }
     }
 
-    fn handle_data_loop(&self, data: &[u8]) {
+    fn prepare_receive_callback(&self, cursor: &mut RecvCursor<'_>) {
+        self.commit_receive_cursor(cursor);
+        if cursor.data.is_empty() {
+            return;
+        }
+        let remaining = match cursor.owner {
+            Some(owner) => BufferedInput {
+                data: Rc::clone(owner),
+                offset: owner.0.len() - cursor.data.len(),
+            },
+            None => BufferedInput::copy(cursor.data),
+        };
+        self.pending_input.borrow_mut().push_front(remaining);
+        cursor.data = &[];
+        self.schedule_pending_input();
+    }
+
+    fn schedule_pending_input(&self) {
+        if let Some(ws) = self.cpp_websocket() {
+            if !self.pending_input_scheduled.replace(true) {
+                ws.queue_receive_data_delivery();
+            }
+        }
+    }
+
+    fn handle_data_loop(&self, data: &[u8], owner: Option<&Rc<InitialData>>) {
         // In the WebSocket specification, control frames may not be fragmented.
         // However, the frame parser should handle fragmented control frames nonetheless.
         // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
         // to the strategy in which the client buffers and coalesces received bytes.
         let mut cursor = RecvCursor {
             data,
+            owner,
             state: self.receive_state.get(),
             body_remain: self.receive_body_remain.get(),
             is_final: self.receiving_is_final.get(),
@@ -715,9 +817,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.receive_state.get() == ReceiveState::Closed {
             return;
         }
+        self.commit_receive_cursor(&cursor);
+    }
+
+    fn commit_receive_cursor(&self, cursor: &RecvCursor<'_>) {
         self.receive_state.set(cursor.state);
         self.receiving_type.set(cursor.last_data_type);
         self.receive_body_remain.set(cursor.body_remain);
+    }
+
+    fn refresh_receive_cursor(&self, cursor: &mut RecvCursor<'_>) {
+        cursor.state = self.receive_state.get();
+        cursor.last_data_type = self.receiving_type.get();
+        cursor.body_remain = self.receive_body_remain.get();
+        cursor.is_final = self.receiving_is_final.get();
     }
 
     fn recv_failed(&self, code: ErrorCode) -> Step {
@@ -822,18 +935,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             return Step::Terminated;
         }
 
-        // An empty final message still dispatches ("", ArrayBuffer(0), ...).
-        if cursor.body_remain == 0 && cursor.state == ReceiveState::NeedBody && cursor.is_final {
-            let _ = self.consume(b"", 0, cursor.last_data_type, true);
-
-            cursor.state = ReceiveState::NeedHeader;
-            self.receiving_compressed.set(false);
-            self.message_is_compressed.set(false);
-
-            if cursor.data.is_empty() {
-                return Step::NeedMoreData;
-            }
-        }
         Step::Continue
     }
 
@@ -966,10 +1067,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if cursor.body_remain == 0 {
             cursor.state = ReceiveState::NeedHeader;
             if cursor.is_final {
-                self.dispatch_buffered_message(
-                    cursor.last_data_type,
-                    self.receiving_compressed.get(),
-                );
+                let kind = cursor.last_data_type;
+                let compressed = self.receiving_compressed.get();
+                self.prepare_receive_callback(cursor);
+                self.dispatch_buffered_message(kind, compressed);
+                self.refresh_receive_cursor(cursor);
             }
         }
 
@@ -1019,6 +1121,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
             return Step::NeedMoreData;
         };
+        cursor.state = ReceiveState::NeedHeader;
+        cursor.body_remain = 0;
+        self.prepare_receive_callback(cursor);
         // Send the Pong before dispatching `ping`. If a listener calls close(), the Pong must not
         // follow the Close frame.
         if opcode == Opcode::Ping
@@ -1029,9 +1134,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.send_pong(&payload[..payload_len]);
         }
         self.dispatch_data(&payload[..payload_len], opcode);
-
-        cursor.state = ReceiveState::NeedHeader;
-        cursor.body_remain = 0;
+        self.refresh_receive_cursor(cursor);
 
         if cursor.data.is_empty() {
             return Step::NeedMoreData;
@@ -1043,18 +1146,22 @@ impl<const SSL: bool> WebSocket<SSL> {
         let (chunk, rest) = cursor
             .data
             .split_at(cursor.body_remain.min(cursor.data.len()));
-        let consumed = self.consume(
-            chunk,
-            cursor.body_remain,
-            cursor.last_data_type,
-            cursor.is_final,
-        );
-
-        cursor.body_remain -= consumed;
+        let left_in_fragment = cursor.body_remain;
+        let kind = cursor.last_data_type;
+        let is_final = cursor.is_final;
+        cursor.body_remain -= chunk.len();
         cursor.data = rest;
         if cursor.body_remain == 0 {
             cursor.state = ReceiveState::NeedHeader;
         }
+        if is_final && cursor.body_remain == 0 {
+            self.prepare_receive_callback(cursor);
+        } else {
+            self.commit_receive_cursor(cursor);
+        }
+        let consumed = self.consume(chunk, left_in_fragment, kind, is_final);
+        debug_assert_eq!(consumed, chunk.len());
+        self.refresh_receive_cursor(cursor);
 
         if cursor.data.is_empty() {
             return Step::NeedMoreData;
@@ -1588,7 +1695,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data: Cell::new(None),
-            parsing: Cell::new(false),
+            pending_input: RefCell::new(VecDeque::new()),
+            pending_input_scheduled: Cell::new(false),
+            feeding: Cell::new(false),
             options: *options,
             deflate: RefCell::new(
                 deflate_params.map(|params| WebSocketDeflate::init(*params, options.is_server)),
@@ -1729,33 +1838,23 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.as_ptr()
     }
 
-    /// Parse bytes read from the JS stream. A listener can re-enter `feed` while we're parsing
-    /// (e.g. an in-memory duplex pair whose other end replies synchronously). Re-entrant bytes
-    /// are queued and parsed in order.
+    /// A JS stream is entered inside its caller's event-loop scope.
     pub(crate) fn feed(this: ThisPtr<Self>, data: &[u8]) {
         if data.is_empty() {
             return;
         }
         let _guard = RefPtr::from_this(this);
-        if this.parsing.get() {
-            let mut pending = this
-                .initial_data
-                .take()
-                .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
-            pending.0.extend_from_slice(data);
-            this.initial_data.set(Some(pending));
+        let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+        if this.feeding.get() {
+            this.pending_input
+                .borrow_mut()
+                .push_back(BufferedInput::copy(data));
+            this.schedule_pending_input();
             return;
         }
-
-        this.parsing.set(true);
-        {
-            let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
-            this.handle_data_loop(data);
-            while let Some(pending) = this.initial_data.take() {
-                this.handle_data_loop(&pending.0);
-            }
-        }
-        this.parsing.set(false);
+        this.feeding.set(true);
+        this.receive_data(data);
+        this.feeding.set(false);
     }
 
     /// The JS stream was closed or destroyed.
@@ -2280,6 +2379,7 @@ pub enum ReceiveState {
 /// Per-`handle_data_loop` parse cursor; the epilogue persists it across socket reads.
 struct RecvCursor<'a> {
     data: &'a [u8],
+    owner: Option<&'a Rc<InitialData>>,
     state: ReceiveState,
     body_remain: usize,
     is_final: bool,

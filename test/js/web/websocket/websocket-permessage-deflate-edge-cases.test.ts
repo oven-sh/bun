@@ -1,9 +1,12 @@
 import { serve } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
+import { tls as receiveTls } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
+import { Worker } from "node:worker_threads";
+import { WebSocket as NodeWS } from "ws";
 import { createDeflateRaw, deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
-import { createPeer, encodeFrame, OP, RawSocket } from "./raw-peer";
+import { createPeer, encodeFrame, OP, RawSocket, response101 } from "./raw-peer";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -727,4 +730,352 @@ test.each([
   ws.onclose = null;
   ws.terminate();
   expect(outcome).toBe(expected);
+});
+
+function createReceiveClient(api: string, url: string, secure: boolean, perMessageDeflate: boolean) {
+  if (api === "ws") {
+    return new NodeWS(url, {
+      perMessageDeflate,
+      ...(secure ? { ca: receiveTls.cert, servername: "localhost" } : {}),
+    });
+  }
+  return new WebSocket(url, secure ? { tls: { ca: receiveTls.cert, serverName: "localhost" } } : undefined);
+}
+
+function buildAfterReceive(promise: Promise<void>) {
+  return Bun.build({
+    entrypoints: ["receive:entry"],
+    target: "bun",
+    plugins: [
+      {
+        name: "receive-continuation",
+        setup(builder) {
+          builder.onResolve({ filter: /^receive:entry$/ }, () => ({ path: "entry", namespace: "receive" }));
+          builder.onLoad({ filter: /^entry$/, namespace: "receive" }, () => ({
+            contents: "export default 1",
+            loader: "js",
+          }));
+          return promise;
+        },
+      },
+    ],
+  });
+}
+
+// https://github.com/oven-sh/bun/issues/48524
+test.each(
+  ["web", "ws"].flatMap(api =>
+    (api === "ws" ? ["text", "arraybuffer", "nodebuffer"] : ["text", "blob", "arraybuffer", "nodebuffer"]).flatMap(
+      kind =>
+        [false, true].flatMap(split =>
+          [false, true].flatMap(compressed =>
+            ["matcher", "async-plugin-setup"].flatMap(wait =>
+              [false, true].map(secure => [api, kind, split, compressed, wait, secure] as const),
+            ),
+          ),
+        ),
+    ),
+  ),
+)(
+  "%s WebSocket receive state survives %s promise continuation (split=%p, compressed=%p, wait=%s, secure=%p)",
+  async (api, kind, split, compressed, wait, secure) => {
+    const compressedFrames = [
+      "wUCqVspMUbIy1FEqSi0uzSlRsqoGshJTKpWsSopKU3WUChJTUjLz0pWslAwMjYxNTM3MLSwTk5JTUtNGGl+pthYA",
+      "wROqBgeWEXJglSXmlKaOhg4odAAA",
+    ].map(value => Buffer.from(value, "base64"));
+    const padding = Buffer.alloc(256, "0123456789abcdef").toString();
+    const expected = [
+      JSON.stringify({ id: 1, result: { ready: true, padding } }),
+      JSON.stringify({ id: 2, result: { value: padding } }),
+    ];
+    const frames = compressed ? compressedFrames : expected.map(message => encodeFrame(OP.text, message));
+    if (kind !== "text") for (const frame of frames) frame[0] = compressed ? 0xc2 : 0x82;
+    await using peer = await createPeer({
+      secure,
+      afterUpgrade: split ? frames[0].subarray(0, 5) : undefined,
+      respond(connection) {
+        connection.socket.setNoDelay(true);
+        let handled = 0;
+        connection.socket.on("data", () => {
+          for (; handled < connection.frames.length; handled++) {
+            const frame = connection.frames[handled];
+            if (frame.opcode !== OP.text) continue;
+            if (frame.payload.toString() === "first")
+              connection.socket.write(split ? frames[0].subarray(5) : frames[0]);
+            else if (frame.payload.toString() === "second") connection.socket.write(frames[1]);
+          }
+        });
+        return response101(connection, ["Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits=15"]);
+      },
+    });
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const failed = Promise.withResolvers<never>();
+    const received: string[] = [];
+    const ws = createReceiveClient(api, peer.url, secure, true);
+    if (kind !== "text") ws.binaryType = kind as WebSocket["binaryType"];
+    const sendRequest = (message: string) => {
+      if (api === "ws") (ws as NodeWS).send(message, { compress: false });
+      else ws.send(message);
+    };
+    ws.onopen = () => sendRequest("first");
+    const observe = (message: string) => {
+      received.push(message);
+      if (message === expected[0]) first.resolve();
+      else if (message === expected[1]) second.resolve();
+    };
+    ws.onmessage = event => {
+      if (kind === "blob") void event.data.text().then(observe, failed.reject);
+      else observe(kind === "text" ? event.data : Buffer.from(event.data).toString());
+    };
+    ws.onerror = event => failed.reject((event as ErrorEvent).error);
+    ws.onclose = event => failed.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+    try {
+      await Promise.race([first.promise, failed.promise]);
+      sendRequest("second");
+      const outcome = Promise.race([second.promise, failed.promise]);
+      if (wait === "async-plugin-setup") {
+        const build = await buildAfterReceive(outcome);
+        expect(build.success).toBe(true);
+      } else {
+        await expect(
+          outcome.then(() => {
+            throw new Error("intended rejection");
+          }),
+        ).rejects.toThrow("intended rejection");
+      }
+      expect(received).toEqual(expected);
+    } finally {
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.terminate();
+    }
+  },
+);
+
+// https://github.com/oven-sh/bun/issues/48524
+test("WebSocket coalesced message events retain their microtask ordering", async () => {
+  await using peer = await createPeer({
+    afterUpgrade: Buffer.concat([encodeFrame(OP.text, "first"), encodeFrame(OP.text, "second")]),
+  });
+  const done = Promise.withResolvers<void>();
+  const order: string[] = [];
+  const ws = new WebSocket(peer.url);
+  ws.onmessage = ({ data }) => {
+    order.push(data);
+    queueMicrotask(() => order.push(`microtask ${data}`));
+    if (data === "second") done.resolve();
+  };
+  ws.onerror = event => done.reject((event as ErrorEvent).error);
+  ws.onclose = event => done.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+  try {
+    await done.promise;
+    expect(order).toEqual(["first", "microtask first", "second", "microtask second"]);
+  } finally {
+    ws.onerror = null;
+    ws.onclose = null;
+    ws.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/48524
+test("WebSocket binary messages read binaryType when their delivery task runs", async () => {
+  await using peer = await createPeer({
+    afterUpgrade: Buffer.concat([encodeFrame(OP.binary, "first"), encodeFrame(OP.binary, "second")]),
+  });
+  const done = Promise.withResolvers<void>();
+  const received: string[] = [];
+  const ws = new WebSocket(peer.url);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = ({ data }) => {
+    if (received.length === 0) {
+      received.push(
+        data instanceof ArrayBuffer ? Buffer.from(data).toString() : `wrong first type: ${data.constructor.name}`,
+      );
+      ws.binaryType = "blob";
+    } else if (data instanceof Blob) {
+      void data.text().then(message => {
+        received.push(message);
+        done.resolve();
+      }, done.reject);
+    } else {
+      done.reject(new Error(`wrong second type: ${data.constructor.name}`));
+    }
+  };
+  ws.onerror = event => done.reject((event as ErrorEvent).error);
+  ws.onclose = event => done.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+  try {
+    await done.promise;
+    expect(received).toEqual(["first", "second"]);
+  } finally {
+    ws.onerror = null;
+    ws.onclose = null;
+    ws.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/48524
+test.each(
+  ["web", "ws"].flatMap(api =>
+    ["upgrade", "socket"].flatMap(input =>
+      ["text", "empty-text", "empty-binary"].flatMap(first =>
+        [false, true].flatMap(secure => [false, true].map(large => [api, input, first, secure, large] as const)),
+      ),
+    ),
+  ),
+)(
+  "%s WebSocket retains wire order across coalesced %s data and a nested receive (first=%s, secure=%p, large=%p)",
+  async (api, input, firstKind, secure, large) => {
+    const expected = [
+      firstKind === "text" ? "first" : "",
+      large ? Buffer.alloc(20 * 1024, "S").toString() : "second old packet",
+      "third new packet",
+    ];
+    const initial = Buffer.concat([
+      encodeFrame(firstKind === "empty-binary" ? OP.binary : OP.text, expected[0]),
+      encodeFrame(OP.text, expected[1]),
+    ]);
+    await using peer = await createPeer({
+      secure,
+      afterUpgrade: input === "upgrade" ? initial : undefined,
+      respond(connection) {
+        connection.socket.setNoDelay(true);
+        let handled = 0;
+        connection.socket.on("data", () => {
+          for (; handled < connection.frames.length; handled++) {
+            const frame = connection.frames[handled];
+            if (frame.opcode !== OP.text) continue;
+            const request = frame.payload.toString();
+            if (request === "first" && input === "socket") connection.socket.write(initial);
+            else if (request === "next") connection.socket.write(encodeFrame(OP.text, expected[2]));
+          }
+        });
+        return response101(connection);
+      },
+    });
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const third = Promise.withResolvers<void>();
+    const failed = Promise.withResolvers<never>();
+    const received: string[] = [];
+    const ws = createReceiveClient(api, peer.url, secure, false);
+    ws.binaryType = "arraybuffer";
+    const sendRequest = (message: string) => {
+      if (api === "ws") (ws as NodeWS).send(message, { compress: false });
+      else ws.send(message);
+    };
+    ws.onopen = () => sendRequest("first");
+    ws.onmessage = ({ data }) => {
+      const message = typeof data === "string" ? data : Buffer.from(data).toString();
+      received.push(message);
+      if (message === expected[0]) first.resolve();
+      else if (message === expected[1]) second.resolve();
+      else if (message === expected[2]) third.resolve();
+      else failed.reject(new Error("Unexpected message: " + message));
+    };
+    ws.onerror = event => failed.reject((event as ErrorEvent).error);
+    ws.onclose = event => failed.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+    try {
+      await Promise.race([first.promise, failed.promise]);
+      sendRequest("next");
+      const build = await buildAfterReceive(Promise.race([third.promise, failed.promise]));
+      expect(build.success).toBe(true);
+      await Promise.race([second.promise, failed.promise]);
+      expect(received).toEqual(expected);
+    } finally {
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.terminate();
+    }
+  },
+);
+
+// https://github.com/oven-sh/bun/issues/48524
+test.each(["web", "ws"].flatMap(api => ["close", "terminate"].map(operation => [api, operation] as const)))(
+  "%s WebSocket preserves buffered receive semantics after %s in the first handler",
+  async (api, operation) => {
+    await using peer = await createPeer({
+      afterUpgrade: Buffer.concat([encodeFrame(OP.text, "first"), encodeFrame(OP.text, "buffered second")]),
+      respond(connection) {
+        let handled = 0;
+        connection.socket.on("data", () => {
+          for (; handled < connection.frames.length; handled++) {
+            const frame = connection.frames[handled];
+            if (frame.opcode === OP.close) {
+              connection.socket.write(encodeFrame(OP.close, frame.payload));
+              connection.socket.end();
+            }
+          }
+        });
+        return response101(connection);
+      },
+    });
+    const done = Promise.withResolvers<void>();
+    const received: string[] = [];
+    const ws = createReceiveClient(api, peer.url, false, false);
+    ws.onmessage = ({ data }) => {
+      received.push(data);
+      if (received.length === 1) {
+        if (operation === "close") ws.close(1000);
+        else ws.terminate();
+      }
+    };
+    ws.onerror = event => done.reject((event as ErrorEvent).error);
+    ws.onclose = () => done.resolve();
+    try {
+      await done.promise;
+      // npm ws drains buffered frames while CLOSING: https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L1302
+      expect(received).toEqual(api === "ws" ? ["first", "buffered second"] : ["first"]);
+    } finally {
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.terminate();
+    }
+  },
+);
+
+// https://github.com/oven-sh/bun/issues/48524
+test("terminating a worker releases its queued WebSocket receive tail", async () => {
+  await using peer = await createPeer({
+    afterUpgrade: Buffer.concat([encodeFrame(OP.text, "first"), encodeFrame(OP.text, Buffer.alloc(20 * 1024, "S"))]),
+  });
+  const ready = Promise.withResolvers<void>();
+  let observed = false;
+  const errors: Error[] = [];
+  const worker = new Worker(
+    `
+    import { parentPort, workerData } from "node:worker_threads";
+    const ws = new WebSocket(workerData.url);
+    ws.onmessage = ({ data }) => {
+      if (data !== "first") throw new Error("unexpected first message");
+      parentPort.postMessage("pending receive tail");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+    };
+    ws.onerror = event => { throw event.error; };
+    ws.onclose = () => { throw new Error("closed before termination"); };
+  `,
+    { eval: true, workerData: { url: peer.url } },
+  );
+  worker.on("message", message => {
+    if (message !== "pending receive tail") ready.reject(new Error("unexpected worker acknowledgement"));
+    else {
+      observed = true;
+      ready.resolve();
+    }
+  });
+  worker.on("error", error => {
+    errors.push(error);
+    ready.reject(error);
+  });
+  worker.on("exit", code => {
+    if (!observed) ready.reject(new Error("worker exited before receiving: " + code));
+  });
+  let code: number;
+  try {
+    await ready.promise;
+  } finally {
+    code = await worker.terminate();
+  }
+  expect(code).toBe(1);
+  expect(errors).toEqual([]);
 });

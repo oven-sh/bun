@@ -650,7 +650,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     callClient<Bun__WebSocketClient__close, Bun__WebSocketClientTLS__close>(code, reasonBytes.data(), reasonBytes.size());
     // close() unpauses a WHATWG socket, so parse any bytes that arrived with the 101. A `ws` socket stays paused, like npm ws.
     if (wasPaused && !isPaused())
-        queueInitialDataDelivery();
+        queueReceiveDataDelivery();
     return {};
 }
 
@@ -682,7 +682,7 @@ bool WebSocket::resume()
     const bool wasPaused = std::exchange(m_paused, false);
     const bool applied = applyPauseToConnectedClient();
     if (wasPaused && shouldDispatchFrames())
-        queueInitialDataDelivery();
+        queueReceiveDataDelivery();
     return applied;
 }
 
@@ -704,7 +704,7 @@ bool WebSocket::applyPauseToConnectedClient()
     return m_state == CONNECTING;
 }
 
-void WebSocket::queueInitialDataDelivery()
+void WebSocket::queueReceiveDataDelivery()
 {
     queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
         ws.callClient<Bun__WebSocketClient__deliverInitialData, Bun__WebSocketClientTLS__deliverInitialData>();
@@ -1397,6 +1397,11 @@ extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocke
 extern "C" void WebSocket__didError(WebCore::WebSocket* webSocket, BunString text, BunString code, BunString detail)
 {
     webSocket->didError(text.transferToWTFString(), code.transferToWTFString(), detail.transferToWTFString());
+}
+
+extern "C" void WebSocket__queueReceiveDataDelivery(WebCore::WebSocket* webSocket)
+{
+    webSocket->queueReceiveDataDelivery();
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, BunString text)

@@ -283,3 +283,116 @@ describe("CONNECT request", () => {
     });
   });
 });
+
+// Complete I/O polls without sleeps while checking that a paused tunnel stays quiet.
+async function ioRoundtrips(clock: WebSocket, count: number): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    if (clock.readyState !== WebSocket.OPEN) throw new Error("clock connection is not open");
+    const reply = Promise.withResolvers<void>();
+    clock.onmessage = () => reply.resolve();
+    clock.onerror = () => reply.reject(new Error("clock connection failed"));
+    clock.onclose = () => reply.reject(new Error("clock connection closed"));
+    clock.send("tick");
+    await reply.promise;
+  }
+}
+
+// https://github.com/oven-sh/bun/issues/48564
+test.each(
+  [
+    { secure: false, proxy: false },
+    { secure: true, proxy: false },
+    { secure: true, proxy: true },
+  ].flatMap(mode => [false, true].map(repause => ({ ...mode, repause }))),
+)("holds input deferred by onopen's nested wait until resume (%o)", async mode => {
+  await using peer = await createPeer({ secure: mode.secure, afterUpgrade: encodeFrame(OP.text, "held") });
+  using proxy = mode.proxy ? await startFixedReplyProxy("HTTP/1.1 200 Connection Established\r\n\r\n") : undefined;
+  using clock = {
+    socket: new WebSocket(echoUrl),
+    [Symbol.dispose]() {
+      this.socket.terminate();
+    },
+  };
+  expect(
+    await new Promise<string>((resolve, reject) => {
+      clock.socket.onmessage = ({ data }) => resolve(String(data));
+      clock.socket.onerror = () => reject(new Error("clock connection failed"));
+      clock.socket.onclose = () => reject(new Error("clock connection closed"));
+    }),
+  ).toBe("connected");
+  const ws = new WebSocket(peer.url, {
+    tls: { rejectUnauthorized: false },
+    ...(proxy ? { proxy: proxy.url } : {}),
+  });
+  const received: string[] = [];
+  const opened = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  const failure = Promise.withResolvers<never>();
+  let beforePause: string[] = [];
+  let build: ReturnType<typeof Bun.build> | undefined;
+  ws.onmessage = ({ data }) => {
+    received.push(data);
+    if (received.length === 2) done.resolve();
+  };
+  ws.onerror = () => failure.reject(new Error("unexpected error event"));
+  ws.onclose = ({ code }) => failure.reject(new Error(`unexpected close ${code}`));
+  ws.onopen = () => {
+    try {
+      ws.send("more");
+      const writeAndPoll = (async () => {
+        const connection = await peer.connection();
+        await connection.nextFrame();
+        await new Promise<void>((resolve, reject) => {
+          connection.socket.write(encodeFrame(OP.text, "later"), error => (error ? reject(error) : resolve()));
+        });
+        await ioRoundtrips(clock.socket, 5);
+      })();
+      // Async plugin setup enters a native nested wait before Bun.build
+      // returns. A TLS tunnel must retain ciphertext received during its
+      // active SSL pass, then respect pause() when that pass resumes.
+      build = Bun.build({
+        entrypoints: ["paused:entry"],
+        target: "bun",
+        plugins: [
+          {
+            name: "paused-upgrade-wait",
+            setup(builder) {
+              builder.onResolve({ filter: /^paused:entry$/ }, () => ({ path: "entry", namespace: "paused" }));
+              builder.onLoad({ filter: /^entry$/, namespace: "paused" }, () => ({
+                contents: "export default 1",
+                loader: "js",
+              }));
+              return writeAndPoll;
+            },
+          },
+        ],
+      });
+      beforePause = received.slice();
+      expect(ws.pause()).toBe(true);
+      opened.resolve();
+    } catch (error) {
+      failure.reject(error);
+    }
+  };
+  try {
+    await Promise.race([opened.promise, failure.promise]);
+    expect((await build!).success).toBe(true);
+    await ioRoundtrips(clock.socket, 5);
+    if (mode.proxy) expect(beforePause).toEqual([]);
+    expect({ received, isPaused: ws.isPaused }).toEqual({ received: beforePause, isPaused: true });
+    if (mode.repause) {
+      expect(ws.resume()).toBe(true);
+      expect(received).toEqual(beforePause);
+      expect(ws.pause()).toBe(true);
+      await ioRoundtrips(clock.socket, 5);
+      expect({ received, isPaused: ws.isPaused }).toEqual({ received: beforePause, isPaused: true });
+    }
+    expect(ws.resume()).toBe(true);
+    await Promise.race([done.promise, failure.promise]);
+    await ioRoundtrips(clock.socket, 5);
+    expect(received).toEqual(["held", "later"]);
+  } finally {
+    ws.onclose = null;
+    ws.terminate();
+  }
+});

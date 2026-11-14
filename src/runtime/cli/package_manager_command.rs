@@ -928,7 +928,7 @@ fn print_node_modules_folder_structure(
         let mut found_node_modules = false;
         while dir_index < directories.len() {
             // A node_modules is removed from the list before it is printed.
-            if strings::eql_long(&possible_path, &directories[dir_index].relative_path, true) {
+            if strings::eql_long(&possible_path, &directories[dir_index].relative_path) {
                 found_node_modules = true;
                 let next = directories.remove(dir_index);
 

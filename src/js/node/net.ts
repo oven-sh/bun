@@ -1707,7 +1707,7 @@ function Socket(options?): void {
     ) {
       fdIsWriteOnly = true;
       // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-      if (optionsReadable !== true && optionsReadable !== false) {
+      if (optionsReadable !== false) {
         this.push(null);
         this.read(0);
       }

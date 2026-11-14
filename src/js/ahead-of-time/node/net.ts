@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f50ce2c4d0f95e9edea1880c3a7741aeb69ecfc67228dfcecc0bbc62bc00c943.
+// Written against that file with the SHA-256 d7657eff5f59fb1ef913390f6a02dfdd8c71598f0663c923fe792ee2929f11be.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2088,7 +2088,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
     ) {
       fdIsWriteOnly = true;
       // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-      if (optionsReadable !== true && optionsReadable !== false) {
+      if (optionsReadable !== false) {
         this.push(null);
         this.read(0);
       }

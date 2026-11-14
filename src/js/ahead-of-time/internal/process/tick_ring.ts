@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/process/tick_ring.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff33ee4be597b763fd45e64008abd87f498378dcb95b2769f1b16989cb9be372.
+// Written against that file with the SHA-256 924cbbd245070895a0e4554b9609c1cdf365556581235cd3aa50686b2b1bd93f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // The ticks that wait are in a ring of nodes, from `ring.read` up to `ring.write`, which is always free.
@@ -196,15 +196,20 @@ function pushWithInitHooks(cb: TickCallback, args: unknown[] | undefined, frame:
       : $newArrayWithSize<(typeof tickInitHooks)[number]>(count);
   if (!(IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS))
     for (let i = 0; i < count; i++) $putByValDirect(hooks, i, tickInitHooks[i]);
-  for (let i = 0; i < (IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS ? hooks.length : count); i++) {
-    try {
-      hooks[i](asyncId, "TickObject", 0, tock);
-    } catch (err: any) {
+  asyncHooksTick.beginHookDispatch();
+  try {
+    for (let i = 0; i < (IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS ? hooks.length : count); i++) {
       try {
-        console.error(typeof err?.stack === "string" ? err.stack : err);
-      } catch {}
-      tickingProcess.exit(1);
+        hooks[i](asyncId, "TickObject", 0, tock);
+      } catch (err: any) {
+        try {
+          console.error(typeof err?.stack === "string" ? err.stack : err);
+        } catch {}
+        tickingProcess.exit(1);
+      }
     }
+  } finally {
+    asyncHooksTick.endHookDispatch();
   }
   pushTickObject(tock);
 }
@@ -229,15 +234,20 @@ function pushInsideNextTick(cb: TickCallback, args: unknown[] | undefined, frame
       : $newArrayWithSize<(typeof tickInitHooks)[number]>(count);
   if (!(IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS))
     for (let i = 0; i < count; i++) $putByValDirect(hooks, i, tickInitHooks[i]);
-  for (let i = 0; i < (IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS ? hooks.length : count); i++) {
-    try {
-      hooks[i](asyncId, "TickObject", 0, tock);
-    } catch (err: any) {
+  asyncHooksTick.beginHookDispatch();
+  try {
+    for (let i = 0; i < (IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS ? hooks.length : count); i++) {
       try {
-        console.error(typeof err?.stack === "string" ? err.stack : err);
-      } catch {}
-      tickingProcess.exit(1);
+        hooks[i](asyncId, "TickObject", 0, tock);
+      } catch (err: any) {
+        try {
+          console.error(typeof err?.stack === "string" ? err.stack : err);
+        } catch {}
+        tickingProcess.exit(1);
+      }
     }
+  } finally {
+    asyncHooksTick.endHookDispatch();
   }
   pushTickObject(tock);
 }

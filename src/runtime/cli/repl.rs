@@ -2357,6 +2357,7 @@ impl<'a> Repl<'a> {
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
+                            self.history.add(strings::trim(&code, b"\n"))?;
                             self.evaluate_and_print(&code);
                             self.editor_buffer = code;
                         }

@@ -87,9 +87,9 @@ mod layout_asserts {
     pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
 
     // ── bun.lockb package-table columns (Package.Serializer) ─────────────
-    // Iterated in declaration order by `MultiArrayList::Slice::column_bytes_mut`;
+    // Iterated in declaration order by `MultiArrayList::column_bytes{,_mut}`;
     // each column is written as a raw byte slab, so per-column `size_of` is the
-    // load-bearing contract — see `lockfile/Package.rs::serializer::sizes()`.
+    // load-bearing contract.
     pin!(crate::resolution::Value<u64>, size = 64, align = 8); // union: VersionedURL | Repository | String
     pin!(crate::resolution::Resolution, size = 72, align = 8); // u8 tag + [7]u8 + Value
     pin!(crate::lockfile::package::Meta, size = 88, align = 4);

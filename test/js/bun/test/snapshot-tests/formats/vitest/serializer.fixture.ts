@@ -13,6 +13,15 @@ class Wrapper {
 class Old {
   v = 1;
 }
+class Hidden {
+  #inner: unknown;
+  constructor(inner: unknown) {
+    this.#inner = inner;
+  }
+  get inner() {
+    return this.#inner;
+  }
+}
 
 expect.addSnapshotSerializer({
   test: v => v instanceof Money,
@@ -31,6 +40,12 @@ expect.addSnapshotSerializer({
 expect.addSnapshotSerializer({
   test: v => typeof v === "string" && v.startsWith("raw:"),
   serialize: (v: string) => v.slice(4),
+});
+expect.addSnapshotSerializer({
+  test: v => v instanceof Hidden,
+  serialize(v: Hidden, config, indentation, depth, refs, printer) {
+    return `Hidden(${printer(v.inner, config, indentation, depth, refs)})`;
+  },
 });
 
 describe("serializers", () => {
@@ -68,4 +83,25 @@ describe("serializers", () => {
   test("in a Map and a Set", () => {
     expect(new Map([[new Money(1, "A"), new Set([new Money(2, "B")])]])).toMatchSnapshot();
   });
+  test("not in the arguments of a custom matcher", () => {
+    expect([
+      new Money(1, "USD"),
+      (expect as any).toBeFoo(new Money(2, "GBP"), { nested: new Wrapper("raw:text") }, "raw:text"),
+    ]).toMatchSnapshot();
+  });
+  test("printer and print, of a custom matcher", () => {
+    expect(new Wrapper([(expect as any).toBeFoo(/a+/, [new Money(3, "JPY")])])).toMatchSnapshot();
+    expect(Object.assign(new Old(), { v: (expect as any).not.toBeFoo(/b+/, new Old()) })).toMatchSnapshot();
+  });
+  test("a custom matcher of what holds it, behind what only a serializer prints", () => {
+    const holder: any = { name: "h" };
+    holder.hidden = new Hidden((expect as any).toBeFoo(holder));
+    expect(holder).toMatchSnapshot();
+  });
+});
+
+expect.extend({
+  toBeFoo() {
+    return { pass: true, message: () => "" };
+  },
 });

@@ -328,17 +328,19 @@ pub(crate) struct Formatter<'a> {
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
-    print_function_name: bool,
+    /// The options of Vitest's `stringify()`, not of a snapshot: function names, no `escapeRegex`, no mock function plugin.
+    is_stringify: bool,
     serializers: Option<JSValue>,
     config: Option<JSValue>,
     /// Print the way Vitest's `inspect()` does: one line, single quotes, unsorted unquoted keys, function names.
     pub(crate) is_inline: bool,
+    argument_runs: Option<&'a ArgumentRuns>,
     pub(crate) depth: u32,
     pub(crate) max_depth: u32,
     pub(crate) max_width: u32,
     call_to_json: bool,
     items: u32,
-    /// Vitest's `_outputLengthPerDepth`. Only tracked when `is_inline`.
+    /// Vitest's `_outputLengthPerDepth`. Only tracked when `is_stringify`.
     output_at_depth: [usize; 12],
 }
 
@@ -362,10 +364,11 @@ impl<'a> Formatter<'a> {
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
-            print_function_name: false,
+            is_stringify: false,
             serializers: None,
             config: None,
             is_inline: false,
+            argument_runs: None,
             depth: 0,
             max_depth: u32::MAX,
             max_width: u32::MAX,
@@ -3598,6 +3601,8 @@ impl JestPrettyFormat {
 impl JestPrettyFormat {
     /// Vitest's `taskTitleValueFormatTruncate`.
     pub(crate) const TRUNCATE: usize = 40;
+    /// The default `maxLength` of Vitest's `stringify()`.
+    const STRINGIFY_MAX_LENGTH: usize = 10_000;
 
     #[cold]
     #[inline(never)]
@@ -3606,11 +3611,14 @@ impl JestPrettyFormat {
         unsafe extern "C" {
             safe fn SnapshotFormat__isShortenedByWidth(global: &JSGlobalObject, value: JSValue) -> bool;
         }
-        const MAX_LENGTH: usize = 10_000;
         let fits = |printed: &[u8]| strings::element_length_utf8_into_utf16(printed) <= Self::TRUNCATE;
 
         let mut printed = Vec::new();
-        Self::stringify(global, value, &mut printed, None, u32::MAX, Self::TRUNCATE)?;
+        let stringify = |printed: &mut Vec<u8>, max_depth_option: Option<u32>, max_width: u32, max_length: usize| {
+            printed.clear();
+            Self::stringify(global, value, printed, Stringify::Title, max_depth_option, max_width, max_length, None)
+        };
+        stringify(&mut printed, None, u32::MAX, Self::TRUNCATE)?;
         if fits(&printed) {
             out.extend_from_slice(&printed);
             return Ok(());
@@ -3633,16 +3641,16 @@ impl JestPrettyFormat {
             let (mut fitting, mut too_wide) = (0, Self::TRUNCATE as u32);
             while fitting + 1 < too_wide {
                 let width = (fitting + too_wide) / 2;
-                Self::stringify(global, value, &mut printed, Some(1), width, MAX_LENGTH)?;
+                stringify(&mut printed, Some(1), width, Self::STRINGIFY_MAX_LENGTH)?;
                 if fits(&printed) {
                     fitting = width;
                 } else {
                     too_wide = width;
                 }
             }
-            Self::stringify(global, value, &mut printed, Some(1), fitting, MAX_LENGTH)?;
+            stringify(&mut printed, Some(1), fitting, Self::STRINGIFY_MAX_LENGTH)?;
         } else {
-            Self::stringify(global, value, &mut printed, Some(0), u32::MAX, MAX_LENGTH)?;
+            stringify(&mut printed, Some(0), u32::MAX, Self::STRINGIFY_MAX_LENGTH)?;
         }
         out.extend_from_slice(&printed);
         Ok(())
@@ -3654,37 +3662,134 @@ impl JestPrettyFormat {
         global: &JSGlobalObject,
         value: JSValue,
         printed: &mut Vec<u8>,
+        caller: Stringify,
         max_depth_option: Option<u32>,
         max_width: u32,
         max_length: usize,
+        runs: Option<&ArgumentRuns>,
     ) -> JsResult<()> {
+        let start = printed.len();
+        let may_retry = |printed: &[u8]| runs.is_none_or(|runs| runs.may_retry(printed.len() - start));
+        let may_print_again = |printed: &[u8]| runs.is_none_or(|runs| runs.may_print_again(printed.len() - start));
         let mut max_depth = 10;
         loop {
-            let mut print = |call_to_json: bool| {
-                printed.clear();
+            let print = |printed: &mut Vec<u8>, call_to_json: bool| {
+                printed.truncate(start);
                 let mut formatter = Formatter::new(global);
                 formatter.snapshot_format = SnapshotFormat::Vitest;
-                formatter.is_inline = true;
+                formatter.is_stringify = true;
+                formatter.is_inline = caller == Stringify::Title;
+                formatter.print_basic_prototype = caller == Stringify::Argument;
+                formatter.argument_runs = runs;
                 formatter.max_depth = max_depth_option.unwrap_or(max_depth);
                 formatter.max_width = max_width;
                 formatter.call_to_json = call_to_json;
                 formatter.print_like_pretty_format(printed, value, false)
             };
-            match print(true) {
+            match print(printed, true) {
                 // Vitest retries once with `callToJSON: false`, whatever was thrown.
-                Err(JsError::Thrown) if global.clear_exception_except_termination() => print(false)?,
+                Err(JsError::Thrown) if may_retry(printed) && global.clear_exception_except_termination() => match runs {
+                    Some(runs) => runs.retry(|| print(printed, false))?,
+                    None => print(printed, false)?,
+                },
                 result => result?,
             }
-            if max_depth <= 1 || strings::element_length_utf8_into_utf16(printed) < max_length {
+            if max_depth <= 1 || strings::element_length_utf8_into_utf16(&printed[start..]) < max_length || !may_print_again(printed) {
                 return Ok(());
             }
             max_depth /= 2;
         }
     }
+
+    /// A matcher from `expect.extend()` prints itself, as in Jest and Vitest: nothing of the print around it reaches an argument.
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn print_custom_matcher(
+        global: &JSGlobalObject,
+        matcher: JSValue,
+        flags: expect::Flags,
+        format: SnapshotFormat,
+        outer: Option<&ArgumentRuns>,
+        out: &mut Vec<u8>,
+    ) -> JsResult<bool> {
+        let (Some(arguments), Some(matcher_fn)) =
+            (js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(matcher), js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(matcher))
+        else {
+            return Ok(false);
+        };
+        let own = ArgumentRuns::default();
+        let runs = outer.unwrap_or(&own);
+        if flags.not() {
+            out.extend_from_slice(b"not.");
+        }
+        out.extend_from_slice(matcher_fn.get_name(global)?.to_utf8().slice());
+        out.push(b'<');
+        let mut iter = arguments.array_iterator(global)?;
+        while let Some(argument) = iter.next()? {
+            if iter.i > 1 {
+                out.extend_from_slice(b", ");
+            }
+            if format == SnapshotFormat::Vitest {
+                Self::stringify(global, argument, out, Stringify::Argument, None, u32::MAX, Self::STRINGIFY_MAX_LENGTH, Some(runs))?;
+            } else {
+                out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
+            }
+        }
+        out.push(b'>');
+        Ok(true)
+    }
+}
+
+/// Who calls Vitest's `stringify()`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Stringify {
+    /// `inspect()`, which prints a title on one line.
+    Title,
+    /// `CustomMatcher.toAsymmetricMatcher()`, which prints an argument with pretty-format's defaults.
+    Argument,
+}
+
+/// What the `stringify()` runs under one custom matcher share. Vitest has no limit on either. Past one, a run ends with the attempt it has.
+#[derive(Default)]
+pub(crate) struct ArgumentRuns {
+    /// Retries that threw as well. Each matcher around a print that keeps throwing doubles them.
+    failed_retries: core::cell::Cell<u32>,
+    /// Retries that have not ended. Each of them makes the retries inside it once more.
+    retries_in_flight: core::cell::Cell<u32>,
+    /// Bytes of the attempts that another attempt replaced. A matcher around a print of 10,000 characters has 4 times as many, and around one that throws once, 2 times.
+    dropped: core::cell::Cell<usize>,
+}
+
+impl ArgumentRuns {
+    const MAX_FAILED_RETRIES: u32 = 1 << 6;
+
+    fn may_print_again(&self, dropped: usize) -> bool {
+        self.dropped.set(self.dropped.get().saturating_add(dropped));
+        self.dropped.get() <= MAX_LENGTH
+    }
+
+    /// Inside another retry, an attempt that threw counts as one that was long enough to print again, however little it printed.
+    fn may_retry(&self, dropped: usize) -> bool {
+        let dropped = if self.retries_in_flight.get() == 0 { dropped } else { dropped.max(JestPrettyFormat::STRINGIFY_MAX_LENGTH) };
+        self.failed_retries.get() < Self::MAX_FAILED_RETRIES && self.may_print_again(dropped)
+    }
+
+    fn retry<T>(&self, print: impl FnOnce() -> JsResult<T>) -> JsResult<T> {
+        self.retries_in_flight.set(self.retries_in_flight.get() + 1);
+        let retried = print();
+        self.retries_in_flight.set(self.retries_in_flight.get() - 1);
+        if retried.is_err() {
+            self.failed_retries.set(self.failed_retries.get() + 1);
+        }
+        retried
+    }
 }
 
 /// Indentation makes the output quadratic in depth. pretty-format overflows Node's stack before 2,400 levels anyway.
 pub(crate) const MAX_INDENT: u32 = 4096;
+
+/// V8's maximum string length, where pretty-format fails with a `RangeError` too.
+const MAX_LENGTH: usize = (1 << 29) - 24;
 
 /// A port of pretty-format with jest-snapshot's options and plugins.
 impl Formatter<'_> {
@@ -3750,9 +3855,7 @@ impl Formatter<'_> {
         self.check_length(self.copied)
     }
 
-    /// The limit is V8's maximum string length, where pretty-format fails with a `RangeError` too.
     pub(crate) fn check_length(&self, length: usize) -> JsResult<()> {
-        const MAX_LENGTH: usize = (1 << 29) - 24;
         if length > MAX_LENGTH {
             return Err(self.global_this.throw_value(
                 self.global_this.create_range_error_instance(format_args!("The value is too large to print in a snapshot")),
@@ -3825,7 +3928,7 @@ impl Formatter<'_> {
         } else {
             self.print_object_like_pretty_format(out, value, has_called_to_json)?;
         }
-        if self.is_inline
+        if self.is_stringify
             && let Some(output) = self.output_at_depth.get_mut(self.depth as usize)
         {
             // Vitest's `maxOutputLength`.
@@ -3857,14 +3960,14 @@ impl Formatter<'_> {
         if is(b"jest.asymmetricMatcher") {
             return self.print_foreign_asymmetric_matcher(out, value).map(|()| true);
         }
-        if !self.is_inline && member(global, value, "_isMockFunction")?.to_boolean() {
+        if !self.is_stringify && member(global, value, "_isMockFunction")?.to_boolean() {
             return self.print_mock_function(out, value).map(|()| true);
         }
         Ok(false)
     }
 
     fn print_function(&self, out: &mut Vec<u8>, function: JSValue) -> JsResult<()> {
-        if !self.is_inline && !self.print_function_name {
+        if !self.is_stringify {
             out.extend_from_slice(b"[Function]");
             return Ok(());
         }
@@ -3943,7 +4046,7 @@ impl Formatter<'_> {
                 write_string(global, &mut text, member(global, value, "flags")?)?;
                 let mut rest = text.as_slice();
                 // pretty-format's `escapeRegex` option.
-                while !self.is_inline
+                while !self.is_stringify
                     && let Some(i) = strings::index_of_any(rest, b"$()*+.?[\\]^{|}")
                 {
                     out.extend_from_slice(&rest[..i]);
@@ -4250,45 +4353,7 @@ impl Formatter<'_> {
             let digits = digits.to_int32();
             let _ = write!(out, " ({} digit{})", digits, if digits == 1 { "" } else { "s" });
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-            let (Some(arguments), Some(matcher_fn)) =
-                (js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value), js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value))
-            else {
-                return Ok(false);
-            };
-            if matcher.flags.not() {
-                out.extend_from_slice(b"not.");
-            }
-            out.extend_from_slice(matcher_fn.get_name(global)?.to_utf8().slice());
-            out.push(b'<');
-            let mut iter = arguments.array_iterator(global)?;
-            while let Some(argument) = iter.next()? {
-                if iter.i > 1 {
-                    out.extend_from_slice(b", ");
-                }
-                if self.snapshot_format == SnapshotFormat::Vitest {
-                    let outer = (
-                        core::mem::take(&mut self.indent),
-                        core::mem::replace(&mut self.print_basic_prototype, true),
-                        core::mem::replace(&mut self.print_function_name, true),
-                        core::mem::take(&mut self.is_inline),
-                        core::mem::replace(&mut self.max_depth, u32::MAX),
-                        core::mem::replace(&mut self.max_width, u32::MAX),
-                    );
-                    let result = self.print_child(out, argument);
-                    (
-                        self.indent,
-                        self.print_basic_prototype,
-                        self.print_function_name,
-                        self.is_inline,
-                        self.max_depth,
-                        self.max_width,
-                    ) = outer;
-                    result?;
-                } else {
-                    out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());
-                }
-            }
-            out.push(b'>');
+            return JestPrettyFormat::print_custom_matcher(global, value, matcher.flags, self.snapshot_format, self.argument_runs, out);
         } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
             let Some(constructor) = js_ExpectAny::constructor_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(b"Any<");

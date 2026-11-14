@@ -137,6 +137,11 @@ const once = first => {
   let calls = 0;
   return { next: () => (calls++ === 0 ? first : { done: true }) };
 };
+expect.extend({
+  toBeFoo() {
+    return { pass: true, message: () => "" };
+  },
+});
 
 const members = {
   "asymmetric matcher: toString": value => matcher({ toString: value }),
@@ -152,6 +157,8 @@ const members = {
   "asymmetric matcher: toAsymmetricMatcher": value => matcher({ ...named("Other"), toAsymmetricMatcher: value }),
   "asymmetric matcher: what toAsymmetricMatcher() returns": value =>
     matcher({ ...named("Other"), toAsymmetricMatcher: () => value }),
+  "custom matcher: an argument": value => expect.toBeFoo("before", value, "after"),
+  "custom matcher: what toJSON() of an argument returns": value => expect.toBeFoo({ a: 1, toJSON: () => value }),
   "$$typeof": value => ({ $$typeof: value, type: "a", props: {} }),
   "element: type": value => element(value, {}),
   "element: props": value => element("a", value),

@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 971, jest: 601 };
+  const tests = { vitest: 1013, jest: 601 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -2944,6 +2944,247 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
       expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
     },
   );
+});
+
+// Vitest prints each argument with stringify(), a print of its own. formats/vitest has the text that Vitest 5.0.3 wrote
+// for them. Here is what only Bun prints in Vitest's format, how often an argument is printed, and where the print ends.
+describe.concurrent("the arguments of a matcher that expect.extend() made, in Vitest's format", () => {
+  const toBeFoo = `expect.extend({ toBeFoo: () => ({ pass: true, message: () => "" }) });`;
+  // print(value) is the text of the value, or the message of what printing it threw.
+  const print = `
+    let printed;
+    expect.addSnapshotSerializer({
+      test: value => value !== null && typeof value === "object" && Object.hasOwn(value, "printed"),
+      serialize(value, config, indentation, depth, refs, printer) {
+        printed = printer(value.printed, config, indentation, depth, refs);
+        return "printed";
+      },
+    });
+    function print(value) {
+      try {
+        expect({ printed: value }).toMatchInlineSnapshot(\`printed\`);
+      } catch (error) {
+        return error.message;
+      }
+      return printed;
+    }
+  `;
+  // More than the 5 s that a test has by default: the test in the child can print to the end of the stack, or 536 MB.
+  const timeoutOfChild = 60_000;
+  async function logOf(test: string) {
+    using dir = tempDir("snapshot-custom-matcher", {
+      "a.test.js": `import { test, expect } from "vitest";\n${toBeFoo}\n${print}\ntest("t", () => {${test}});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timeout", String(timeoutOfChild)],
+      env: { ...bunEnv, CI: "true" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: timeoutOfChild / 2,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const log = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
+    return { log: log.map(line => JSON.parse(line)), stderr: exitCode ? stderr : "", exitCode };
+  }
+
+  // Vitest 5.0.3 wrote the snapshot file, file.txt and the inline snapshot for the test of "vitest".
+  test.each(["vitest", "bun:test"])("a test of %j passes on what Vitest wrote", async module => {
+    const printed = '{\n  "matcher": toBeFoo</a+b.c/, Array [\n  /x?/,\n]>,\n  "re": /a\\+b\\.c/,\n}';
+    const files = {
+      "a.test.js": `
+        import { test, expect } from ${JSON.stringify(module)};
+        ${toBeFoo}
+        const value = () => ({ matcher: expect.toBeFoo(/a+b.c/, [/x?/]), re: /a+b.c/ });
+        test("toMatchSnapshot()", () => {
+          expect(value()).toMatchSnapshot();
+        });
+        test("toMatchFileSnapshot()", async () => {
+          await expect(value()).toMatchFileSnapshot("./file.txt");
+        });
+        test("a thrown value", () => {
+          expect(() => {
+            throw value();
+          }).toThrowErrorMatchingInlineSnapshot(\`
+            {
+              "matcher": toBeFoo</a+b.c/, Array [
+              /x?/,
+            ]>,
+              "re": /a\\\\+b\\\\.c/,
+            }
+          \`);
+        });
+      `,
+      "__snapshots__/a.test.js.snap":
+        headers.vitest + "\nexports[`toMatchSnapshot() 1`] = `\n" + printed.replaceAll("\\", "\\\\") + "\n`;\n",
+      "file.txt": printed,
+    };
+    using dir = tempDir("snapshot-custom-matcher", files);
+    const { stderr, exitCode, pass, fail } = await runTests(String(dir), { CI: "true" });
+    expect({ fail, pass, stderr: fail ? stderr : "" }).toEqual({ fail: 0, pass: 3, stderr: "" });
+    const after = Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]);
+    expect(Object.fromEntries(after)).toEqual(files);
+    expect(exitCode).toBe(0);
+  });
+
+  // As Vitest 5.0.3 printed them. Without the string, the argument has 44 characters.
+  test("an argument of 10,000 UTF-16 code units is printed again with fewer levels, and one of 9,999 is not", async () => {
+    const { log, stderr, exitCode } = await logOf(`
+      for (const [character, count] of [["x", 9955], ["x", 9956], ["\\u00e9", 9955], ["\\u00e9", 9956], ["\\u{1f600}", 4977], ["\\u{1f600}", 4978]]) {
+        const text = Buffer.alloc(Buffer.byteLength(character) * count, character).toString();
+        const printed = print(expect.toBeFoo({ a: { b: text } }));
+        console.log(JSON.stringify([character.length * count, printed.length, printed.includes(text) ? "whole" : printed]));
+      }
+    `);
+    const whole = (length: number) => [length, "toBeFoo<>".length + 44 + length, "whole"];
+    const again = (length: number) => [length, 36, 'toBeFoo<Object {\n  "a": [Object],\n}>'];
+    expect({ log, stderr, exitCode }).toEqual({
+      log: [whole(9955), again(9956), whole(9955), again(9956), whole(9954), again(9956)],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each row is the count of toJSON() calls and the length of the text, and each is what Vitest 5.0.3 gives. No
+  // argument gets shorter with fewer levels, so each is printed 4 times, and as often again by each matcher around it.
+  test("an argument of 10,000 characters is printed again as often as Vitest prints it, also in or beside a matcher", async () => {
+    const { log, stderr, exitCode } = await logOf(`
+      const long = Buffer.alloc(10_000, "x").toString();
+      const rows = {
+        "1 matcher": counted => expect.toBeFoo(counted()),
+        "2 in each other": counted => expect.toBeFoo(expect.toBeFoo(counted())),
+        "3 in each other": counted => expect.toBeFoo(expect.toBeFoo(expect.toBeFoo(counted()))),
+        "4 in each other": counted => expect.toBeFoo(expect.toBeFoo(expect.toBeFoo(expect.toBeFoo(counted())))),
+        "2 in each other, 6 arguments": counted => expect.toBeFoo(expect.toBeFoo(...Array.from({ length: 6 }, counted))),
+        "3 in each other, 2 arguments": counted => expect.toBeFoo(expect.toBeFoo(expect.toBeFoo(counted(), counted()))),
+        "6 beside each other": counted => expect.toBeFoo(Array.from({ length: 6 }, () => expect.toBeFoo(counted()))),
+        "22 arguments": counted => expect.toBeFoo(...Array.from({ length: 22 }, counted)),
+      };
+      for (const [name, make] of Object.entries(rows)) {
+        let calls = 0;
+        const printed = print(make(() => ({ toJSON: () => (calls++, long) })));
+        console.log(JSON.stringify([name, calls, printed.length]));
+      }
+    `);
+    expect({ log, stderr, exitCode }).toEqual({
+      log: [
+        ["1 matcher", 4, 10011],
+        ["2 in each other", 16, 10020],
+        ["3 in each other", 64, 10029],
+        ["4 in each other", 256, 10038],
+        ["2 in each other, 6 arguments", 96, 60040],
+        ["3 in each other, 2 arguments", 128, 20033],
+        ["6 beside each other", 96, 60108],
+        ["22 arguments", 88, 220095],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Vitest 5.0.3 reads the getter 2, 8, 64 and 128 times and throws a PrettyFormatPluginError with the same message.
+  // It prints the 70 too: a retry that does not throw is not one of the 64.
+  test("an argument that throws is printed again, and 64 times at most once that throws as well", async () => {
+    const { log, stderr, exitCode } = await logOf(`
+      for (const matchers of [1, 3, 6, 7]) {
+        let reads = 0;
+        let value = {
+          get thrower() {
+            reads++;
+            throw new Error("thrown");
+          },
+        };
+        for (let i = 0; i < matchers; i++) value = expect.toBeFoo([value]);
+        const printed = print(value);
+        console.log(JSON.stringify([matchers, reads, printed]));
+      }
+      const throwsOnce = () => ({
+        toJSON() {
+          throw new Error("not thrown");
+        },
+      });
+      const beside = print(expect.toBeFoo(Array.from({ length: 70 }, () => expect.toBeFoo(throwsOnce()))));
+      console.log(JSON.stringify(beside.split('toBeFoo<Object {\\n  "toJSON": [Function toJSON],\\n}>,').length - 1));
+    `);
+    expect({ log, stderr, exitCode }).toEqual({
+      log: [[1, 2, "thrown"], [3, 8, "thrown"], [6, 64, "thrown"], [7, 66, "thrown"], 70],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Under one matcher, Bun prints a value again only while the attempts that were replaced have 536,870,888 bytes or
+  // fewer. A retry inside another retry, which is where the work doubles, counts as 10,000 bytes at least. Vitest
+  // 5.0.3 has no limit: it calls the second toJSON() 4 times and prints the matcher. Not beside the other tests: this
+  // one prints 536 MB.
+  test.serial(
+    "a value is not printed again once the attempts that were replaced have 536,870,888 bytes",
+    async () => {
+      const { log, stderr, exitCode } = await logOf(`
+        const calls = [0, 0];
+        const throwsOnce = message => ({
+          toJSON() {
+            throw new Error(message);
+          },
+        });
+        // 255 second prints of 2,100,000 characters leave about 1,370,000 bytes.
+        const long = Buffer.alloc(2_100_000, "x").toString();
+        const first = expect.toBeFoo(expect.toBeFoo(expect.toBeFoo({ toJSON: () => (calls[0]++, long) })));
+        // 100 retries beside each other count as what their attempts printed, which is nothing.
+        const beside = Array.from({ length: 100 }, () => expect.toBeFoo(throwsOnce("not thrown")));
+        // Of these 63 retries, 57 are inside another retry: 570,000 bytes.
+        let inEachOther = "innermost";
+        for (let i = 0; i < 6; i++) inEachOther = expect.toBeFoo([inEachOther, throwsOnce("not thrown")]);
+        // A second print of 1,000,000 characters is more than what is left, so this one is printed once.
+        const shorter = Buffer.alloc(1_000_000, "x").toString();
+        const once = { toJSON: () => (calls[1]++, shorter) };
+        // The retry is not made, so what toJSON() threw is thrown.
+        const printed = print(expect.toBeFoo(first, beside, inEachOther, once, throwsOnce("thrown")));
+        console.log(JSON.stringify([...calls, printed]));
+      `);
+      expect({ log, stderr, exitCode }).toEqual({ log: [[256, 1, "thrown"]], stderr: "", exitCode: 0 });
+    },
+    timeoutOfChild,
+  );
+
+  // Vitest 5.0.3 does not finish on these. The getter counts a read only when it has made the next matcher, so the
+  // count does not depend on where the stack ends: below 2 for each of the 64 retries after the deepest level. A print
+  // that did not end would read the getter again until it returns a string.
+  test("a matcher that its own argument holds, and matchers without end, are a RangeError, and soon", async () => {
+    const { log, stderr, exitCode } = await logOf(`
+      const holder = { name: "holder" };
+      holder.matcher = expect.toBeFoo(holder, 2);
+      console.log(JSON.stringify([print(holder), print(holder.matcher)]));
+
+      const shared = {};
+      shared.matchers = Array.from({ length: 8 }, (_, i) => expect.toBeFoo({ i, shared }));
+      console.log(JSON.stringify(print(shared)));
+
+      let reads = 0;
+      let deepest = 0;
+      let readsAtDeepest = 0;
+      const endless = depth => ({
+        get matcher() {
+          const matcher = expect.toBeFoo(endless(depth + 1));
+          reads++;
+          if (depth > deepest) {
+            deepest = depth;
+            readsAtDeepest = reads;
+          }
+          return reads - readsAtDeepest > 1000 ? "read too often" : matcher;
+        },
+      });
+      const printed = print(endless(1));
+      const readsAfterDeepest = reads - readsAtDeepest;
+      console.log(JSON.stringify([printed, readsAfterDeepest < 2 * 64 || readsAfterDeepest]));
+    `);
+    const overflow = "Maximum call stack size exceeded.";
+    expect({ log, stderr, exitCode }).toEqual({
+      log: [[overflow, overflow], overflow, [overflow, true]],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // Windows cannot create directories as deep as its path buffer is long.

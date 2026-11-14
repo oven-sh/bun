@@ -28,6 +28,14 @@ exports[`property matchers > class instance 1`] = `
 }
 `;
 
+exports[`property matchers > custom matchers 1`] = `
+{
+  "id": toMatchOneOf</^x$/, /ab?\\.c/>,
+  "n": toBeBetween<1, 5>,
+  "re": /a\\+/,
+}
+`;
+
 exports[`property matchers > empty properties 1`] = `
 {
   "a": 1,
@@ -496,6 +504,144 @@ exports[`values > custom asymmetric matcher 1`] = `
 ]
 `;
 
+exports[`values > custom asymmetric matcher more than 10 levels below its argument 1`] = `
+{
+  "chain": {
+    "o": {
+      "o": {
+        "o": {
+          "o": {
+            "o": {
+              "o": {
+                "o": {
+                  "o": {
+                    "matcher": toBeBetween<Object {
+  "holder": Object {
+    "chain": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "o": [Object],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "name": "h",
+  },
+}>,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  "name": "h",
+}
+`;
+
+exports[`values > custom asymmetric matcher of a deep value 1`] = `
+{
+  "10 levels": toBeBetween<Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "o": [Object],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}, Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "o": [Array],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}>,
+  "9 levels": toBeBetween<Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "leaf": true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}>,
+  "counted from the argument": [
+    [
+      toBeBetween<Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "o": [Map],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}>,
+    ],
+  ],
+}
+`;
+
 exports[`values > custom asymmetric matcher of a function 1`] = `
 [
   toBeBetween<[Function low], [Function anonymous]>,
@@ -505,6 +651,372 @@ exports[`values > custom asymmetric matcher of a function 1`] = `
 }>,
   },
 ]
+`;
+
+exports[`values > custom asymmetric matcher of a getter that throws once 1`] = `
+toBeBetween<Object {
+  "once": "read again",
+}>
+`;
+
+exports[`values > custom asymmetric matcher of a long value 1`] = `
+[
+  toBeBetween<Object {
+  "a": [Object],
+}, Object {
+  "a": Object {
+    "b": Object {
+      "c": Object {
+        "d": "each argument is measured on its own",
+      },
+    },
+  },
+}>,
+  toBeBetween<Object {
+  "o": Object {
+    "o": [Object],
+  },
+}, Array [
+  [Array],
+]>,
+  toBeBetween<Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": [Object],
+        },
+      },
+    },
+  },
+}>,
+  toBeBetween<Object {
+  "a": Object {
+    "inside": toBeBetween<Object {
+  "b": [Object],
+}>,
+  },
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+  "timesPrinted": 4,
+}>,
+]
+`;
+
+exports[`values > custom asymmetric matcher of a matcher at the deepest level 1`] = `
+toBeBetween<Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "arrayContaining": [ArrayContaining],
+                    "custom": toBeBetween<Object {
+  "o": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": Object {
+            "o": Object {
+              "o": Object {
+                "o": Object {
+                  "o": Object {
+                    "leaf": true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}>,
+                    "objectContaining": [ObjectContaining],
+                    "stringMatching": StringMatching /a+/,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}>
+`;
+
+exports[`values > custom asymmetric matcher of a react element 1`] = `
+toBeBetween<<div
+  f={[Function named]}
+  o={
+    Object {
+      "list": Array [
+        1,
+      ],
+    }
+  }
+  re={/a+b/}
+>
+  /c+/
+</div>>
+`;
+
+exports[`values > custom asymmetric matcher of a regular expression 1`] = `
+[
+  toBeBetween</ab+c/gi, /^[a-z]+(foo|bar)?\\s*\\{1,2\\}\\$.$/m>,
+  /ab\\+c/gi,
+  not.toBeBetween<Object {
+  "list": Array [
+    /a\\/b/,
+  ],
+  "re": /x\\d/y,
+}, Map {
+  /k+/ => Set {
+    /v*/,
+  },
+}, Arguments [
+  /a.b/,
+]>,
+  {
+    "beside": /a\\.b/,
+    "nested": toBeBetween</a.b/>,
+  },
+  toSatisfy<[Function isOdd], /a.b/>,
+]
+`;
+
+exports[`values > custom asymmetric matcher of a value past 1,000,000 characters 1`] = `
+toBeBetween<Object {
+  "a": Object {
+    "o": Object {
+      "o": Object {
+        "o": Object {
+          "o": [Object],
+        },
+      },
+    },
+  },
+  "b": Object {
+    "timesExpanded": 1,
+  },
+}>
+`;
+
+exports[`values > custom asymmetric matcher of a value that holds itself 1`] = `
+{
+  "matcher": toBeBetween<Object {
+  "name": "c",
+  "self": [Circular],
+}, Object {
+  "s": 1,
+}, Object {
+  "s": 1,
+}>,
+  "shared": {
+    "s": 1,
+  },
+}
+`;
+
+exports[`values > custom asymmetric matcher of a value with toJSON 1`] = `
+[
+  toBeBetween<Object {
+  "json": /a+/,
+}>,
+  toBeBetween<Object {
+  "a": 1,
+  "toJSON": [Function toJSON],
+}, "each argument is printed on its own">,
+  toBeBetween<Object {
+  "first": Object {
+    "toJSON": [Function toJSON],
+  },
+  "second": Object {
+    "toJSON": [Function toJSON],
+  },
+}>,
+]
+`;
+
+exports[`values > custom asymmetric matcher of an asymmetric matcher 1`] = `
+[
+  toBeBetween<StringMatching /x+/, StringNotMatching /y?/>,
+  toBeBetween<ObjectContaining {
+  "re": /x+/,
+}, ArrayNotContaining [
+  /y?/,
+]>,
+  toBeBetween<not.toBeBetween</x+/, Array [
+  /y?/,
+]>, toSatisfy<[Function anonymous], /z*/>>,
+  toBeBetween<Any<Number>, Anything, NumberCloseTo 1.5 (2 digits), StringContaining "a.b">,
+  ObjectContaining {
+    "beside": /x\\+/,
+    "inside": toBeBetween</x+/>,
+  },
+]
+`;
+
+exports[`values > custom asymmetric matcher prints its arguments each time it is printed 1`] = `
+{
+  "constructed": 0,
+  "matched": 0,
+  "printed": toBeBetween<1>,
+  "printedAgain": toBeBetween<2>,
+  "total": 2,
+}
+`;
+
+exports[`values > custom asymmetric matcher that its own argument returns, but not at every read 1`] = `
+[
+  toBeBetween<Object {
+  "once": toBeBetween<Object {
+  "once": "read again",
+}>,
+}>,
+  not.toBeBetween<"before", Object {
+  "again": not.toBeBetween<"before", Object {
+  "again": not.toBeBetween<"before", Object {
+  "again": not.toBeBetween<"before", "done">,
+}>,
+}>,
+}>,
+]
+`;
+
+exports[`values > custom asymmetric matchers beside each other in an argument 1`] = `
+[
+  toBeBetween<Array [
+  [Object],
+  [Object],
+  [Object],
+  [Object],
+  [Object],
+  [Object],
+  [Object],
+]>,
+  toBeBetween<Array [
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+  toBeBetween<Object {
+  "a": [Object],
+}>,
+]>,
+]
+`;
+
+exports[`values > custom asymmetric matchers in each other, each beside a toJSON that throws 1`] = `
+{
+  "printed": toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  toBeBetween<Array [
+  "innermost",
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  Object {
+    "toJSON": [Function toJSON],
+  },
+]>,
+  "total": 255,
+}
 `;
 
 exports[`values > deep 1`] = `

@@ -4,6 +4,294 @@ exports[` > a hint for a test without a name 1`] = `2`;
 
 exports[` 1`] = `1`;
 
+exports[`a custom matcher of what holds itself: a DOM element among its children 1`] = `
+toBeFoo<<div>
+  <div>
+    <div>
+      <div>
+        <div>
+          <div>
+            <div>
+              <div>
+                <div>
+                  <div>
+                    <div … />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>>
+`;
+
+exports[`a custom matcher of what holds itself: a DOM element in an attribute 1`] = `
+toBeFoo<<div
+  it={
+    <div
+      it={
+        <div
+          it={
+            <div
+              it={
+                <div
+                  it={
+                    <div
+                      it={
+                        <div
+                          it={
+                            <div
+                              it={
+                                <div
+                                  it={
+                                    <div
+                                      it={<div … />}
+                                    />
+                                  }
+                                />
+                              }
+                            />
+                          }
+                        />
+                      }
+                    />
+                  }
+                />
+              }
+            />
+          }
+        />
+      }
+    />
+  }
+/>>
+`;
+
+exports[`a custom matcher of what holds itself: a DOM element in an element in an attribute 1`] = `
+toBeFoo<<div
+  it={
+    <a
+      it={
+        <div
+          it={
+            <a
+              it={
+                <div
+                  it={
+                    <a
+                      it={
+                        <div
+                          it={
+                            <a
+                              it={
+                                <div
+                                  it={
+                                    <a
+                                      it={<div … />}
+                                    />
+                                  }
+                                />
+                              }
+                            />
+                          }
+                        />
+                      }
+                    />
+                  }
+                />
+              }
+            />
+          }
+        />
+      }
+    />
+  }
+/>>
+`;
+
+exports[`a custom matcher of what holds itself: a test renderer's object among its children 1`] = `
+toBeFoo<<a>
+  <a>
+    <a>
+      <a>
+        <a>
+          <a>
+            <a>
+              <a>
+                <a>
+                  <a>
+                    <a … />
+                  </a>
+                </a>
+              </a>
+            </a>
+          </a>
+        </a>
+      </a>
+    </a>
+  </a>
+</a>>
+`;
+
+exports[`a custom matcher of what holds itself: a test renderer's object in its props 1`] = `
+toBeFoo<<a
+  it={
+    <a
+      it={
+        <a
+          it={
+            <a
+              it={
+                <a
+                  it={
+                    <a
+                      it={
+                        <a
+                          it={
+                            <a
+                              it={
+                                <a
+                                  it={
+                                    <a
+                                      it={<a … />}
+                                    />
+                                  }
+                                />
+                              }
+                            />
+                          }
+                        />
+                      }
+                    />
+                  }
+                />
+              }
+            />
+          }
+        />
+      }
+    />
+  }
+/>>
+`;
+
+exports[`a custom matcher of what holds itself: an Immutable.List among its values 1`] = `
+toBeFoo<Immutable.List [
+  Immutable.List [
+    Immutable.List [
+      Immutable.List [
+        Immutable.List [
+          Immutable.List [
+            Immutable.List [
+              Immutable.List [
+                Immutable.List [
+                  Immutable.List [
+                    [Immutable.List],
+                  ],
+                ],
+              ],
+            ],
+          ],
+        ],
+      ],
+    ],
+  ],
+]>
+`;
+
+exports[`a custom matcher of what holds itself: an asymmetric matcher in its sample 1`] = `
+toBeFoo<ObjectContaining {
+  "it": ObjectContaining {
+    "it": ObjectContaining {
+      "it": ObjectContaining {
+        "it": ObjectContaining {
+          "it": ObjectContaining {
+            "it": ObjectContaining {
+              "it": ObjectContaining {
+                "it": ObjectContaining {
+                  "it": ObjectContaining {
+                    "it": [ObjectContaining],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}>
+`;
+
+exports[`a custom matcher of what holds itself: an element among its children 1`] = `
+toBeFoo<<a>
+  <a>
+    <a>
+      <a>
+        <a>
+          <a>
+            <a>
+              <a>
+                <a>
+                  <a>
+                    <a … />
+                  </a>
+                </a>
+              </a>
+            </a>
+          </a>
+        </a>
+      </a>
+    </a>
+  </a>
+</a>>
+`;
+
+exports[`a custom matcher of what holds itself: an element in its props 1`] = `
+toBeFoo<<a
+  it={
+    <a
+      it={
+        <a
+          it={
+            <a
+              it={
+                <a
+                  it={
+                    <a
+                      it={
+                        <a
+                          it={
+                            <a
+                              it={
+                                <a
+                                  it={
+                                    <a
+                                      it={<a … />}
+                                    />
+                                  }
+                                />
+                              }
+                            />
+                          }
+                        />
+                      }
+                    />
+                  }
+                />
+              }
+            />
+          }
+        />
+      }
+    />
+  }
+/>>
+`;
+
 exports[`any() of a class without a name 1`] = `
 {
   "a": Any<<anonymous>>,

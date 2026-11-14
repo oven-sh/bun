@@ -1,6 +1,12 @@
 // @ts-nocheck
 import { describe, test, expect, vi } from "vitest";
 
+expect.extend({
+  toMatchOneOf(received: string, ...patterns: RegExp[]) {
+    return { pass: patterns.some(pattern => pattern.test(received)), message: () => "" };
+  },
+});
+
 describe("inline", () => {
   test("number", () => {
     expect(1).toMatchInlineSnapshot(`1`);
@@ -62,6 +68,29 @@ describe("inline", () => {
     expect({ f: vi.fn().mockName("nm") }).toMatchInlineSnapshot(`
       {
         "f": [MockFunction nm],
+      }
+    `);
+  });
+  test("custom matcher", () => {
+    expect([(expect as any).toMatchOneOf(/a+b.c/, { re: /x?/ }), /a+b.c/]).toMatchInlineSnapshot(`
+      [
+        toMatchOneOf</a+b.c/, Object {
+        "re": /x?/,
+      }>,
+        /a\\+b\\.c/,
+      ]
+    `);
+    expect({ id: "ab.c", re: /a+/ }).toMatchInlineSnapshot({ id: (expect as any).toMatchOneOf(/^x$/, /ab?\.c/) }, `
+      {
+        "id": toMatchOneOf</^x$/, /ab?\\.c/>,
+        "re": /a\\+/,
+      }
+    `);
+    expect(() => {
+      throw { matcher: (expect as any).not.toMatchOneOf(/a+b.c/) };
+    }).toThrowErrorMatchingInlineSnapshot(`
+      {
+        "matcher": not.toMatchOneOf</a+b.c/>,
       }
     `);
   });

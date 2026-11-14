@@ -250,6 +250,83 @@ describe("jest-extended", () => {
       `);
     });
 
+    test("expect.toSatisfy() prints each argument as Vitest does, whatever prints the matcher", () => {
+      const isOdd = value => value % 2 === 1;
+      const messageOf = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return Bun.stripANSI(e.message);
+        }
+      };
+      class Marked {
+        mark = 1;
+      }
+      let asked = 0;
+      expect.addSnapshotSerializer({
+        test: value => (asked++, value instanceof Marked),
+        serialize: () => "marked",
+      });
+
+      // A RegExp is not escaped, and the matcher has no line break before or after it.
+      expect(inspect(expect.toSatisfy(isOdd, /a+b.c/))).toBe("toSatisfy<[Function isOdd], /a+b.c/>");
+      expect(inspect({ k: expect.toSatisfy(isOdd, { a: [1] }), z: 1 })).toBe(
+        '{\n  k: toSatisfy<[Function isOdd], Object {\n  "a": Array [\n    1,\n  ],\n}>,\n  z: 1,\n}',
+      );
+      expect(messageOf(() => expect({ a: 2 }).toEqual({ a: expect.toSatisfy(isOdd, /a+b.c/, { b: 1 }) }))).toContain(
+        '-   "a": toSatisfy<[Function isOdd], /a+b.c/, Object {\n-   "b": 1,\n- }>,\n+   "a": 2,\n',
+      );
+
+      // The utils of a matcher from expect.extend() print it in the same way.
+      let fromUtils;
+      expect.extend({
+        toBePrintedByUtils(received) {
+          const { utils } = this;
+          fromUtils = [utils.stringify(received), utils.printExpected(received), utils.printReceived(received)];
+          return { pass: true, message: () => "" };
+        },
+      });
+      expect(expect.toSatisfy(isOdd, /a+b.c/)).toBePrintedByUtils();
+      expect(fromUtils.map(text => Bun.stripANSI(text))).toEqual([
+        "toSatisfy<[Function isOdd], /a+b.c/>",
+        "toSatisfy<[Function isOdd], /a+b.c/>",
+        "toSatisfy<[Function isOdd], /a+b.c/>",
+      ]);
+
+      // A snapshot serializer is not asked about the matcher or about its arguments, only about a value beside it.
+      asked = 0;
+      expect(inspect(expect.toSatisfy(isOdd, new Marked()))).toBe(
+        'toSatisfy<[Function isOdd], Marked {\n  "mark": 1,\n}>',
+      );
+      expect(asked).toBe(0);
+      expect({ matcher: expect.toSatisfy(isOdd, new Marked()), beside: new Marked() }).toMatchInlineSnapshot(`
+        {
+          "beside": marked,
+          "matcher": toSatisfy<[Function isOdd], Marked {
+          "mark": 1,
+        }>,
+        }
+      `);
+
+      // A carriage return stays one.
+      expect(inspect(expect.toSatisfy(isOdd, "a\r\nb\rc"))).toBe('toSatisfy<[Function isOdd], "a\r\nb\rc">');
+
+      // A mock function is a function like any other.
+      expect(inspect(expect.not.toSatisfy(jest.fn().mockName("named")))).toBe(
+        "not.toSatisfy<[Function mockConstructor]>",
+      );
+
+      // What an argument throws is not thrown by Bun.inspect(), which prints the matcher as any other object then.
+      const throws = {
+        get g() {
+          throw new Error("not thrown");
+        },
+      };
+      expect(inspect(expect.toSatisfy(isOdd, throws))).toBe(
+        "toSatisfy [\n  [Function: isOdd], {\n    g: [Getter],\n  }\n]",
+      );
+    });
+
     test("expect.toSatisfy() needs a function", () => {
       for (const make of [() => expect.toSatisfy(), () => expect.toSatisfy(5), () => expect.not.toSatisfy("isOdd")]) {
         expect(make).toThrow("Expected a function");

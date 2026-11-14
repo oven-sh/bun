@@ -2636,17 +2636,13 @@ impl ExpectCustomAsymmetricMatcher {
         let utils = ExpectMatcherUtils::singleton(global_this);
         if js_ExpectMatcherUtils::to_satisfy_get_cached(utils) == Some(matcher_fn) {
             let mut printed: Vec<u8> = Vec::new();
-            if let Err(e) = JestPrettyFormat::print_snapshot(
-                global_this,
-                this_value,
-                None,
-                &mut printed,
-                SnapshotFormat::Vitest,
-            ) {
-                return Self::maybe_clear(global_this, e, dont_throw);
-            }
-            writer.write_all(&printed)?;
-            return Ok(true);
+            return match JestPrettyFormat::print_custom_matcher(global_this, this_value, self.flags, SnapshotFormat::Vitest, None, &mut printed) {
+                Ok(is_printed) => {
+                    writer.write_all(&printed)?;
+                    Ok(is_printed)
+                }
+                Err(e) => Self::maybe_clear(global_this, e, dont_throw),
+            };
         }
         let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
             Ok(v) => v,

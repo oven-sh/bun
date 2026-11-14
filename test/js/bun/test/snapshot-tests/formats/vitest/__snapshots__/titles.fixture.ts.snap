@@ -338,6 +338,29 @@ exports[`%o and %O > typed Float64Array [ -0, 1.5 ] 1`] = `55`;
 
 exports[`%o and %O > typed Uint8Array [ 1, 2 ] 1`] = `54`;
 
+exports[`custom matcher > [ …(1) ] 1`] = `352`;
+
+exports[`custom matcher > { in: toBeFoo</r+/> } 1`] = `350`;
+
+exports[`custom matcher > not.toBeFoo</x?/, [Function named], Array [
+  "s",
+]> 1`] = `349`;
+
+exports[`custom matcher > printed again toBeFoo<Object {
+  "calls": 10,
+  "long": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+}> 1`] = `354`;
+
+exports[`custom matcher > printed so often when the test was collected 1`] = `10`;
+
+exports[`custom matcher > toBeFoo<"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"> 1`] = `351`;
+
+exports[`custom matcher > toBeFoo</r.e/> 1`] = `348`;
+
+exports[`custom matcher > toBeFoo</r.e/> and not.toBeFoo<Object {
+  "re": /x?/,
+}> 1`] = `353`;
+
 exports[`names > <anonymous> 1`] = `344`;
 
 exports[`names > 5 1`] = `345`;

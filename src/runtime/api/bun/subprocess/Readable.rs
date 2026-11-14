@@ -181,26 +181,12 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
+                let reader = Self::pipe_reader_mut(&pipe);
+                reader.process = None;
                 #[cfg(unix)]
-                {
-                    let release_start_ref = {
-                        let reader = Self::pipe_reader_mut(&pipe);
-                        if reader.process.is_some()
-                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
-                            && reader.ref_count.get() > 1
-                        {
-                            reader.reader.deinit();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if release_start_ref {
-                        // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
-                        unsafe { PipeReader::deref(pipe.as_ptr()) };
-                    }
+                if let Some(_start_ref) = reader.start_ref.take() {
+                    reader.reader.deinit();
                 }
-                Self::pipe_reader_mut(&pipe).process = None;
             }
             Readable::Buffer(_) | Readable::Errored(..) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
@@ -222,8 +208,10 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(cx);
-                Self::pipe_reader_mut(&pipe).process = None;
+                let reader = Self::pipe_reader_mut(&pipe);
+                let result = reader.to_js(cx);
+                reader.process = None;
+                drop(reader.start_ref.take());
                 result
             }
             Readable::Buffer(_) => {

@@ -132,17 +132,26 @@ public:
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned index, JSC::PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned index, JSC::JSValue, bool shouldThrow);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned index);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:
+    static bool putOverContextifiedObject(NodeVMGlobalObject*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putWithOtherReceiver(NodeVMGlobalObject*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putAfterRefusal(NodeVMGlobalObject*, JSGlobalObject*, JSC::PropertyName, std::optional<uint32_t> index, JSC::JSValue, JSC::PutPropertySlot&, bool isReadOnlyThere);
+    static bool putOnGlobalOnly(NodeVMGlobalObject*, JSGlobalObject*, JSC::PropertyName, std::optional<uint32_t> index, JSC::JSValue, JSC::PutPropertySlot&);
+
     // The contextified object that acts as the global proxy
     WriteBarrier<JSObject> m_sandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
+    // The name that putOnGlobalOnly() is storing. Every definition of that name meanwhile stays on the global.
+    UniquedStringImpl* m_nameStoredOnGlobalOnly { nullptr };
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
 };

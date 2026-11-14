@@ -31,6 +31,7 @@
 #include "wtf/GetPtr.h"
 #include "wtf/NoTailCalls.h"
 #include "wtf/PointerPreparations.h"
+#include "wtf/SetForScope.h"
 #include "wtf/URL.h"
 #include "JavaScriptCore/TypedArrayInlines.h"
 #include "JavaScriptCore/PropertyNameArray.h"
@@ -1155,6 +1156,103 @@ static bool isSafeToForwardToContextifiedObject(JSGlobalObject* globalObject, Th
     return false;
 }
 
+static ALWAYS_INLINE bool isReadOnlyData(unsigned attributes)
+{
+    return (attributes & PropertyAttribute::ReadOnly) && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor));
+}
+
+enum class ContextifiedProperty : uint8_t {
+    Absent,
+    Writable,
+    ReadOnly,
+    Accessor,
+};
+
+// [[GetOwnProperty]] through the method table: a Proxy, a compiled object and another context's global answer for themselves.
+static NEVER_INLINE ContextifiedProperty ownPropertyOfContextifiedObject(JSGlobalObject* globalObject, JSObject* contextifiedObject, PropertyName propertyName)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertySlot slot(contextifiedObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool found = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, ContextifiedProperty::Absent);
+    if (!found)
+        return ContextifiedProperty::Absent;
+    if (slot.isAccessor())
+        return ContextifiedProperty::Accessor;
+    return isReadOnlyData(slot.attributes()) ? ContextifiedProperty::ReadOnly : ContextifiedProperty::Writable;
+}
+
+static NEVER_INLINE bool isVariableOfGlobal(JSGlobalObject* global, PropertyName propertyName)
+{
+    return !propertyName.isSymbol() && global->symbolTable()->contains(propertyName.uid());
+}
+
+// What an object holds in its structure, its static table, its elements and, for a global, its variables. The method table would build a lazy property, and that of a context's global asks the contextified object.
+static std::optional<unsigned> attributesOfRealOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, std::optional<uint32_t> index)
+{
+    if (index) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+        if (JSObject::getOwnPropertySlotByIndex(object, globalObject, *index, slot))
+            return slot.attributes();
+        return std::nullopt;
+    }
+
+    Structure* structure = object->structure();
+    unsigned attributes = 0;
+    if (isValidOffset(structure->get(JSC::getVM(globalObject), propertyName, attributes)))
+        return attributes;
+    if (structure->hasNonReifiedStaticProperties()) {
+        if (auto entry = structure->findPropertyHashEntry(propertyName))
+            return entry->value->attributes();
+    }
+    if (object->isGlobalObject() && !propertyName.isSymbol()) {
+        SymbolTableEntry::Fast variable = uncheckedDowncast<JSGlobalObject>(object)->symbolTable()->get(propertyName.uid());
+        if (!variable.isNull())
+            return variable.getAttributes() | PropertyAttribute::DontDelete;
+    }
+    return std::nullopt;
+}
+
+enum class RealProperty : uint8_t {
+    Absent,
+    Writable,
+    ReadOnly,
+};
+
+// V8's GetRealNamedPropertyAttributes() on a global: the global, then its prototype chain, without the contextified object of any context on the way. A Proxy ends the walk, and the name counts as found there.
+static NEVER_INLINE RealProperty realPropertyOfGlobal(JSGlobalObject* globalObject, JSGlobalObject* global, PropertyName propertyName, std::optional<uint32_t> index)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    for (JSObject* object = global;;) {
+        if (object->type() == GlobalProxyType)
+            object = uncheckedDowncast<JSGlobalProxy>(object)->target();
+
+        JSValue prototype;
+        if (object->isGlobalObject() || !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) {
+            if (auto attributes = attributesOfRealOwnProperty(globalObject, object, propertyName, index))
+                return isReadOnlyData(*attributes) ? RealProperty::ReadOnly : RealProperty::Writable;
+            prototype = object->getPrototypeDirect();
+        } else {
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+            bool found = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, RealProperty::Absent);
+            if (found)
+                return isReadOnlyData(slot.attributes()) ? RealProperty::ReadOnly : RealProperty::Writable;
+            if (object->type() == ProxyObjectType)
+                return RealProperty::Writable;
+            prototype = object->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, RealProperty::Absent);
+        }
+        if (!prototype.isObject())
+            return RealProperty::Absent;
+        object = asObject(prototype);
+    }
+}
+
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
@@ -1167,6 +1265,87 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         return Base::put(cell, globalObject, propertyName, value, slot);
     }
 
+    return putOverContextifiedObject(thisObject, globalObject, propertyName, value, slot);
+}
+
+// JSObject::put() hands a store to the put() of an object above the receiver that has its own, and that put() ends in a definition on the receiver.
+static bool hasPutAbove(JSObject* object)
+{
+    for (JSValue above = object->getPrototypeDirect(); above.isObject(); above = asObject(above)->getPrototypeDirect()) {
+        if (asObject(above)->structure()->typeInfo().overridesPut())
+            return true;
+    }
+    return false;
+}
+
+// The store on the global itself, for a store that is not for the contextified object. defineOwnProperty() keeps the definition that such an object above the global sends back on the global.
+bool NodeVMGlobalObject::putOnGlobalOnly(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, std::optional<uint32_t> index, JSValue value, PutPropertySlot& slot)
+{
+    // A read through the global gives the global for the contextified object, so the global holds itself in its place.
+    if (value == JSValue(thisObject->m_sandbox.get()))
+        value = thisObject->globalThis();
+    SetForScope nameStoredOnGlobalOnly(thisObject->m_nameStoredOnGlobalOnly, index || hasPutAbove(thisObject) ? propertyName.uid() : thisObject->m_nameStoredOnGlobalOnly);
+    // JSObject::put() hands an index to the putByIndex() of the method table, which is this class again.
+    if (index)
+        return Base::putByIndex(thisObject, globalObject, *index, value, slot.isStrictMode());
+    return Base::put(thisObject, globalObject, propertyName, value, slot);
+}
+
+// `globalObject` is the realm of the caller, so the receiver decides. V8 sends a store with another receiver to that receiver, and a read-only property of the contextified object refuses it: https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/objects/objects.cc#L2435-L2456
+NEVER_INLINE bool NodeVMGlobalObject::putWithOtherReceiver(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // A trap of the contextified object can change the receiver, and a cache would then take the store for a plain replace.
+    slot.disableCaching();
+    ContextifiedProperty own = ownPropertyOfContextifiedObject(globalObject, thisObject->m_sandbox.get(), propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (own == ContextifiedProperty::ReadOnly)
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+    if (own != ContextifiedProperty::Absent)
+        RELEASE_AND_RETURN(scope, ordinarySetWithOwnDescriptor(globalObject, thisObject, propertyName, value, slot.thisValue(), PropertyDescriptor(jsUndefined(), static_cast<unsigned>(PropertyAttribute::None)), slot.isStrictMode()));
+    RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
+}
+
+// The contextified object refused the store. V8 then looks the name up on the receiver once more, and that lookup asks the contextified object: https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/objects/objects.cc#L2603-L2665
+NEVER_INLINE bool NodeVMGlobalObject::putAfterRefusal(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, std::optional<uint32_t> index, JSValue value, PutPropertySlot& slot, bool isReadOnlyThere)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // For a read-only property that the contextified object inherits this is not Node's result: Node drops the store and has the value on the global, where OrdinarySet says TypeError.
+    if (isReadOnlyThere)
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+
+    auto* sandbox = thisObject->m_sandbox.get();
+    ContextifiedProperty own = ownPropertyOfContextifiedObject(globalObject, sandbox, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    switch (own) {
+    case ContextifiedProperty::Accessor:
+        // A script reads its variable from the variable's slot, so a variable of that name takes the value.
+        if (isVariableOfGlobal(thisObject, propertyName))
+            break;
+        // Node's setter ends the store at an accessor that the contextified object owns, without an error. Behind the global of another context V8 finds the accessor once more and throws, so the answer here stays false for that global.
+        if (auto* proxy = dynamicDowncast<JSGlobalProxy>(sandbox); proxy && proxy->target()->inherits<NodeVMGlobalObject>())
+            return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+        return false;
+    case ContextifiedProperty::ReadOnly:
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+    case ContextifiedProperty::Writable: {
+        PropertyDescriptor valueOnly;
+        valueOnly.setValue(value);
+        RELEASE_AND_RETURN(scope, defineOwnProperty(thisObject, globalObject, propertyName, valueOnly, slot.isStrictMode()));
+    }
+    case ContextifiedProperty::Absent:
+        break;
+    }
+    RELEASE_AND_RETURN(scope, putOnGlobalOnly(thisObject, globalObject, propertyName, index, value, slot));
+}
+
+// Node's PropertySetterCallback, and what V8 does around it: https://github.com/nodejs/node/blob/v26.12.1/src/node_contextify.cc#L598-L661
+NEVER_INLINE bool NodeVMGlobalObject::putOverContextifiedObject(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
     auto* sandbox = thisObject->m_sandbox.get();
 
     VM& vm = JSC::getVM(globalObject);
@@ -1174,39 +1353,63 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
         return false;
 
-    JSValue thisValue = slot.thisValue();
-    bool isContextualStore = thisValue != JSValue(globalObject);
-    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(thisValue); proxy && proxy->target() == globalObject) {
-        isContextualStore = false;
-    }
-    bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
+    if (slot.thisValue() != JSValue(thisObject->globalThis()) && isThisValueAltered(slot, thisObject)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, putWithOtherReceiver(thisObject, globalObject, propertyName, value, slot));
+
+    std::optional<uint32_t> index = parseIndex(propertyName);
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
-    bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
+    bool isDeclaredOnSandbox = index ? sandbox->getPropertySlot(globalObject, *index, getter) : sandbox->getNonIndexPropertySlot(globalObject, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);
 
-    bool isDeclared = isDeclaredOnGlobalObject || isDeclaredOnSandbox;
-    bool isFunction = value.isCallable();
-
-    if (slot.isStrictMode() && !isDeclared && isContextualStore && !isFunction) {
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    // Node asks the global before every store. Here only a name that the contextified object lacks pays for that lookup, so a contextified object that has `NaN` is still written. A Proxy reports every name, so a store over one pays too.
+    if (!isDeclaredOnSandbox || getter.isTaintedByOpaqueObject()) {
+        RealProperty onGlobal = realPropertyOfGlobal(globalObject, thisObject, propertyName, index);
+        RETURN_IF_EXCEPTION(scope, false);
+        // JSObject::putByIndex() does not ask every object above the global for a read-only index, a String object for one.
+        if (onGlobal == RealProperty::ReadOnly && index)
+            return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+        if (onGlobal == RealProperty::ReadOnly || (onGlobal == RealProperty::Absent && !isDeclaredOnSandbox && propertyName.isSymbol()))
+            RELEASE_AND_RETURN(scope, putOnGlobalOnly(thisObject, globalObject, propertyName, index, value, slot));
     }
 
-    if (!isDeclared && value.isSymbol()) {
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
-    }
-
-    slot.setThisValue(sandbox);
-
-    bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
+    // Like `sandbox->Set()` in Node, this does not throw when the contextified object refuses the store.
+    PutPropertySlot sandboxSlot(sandbox, false);
+    bool didStore = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, sandboxSlot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!result) return false;
 
-    if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
-        return true;
+    if (!didStore) [[unlikely]]
+        RELEASE_AND_RETURN(scope, putAfterRefusal(thisObject, globalObject, propertyName, index, value, slot, isDeclaredOnSandbox && isReadOnlyData(getter.attributes())));
+
+    // Node ends the store at an accessor that the contextified object owns. Here it ends at an enumerable accessor whose setter ran, as before. A script reads its variable from the variable's slot, so a variable of that name still takes the value.
+    if (isDeclaredOnSandbox && getter.isAccessor() && !(getter.attributes() & PropertyAttribute::DontEnum)) [[unlikely]] {
+        if (!isVariableOfGlobal(thisObject, propertyName))
+            return true;
     }
 
-    slot.setThisValue(thisValue);
-    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    if (index) {
+        // An index names no variable, so the global keeps one only when the contextified object does not hold it after the store: a Proxy or an inherited setter took it.
+        if (isDeclaredOnSandbox && getter.slotBase() == sandbox && !getter.isTaintedByOpaqueObject())
+            return true;
+        ContextifiedProperty own = ownPropertyOfContextifiedObject(globalObject, sandbox, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (own != ContextifiedProperty::Absent)
+            return true;
+        RELEASE_AND_RETURN(scope, putOnGlobalOnly(thisObject, globalObject, propertyName, index, value, slot));
+    }
+    // Node stores on the global only when the global itself holds the name. Here the global keeps a copy of every name, which keeps a later `var` of that name from declaring a variable in front of the contextified object.
+    RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
+}
+
+// `globalThis[0] = value` goes to the contextified object as `globalThis.name = value` does, and as the read of an index does.
+bool NodeVMGlobalObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    if (!thisObject->m_sandbox)
+        return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
+
+    VM& vm = JSC::getVM(globalObject);
+    PutPropertySlot slot(thisObject->globalThis(), shouldThrow);
+    return putOverContextifiedObject(thisObject, globalObject, Identifier::from(vm, index), value, slot);
 }
 
 // [[Get]] that reports whether the property exists. A JSC Proxy always says yes, so without a `get` trap ask its target, like V8.
@@ -1318,13 +1521,68 @@ bool NodeVMGlobalObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObjec
     return getOwnPropertySlot(cell, globalObject, Identifier::from(vm, index), slot);
 }
 
+// The contextified object refused the definition. V8 validates it against the property that the contextified object owned, applies a data definition with a store through Node's setter, and then defines on the global: https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/objects/js-objects.cc#L1532-L1769
+static NEVER_INLINE bool defineOnGlobalAfterRefusal(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, JSObject* contextifiedObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool isOwned, const PropertyDescriptor& current, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (isOwned) {
+        bool isCompatible = validateAndApplyPropertyDescriptor(globalObject, nullptr, propertyName, true, descriptor, true, current, shouldThrow);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isCompatible)
+            return false;
+    }
+    // Node's setter ends the store at an accessor that the contextified object owns, so nothing reaches the global.
+    bool endsAtAccessor = isOwned && current.isAccessorDescriptor() && descriptor.isDataDescriptor();
+    if (descriptor.value() || endsAtAccessor) {
+        PutPropertySlot slot(contextifiedObject, false);
+        contextifiedObject->methodTable()->put(contextifiedObject, globalObject, propertyName, descriptor.value() ? descriptor.value() : jsUndefined(), slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (endsAtAccessor)
+            return true;
+    }
+    // The elements of the global know nothing of the contextified object's, so a partial definition of an index that it owns would lock the element of the global.
+    if (isOwned && parseIndex(propertyName))
+        return true;
+    RELEASE_AND_RETURN(scope, NodeVMGlobalObject::Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
+}
+
+// The contextified object took the definition. A script reads and stores its variable in the slot of the variable. So a variable of that name takes the value, and from now on the stores of scripts to the variables of this context come through put(), where the contextified object says what is writable. The copy that the global keeps of a stored name is hidden when the definition hides the name, for Object.keys() lists the copy.
+static NEVER_INLINE void followDefinitionOnGlobal(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor)
+{
+    VM& vm = JSC::getVM(globalObject);
+
+    if (isVariableOfGlobal(thisObject, propertyName)) {
+        bool locks = descriptor.writablePresent() && !descriptor.writable();
+        if (!descriptor.value() && !locks && !descriptor.isAccessorDescriptor())
+            return;
+        // Once this set has fired, no tier stores to the slot of a variable without a call of put().
+        thisObject->varReadOnlyWatchpointSet().fireAll(vm, "A definition on the contextified object of a node:vm context covers a variable");
+        if (descriptor.value()) {
+            PropertyDescriptor valueOnly;
+            valueOnly.setValue(descriptor.value());
+            NodeVMGlobalObject::Base::defineOwnProperty(thisObject, globalObject, propertyName, valueOnly, false);
+        }
+        return;
+    }
+
+    if (!descriptor.enumerablePresent() || descriptor.enumerable())
+        return;
+    // A property that is not configurable is the binding of a declaration, which has to stay enumerable to be declared again.
+    unsigned attributes = 0;
+    PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
+    if (isValidOffset(offset) && !(attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
+        thisObject->putDirect(vm, propertyName, thisObject->getDirect(offset), attributes | PropertyAttribute::DontEnum);
+}
+
 bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-    if (!thisObject->m_sandbox) [[likely]] {
+    if (!thisObject->m_sandbox || thisObject->m_nameStoredOnGlobalOnly == propertyName.uid()) {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
@@ -1332,41 +1590,34 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
         return false;
 
-    PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
-    bool isDeclaredOnGlobalProxy = globalObject->JSC::JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
+    // `globalObject` is the realm of the caller. The global that holds the name or not is this one.
+    std::optional<unsigned> onGlobal = attributesOfRealOwnProperty(globalObject, thisObject, propertyName, parseIndex(propertyName));
 
     // If the property is set on the global as neither writable nor
     // configurable, don't change it on the global or sandbox.
-    if (isDeclaredOnGlobalProxy && (slot.attributes() & PropertyAttribute::ReadOnly) != 0 && (slot.attributes() & PropertyAttribute::DontDelete) != 0) {
+    if (onGlobal && (*onGlobal & PropertyAttribute::ReadOnly) != 0 && (*onGlobal & PropertyAttribute::DontDelete) != 0) {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
+
+    // V8 asks Node's descriptor interceptor first, which reports the property that the contextified object owns.
+    PropertyDescriptor current;
+    bool isOwned = contextifiedObject->getOwnPropertyDescriptor(globalObject, propertyName, current);
+    RETURN_IF_EXCEPTION(scope, false);
 
     // Dispatch through the method table so exotic sandboxes (e.g. Proxy objects)
     // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
     // PropertyDefinerCallback.
-    if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
-    }
-
-    // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
-    // stored as a CustomGetterSetter on a non-dictionary structure). Reusing it
-    // here would trip PropertySlot's CachingDisallowed asserts if the sandbox
-    // resolves the same name via setGetterSlot/setCustom/setValue(3-arg), which
-    // happens once the sandbox has transitioned to an uncacheable dictionary.
-    PropertySlot sandboxSlot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, sandboxSlot);
+    bool did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, false);
     RETURN_IF_EXCEPTION(scope, false);
+    if (!did)
+        RELEASE_AND_RETURN(scope, defineOnGlobalAfterRefusal(thisObject, globalObject, contextifiedObject, propertyName, descriptor, isOwned, current, shouldThrow));
 
-    if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
+    // Only an exotic contextified object runs a script during the definition (a Proxy trap, the conversion of a value by a typed array), and that script can declare a variable of this name.
+    if (onGlobal || (TypeInfo::overridesGetOwnPropertySlot(contextifiedObject->inlineTypeFlags()) && isVariableOfGlobal(thisObject, propertyName))) {
+        followDefinitionOnGlobal(thisObject, globalObject, propertyName, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
     }
-
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!did) return false;
-
-    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
+    return true;
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);
@@ -1574,7 +1825,25 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
         return false;
     }
 
+    // JSObject::deleteProperty() hands an index to the deletePropertyByIndex() of the method table, which would come back to this class.
+    if (std::optional<uint32_t> index = parseIndex(propertyName)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Base::deletePropertyByIndex(cell, globalObject, *index));
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
+bool NodeVMGlobalObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    if (!thisObject->m_sandbox)
+        return Base::deletePropertyByIndex(cell, globalObject, index);
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+        return false;
+
+    DeletePropertySlot slot;
+    RELEASE_AND_RETURN(scope, deleteProperty(cell, globalObject, Identifier::from(vm, index), slot));
 }
 
 bool NodeVMGlobalObject::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)

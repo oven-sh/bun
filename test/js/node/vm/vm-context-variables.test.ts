@@ -20,6 +20,9 @@ const texts = [
   "this.made = 42",
   "let made = seed",
   "var made = seed; delete this.made",
+  "var made = seed; Object.defineProperty(globalThis, 'made', { value: 5, writable: true, enumerable: true, configurable: true }); made = seed + 1",
+  "var made = seed; Object.defineProperty(globalThis, 'made', { value: 5, writable: true, enumerable: true, configurable: true }); for (var i = 0; i < 5; i++) made = i",
+  "var made = seed; this[0] = made",
 ];
 for (const text of texts) {
   const sandbox = { seed: 2 };
@@ -42,6 +45,9 @@ made = 42: 42 | seed,made | seed,made
 this.made = 42: 42 | seed,made | seed,made
 let made = seed: undefined | seed | seed
 var made = seed; delete this.made: undefined | seed | seed
+var made = seed; Object.defineProperty(globalThis, 'made', { value: 5, writable: true, enumerable: true, configurable: true }); made = seed + 1: 3 | seed,made | seed,made
+var made = seed; Object.defineProperty(globalThis, 'made', { value: 5, writable: true, enumerable: true, configurable: true }); for (var i = 0; i < 5; i++) made = i: 4 | seed,made,i | seed,made,i
+var made = seed; this[0] = made: 2 | 0,seed,made | 0,seed,made
 `;
 
 async function run(text: string, env: Record<string, string>) {

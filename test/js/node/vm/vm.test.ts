@@ -2428,6 +2428,1038 @@ test.concurrent("a sandbox that inherits from the global of its own context", as
   expect(exitCode).toBe(0);
 });
 
+// Every expected value in this block is the result of Node.js v26.12.1, except where a comment says otherwise.
+describe("a store on the global object of a context", () => {
+  const data = (value: unknown) => ({ value, writable: true, enumerable: true, configurable: true });
+  const owns = (object: object, key: PropertyKey) => Object.prototype.hasOwnProperty.call(object, key);
+  // This file is a module, so a store in it is strict. The store in this function is not.
+  const sloppyStore = new Function("object", "key", "value", "object[key] = value;");
+
+  function contextOver(sandbox: any = {}) {
+    createContext(sandbox);
+    return { sandbox, global: runInContext("this", sandbox) };
+  }
+  // The global object of a context whose contextified object is the global object of a context over `first`.
+  function nestedGlobal(first: object) {
+    return runInContext("this", createContext(runInContext("this", createContext(first))));
+  }
+  function readOnly(object: any, key: PropertyKey, value: unknown) {
+    return Object.defineProperty(object, key, { value, writable: false, enumerable: true, configurable: true });
+  }
+  // The name of what `fn` throws, and whether it is an error of this realm or of the context.
+  function outcome(fn: () => unknown) {
+    try {
+      fn();
+      return "no throw";
+    } catch (e) {
+      return e instanceof Error ? e.name : `${(e as Error).name} of the context`;
+    }
+  }
+
+  test("strict code outside the context stores a new name", () => {
+    function keysAfter(store: (global: any) => unknown) {
+      const { sandbox, global } = contextOver();
+      store(global);
+      return Object.keys(sandbox);
+    }
+    expect({
+      number: keysAfter(global => (global.x = 1)),
+      string: keysAfter(global => (global.x = "s")),
+      object: keysAfter(global => (global.x = { level: 3 })),
+      undefined: keysAfter(global => (global.x = undefined)),
+      symbol: keysAfter(global => (global.x = Symbol())),
+      function: keysAfter(global => (global.x = function () {})),
+      computedName: keysAfter(global => (global["x"] = 1)),
+      logicalAssignment: keysAfter(global => (global.x ??= 1)),
+      destructuring: keysAfter(global => ({ a: global.x } = { a: 1 })),
+      objectAssign: keysAfter(global => Object.assign(global, { x: 1, y: 2 })),
+      reflectSet: keysAfter(global => Reflect.set(global, "x", 1)),
+      push: keysAfter(global => Array.prototype.push.call(global, "a")),
+    }).toEqual({
+      number: ["x"],
+      string: ["x"],
+      object: ["x"],
+      undefined: ["x"],
+      symbol: ["x"],
+      function: ["x"],
+      computedName: ["x"],
+      logicalAssignment: ["x"],
+      destructuring: ["x"],
+      objectAssign: ["x", "y"],
+      reflectSet: ["x"],
+      push: ["0", "length"],
+    });
+
+    const { sandbox, global } = contextOver();
+    const settings = { level: 3 };
+    global.settings = settings;
+    expect(Object.getOwnPropertyDescriptor(sandbox, "settings")).toEqual(data(settings));
+    expect(runInContext("settings.level", sandbox)).toBe(3);
+  });
+
+  test("strict code of another context, and strict code that the context calls, store a new name", () => {
+    const { sandbox, global } = contextOver();
+    runInNewContext("'use strict'; target.fromAnotherContext = 1", { target: global });
+    const callback = (object: any) => (object.fromACallback = 1);
+    runInContext("(function (callback) { callback(this); })", sandbox).call(global, callback);
+    compileFunction("'use strict'; target.fromACompiledFunction = 1", ["target"], {
+      parsingContext: createContext({}),
+    })(global);
+    expect(Object.keys(sandbox)).toEqual(["fromAnotherContext", "fromACallback", "fromACompiledFunction"]);
+
+    const shared = {};
+    runInNewContext("this", shared).kept = 1;
+    expect([Object.keys(shared), runInNewContext("typeof kept", shared)]).toEqual([["kept"], "number"]);
+  });
+
+  test("a new name goes through the global object of another context to the first object", () => {
+    function keysAfter(store: (global: any, first: object) => unknown) {
+      const first = {};
+      store(nestedGlobal(first), first);
+      return Object.keys(first);
+    }
+    const threeDeep = {};
+    runInContext("'use strict'; this.fresh = 1", createContext(nestedGlobal(threeDeep)));
+    expect({
+      strictScript: keysAfter(global => runInContext("'use strict'; this.fresh = 1", createContext(global))),
+      strictHost: keysAfter(global => (global.fresh = 1)),
+      sloppyScript: keysAfter(global => runInContext("this.fresh = 1; other = 2", createContext(global))),
+      threeDeep: Object.keys(threeDeep),
+    }).toEqual({
+      strictScript: ["fresh"],
+      strictHost: ["fresh"],
+      sloppyScript: ["fresh", "other"],
+      threeDeep: ["fresh"],
+    });
+  });
+
+  test("a name that only the global object holds goes to the contextified object", () => {
+    const builtin = contextOver();
+    builtin.global.Array = 1;
+    const inherited = contextOver(Object.create(null));
+    inherited.global.toString = 1;
+    // A built-in that the global object has not made yet hides a read-only property of its prototype chain.
+    const notMadeYet = contextOver();
+    runInContext("Object.defineProperty(Object.prototype, 'WeakRef', { value: 1 })", notMadeYet.sandbox);
+    notMadeYet.global.WeakRef = 2;
+    const declared = contextOver();
+    runInContext("let lexical = 0; var variable = 0; function made() {}", declared.sandbox);
+    Object.assign(declared.global, { lexical: 1, variable: 1, made: 1 });
+    expect({
+      builtin: Object.keys(builtin.sandbox),
+      inherited: Object.keys(inherited.sandbox),
+      notMadeYet: [Object.keys(notMadeYet.sandbox), runInContext("WeakRef", notMadeYet.sandbox)],
+      declared: [Object.keys(declared.sandbox).sort(), runInContext("[lexical, variable, made]", declared.sandbox)],
+    }).toEqual({
+      builtin: ["Array"],
+      inherited: ["toString"],
+      notMadeYet: [["WeakRef"], 2],
+      declared: [
+        ["lexical", "made", "variable"],
+        [0, 1, 1],
+      ],
+    });
+  });
+
+  test("an index key takes the same way as a name", () => {
+    const rows: Record<string, unknown> = {};
+    {
+      const { sandbox, global } = contextOver();
+      global[0] = "a";
+      Object.assign(global, ["b"]);
+      global[0] = "c";
+      runInContext("this[1] = 1; (function () { 'use strict'; this[2] = 2; }).call(this)", sandbox);
+      rows.stores = [Object.keys(sandbox), sandbox[0], global[0]];
+      const name = String(1);
+      rows.deletes = [
+        delete global[0],
+        delete global[name],
+        runInContext("delete this[2]", sandbox),
+        Object.keys(sandbox),
+        0 in global,
+      ];
+    }
+    {
+      const { sandbox, global } = contextOver(Object.freeze({ 0: "held" }));
+      global[1] = 1;
+      rows.frozen = [outcome(() => (global[0] = 2)), Reflect.set(global, 0, 2), Object.keys(sandbox), global[1]];
+    }
+    {
+      const { sandbox, global } = contextOver();
+      const receiver = {};
+      const heir = Object.create(global);
+      heir[0] = 1;
+      rows.otherReceiver = [
+        Reflect.set(global, 0, 1, receiver),
+        Object.keys(receiver),
+        Object.keys(heir),
+        Object.keys(sandbox),
+      ];
+    }
+    {
+      const calls: unknown[] = [];
+      const accessor = {
+        get: () => 7,
+        set: (value: unknown) => void calls.push(value),
+        enumerable: true,
+        configurable: true,
+      };
+      const { global } = contextOver(Object.defineProperty({}, 0, accessor));
+      const receiver = {};
+      rows.otherReceiverOverAccessor = [Reflect.set(global, 0, 2, receiver), Object.keys(receiver), calls];
+    }
+    {
+      const { sandbox, global } = contextOver();
+      runInContext("Object.defineProperty(Object.prototype, 0, { value: 'locked' })", sandbox);
+      rows.readOnlyAboveTheGlobal = [outcome(() => (global[0] = 1)), Object.keys(sandbox), global[0]];
+    }
+    {
+      // The global object keeps no copy of an index that the contextified object holds.
+      const { sandbox, global } = contextOver();
+      global[0] = 1;
+      delete sandbox[0];
+      rows.afterDeleteOnTheObject = 0 in global;
+    }
+    {
+      // It holds the index when a Proxy or an inherited setter took the store and the contextified object has nothing.
+      const taken = contextOver(new Proxy({}, { set: () => true }));
+      taken.global[0] = 2;
+      const calls: unknown[] = [];
+      const setter = { get: () => "got", set: (value: unknown) => void calls.push(value), configurable: true };
+      const inherited = contextOver(Object.create(Object.defineProperty({}, 0, setter)));
+      inherited.global[0] = 2;
+      rows.notHeldAfterTheStore = [
+        taken.global[0],
+        owns(taken.global, 0),
+        inherited.global[0],
+        owns(inherited.global, 0),
+        0 in inherited.global,
+        calls,
+      ];
+    }
+    {
+      const first = {};
+      const global = nestedGlobal(first);
+      global[0] = 1;
+      rows.nested = [Object.keys(first), delete global[0], Object.keys(first)];
+    }
+    {
+      const global = createContext(constants.DONT_CONTEXTIFY);
+      global[0] = 1;
+      rows.notContextified = [runInContext("this[0]", global), delete global[0], 0 in global];
+    }
+    expect(rows).toEqual({
+      stores: [["0", "1", "2"], "c", "c"],
+      deletes: [true, true, true, [], false],
+      frozen: ["TypeError", false, ["0"], 1],
+      otherReceiver: [true, ["0"], ["0"], []],
+      otherReceiverOverAccessor: [true, ["0"], []],
+      readOnlyAboveTheGlobal: ["TypeError", [], "locked"],
+      afterDeleteOnTheObject: false,
+      notHeldAfterTheStore: [2, true, "got", true, true, [2]],
+      nested: [["0"], true, []],
+      notContextified: [1, true, false],
+    });
+  });
+
+  test("a store whose receiver is another object stays off the contextified object", () => {
+    const rows: Record<string, unknown> = {};
+    {
+      const { sandbox, global } = contextOver();
+      const receiver = {};
+      rows.reflectSet = [
+        Reflect.set(global, "x", 1, receiver),
+        Object.keys(receiver),
+        Object.keys(sandbox),
+        "x" in global,
+      ];
+    }
+    {
+      const { sandbox, global } = contextOver();
+      rows.primitiveReceiver = [Reflect.set(global, "x", 1, 5), Object.keys(sandbox), "x" in global];
+    }
+    {
+      const { sandbox, global } = contextOver();
+      const heir = Object.create(global);
+      sloppyStore(heir, "x", 1);
+      heir.made = function () {};
+      rows.heir = [Object.keys(heir), Object.keys(sandbox), runInContext("typeof x + typeof made", sandbox)];
+    }
+    {
+      const calls: unknown[] = [];
+      const { sandbox, global } = contextOver({
+        held: 1,
+        get getterOnly() {
+          return 7;
+        },
+        set accessor(value: unknown) {
+          calls.push(value);
+        },
+      });
+      const heir = Object.create(global);
+      rows.existingNames = [
+        outcome(() => Object.assign(heir, { held: 2, getterOnly: 2, accessor: 2 })),
+        Object.keys(heir),
+        sandbox.held,
+        calls,
+      ];
+    }
+    {
+      // Only a read-only property that the contextified object owns refuses such a store.
+      const { sandbox, global } = contextOver(readOnly({}, "locked", 1));
+      const heir = Object.create(global);
+      const receiver = {};
+      rows.readOnly = [
+        outcome(() => (heir.locked = 2)),
+        Reflect.set(global, "locked", 2, receiver),
+        owns(heir, "locked"),
+        owns(receiver, "locked"),
+        sandbox.locked,
+      ];
+    }
+    {
+      // One that it inherits does not.
+      const { global } = contextOver(Object.create(readOnly({}, "locked", 1)));
+      const heir = Object.create(global);
+      const receiver = {};
+      rows.inheritedReadOnly = [
+        outcome(() => (heir.locked = 2)),
+        Reflect.set(global, "locked", 2, receiver),
+        owns(heir, "locked"),
+        owns(receiver, "locked"),
+      ];
+    }
+    {
+      // A name that the contextified object has ends the lookup, so nothing above the global object is asked.
+      const calls: unknown[] = [];
+      const { sandbox, global } = contextOver({ held: 1, frozenAbove: 1 });
+      const above = Object.create(runInContext("Object.prototype", sandbox), {
+        held: { set: (value: unknown) => calls.push(value), configurable: true },
+        frozenAbove: { value: 0 },
+      });
+      Object.setPrototypeOf(global, above);
+      const heir = Object.create(global);
+      rows.aboveTheGlobal = [outcome(() => Object.assign(heir, { held: 2, frozenAbove: 2 })), Object.keys(heir), calls];
+    }
+    {
+      const { sandbox } = contextOver(readOnly({}, "locked", 1));
+      rows.insideTheContext = outcome(() => runInContext("'use strict'; Object.create(this).locked = 2", sandbox));
+    }
+    expect(rows).toEqual({
+      reflectSet: [true, ["x"], [], false],
+      primitiveReceiver: [false, [], false],
+      heir: [["x", "made"], [], "undefinedundefined"],
+      existingNames: ["no throw", ["held", "getterOnly", "accessor"], 1, []],
+      readOnly: ["TypeError", false, false, false, 1],
+      inheritedReadOnly: ["no throw", true, true, true],
+      aboveTheGlobal: ["no throw", ["held", "frozenAbove"], []],
+      insideTheContext: "TypeError of the context",
+    });
+  });
+
+  test("a store to a read-only name of the global object leaves the contextified object alone", () => {
+    const rows: Record<string, unknown> = {};
+    {
+      const { sandbox, global } = contextOver();
+      runInContext("NaN = 1; Infinity = 1", sandbox);
+      rows.constants = [
+        Reflect.set(global, "undefined", 1),
+        outcome(() => (global.undefined = 1)),
+        Reflect.defineProperty(global, "NaN", data(1)),
+        outcome(() => Object.defineProperty(global, "undefined", { value: 1 })),
+        outcome(() => runInContext("Object.defineProperty(globalThis, 'Infinity', { value: 1 })", sandbox)),
+        Object.keys(sandbox),
+        runInContext("[typeof undefined, NaN, Infinity].join()", sandbox),
+      ];
+    }
+    {
+      // The name is read-only on the prototype chain of the global object.
+      const { sandbox, global } = contextOver();
+      runInContext("Object.defineProperty(Object.prototype, 'inherited', { value: 1, configurable: true })", sandbox);
+      rows.inherited = [
+        outcome(() => runInContext("'use strict'; this.inherited = 2", sandbox)),
+        outcome(() => (global.inherited = 2)),
+        Reflect.set(global, "inherited", 2),
+        Object.keys(sandbox),
+        runInContext("inherited", sandbox),
+      ];
+    }
+    {
+      // A Proxy above the global object is asked for the property, as any object there.
+      const { sandbox, global } = contextOver();
+      Object.setPrototypeOf(global, new Proxy(Object.defineProperty({}, "behindProxy", { value: 1 }), {}));
+      rows.behindProxy = [outcome(() => (global.behindProxy = 2)), Object.keys(sandbox)];
+    }
+    {
+      // A getter that the engine implements is no read-only property, and the lookup leaves a lazy property above the global object usable.
+      const { sandbox, global } = contextOver();
+      Object.setPrototypeOf(global, runInContext("Symbol.prototype", sandbox));
+      runInContext("description = 5", sandbox);
+      const lazy = contextOver();
+      Object.setPrototypeOf(lazy.global, process);
+      lazy.global.nextTick = 1;
+      rows.nativeGetter = [Object.keys(sandbox), Object.keys(lazy.sandbox), typeof process.nextTick];
+    }
+    {
+      // A Proxy reports every name as its own, and the global object is still asked first.
+      const trapped: PropertyKey[] = [];
+      const target = {};
+      const { sandbox, global } = contextOver(
+        new Proxy(target, {
+          set(target, key, value, receiver) {
+            trapped.push(key);
+            return Reflect.set(target, key, value, receiver);
+          },
+        }),
+      );
+      runInContext(
+        "Object.defineProperty(Object.prototype, 'inherited', { value: 1, configurable: true }); NaN = 1; undefined = 1",
+        sandbox,
+      );
+      rows.overProxy = [
+        outcome(() => (global.Infinity = 1)),
+        Reflect.set(global, "inherited", 2),
+        outcome(() => runInContext("'use strict'; inherited = 2", sandbox)),
+        trapped,
+        Object.keys(target),
+        runInContext("inherited", sandbox),
+      ];
+    }
+    expect(rows).toEqual({
+      constants: [false, "TypeError", false, "TypeError", "TypeError of the context", [], "undefined,NaN,Infinity"],
+      inherited: ["TypeError of the context", "TypeError", false, [], 1],
+      behindProxy: ["TypeError", []],
+      nativeGetter: [["description"], ["nextTick"], "function"],
+      overProxy: ["TypeError", false, "TypeError of the context", [], [], 1],
+    });
+  });
+
+  test("a new symbol key stays on the global object, and a symbol that the global object holds does not", () => {
+    const { sandbox, global } = contextOver();
+    const fresh = Symbol("fresh");
+    const again = Symbol("again");
+    const inherited = Symbol.for("a store on the global object of a context");
+    runInContext(`Object.prototype[Symbol.for(${JSON.stringify(inherited.description)})] = 0`, sandbox);
+
+    const rows: Record<string, unknown> = {};
+    rows.fresh = [Reflect.set(global, fresh, 1), owns(sandbox, fresh), global[fresh]];
+    global[again] = 1;
+    rows.again = [owns(sandbox, again)];
+    global[again] = 2;
+    (rows.again as unknown[]).push(owns(sandbox, again), sandbox[again]);
+    global[inherited] = 1;
+    rows.inherited = [owns(sandbox, inherited)];
+    // A read through the global object gives the global object for the contextified object, also from a name that stays on it.
+    const holdsTheObject = Symbol("holds the contextified object");
+    global[holdsTheObject] = sandbox;
+    rows.holdsTheObject = [owns(sandbox, holdsTheObject), global[holdsTheObject] === global];
+    // A Proxy reports every name as its own, so it takes a new symbol.
+    const target = {};
+    contextOver(new Proxy(target, {})).global[fresh] = 1;
+    rows.overProxy = [owns(target, fresh)];
+    expect(rows).toEqual({
+      fresh: [true, false, 1],
+      again: [false, true, 2],
+      inherited: [true],
+      holdsTheObject: [false, true],
+      overProxy: [true],
+    });
+  });
+
+  const locks: [string, (object: { held: number }) => object][] = [
+    ["frozen", Object.freeze],
+    ["sealed", Object.seal],
+    ["not extensible", Object.preventExtensions],
+  ];
+  describe.each(locks)("over a %s object", (_, lock) => {
+    test("a new name stays on the global object, and no store or definition throws", () => {
+      const { sandbox, global } = contextOver(lock({ held: 1 }));
+      expect({
+        strictScript: outcome(() => runInContext("'use strict'; this.a = 1", sandbox)),
+        sloppyScript: outcome(() => runInContext("this.b = 1; c = 1", sandbox)),
+        strictHost: outcome(() => (global.d = 1)),
+        strictHostFunction: outcome(() => (global.e = function () {})),
+        objectAssign: outcome(() => Object.assign(global, { f: 1 })),
+        reflectSet: Reflect.set(global, "g", 1),
+        defineProperty: outcome(() =>
+          runInContext("Object.defineProperty(globalThis, 'h', { value: 1, configurable: true })", sandbox),
+        ),
+        defineAccessor: outcome(() => Object.defineProperty(global, "i", { get: () => 1, configurable: true })),
+        reflectDefineProperty: Reflect.defineProperty(global, "j", data(1)),
+        inside: runInContext(
+          "[typeof a, typeof b, typeof c, typeof d, typeof e, typeof f, typeof g, typeof h, typeof i, typeof j].join()",
+          sandbox,
+        ),
+        keys: Object.keys(sandbox),
+      }).toEqual({
+        strictScript: "no throw",
+        sloppyScript: "no throw",
+        strictHost: "no throw",
+        strictHostFunction: "no throw",
+        objectAssign: "no throw",
+        reflectSet: true,
+        defineProperty: "no throw",
+        defineAccessor: "no throw",
+        reflectDefineProperty: true,
+        inside: "number,number,number,number,function,number,number,number,number,number",
+        keys: ["held"],
+      });
+    });
+  });
+
+  test("a name that the contextified object holds, over a frozen and over a sealed object", () => {
+    const frozen = contextOver(Object.freeze({ held: 1 }));
+    const sealed = contextOver(Object.seal({ held: 1 }));
+    const later = contextOver();
+    later.global.held = 1;
+    Object.freeze(later.sandbox);
+    expect({
+      frozen: [
+        outcome(() => (frozen.global.held = 2)),
+        outcome(() => runInContext("'use strict'; held = 2", frozen.sandbox)),
+        Reflect.set(frozen.global, "held", 2),
+        runInContext("held = 2; held", frozen.sandbox),
+      ],
+      sealed: [outcome(() => (sealed.global.held = 2)), sealed.sandbox.held, runInContext("held", sealed.sandbox)],
+      frozenLater: [
+        outcome(() => (later.global.held = 2)),
+        Reflect.set(later.global, "held", 2),
+        later.sandbox.held,
+        runInContext("held", later.sandbox),
+      ],
+    }).toEqual({
+      frozen: ["TypeError", "TypeError of the context", false, 1],
+      sealed: ["no throw", 2, 2],
+      frozenLater: ["TypeError", false, 1, 1],
+    });
+  });
+
+  test("a store that the contextified object refuses goes on to the global object", () => {
+    const rows: Record<string, unknown> = {};
+    {
+      const target = {};
+      const { sandbox, global } = contextOver(new Proxy(target, { set: () => false }));
+      rows.setTrapReturnsFalse = [
+        outcome(() => (global.x = 1)),
+        runInContext("typeof x", sandbox),
+        Object.keys(target),
+      ];
+    }
+    {
+      const prototype = {
+        get inherited() {
+          return 7;
+        },
+      };
+      const { sandbox, global } = contextOver(Object.create(prototype));
+      rows.inheritedGetter = [outcome(() => (global.inherited = 2)), owns(sandbox, "inherited")];
+      delete (prototype as any).inherited;
+      (rows.inheritedGetter as unknown[]).push(runInContext("typeof inherited", sandbox));
+    }
+    {
+      const { sandbox, global } = contextOver({
+        get own() {
+          return 7;
+        },
+      });
+      rows.ownGetter = [outcome(() => (global.own = 2)), runInContext("'use strict'; own = 2; own", sandbox)];
+      // Behind the global object of another context V8 finds the getter once more, and throws.
+      const nested = nestedGlobal(sandbox);
+      rows.ownGetterOfTheFirstObject = [outcome(() => (nested.own = 2)), Reflect.set(nested, "own", 2)];
+    }
+    {
+      const { sandbox, global } = contextOver(readOnly({}, "own", 1));
+      rows.ownReadOnly = [outcome(() => (global.own = 2)), Reflect.set(global, "own", 2), sandbox.own];
+    }
+    {
+      const target = readOnly({}, "own", 1);
+      const { global } = contextOver(new Proxy(target, {}));
+      rows.ownReadOnlyBehindProxy = [outcome(() => (global.own = 2)), target.own];
+    }
+    {
+      // As jsdom does: the accessor is on the prototype chain of the global object too.
+      const { sandbox, global } = contextOver();
+      const prototype = Object.create(runInContext("Object.prototype", sandbox), {
+        both: { get: () => 7, enumerable: true, configurable: true },
+      });
+      Object.setPrototypeOf(sandbox, prototype);
+      Object.setPrototypeOf(global, prototype);
+      rows.getterOnBothChains = [outcome(() => (global.both = 2)), owns(sandbox, "both")];
+    }
+    {
+      // V8 then defines the value on the global object, and that definition goes to the contextified object.
+      const target = { held: 1 };
+      const { sandbox, global } = contextOver(new Proxy(target, { set: () => false }));
+      rows.setTrapOverHeldName = [outcome(() => (global.held = 2)), target.held, runInContext("held", sandbox)];
+    }
+    {
+      // An accessor that a Proxy reports as its own ends the store. No setter above the global object runs.
+      const calls: unknown[] = [];
+      const target = {
+        get own() {
+          return 7;
+        },
+      };
+      const { sandbox, global } = contextOver(new Proxy(target, { set: () => false }));
+      runInContext(
+        "calls => Object.defineProperty(Object.prototype, 'own', { set: value => void calls.push(value), configurable: true })",
+        sandbox,
+      )(calls);
+      rows.accessorBehindProxy = [outcome(() => (global.own = 2)), calls];
+    }
+    {
+      // Whatever is above the global object, the store stays off the contextified object that refused it.
+      const prototype = {
+        get inherited() {
+          return "from the getter";
+        },
+      };
+      const { sandbox, global } = contextOver(Object.create(prototype));
+      Object.setPrototypeOf(global, []);
+      sloppyStore(global, "inherited", "stored");
+      rows.arrayAboveTheGlobal = [owns(sandbox, "inherited"), runInContext("inherited", sandbox)];
+    }
+    expect(rows).toEqual({
+      setTrapReturnsFalse: ["no throw", "number", []],
+      inheritedGetter: ["no throw", false, "number"],
+      ownGetter: ["no throw", 7],
+      ownGetterOfTheFirstObject: ["TypeError", false],
+      ownReadOnly: ["TypeError", false, 1],
+      ownReadOnlyBehindProxy: ["TypeError", 1],
+      getterOnBothChains: ["TypeError", false],
+      setTrapOverHeldName: ["no throw", 2, 2],
+      accessorBehindProxy: ["no throw", []],
+      arrayAboveTheGlobal: [false, "from the getter"],
+    });
+
+    // Not the result of Node.js, which drops a store over a read-only property that the contextified object inherits and has the value on the global object. A TypeError is what OrdinarySet says.
+    const { sandbox, global } = contextOver(Object.create(readOnly({}, "inherited", 1)));
+    const overIndex = contextOver(Object.create(readOnly({}, 0, 1)));
+    expect({
+      strictHost: outcome(() => (global.inherited = 2)),
+      strictHostIndex: outcome(() => (overIndex.global[0] = 2)),
+      strictScript: outcome(() => runInContext("'use strict'; this.inherited = 2", sandbox)),
+      reflectSet: Reflect.set(global, "inherited", 2),
+      sloppyScript: runInContext("this.inherited = 2; inherited", sandbox),
+      own: owns(sandbox, "inherited"),
+    }).toEqual({
+      strictHost: "TypeError",
+      strictHostIndex: "TypeError",
+      strictScript: "TypeError of the context",
+      reflectSet: false,
+      sloppyScript: 1,
+      own: false,
+    });
+  });
+
+  test("a definition that the contextified object refuses, over a property that it owns", () => {
+    // The definition is validated against that property: for a name, for an index and under a variable of the context.
+    const rows: Record<string, unknown> = {};
+    for (const key of ["held", 0]) {
+      const { sandbox, global } = contextOver(Object.freeze({ [key]: 1 }));
+      const defineInside = runInContext("(key, value) => Object.defineProperty(globalThis, key, { value })", sandbox);
+      rows[`frozen ${key}`] = [
+        outcome(() => Object.defineProperty(global, key, data(2))),
+        Reflect.defineProperty(global, key, data(2)),
+        outcome(() => defineInside(key, 2)),
+        outcome(() => Object.defineProperty(global, key, { get: () => 2 })),
+        // The value and the attributes that the property has are no change.
+        outcome(() => Object.defineProperty(global, key, { value: 1 })),
+        runInContext("key => globalThis[key]", sandbox)(key),
+      ];
+    }
+    {
+      const { sandbox, global } = contextOver(Object.freeze({ held: 1 }));
+      runInContext("var held = 5", sandbox);
+      rows.underVariable = [outcome(() => Object.defineProperty(global, "held", { value: 2 })), sandbox.held];
+    }
+    {
+      // A Proxy refuses a definition that its property allows. The definition goes on to the global object.
+      const target = { held: 1 };
+      const { global } = contextOver(new Proxy(target, { defineProperty: () => false }));
+      rows.refusedByTrap = [outcome(() => Object.defineProperty(global, "held", data(2))), target.held];
+    }
+    {
+      // V8 applies a definition of a value with a store, which reaches an inherited setter and an element of a typed array.
+      const calls: unknown[] = [];
+      const prototype = {
+        set inherited(value: unknown) {
+          calls.push(value);
+        },
+      };
+      const { global } = contextOver(Object.preventExtensions(Object.create(prototype)));
+      rows.inheritedSetter = [outcome(() => Object.defineProperty(global, "inherited", data(5))), calls];
+      const elements = new Uint8Array(1);
+      rows.typedArrayElement = [
+        Reflect.defineProperty(contextOver(elements).global, 0, { value: 7, writable: false }),
+        elements[0],
+      ];
+    }
+    {
+      // That store ends at an accessor that the contextified object owns, so the global object has nothing to refuse a later store.
+      const calls: unknown[] = [];
+      const target = {
+        get held() {
+          return 7;
+        },
+        set held(value: unknown) {
+          calls.push(value);
+        },
+      };
+      const { global } = contextOver(new Proxy(target, { defineProperty: () => false }));
+      rows.overAccessor = [
+        outcome(() => Object.defineProperty(global, "held", { value: 2 })),
+        outcome(() => (global.held = 3)),
+        calls,
+      ];
+    }
+    expect(rows).toEqual({
+      "frozen held": ["TypeError", false, "TypeError of the context", "TypeError", "no throw", 1],
+      "frozen 0": ["TypeError", false, "TypeError of the context", "TypeError", "no throw", 1],
+      underVariable: ["TypeError", 1],
+      refusedByTrap: ["no throw", 1],
+      inheritedSetter: ["no throw", [5]],
+      typedArrayElement: [true, 7],
+      overAccessor: ["no throw", "no throw", [2, 3]],
+    });
+  });
+
+  test("a definition of a name that the global object holds too", () => {
+    const rows: Record<string, unknown> = {};
+    {
+      const { sandbox, global } = contextOver({ held: 0 });
+      global.held = 1;
+      Object.defineProperty(global, "held", { writable: false });
+      Object.defineProperty(global, "held", data(2));
+      rows.afterUnlock = [outcome(() => (global.held = 3)), Reflect.set(global, "held", 4), sandbox.held];
+      Object.defineProperty(global, "held", { enumerable: false });
+      rows.hidden = [Object.keys(global), runInContext("Object.keys(globalThis)", sandbox)];
+    }
+    {
+      // A value that the contextified object refused is on the global object alone. A definition leaves it as it is.
+      const { global } = contextOver(new Proxy({}, { set: () => false }));
+      global.kept = 1;
+      Object.defineProperty(global, "kept", { value: 2 });
+      rows.refusedValue = Object.keys(global);
+    }
+    {
+      // A function that a script declared over a stored name can be declared again after the name is hidden.
+      const { sandbox, global } = contextOver();
+      runInContext("handler = null", sandbox);
+      runInContext("function handler() {}", sandbox);
+      Object.defineProperty(global, "handler", { enumerable: false });
+      rows.declaredAgain = runInContext("function handler() { return 'again' } handler()", sandbox);
+    }
+    {
+      // The built-in of the context is still there behind the definition.
+      const { sandbox, global } = contextOver();
+      Object.defineProperty(global, "Array", data(1));
+      Object.defineProperty(global, "Map", data(1));
+      delete sandbox.Array;
+      delete sandbox.Map;
+      rows.builtins = runInContext("[typeof Array, typeof Map, [].constructor === Array]", sandbox);
+    }
+    expect(rows).toEqual({
+      afterUnlock: ["no throw", true, 4],
+      hidden: [[], []],
+      refusedValue: ["kept"],
+      declaredAgain: "again",
+      builtins: ["function", "function", true],
+    });
+  });
+
+  test("a variable over an accessor that the contextified object owns takes the value", () => {
+    // As in a page script of happy-dom (`var parent = ...`, the accessor is not enumerable) and of jsdom (enumerable).
+    const rows: Record<string, unknown> = {};
+    for (const enumerable of [false, true]) {
+      let stored: unknown = "initial";
+      const accessor = {
+        get: () => stored,
+        set: (value: unknown) => void (stored = value),
+        enumerable,
+        configurable: true,
+      };
+      const { sandbox } = contextOver(Object.defineProperties({}, { held: accessor, made: accessor }));
+      rows[`enumerable: ${enumerable}`] = [
+        runInContext("var held = 1; held", sandbox),
+        runInContext("held", sandbox),
+        runInContext("function made() {} typeof made", sandbox),
+      ];
+    }
+    {
+      // As on main: after a store to an accessor that is not enumerable, the global object holds the name, so a later `var` declares no variable in front of the accessor.
+      let stored: unknown = "initial";
+      const accessor = { get: () => stored, set: (value: unknown) => void (stored = value), configurable: true };
+      const { sandbox, global } = contextOver(Object.defineProperty({}, "held", accessor));
+      global.held = "stored";
+      rows.storeBeforeTheDeclaration = runInContext("var held; held", sandbox);
+    }
+    expect(rows).toEqual({
+      "enumerable: false": [1, 1, "function"],
+      "enumerable: true": [1, 1, "function"],
+      storeBeforeTheDeclaration: "stored",
+    });
+  });
+
+  test("what is above the global object: the global object of another context, and a Proxy", () => {
+    const rows: Record<string, unknown> = {};
+    {
+      // What the contextified object of that other context holds is no name of its global object.
+      const other = contextOver(readOnly({}, "limit", 1));
+      const { sandbox, global } = contextOver();
+      Object.setPrototypeOf(global, other.global);
+      sloppyStore(global, "limit", 2);
+      rows.otherContext = [Object.keys(sandbox), runInContext("limit", sandbox)];
+    }
+    {
+      // A Proxy there counts as holding every name, so a new symbol goes to the contextified object.
+      const { sandbox, global } = contextOver();
+      Object.setPrototypeOf(global, new Proxy({}, { set: () => true }));
+      const symbol = Symbol("new");
+      global[symbol] = 1;
+      rows.proxy = [owns(sandbox, symbol), global[symbol]];
+    }
+    {
+      // A setter there defines the name on the receiver, and that definition goes to the contextified object.
+      const inherited = {
+        get replaced() {
+          return "inherited";
+        },
+      };
+      const { sandbox, global } = contextOver(Object.create(inherited));
+      runInContext(
+        `Object.defineProperty(Object.prototype, "replaced", {
+          set(value) {
+            Object.defineProperty(this, "replaced", { value, writable: true, enumerable: true, configurable: true });
+          },
+          configurable: true,
+        })`,
+        sandbox,
+      );
+      global.replaced = 5;
+      rows.setter = [owns(sandbox, "replaced"), runInContext("replaced", sandbox)];
+    }
+    expect(rows).toEqual({
+      otherContext: [["limit"], 2],
+      proxy: [true, 1],
+      setter: [true, 5],
+    });
+  });
+
+  test("a trap of the contextified object defines the name on the receiver of the store", () => {
+    let heir: any = null;
+    const target = { x: 1 };
+    const { global } = contextOver(
+      new Proxy(target, {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "x" && heir) Object.defineProperty(heir, "x", data(0));
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      }),
+    );
+    heir = Object.create(global);
+    heir.x = 2;
+    expect([heir.x, target.x]).toEqual([2, 1]);
+  });
+
+  test("what a setter or a trap throws during a store", () => {
+    const message = (fn: () => unknown) => {
+      try {
+        fn();
+        return "no throw";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
+    const thrower = (text: string) => () => {
+      throw new Error(text);
+    };
+    const rows: Record<string, unknown> = {};
+    {
+      let reads = 0;
+      const { global } = contextOver({
+        get accessor() {
+          reads++;
+          throw new Error("getter");
+        },
+        set accessor(value: unknown) {
+          throw new Error("setter");
+        },
+      });
+      rows.setter = [message(() => (global.accessor = 1)), reads];
+      const nested = nestedGlobal({
+        set accessor(value: unknown) {
+          throw new Error("setter of the first object");
+        },
+      });
+      rows.nestedSetter = message(() => (nested.accessor = 1));
+    }
+    {
+      const target = {};
+      const { sandbox, global } = contextOver(new Proxy(target, { set: thrower("set trap") }));
+      rows.setTrap = [
+        message(() => (global.x = 1)),
+        message(() => (global[0] = 1)),
+        Object.keys(target),
+        runInContext("typeof x", sandbox),
+      ];
+    }
+    {
+      // The store is refused, and the lookup that follows throws.
+      const { sandbox, global } = contextOver(
+        new Proxy({}, { set: () => false, getOwnPropertyDescriptor: thrower("getOwnPropertyDescriptor trap") }),
+      );
+      rows.afterRefusedStore = [message(() => (global.x = 1)), runInContext("typeof x", sandbox)];
+    }
+    {
+      const { global } = contextOver(
+        new Proxy({}, { getOwnPropertyDescriptor: thrower("getOwnPropertyDescriptor trap") }),
+      );
+      const heir = Object.create(global);
+      rows.otherReceiver = [message(() => (heir.x = 1)), Object.keys(heir)];
+    }
+    {
+      const throws = contextOver(new Proxy({}, { defineProperty: thrower("defineProperty trap") }));
+      const refuses = contextOver(new Proxy({}, { defineProperty: () => false }));
+      rows.defineProperty = [
+        message(() => Object.defineProperty(throws.global, "x", data(1))),
+        message(() => Object.defineProperty(refuses.global, "x", data(1))),
+        Reflect.defineProperty(refuses.global, "y", data(1)),
+        runInContext("typeof x + typeof y", refuses.sandbox),
+      ];
+    }
+    expect(rows).toEqual({
+      setter: ["setter", 0],
+      nestedSetter: "setter of the first object",
+      setTrap: ["set trap", "set trap", [], "undefined"],
+      afterRefusedStore: ["getOwnPropertyDescriptor trap", "undefined"],
+      otherReceiver: ["getOwnPropertyDescriptor trap", []],
+      defineProperty: ["defineProperty trap", "no throw", true, "numbernumber"],
+    });
+
+    // Not the result of Node.js, which drops what a trap of a Proxy above the global object throws and stores on the contextified object.
+    const { sandbox, global } = contextOver();
+    Object.setPrototypeOf(global, new Proxy({}, { getOwnPropertyDescriptor: thrower("trap above the global") }));
+    expect([message(() => (global.x = 1)), Object.keys(sandbox)]).toEqual(["trap above the global", []]);
+  });
+
+  test("Object.defineProperty() from another realm asks the global object of the context, not the global object of the caller", () => {
+    const { sandbox, global } = contextOver();
+    // The global object of the caller holds the name read-only and not configurable.
+    const define = runInContext(
+      `Object.defineProperty(globalThis, "locked", { value: 1 });
+      (target, descriptor) => Object.defineProperty(target, "locked", descriptor)`,
+      createContext(constants.DONT_CONTEXTIFY),
+    );
+    define(global, data(2));
+    const first = {};
+    Object.defineProperty(nestedGlobal(first), "Bun", data(2));
+    expect([Object.keys(sandbox), sandbox.locked, Object.keys(first)]).toEqual([["locked"], 2, ["Bun"]]);
+  });
+
+  // In a host whose own global is frozen, every name of that global is read-only and not configurable.
+  test.concurrent(
+    "Object.defineProperty() on the global object of a context from a host with a frozen global",
+    async () => {
+      using dir = tempDir("vm-frozen-host", {
+        "frozen-host-fixture.cjs": `
+          const vm = require("node:vm");
+          Object.freeze(globalThis);
+          const sandbox = vm.createContext({});
+          const descriptor = { value: 1, writable: true, enumerable: true, configurable: true };
+          Object.defineProperty(vm.runInContext("this", sandbox), "console", descriptor);
+          Object.defineProperty(vm.runInContext("this", sandbox), "Bun", descriptor);
+          console.log(Object.keys(sandbox).join());`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "frozen-host-fixture.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "console,Bun\n", stderr: "", exitCode: 0 });
+    },
+  );
+
+  test("Object.defineProperty() over a variable of the context goes to the contextified object and to the variable", () => {
+    const { sandbox, global } = contextOver();
+    runInContext("var fromInside = 1, fromOutside = 1, attributesOnly = 1, locked = 1; function made() {}", sandbox);
+    expect({
+      fromInside: outcome(() =>
+        runInContext(`Object.defineProperty(globalThis, "fromInside", ${JSON.stringify(data(2))})`, sandbox),
+      ),
+      fromOutside: outcome(() => Object.defineProperty(global, "fromOutside", data(2))),
+      made: outcome(() => Object.defineProperty(global, "made", data(2))),
+      attributesOnly: outcome(() => Object.defineProperty(global, "attributesOnly", { enumerable: false })),
+      locked: outcome(() => Object.defineProperty(global, "locked", { value: 2, writable: false })),
+      sandbox: [sandbox.fromInside, sandbox.fromOutside, sandbox.made, sandbox.attributesOnly, sandbox.locked],
+      throughGlobalThis: runInContext("[globalThis.fromInside, globalThis.fromOutside, globalThis.made]", sandbox),
+      // A script reads its variable from the variable, which has the value too.
+      bareNames: runInContext("[fromInside, fromOutside, made, attributesOnly, locked]", sandbox),
+      keys: Object.keys(sandbox).sort(),
+      // The name is read-only in every tier, as the property of the contextified object is.
+      storeToLocked: [
+        runInContext("locked = 5; for (var i = 0; i < 1e4; i++) locked = i; locked", sandbox),
+        outcome(() => runInContext("'use strict'; locked = 5", sandbox)),
+        sandbox.locked,
+      ],
+      // A later definition makes it writable again.
+      unlocked: [
+        outcome(() => Object.defineProperty(global, "locked", data(3))),
+        runInContext("locked = 4; locked", sandbox),
+        sandbox.locked,
+      ],
+    }).toEqual({
+      fromInside: "no throw",
+      fromOutside: "no throw",
+      made: "no throw",
+      attributesOnly: "no throw",
+      locked: "no throw",
+      sandbox: [2, 2, 2, 1, 2],
+      throughGlobalThis: [2, 2, 2],
+      bareNames: [2, 2, 2, 1, 2],
+      keys: ["fromInside", "fromOutside", "locked", "made"],
+      storeToLocked: [2, "TypeError of the context", 2],
+      unlocked: ["no throw", 4, 4],
+    });
+
+    // After a definition, every store of a script to its variable still reaches the contextified object, in every tier.
+    const later = contextOver();
+    runInContext("var counter = 1", later.sandbox);
+    Object.defineProperty(later.global, "counter", data(2));
+    const counted = runInContext("counter += 40; for (var i = 0; i < 1e4; i++) counter++; counter", later.sandbox);
+    expect([counted, later.sandbox.counter]).toEqual([10042, 10042]);
+
+    // A trap of the contextified object declares the variable during the definition. The variable takes the value too.
+    let declareOnce: (() => void) | null = () => runInContext("var fromATrap = 1", declares);
+    const declares = createContext(
+      new Proxy(
+        {},
+        {
+          defineProperty(target, key, descriptor) {
+            const declare = declareOnce;
+            declareOnce = null;
+            declare?.();
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        },
+      ),
+    );
+    Object.defineProperty(runInContext("this", declares), "fromATrap", data(2));
+    expect(runInContext("fromATrap", declares)).toBe(2);
+  });
+
+  // Node.js reads every global name through the contextified object, and this Proxy answers `undefined` for a name that its target refused. Here the script reads its variable, which took the value. Main dropped the store.
+  test.todo("a script reads its variable through a Proxy that refuses the store", () => {
+    const context = createContext(
+      new Proxy(Object.freeze({}), { get: (target, key, receiver) => Reflect.get(target, key, receiver) }),
+    );
+    expect(runInContext("var refused = 0; refused++; typeof refused", context)).toBe("undefined");
+  });
+});
+
 describe.each([
   ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
   ["a contextified object", () => createContext({})],
@@ -2992,21 +4024,24 @@ describe("defineProperty errors use vm-realm global", () => {
     expect(result.hostFunction("return typeof process")()).toBe("undefined");
   });
 
-  test("data descriptor on a property not on the sandbox (non-extensible sandbox)", () => {
-    // preventExtensions makes the define of a new key throw from the sandbox itself.
+  test("data descriptor that the sandbox and the global both refuse (non-extensible sandbox)", () => {
+    // The sandbox takes no new key, and a variable of the context is not configurable. A new key alone goes to the global, as in Node.js.
     const sandbox = {};
     Object.preventExtensions(sandbox);
     createContext(sandbox);
 
     const result = runInContext(
       `
+        var declared = 1;
         let err;
         try {
-          Object.defineProperty(this, "newKey", { value: 1 });
+          Object.defineProperty(this, "declared", { value: 2, configurable: true });
         } catch (e) { err = e; }
+        Object.defineProperty(this, "newKey", { value: 1 });
         ({
           isVmRealmTypeError: err instanceof TypeError,
           hostFunction: err && err.constructor && err.constructor.constructor,
+          newKey,
         });
       `,
       sandbox,
@@ -3015,6 +4050,7 @@ describe("defineProperty errors use vm-realm global", () => {
     expect(result.isVmRealmTypeError).toBe(true);
     expect(result.hostFunction === Function).toBe(false);
     expect(result.hostFunction("return typeof process")()).toBe("undefined");
+    expect(result.newKey).toBe(1);
   });
 });
 

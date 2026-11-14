@@ -51,3 +51,52 @@ test("#29264 bundler survives external + missing imports in same file", { timeou
   expect(combined).toContain('Could not resolve: "./src"');
   expect(exitCode).toBe(0);
 });
+
+// The test above now reaches the external arm of on_resolve, because Bun keeps
+// "src" external. This one stays on the path that crashed: the plugin declines
+// "other", so the bundler resolves it after "./src" already failed.
+test("#29264 bundler survives declined + missing imports in same file", async () => {
+  using dir = tempDir("issue-29264-declined", {
+    "build-fixture.js": /* js */ `
+      try {
+        await Bun.build({
+          entrypoints: ["index.js"],
+          plugins: [
+            {
+              name: "decline-bare",
+              setup(build) {
+                build.onResolve({ filter: /^[^.]/ }, () => undefined);
+              },
+            },
+          ],
+        });
+        console.log("DONE:ok");
+      } catch (e) {
+        console.log("DONE:caught");
+        if (e && e.errors) {
+          for (const err of e.errors) console.log("ERR:" + err.message);
+        }
+      }
+    `,
+    "index.js": /* js */ `
+      import "other";
+      import "./src";
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build-fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const combined = stdout + stderr;
+  expect(combined).toContain("DONE:caught");
+  expect(combined).toContain('Could not resolve: "./src"');
+  expect(combined).toContain('Could not resolve: "other"');
+  expect(exitCode).toBe(0);
+});

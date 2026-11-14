@@ -1156,28 +1156,26 @@ fn make_bins_executable(
     ) else {
         return;
     };
-    let cache_entry = strings::StringOrTinyString::init(cache_dir_subpath);
     let mut abs_target_buf = bun_paths::path_buffer_pool::get();
     let mut abs_dest_buf = bun_paths::path_buffer_pool::get();
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     bin::Linker {
         bin: pkg.bin,
-        target_node_modules_path: &raw const cache_path,
-        target_package_name: cache_entry,
+        target_node_modules_path: Some(&cache_path),
+        target_package_name: cache_dir_subpath,
         seen: None,
         node_modules_path: &mut links_path,
-        package_name: cache_entry,
+        package_name: cache_dir_subpath,
         global_bin_path: ZStr::EMPTY,
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         abs_target_buf: abs_target_buf.as_mut_slice(),
-        abs_dest_buf: abs_dest_buf.as_mut_slice(),
         rel_buf: rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     }
-    .link(false);
+    .link(false, abs_dest_buf.as_mut_slice());
 }
 
 /// The patched package's cache entry can be missing, because an install that finds the patched

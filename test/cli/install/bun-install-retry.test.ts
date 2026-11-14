@@ -1,6 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { access, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -1505,16 +1515,17 @@ describe.concurrent("a failed download that several dependencies share", () => {
   });
 });
 
-// A dependency on a git repository, a GitHub repository or a tarball has no manifest. `bun update` reads its source
-// again, and so does `bun install --force` for a tarball. An optional one keeps the package that bun.lock has for it
-// until the source gives another, so a source that cannot be read leaves that package in bun.lock.
+// `bun update` reads the source of a dependency again: its manifest in the registry, a git repository, a GitHub
+// repository or a tarball. `bun install --force` does so for a tarball. An optional one keeps the package that
+// bun.lock has for it until the source gives another, so a source that cannot be read leaves that package in bun.lock.
 describe.concurrent("a locked optional dependency whose source cannot be read again", () => {
-  const kinds = ["tarball URL", "GitHub", "git", "file: tarball"] as const;
+  const kinds = ["registry", "tarball URL", "GitHub", "git", "file: tarball"] as const;
   type Kind = (typeof kinds)[number];
   // A package that is not in the project cannot name a path in it.
-  const fetched = ["tarball URL", "GitHub", "git"] as const;
+  const fetched = ["registry", "tarball URL", "GitHub", "git"] as const;
   const tarballs = ["tarball URL", "file: tarball"] as const;
   const names: Record<Kind, string> = {
+    "registry": "registry-dep",
     "tarball URL": "url-dep",
     "GitHub": "github-dep",
     "git": "git-dep",
@@ -1546,8 +1557,11 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
   }
 
   type Options = {
-    /** Who declares the dependency: the root, the workspace `packages/member`, or the GitHub package `parent`. */
-    in?: "root" | "member" | "package";
+    /**
+     * Who declares the dependency: the root, the workspace `packages/member`, the GitHub package `parent`, or the
+     * registry package `parent`.
+     */
+    in?: "root" | "member" | "package" | "registry package";
     group?: "optionalDependencies" | "dependencies";
     linker?: "hoisted" | "isolated";
     /** The key of the entry, if it is not the name of the package. */
@@ -1568,12 +1582,17 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
     const manifest = (version: string, as = name) => ({ name: as, version, ...options.package });
     // The registry: each version of each package, in the order of publication.
     const registry: Record<string, Record<string, { manifest: object; bytes: Uint8Array }>> = {};
-    // The packages of the registry whose tarball cannot be downloaded.
+    // The tags that a package has besides `latest`, and when its versions were published.
+    const tags: Record<string, Record<string, string>> = {};
+    const times: Record<string, Record<string, string>> = {};
+    // The packages of the registry whose tarball cannot be downloaded, and the ones whose manifest gets a status.
     const withoutTarball = new Set<string>();
-    async function register(manifest: { name: string; version: string; dependencies?: object }) {
+    const refused = new Map<string, number>();
+    async function register(manifest: { name: string; version: string; [field: string]: unknown }) {
       (registry[manifest.name] ??= {})[manifest.version] = { manifest, bytes: await tarball("package", manifest) };
     }
     await register({ name: "good", version: "1.0.0" });
+    if (kind === "registry") await register(manifest("1.0.0"));
     let packed = await tarball("package", manifest("1.0.0"));
     // GitHub names the directory in its archive after the commit.
     let archive = await tarball("owner-repo-abc1234", manifest("1.0.0"));
@@ -1581,14 +1600,31 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
     // The answer to a request for the dependency whose path ends with `suffix`.
     let lost: { status: number; suffix: string } | undefined;
     let asked: string[] = [];
+    let requested: string[] = [];
     // Set while the manifest of `good` waits for a request for the dependency.
     let held: PromiseWithResolvers<void> | undefined;
     const server = Bun.serve({
       port: 0,
       async fetch(request) {
-        const { origin, pathname } = new URL(request.url);
+        const { origin, pathname: encoded } = new URL(request.url);
+        // The manifest of `@scope/name` is asked for as `/@scope%2fname`.
+        const pathname = decodeURIComponent(encoded);
+        requested.push(pathname);
+        // The source of a registry dependency is its manifest.
+        if (kind === "registry" && pathname === `/${name}`) {
+          asked.push(pathname);
+          held?.resolve();
+          // 0: the answer ends before its body does.
+          if (lost?.status === 0) {
+            const body = new ReadableStream({ start: controller => controller.error(new Error("dropped")) });
+            return new Response(body, { headers: { "content-length": "1000" } });
+          }
+          if (lost) return new Response("refused", { status: lost.status });
+        }
         const published = registry[pathname.slice(1)];
         if (published) {
+          const status = refused.get(pathname.slice(1));
+          if (status) return new Response("refused", { status });
           if (pathname === "/good") await held?.promise;
           const versions = Object.entries(published).map(([version, { manifest }]) => [
             version,
@@ -1596,11 +1632,12 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
           ]);
           return Response.json({
             name: pathname.slice(1),
-            "dist-tags": { latest: versions.at(-1)![0] },
+            "dist-tags": { latest: versions.at(-1)![0], ...tags[pathname.slice(1)] },
             versions: Object.fromEntries(versions),
+            time: times[pathname.slice(1)],
           });
         }
-        const [, tarballOf, version] = /^\/(.+)-(\d+\.\d+\.\d+)\.tgz$/.exec(pathname) ?? [];
+        const [, tarballOf, version] = /^\/(.+?)-(\d+\.\d+\.\d+(?:-[\w.]+)?)\.tgz$/.exec(pathname) ?? [];
         if (withoutTarball.has(tarballOf)) return new Response("refused", { status: 503 });
         if (registry[tarballOf]?.[version]) return new Response(registry[tarballOf][version].bytes);
         if (parent && pathname.startsWith("/repos/owner/parent/tarball/")) return new Response(parent);
@@ -1628,6 +1665,10 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
     let other: string;
     let source: string | undefined;
     switch (kind) {
+      case "registry":
+        spec = "^1.0.0";
+        other = "^2.0.0";
+        break;
       case "tarball URL":
         spec = `${origin}/t/url-dep-1.0.0.tgz`;
         other = `${origin}/t/url-dep-2.0.0.tgz`;
@@ -1667,6 +1708,9 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
       if (declaredIn === "package") {
         parent = await tarball("owner-parent-def5678", { name: "parent", version: "1.0.0", [group]: { [key]: entry } });
         root.dependencies.parent = "owner/parent#v1";
+      } else if (declaredIn === "registry package") {
+        await register({ name: "parent", version: "1.0.0", [group]: { [key]: entry } });
+        root.dependencies.parent = "^1.0.0";
       } else {
         const declarer = declaredIn === "member" ? member : root;
         declarer[group] = { ...declarer[group], [key]: entry };
@@ -1708,11 +1752,11 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
     const run = (...args: string[]) => runIn(".", ...args);
 
     /** The packages that bun.lock has under the name of the dependency, as `name@resolution`. */
-    async function locked() {
+    async function locked(of = name) {
       const { packages } = Bun.JSONC.parse(await file(path("bun.lock")).text()) as {
         packages: Record<string, [string]>;
       };
-      return [...new Set(Object.values(packages).map(([id]) => id))].filter(id => id.startsWith(`${name}@`));
+      return [...new Set(Object.values(packages).map(([id]) => id))].filter(id => id.startsWith(`${of}@`));
     }
     /** The version of `of` that is installed, if any. */
     async function installed(of = key) {
@@ -1727,7 +1771,9 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
       Promise.all(["bun.lock", "package.json", "packages/member/package.json"].map(f => file(path(f)).text()));
     /** What a command prints about a source that it could not read. */
     function unread(answer = 503, ref = "v1") {
+      const dropped = `warn: ConnectionClosed downloading package manifest ${name}`;
       const lines: Record<Kind, string[]> = {
+        "registry": [answer === 0 ? dropped : `warn: GET ${origin}/${name} - ${answer}`],
         "tarball URL": [`warn: GET ${spec} - ${answer}`],
         "GitHub": [`warn: GET ${origin}/repos/owner/repo/tarball/${ref} - ${answer}`],
         "git": [
@@ -1764,10 +1810,10 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
         return id;
       },
       /** Installs, and returns what was written. */
-      async install() {
+      async install(version = "1.0.0") {
         expect(await run("install")).toMatchObject({ warnings: [], errors: [], exitCode: 0 });
         const ids = await locked();
-        expect([ids.length, await installed()]).toEqual([1, "1.0.0"]);
+        expect([ids.length, await installed()]).toEqual([1, version]);
         id = ids[0];
         return written();
       },
@@ -1788,12 +1834,41 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
        * another commit.
        */
       async publish(version: string, as = name) {
+        if (kind === "registry") await register(manifest(version, as));
         packed = await tarball("package", manifest(version, as));
         archive = await tarball("owner-repo-def5678", manifest(version, as));
         if (kind === "file: tarball") writeFileSync(source!, packed);
         if (kind === "git") {
           writeFileSync(join(source!, "package.json"), JSON.stringify(manifest(version, as)));
           await git(source!, "-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", version);
+        }
+      },
+      /** The registry no longer lists `version` of the dependency. */
+      unpublish(version: string) {
+        delete registry[name][version];
+      },
+      /** The dependency has the tag `tag` for `version`. Without a version it has no such tag. */
+      tag(tag: string, version?: string) {
+        tags[name] = { ...tags[name], [tag]: version! };
+      },
+      /** The manifest of the dependency says when `version` was published. */
+      publishedAt(version: string, when: Date) {
+        times[name] = { ...times[name], [version]: when.toISOString() };
+      },
+      /** From now on the registry answers `status` to a request for the manifest of `of`. */
+      refuse(of: string, status: number) {
+        refused.set(of, status);
+      },
+      /** Every path that was requested since the last call. */
+      requested() {
+        const paths = requested;
+        requested = [];
+        return paths;
+      },
+      /** Takes the manifest of the dependency out of the cache. */
+      forgetManifest() {
+        for (const cached of readdirSync(path(".bun-cache")).filter(entry => entry.endsWith(".npm"))) {
+          if (readFileSync(path(".bun-cache", cached)).includes(`/${name}-`)) rmSync(path(".bun-cache", cached));
         }
       },
       /** From now on the registry answers 503 for the tarballs of `of`. */
@@ -1806,7 +1881,12 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
       },
       /** What `bun update` prints when it could not read the source, and what it leaves: bun.lock as it is. */
       kept(answer = 503, ref = "v1") {
-        const warnings = [...unread(answer, ref), `warn: ${id} was not checked for updates`];
+        const line = `warn: ${id} was not checked for updates`;
+        // A registry package gets one line, which ends with the failed request.
+        const warnings =
+          kind === "registry"
+            ? [`${line}: ${unread(answer)[0].slice("warn: ".length)}`]
+            : [...unread(answer, ref), line];
         return { warnings, unchecked: 1, errors: [], saved: false, exitCode: 0 };
       },
       /** What `bun update` prints and leaves when the command line selects the entry: it fails, and writes nothing. */
@@ -1838,8 +1918,9 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
     expect(await p.installed()).toBe("1.0.0");
   }
 
-  describe.each(["root", "member", "package"] as const)("declared by the %s", declaredIn => {
-    const declarable: readonly Kind[] = declaredIn === "package" ? fetched : kinds;
+  describe.each(["root", "member", "package", "registry package"] as const)("declared by the %s", declaredIn => {
+    const declarable: readonly Kind[] =
+      declaredIn === "registry package" ? ["registry"] : declaredIn === "package" ? fetched : kinds;
 
     it.each(declarable)("%s: `bun update` keeps the package", async kind => {
       using p = await project(kind, { in: declaredIn });
@@ -1879,11 +1960,18 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
       using p = await project(kind, { in: declaredIn });
       const before = await p.install();
       await p.publish("1.1.0");
+      // `bun update` in the root leaves the registry entries of a workspace to that workspace.
+      const cwd = kind === "registry" && declaredIn === "member" ? "packages/member" : ".";
       // A tarball that has other bytes than bun.lock recorded is a warning.
-      expect(await p.run("update")).toMatchObject({ errors: [], saved: true, exitCode: 0 });
+      expect(await p.runIn(cwd, "update")).toMatchObject({ errors: [], saved: true, exitCode: 0 });
       expect(await p.installed()).toBe("1.1.0");
-      expect((await p.written())[0]).not.toBe(before[0]);
+      const [lock, root, member] = await p.written();
+      expect(lock).not.toBe(before[0]);
       expect(await p.locked()).toHaveLength(1);
+      if (kind === "registry" && (declaredIn === "root" || declaredIn === "member")) {
+        const declarer = JSON.parse(declaredIn === "member" ? member : root);
+        expect(declarer.optionalDependencies).toEqual({ "registry-dep": "^1.1.0" });
+      }
     });
   });
 
@@ -1976,6 +2064,9 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
   });
 
   it.each([
+    ["registry", 404],
+    ["registry", 401],
+    ["registry", 500],
     ["tarball URL", 404],
     ["tarball URL", 500],
     ["GitHub", 404],
@@ -2011,16 +2102,19 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
   });
 
   // Its turn comes after the one of `good`, and its download does not wait for that turn.
-  it.each(["tarball URL", "GitHub"] as const)("%s: `bun update` asks for it before its turn", async kind => {
-    using p = await project(kind, { in: "member", member: { dependencies: { good: "^1.0.0" } } });
-    const before = await p.install();
-    p.holdGood();
-    expect(await p.run("update")).toMatchObject({ warnings: [], errors: [], saved: false, exitCode: 0 });
-    expect(await p.written()).toEqual(before);
-  });
+  it.each(["registry", "tarball URL", "GitHub"] as const)(
+    "%s: `bun update` asks for it before its turn",
+    async kind => {
+      using p = await project(kind, { in: "member", member: { dependencies: { good: "^1.0.0" } } });
+      const before = await p.install();
+      p.holdGood();
+      expect(await p.run("update")).toMatchObject({ warnings: [], errors: [], saved: false, exitCode: 0 });
+      expect(await p.written()).toEqual(before);
+    },
+  );
 
   // A tarball is not read again by a command that does not save.
-  it.each(["GitHub", "git"] as const)("%s: `bun update --no-save` leaves it installed", async kind => {
+  it.each(["registry", "GitHub", "git"] as const)("%s: `bun update --no-save` leaves it installed", async kind => {
     using p = await project(kind);
     const before = await p.install();
     p.lose();
@@ -2036,8 +2130,8 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
     expect(await p.written()).toEqual(before);
   });
 
-  it("GitHub: `bun update --silent` prints nothing", async () => {
-    using p = await project("GitHub");
+  it.each(["registry", "GitHub"] as const)("%s: `bun update --silent` prints nothing", async kind => {
+    using p = await project(kind);
     const before = await p.install();
     p.lose();
     expect(await p.run("update", "--silent")).toMatchObject({ err: "", out: "", exitCode: 0 });
@@ -2053,8 +2147,10 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
       expect(await p.written()).toEqual(before);
     });
 
-    it.each(["--production", "--depth 0", "*-dep"])("GitHub: `bun update %s`", async selector => {
-      using p = await project("GitHub");
+    const selectors = ["--production", "--depth 0", "*-dep"];
+    const selected = (["registry", "GitHub"] as const).flatMap(kind => selectors.map(selector => [kind, selector]));
+    it.each(selected as ["registry" | "GitHub", string][])("%s: `bun update %s`", async (kind, selector) => {
+      using p = await project(kind);
       const before = await p.install();
       p.lose();
       expect(await p.run("update", ...selector.split(" "))).toMatchObject(p.failed());
@@ -2143,20 +2239,23 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
   });
 
   // What bun.lock has is what gets installed. A required dependency of the kept package is an error there.
-  it("GitHub: with an empty cache, `bun update` fails like `bun install` for a dependency of the kept package", async () => {
-    using p = await project("GitHub", { package: { dependencies: { child: "^1.0.0" } } });
-    await p.register({ name: "child", version: "1.0.0" });
-    const before = await p.install();
-    p.lose();
-    p.loseTarballOf("child");
-    p.removeInstalled();
-    rmSync(p.path(".bun-cache"), { recursive: true, force: true });
-    for (const command of ["update", "install"]) {
-      const errors = [`error: GET ${p.origin}/child-1.0.0.tgz - 503`];
-      expect(await p.run(command)).toMatchObject({ errors, saved: false, exitCode: 1 });
-      expect(await p.written()).toEqual(before);
-    }
-  });
+  it.each(["registry", "GitHub"] as const)(
+    "%s: with an empty cache, `bun update` fails like `bun install` for a dependency of the kept package",
+    async kind => {
+      using p = await project(kind, { package: { dependencies: { child: "^1.0.0" } } });
+      await p.register({ name: "child", version: "1.0.0" });
+      const before = await p.install();
+      p.lose();
+      p.loseTarballOf("child");
+      p.removeInstalled();
+      rmSync(p.path(".bun-cache"), { recursive: true, force: true });
+      for (const command of ["update", "install"]) {
+        const errors = [`error: GET ${p.origin}/child-1.0.0.tgz - 503`];
+        expect(await p.run(command)).toMatchObject({ errors, saved: false, exitCode: 1 });
+        expect(await p.written()).toEqual(before);
+      }
+    },
+  );
 
   // Up to Bun 1.4.3, bun.lock does not say which entries have no package. Reading one binds such an entry to any
   // package of its name.
@@ -2243,5 +2342,459 @@ describe.concurrent("a locked optional dependency whose source cannot be read ag
       exitCode: 0,
     });
     expect([await p.locked(), await p.installed()]).toEqual([[], undefined]);
+  });
+
+  // What the entry asks for only has to lead to the version that bun.lock has.
+  it.each([
+    ["an exact version", "registry-dep", "1.0.0", "1.0.0"],
+    ["a dist-tag", "registry-dep", "latest", "1.1.0"],
+    ["an `npm:` alias", "alias-dep", "npm:registry-dep@^1.0.0", "1.1.0"],
+  ])(
+    "registry: an entry that asks for %s keeps the package, and moves it when the registry answers",
+    async (_, key, entry, moved) => {
+      using p = await project("registry", { key });
+      await p.declare(entry);
+      const before = await p.install();
+      p.lose(404);
+      expect(await p.run("update")).toMatchObject(p.kept(404));
+      expect(await p.written()).toEqual(before);
+
+      p.restore();
+      await p.publish("1.1.0");
+      expect(await p.run("update")).toMatchObject({ warnings: [], errors: [], exitCode: 0 });
+      expect(await p.installed()).toBe(moved);
+    },
+  );
+
+  it("registry: an entry whose new range accepts the version of bun.lock keeps the package", async () => {
+    using p = await project("registry");
+    await p.install();
+    await p.declare(">=1.0.0 <2");
+    const [, ...manifests] = await p.written();
+    p.lose(404);
+    // bun.lock gets the new range.
+    expect(await p.run("update")).toMatchObject({ ...p.kept(404), saved: true });
+    expect([await p.locked(), (await p.written()).slice(1)]).toEqual([[p.id], manifests]);
+    await expectInstallable(p);
+  });
+
+  // bun.lock has 1.1.0 for `^1.0.0`. An update that reads the manifest writes `^1.1.0` to package.json.
+  it.each(["root", "member"] as const)(
+    "registry: `bun update` leaves the range that the %s has for the package",
+    async declaredIn => {
+      using p = await project("registry", { in: declaredIn });
+      await p.publish("1.1.0");
+      const before = await p.install("1.1.0");
+      p.lose(404);
+      const cwd = declaredIn === "member" ? "packages/member" : ".";
+      for (const flags of [[], ["--latest"], ["-r"], ["--filter", "*"]]) {
+        expect(await p.runIn(cwd, "update", ...flags)).toMatchObject(p.kept(404));
+        expect(await p.written()).toEqual(before);
+      }
+    },
+  );
+
+  // The workspace has the key for another package, and that entry moves.
+  it("registry: `bun update -r` still writes the entry that a workspace has under the same key", async () => {
+    const entry = { "registry-dep": "npm:good@^1.0.0" };
+    using p = await project("registry", { member: { optionalDependencies: entry } });
+    await p.publish("1.1.0");
+    await p.install("1.1.0");
+    await p.register({ name: "good", version: "1.1.0" });
+    p.lose(404);
+    expect(await p.run("update", "-r")).toMatchObject({ ...p.kept(404), saved: true });
+    const [root, member] = (await p.written()).slice(1).map(manifest => JSON.parse(manifest).optionalDependencies);
+    expect([root, member]).toEqual([{ "registry-dep": "^1.0.0" }, { "registry-dep": "npm:good@^1.1.0" }]);
+  });
+
+  it("registry: `bun update` keeps the package when the connection ends before the manifest does", async () => {
+    using p = await project("registry");
+    const before = await p.install();
+    p.lose(0);
+    expect(await p.run("update")).toMatchObject(p.kept(0));
+    expect(await p.written()).toEqual(before);
+  });
+
+  it("registry: `bun update` says once that a package was not checked that an installed package has too", async () => {
+    using p = await project("registry", { root: { dependencies: { parent: "^1.0.0" } } });
+    await p.register({ name: "parent", version: "1.0.0", dependencies: { "registry-dep": "^1.0.0" } });
+    const before = await p.install();
+    p.lose(404);
+    expect(await p.run("update")).toMatchObject(p.kept(404));
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The registry answered, so this is what it has now.
+  it("registry: a manifest that lists no version in the range does not keep the package", async () => {
+    using p = await project("registry");
+    await p.install();
+    p.unpublish("1.0.0");
+    await p.publish("2.0.0");
+    expect(await p.run("update")).toMatchObject({ warnings: [], errors: [], saved: true, exitCode: 0 });
+    expect(await p.locked()).toEqual([]);
+  });
+
+  it.each([
+    ["an entry that an `overrides` rule sets", { overrides: { "registry-dep": "^1.0.0" } }, "^1.0.0"],
+    // The rule does not apply to the entry. It only has the name of its package.
+    [
+      "an entry whose package a rule below another package names",
+      { overrides: { good: { "registry-dep": "1.0.0" } } },
+      "^1.0.0",
+    ],
+    [
+      "an entry that a catalog sets",
+      { workspaces: { packages: ["packages/*"], catalog: { "registry-dep": "^1.0.0" } } },
+      "catalog:",
+    ],
+  ])("registry: %s does not keep the package", async (_, root, entry) => {
+    using p = await project("registry", { root });
+    await p.declare(entry);
+    await p.install();
+    p.lose();
+    expect(await p.run("update")).toMatchObject({ unchecked: 0, errors: [], saved: true, exitCode: 0 });
+    expect(await p.locked()).toEqual([]);
+  });
+
+  // A registry package has one manifest for every entry, so its name selects an entry with another key too.
+  it.each(["alias-dep", "registry-dep"])("registry: `bun update %s` fails for the entry `alias-dep`", async request => {
+    using p = await project("registry", { key: "alias-dep" });
+    await p.declare("npm:registry-dep@^1.0.0");
+    const before = await p.install();
+    p.lose();
+    expect(await p.run("update", request)).toMatchObject(p.failed());
+    expect(await p.written()).toEqual(before);
+  });
+
+  // No request is sent, so none fails the command. The package stays, also when the command selects the entry.
+  describe("registry: `--offline` without the manifest in the cache", () => {
+    it.each(["", "registry-dep", "--production", "--depth 0", "*-dep"])(
+      "`bun update %s` keeps the package",
+      async selector => {
+        using p = await project("registry");
+        // bun.lock has 1.1.0 for `^1.0.0`, so a command that writes the entry changes package.json.
+        await p.publish("1.1.0");
+        const before = await p.install("1.1.0");
+        p.forgetManifest();
+        const warnings = [`warn: ${p.id} was not checked for updates`];
+        const args = selector.split(" ").filter(Boolean);
+        expect(await p.run("update", ...args, "--offline")).toMatchObject({ ...p.kept(), warnings });
+        expect(await p.written()).toEqual(before);
+      },
+    );
+
+    it.each(["alias-dep", "registry-dep"])(
+      "`bun update %s` keeps the package of the entry `alias-dep`",
+      async request => {
+        using p = await project("registry", { key: "alias-dep" });
+        await p.declare("npm:registry-dep@^1.0.0");
+        await p.publish("1.1.0");
+        const before = await p.install("1.1.0");
+        p.forgetManifest();
+        const warnings = [`warn: ${p.id} was not checked for updates`];
+        expect(await p.run("update", request, "--offline")).toMatchObject({ ...p.kept(), warnings });
+        expect(await p.written()).toEqual(before);
+      },
+    );
+  });
+
+  // bun refuses the URL, so no request is made and no request fails.
+  it.each(["", "@scope/dep"])(
+    "registry: `bun update %s` keeps the package when no request can be made to the registry of the scope",
+    async request => {
+      using p = await project("registry", { root: { optionalDependencies: { "@scope/dep": "^1.0.0" } } });
+      await p.register({ name: "@scope/dep", version: "1.0.0" });
+      const before = await p.install();
+      const bunfig = Bun.TOML.parse(await file(p.path("bunfig.toml")).text()) as { install: object };
+      const install = { ...bunfig.install, scopes: { scope: "ftp://localhost/" } };
+      await writeFile(p.path("bunfig.toml"), Bun.TOML.stringify({ install }));
+      const warnings = [
+        "warn: @scope/dep@1.0.0 was not checked for updates",
+        "warn: Registry URL must be http:// or https://",
+        "warn: InvalidURL",
+      ];
+      const args = ["update", request].filter(Boolean);
+      expect(await p.run(...args)).toMatchObject({ warnings, errors: [], saved: false, exitCode: 0 });
+      expect(await p.written()).toEqual(before);
+    },
+  );
+
+  // Another cache served the update to 1.1.0, so the manifest in the cache of the project is from before 1.1.0.
+  it("registry: a cached manifest that lacks the range is not an answer", async () => {
+    using p = await project("registry");
+    await p.install();
+    await p.publish("1.1.0");
+    const moved = { errors: [], saved: true, exitCode: 0 };
+    expect(await p.run("update", "--cache-dir", p.path(".other-cache"))).toMatchObject(moved);
+    const before = await p.written();
+    const line = "warn: registry-dep@1.1.0 was not checked for updates";
+    const kept = { unchecked: 1, errors: [], saved: false, exitCode: 0 };
+    expect(await p.run("update", "--offline")).toMatchObject({ ...kept, warnings: [line] });
+    expect(await p.run("update", "registry-dep", "--offline")).toMatchObject({ ...kept, warnings: [line] });
+    // `--prefer-offline` asks the registry for what the cache lacks, and the registry does not answer.
+    p.lose(404);
+    const unanswered = [`${line}: ${p.unread(404)[0].slice("warn: ".length)}`];
+    expect(await p.run("update", "--prefer-offline")).toMatchObject({ ...kept, warnings: unanswered });
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The registry answered. The age gate refuses every version in the range, and the one of bun.lock is gone.
+  it("registry: a manifest that only has versions that are too new does not keep the package", async () => {
+    using p = await project("registry");
+    await p.install();
+    p.unpublish("1.0.0");
+    await p.publish("1.1.0");
+    p.publishedAt("1.1.0", new Date());
+    const left = { warnings: [], errors: [], saved: true, exitCode: 0 };
+    expect(await p.run("update", "--minimum-release-age", "86400")).toMatchObject(left);
+    expect(await p.locked()).toEqual([]);
+  });
+
+  it("registry: an entry that asks for a tag keeps the package, moves with the tag, and goes with the tag", async () => {
+    using p = await project("registry");
+    p.tag("beta", "1.0.0");
+    await p.declare("beta");
+    const before = await p.install();
+    p.lose(404);
+    expect(await p.run("update")).toMatchObject(p.kept(404));
+    expect(await p.written()).toEqual(before);
+
+    p.restore();
+    await p.publish("1.1.0");
+    p.tag("beta", "1.1.0");
+    const answered = { warnings: [], errors: [], saved: true, exitCode: 0 };
+    expect(await p.run("update")).toMatchObject(answered);
+    expect(await p.installed()).toBe("1.1.0");
+
+    p.tag("beta");
+    expect(await p.run("update")).toMatchObject(answered);
+    expect(await p.locked()).toEqual([]);
+  });
+
+  // `*` and an alias without a range take `latest`, which is a prerelease here. No range accepts a prerelease.
+  it.each([
+    ["registry-dep", "*"],
+    ["alias-dep", "npm:registry-dep@*"],
+    ["alias-dep", "npm:registry-dep"],
+  ])("registry: the entry `%s: %s` keeps a prerelease", async (key, entry) => {
+    using p = await project("registry", { key });
+    await p.publish("2.0.0-beta.1");
+    await p.declare(entry);
+    const before = await p.install("2.0.0-beta.1");
+    p.lose(404);
+    expect(await p.run("update")).toMatchObject(p.kept(404));
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The entry of the workspace follows the alias that the root has under the same key. It asks for `bar`, not
+  // for a package of its own name, and has no package while `bar` is read again.
+  it("registry: an entry that follows an `npm:` alias of the root under its key does not keep the package", async () => {
+    const alias = { "registry-dep": "npm:bar@^1.0.0" };
+    using p = await project("registry", { in: "member", root: { optionalDependencies: alias } });
+    await p.register({ name: "bar", version: "1.0.0" });
+    expect(await p.run("install")).toMatchObject({ warnings: [], errors: [], exitCode: 0 });
+    expect([await p.locked(), await p.locked("bar")]).toEqual([[], ["bar@1.0.0"]]);
+    p.refuse("bar", 404);
+    expect(await p.run("update")).toMatchObject({
+      warnings: [`warn: bar@1.0.0 was not checked for updates: GET ${p.origin}/bar - 404`],
+      errors: [],
+      saved: true,
+      exitCode: 0,
+    });
+    const { workspaces } = Bun.JSONC.parse(await file(p.path("bun.lock")).text()) as {
+      workspaces: Record<string, { unresolved?: string[] }>;
+    };
+    expect([await p.locked("bar"), workspaces[""].unresolved, workspaces["packages/member"].unresolved]).toEqual([
+      ["bar@1.0.0"],
+      undefined,
+      ["registry-dep"],
+    ]);
+  });
+
+  // `--latest` plans the dependencies of the named package after the resolve. The kept package is one of them.
+  it("registry: `bun update <name> --latest` says once that a dependency of <name> was not checked", async () => {
+    using p = await project("registry", { in: "member", member: { dependencies: { parent: "^1.0.0" } } });
+    await p.register({ name: "parent", version: "1.0.0", dependencies: { "registry-dep": "^1.0.0" } });
+    const before = await p.install();
+    p.lose(404);
+    expect(await p.runIn("packages/member", "update", "parent", "--latest")).toMatchObject(p.kept(404));
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The failed request ends the command. bun does not ask about the dependencies of the package that it keeps.
+  it.each(["registry", "GitHub"] as const)(
+    "%s: `bun update <name> --latest` asks nothing about the dependencies of the package",
+    async kind => {
+      using p = await project(kind, { package: { dependencies: { child: "^1.0.0" } } });
+      await p.register({ name: "child", version: "1.0.0" });
+      const before = await p.install();
+      p.lose();
+      p.requested();
+      expect(await p.run("update", p.name, "--latest")).toMatchObject(p.failed());
+      expect(p.requested().filter(path => path === "/child")).toEqual([]);
+      expect(await p.written()).toEqual(before);
+    },
+  );
+
+  // The deprecation message of `noisy` has the name of the kept package, and is logged first.
+  it("registry: `bun update` gives the failed request as the reason that the package was not checked", async () => {
+    using p = await project("registry", { root: { dependencies: { noisy: "^1.0.0" } } });
+    const deprecated = "use registry-dep instead";
+    await p.register({ name: "noisy", version: "1.0.0", deprecated });
+    expect(await p.run("install")).toMatchObject({ errors: [], exitCode: 0 });
+    await p.register({ name: "noisy", version: "1.1.0", deprecated });
+    p.lose(404);
+    expect(await p.run("update")).toMatchObject({
+      warnings: [
+        `warn: registry-dep@1.0.0 was not checked for updates: GET ${p.origin}/registry-dep - 404`,
+        `warn: deprecated noisy@1.1.0: ${deprecated}`,
+      ],
+      errors: [],
+      saved: true,
+      exitCode: 0,
+    });
+    expect([await p.locked(), await p.installed("noisy")]).toEqual([["registry-dep@1.0.0"], "1.1.0"]);
+  });
+
+  // The keys are in another order than the names of their packages.
+  it("registry: `bun update` lists the packages that were not checked in the order of their names", async () => {
+    const aliases = { "a-key": "npm:zzz@^1.0.0", "z-key": "npm:aaa@^1.0.0" };
+    using p = await project("registry", { root: { optionalDependencies: aliases } });
+    await p.register({ name: "aaa", version: "1.0.0" });
+    await p.register({ name: "zzz", version: "1.0.0" });
+    const before = await p.install();
+    p.lose(404);
+    p.refuse("aaa", 404);
+    p.refuse("zzz", 404);
+    const line = (name: string) => `warn: ${name}@1.0.0 was not checked for updates: GET ${p.origin}/${name} - 404`;
+    const warnings = [line("aaa"), line("registry-dep"), line("zzz")];
+    expect(await p.run("update")).toMatchObject({ ...p.kept(404), warnings, unchecked: 3 });
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The bytes of the tarball changed, so its dependencies are read again, whatever the command.
+  it.each(tarballs)("%s: `bun install --force` keeps an optional registry dependency of the package", async kind => {
+    using p = await project(kind, { package: { optionalDependencies: { child: "^1.0.0" } } });
+    await p.register({ name: "child", version: "1.0.0" });
+    await p.install();
+    await p.publish("1.0.1");
+    p.refuse("child", 404);
+    const forced = await p.run("install", "--force");
+    expect(forced).toMatchObject({ unchecked: 0, errors: [], exitCode: 0 });
+    expect(forced.warnings).toContain(`warn: GET ${p.origin}/child - 404`);
+    expect([await p.locked("child"), await p.installed()]).toEqual([["child@1.0.0"], "1.0.1"]);
+  });
+
+  describe("registry: an installed registry package declares it", () => {
+    // The command has no entry of a package.json to fail for.
+    it("`bun update <name> --offline` keeps the package, and `bun update <name>` moves it", async () => {
+      using p = await project("registry", { in: "registry package" });
+      const before = await p.install();
+      p.forgetManifest();
+      const warnings = [`warn: ${p.id} was not checked for updates`];
+      expect(await p.run("update", "registry-dep", "--offline")).toMatchObject({ ...p.kept(), warnings });
+      expect(await p.written()).toEqual(before);
+
+      await p.publish("1.1.0");
+      expect(await p.run("update", "registry-dep")).toMatchObject({
+        warnings: [],
+        errors: [],
+        saved: true,
+        exitCode: 0,
+      });
+      expect(await p.installed()).toBe("1.1.0");
+    });
+
+    it("`bun update <key>` keeps the package of an `npm:` alias", async () => {
+      using p = await project("registry", { in: "registry package", key: "alias-dep" });
+      await p.declare("npm:registry-dep@^1.0.0");
+      const before = await p.install();
+      p.lose(404);
+      expect(await p.run("update", "alias-dep")).toMatchObject(p.kept(404));
+      expect(await p.written()).toEqual(before);
+    });
+
+    // `--latest` plans the dependencies of `parent` after the resolve. The failed one is not one of them.
+    it.each(["registry-dep", "parent registry-dep --latest"])(
+      "`bun update %s` fails when the request for the manifest of the package fails",
+      async selector => {
+        using p = await project("registry", { in: "registry package" });
+        const before = await p.install();
+        p.lose();
+        expect(await p.run("update", ...selector.split(" "))).toMatchObject(p.failed());
+        expect(await p.written()).toEqual(before);
+      },
+    );
+  });
+
+  // A peer dependency takes the package of the entry. An entry without a package provides nothing, and the peer
+  // dependency then asks the registry itself.
+  describe("registry: a peer dependency on the kept package", () => {
+    it("`bun update --offline` keeps the package that a workspace has as a peer dependency", async () => {
+      using p = await project("registry", { member: { peerDependencies: { "registry-dep": "^2.0.0" } } });
+      const before = await p.install();
+      p.forgetManifest();
+      const warnings = [`warn: ${p.id} was not checked for updates`];
+      expect(await p.run("update", "--offline")).toMatchObject({ ...p.kept(), warnings });
+      expect(await p.written()).toEqual(before);
+    });
+
+    // No bound of `^1.0.0` satisfies `^1.1.0`, so the peer dependency does not follow the alias by its name.
+    it.each([
+      ["no package", false],
+      ["a package", true],
+    ])(
+      "a peer dependency on the key of an `npm:` alias asks the registry nothing, which has %s of that name",
+      async (_, published) => {
+        using p = await project("registry", {
+          key: "alias-dep",
+          member: { peerDependencies: { "alias-dep": "^1.1.0" } },
+        });
+        if (published) await p.register({ name: "alias-dep", version: "1.1.0" });
+        await p.declare("npm:registry-dep@^1.0.0");
+        await p.publish("1.1.0");
+        const before = await p.install("1.1.0");
+        p.lose(404);
+        p.asked();
+        expect(await p.run("update")).toMatchObject(p.kept(404));
+        expect(p.asked()).toEqual(["/registry-dep"]);
+        expect(await p.written()).toEqual(before);
+      },
+    );
+
+    // The entry of the root stays as written. The peer range of the workspace is written as on a run that reads the
+    // manifest, which main does too.
+    it("`bun update -r` writes the peer range of a workspace for the kept package", async () => {
+      using p = await project("registry", { member: { peerDependencies: { "registry-dep": "^1.0.0" } } });
+      await p.publish("1.1.0");
+      await p.install("1.1.0");
+      p.lose(404);
+      expect(await p.run("update", "-r")).toMatchObject({ ...p.kept(404), saved: true });
+      const [root, member] = (await p.written()).slice(1).map(manifest => JSON.parse(manifest));
+      expect([root.optionalDependencies, member.peerDependencies]).toEqual([
+        { "registry-dep": "^1.0.0" },
+        { "registry-dep": "^1.1.0" },
+      ]);
+    });
+
+    // `asker` moves to a version whose peer range rejects the version that the kept package shares with it.
+    it("the kept package keeps the version of the peer dependency that it shares", async () => {
+      using p = await project("registry", {
+        package: { peerDependencies: { shared: "^1.0.0" } },
+        root: { dependencies: { asker: "^1.0.0" } },
+      });
+      await p.register({ name: "asker", version: "1.0.0", peerDependencies: { shared: "^1.0.0" } });
+      await p.register({ name: "shared", version: "1.0.0" });
+      await p.install();
+      await p.register({ name: "asker", version: "1.1.0", peerDependencies: { shared: "^2.0.0" } });
+      await p.register({ name: "shared", version: "2.0.0" });
+      p.lose(404);
+      expect(await p.run("update")).toMatchObject({ ...p.kept(404), saved: true });
+      expect([await p.locked("asker"), await p.locked(), await p.locked("shared")]).toEqual([
+        ["asker@1.1.0"],
+        ["registry-dep@1.0.0"],
+        ["shared@1.0.0"],
+      ]);
+    });
   });
 });

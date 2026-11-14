@@ -66,34 +66,22 @@ pub trait VecExt<T>: Sized {
     where
         T: Copy;
     fn ordered_remove(&mut self, index: usize) -> T;
-    /// # Safety
-    /// Exposes `self[len..capacity]` as initialized. Every element must be
-    /// overwritten before any read (including Drop). Prefer
-    /// [`reserve_spare`] for `T` with validity invariants.
-    unsafe fn expand_to_capacity(&mut self);
-    /// # Safety
-    /// Returns `&mut [T]` over `additional` uninitialized elements. Caller
-    /// must fully initialize the slice before any read/drop. Prefer
-    /// [`reserve_spare`] + `set_len` for non-POD `T`. Uses `reserve_exact` so the allocation grows
-    /// to *exactly* `len + additional`. Use when the buffer is the final
-    /// single-shot blob (sourcemap finalize, etc.).
-    unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];
     /// Reserves `additional` and returns the first `additional` slots of
-    /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice_exact`]:
+    /// spare capacity as `MaybeUninit<T>`. The
     /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
-    /// `reserve(additional)` then [`expand_to_capacity`], returning the
+    /// `reserve(additional)` then `set_len(capacity)`, returning the
     /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
     /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
-    /// Unlike [`writable_slice_exact`] this exposes the *full* over-allocated
+    /// This exposes the *full* over-allocated
     /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
     /// callee can use the allocator's slack. Pass `additional = 0` when the
     /// caller has already reserved.
     ///
     /// # Safety
-    /// Same as [`expand_to_capacity`]: every byte in `[prev_len, cap)` must be
+    /// Every byte in `[prev_len, cap)` must be
     /// written by the FFI callee (or `len` truncated back) before any read.
     unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize);
 
@@ -276,20 +264,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn ordered_remove(&mut self, index: usize) -> T {
         self.remove(index)
-    }
-    #[inline]
-    unsafe fn expand_to_capacity(&mut self) {
-        // SAFETY: caller contract — every element in `[len, cap)` is written
-        // before being observed.
-        unsafe { self.set_len(self.capacity()) };
-    }
-    #[inline]
-    unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T] {
-        self.reserve_exact(additional);
-        let prev = self.len();
-        // SAFETY: caller contract — slice fully written before any read.
-        unsafe { self.set_len(prev + additional) };
-        &mut self[prev..]
     }
     #[inline]
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>] {

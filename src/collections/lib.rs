@@ -376,18 +376,9 @@ impl<T, const N: usize> SmallList<T, N> {
             self.0.reserve_exact(new_capacity as usize - cur);
         }
     }
-    /// Exposed as safe: every current external caller only shrinks
-    /// (`new_len <= len`). Growing past the initialised region is the
-    /// caller's responsibility.
     #[inline]
-    pub fn set_len(&mut self, new_len: u32) {
-        // SAFETY: a raw length store. All current external callers only
-        // shrink (`new_len <= self.len()`), so `[0..new_len]` stays
-        // initialised and `new_len <= capacity`, satisfying
-        // `SmallVec::set_len`'s preconditions (the truncated tail merely
-        // leaks). Any caller that grows takes responsibility for
-        // initialising the exposed region.
-        unsafe { self.0.set_len(new_len as usize) }
+    pub fn truncate(&mut self, new_len: u32) {
+        self.0.truncate(new_len as usize);
     }
 
     // ── conversion / clone ─────────────────────────────────────────────────

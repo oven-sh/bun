@@ -820,8 +820,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, rusage),
+        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
     }
 }
 
@@ -1091,8 +1090,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&self.manager.event_loop);
-        let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
-        let process: *mut Process = process_handle.as_ptr();
+        let process = std::mem::take(spawned).to_process_handle(event_loop);
+        let process = self.process.insert(process).this_ptr();
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter
@@ -1100,13 +1099,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         // inside this frame, so from here on we touch `*self` only through
         // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
-        // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
-        // (refcount == 1, owned by us); `parent` was just derived from
-        // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
-        unsafe {
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
-            (*parent).process = Some(process_handle);
-        }
+        // SAFETY: `parent` was just derived from `&mut self`, and its `Drop` detaches `process`.
+        let handler = unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, parent) };
+        process.set_exit_handler(handler);
 
         // Assign the field BEFORE `start()`. `start()` may complete the write synchronously
         // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
@@ -1155,12 +1150,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
         drop(writer_local);
 
-        // SAFETY: `process` is live (we hold a ref); reached via the local raw
-        // ptr per the single-provenance note. `watch_or_reap` may re-enter
-        // `on_process_exit` synchronously (already-exited child).
-        match unsafe { (*process).watch_or_reap() } {
-            Err(_) => return Err(crate::Error::ProcessWatchFailed),
-            Ok(_) => {}
+        // May re-enter `on_process_exit` synchronously (already-exited child).
+        if Process::watch_or_reap(process).is_err() {
+            return Err(crate::Error::ProcessWatchFailed);
         }
 
         scopeguard::ScopeGuard::into_inner(guard);
@@ -1200,7 +1192,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         true
     }
 
-    pub(crate) fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, status: Status, _: &Rusage) {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {

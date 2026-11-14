@@ -283,7 +283,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// A `.then(cb)` can reach the wrapper, so `deinit_if_we_can` moves the Strong into the task that resolves the promise.
     pub(crate) all_closed_promise: JsCell<jsc::JSPromiseStrong>,
 
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
 
     pub(crate) flags: core::cell::Cell<ServerFlags>,
 
@@ -1655,14 +1655,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Once `is_closed()`, nothing is left that would ever `unref()` again
         // (`deinit_if_we_can` already dropped the loop ref), so a ref taken
         // here would pin the process forever.
-        if self.poll_ref.get().is_active() || self.is_closed() {
+        if self.poll_ref.is_active() || self.is_closed() {
             return;
         }
-        self.poll_ref.with_mut(|r| r.ref_(self.vm.loop_ctx()));
+        self.poll_ref.ref_(self.vm.loop_ctx());
     }
 
     pub(crate) fn unref(&self) {
-        self.poll_ref.with_mut(|r| r.unref(self.vm.loop_ctx()));
+        self.poll_ref.unref(self.vm.loop_ctx());
     }
 
     pub(crate) fn stop_listening(&self, abrupt: bool) {
@@ -2097,7 +2097,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // ~816 KB mux pool; `listen()` materializes it on demand.
             mux_request_pool: core::cell::Cell::new(core::ptr::null_mut()),
             all_closed_promise: JsCell::new(jsc::JSPromiseStrong::default()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             flags: core::cell::Cell::new(ServerFlags::default()),
             plugins: JsCell::new(None),
             user_routes: JsCell::new(Vec::new()),

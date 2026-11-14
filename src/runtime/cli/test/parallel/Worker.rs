@@ -327,16 +327,14 @@ impl Worker {
             let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }
 
-        let process: *mut Process = this.process.as_ref().expect("set above").as_ptr();
-        // SAFETY: just spawned; sole owner until reaped.
-        let process = unsafe { &mut *process };
+        let process = this.process.as_ref().expect("set above").this_ptr();
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
-                if let spawn::Poller::Uv(ref uv) = process.poller {
+                if let Some(handle) = process.os_handle() {
                     // SAFETY: FFI call; handles are valid (just spawned).
                     unsafe {
-                        let _ = bun_sys::windows::AssignProcessToJobObject(job, uv.process_handle);
+                        let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
                     }
                 }
             }
@@ -350,7 +348,7 @@ impl Worker {
                 &raw mut **this,
             )
         });
-        match process.watch_or_reap() {
+        match Process::watch_or_reap(process) {
             Ok(_) => {}
             Err(e) => {
                 // Surface to the caller (spawnWorker / onWorkerExit) instead of
@@ -369,7 +367,7 @@ impl Worker {
         Ok(())
     }
 
-    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, rusage: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, status: Status, rusage: &Rusage) {
         self.alive = false;
         let peak_rss_mb = (rusage.maxrss() / (1024.0 * 1024.0)) as u32;
         // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
@@ -404,8 +402,7 @@ impl Worker {
 
 bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, rusage),
+        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
     }
 }
 

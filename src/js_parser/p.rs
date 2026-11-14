@@ -5947,12 +5947,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         if !self.fn_only_data_visit.is_this_nested {
-            // In the REPL, top-level `this` must evaluate to the global object
-            // (matching Node's `> this` and `deno repl > this`). The REPL wraps
-            // user input in an arrow IIFE that has no `exports` binding, so the
-            // CommonJS substitution below would emit a reference to an
-            // undefined `exports`. Leaving `E::This` in place lets the arrow
-            // inherit `this` from the enclosing (global) scope at runtime.
+            // REPL input is a script even with `import` or `await`: `this` is the global object.
             if self.options.repl_mode {
                 return None;
             }
@@ -5964,10 +5959,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                     data: null_value_expr(),
                 });
-            } else {
+            } else if self.options.bundle || self.options.features.commonjs_at_runtime {
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
                 // Instead of doing this at runtime using "fn.call(module.exports)", we
                 // do it at compile time using expression substitution here.
+                // Only the bundler and runtime wrappers bind `exports`; transform-only output has none.
                 let exports_ref = self.exports_ref;
                 self.record_usage(exports_ref);
                 self.deoptimize_common_js_named_exports();

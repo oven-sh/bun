@@ -72,6 +72,18 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("console.log(this)");
       expect(result).not.toContain("console.log(exports)");
     });
+
+    test.each([
+      ["an import", 'import fs from "node:fs";\nvar g = this;'],
+      ["a top-level await", "var r = await Promise.resolve(1);\nvar g = this;"],
+    ])("top-level `this` is preserved when the same input has %s", (_, input) => {
+      // Neither makes a REPL submission an ES module, so `this` must not
+      // become the module value (`null`).
+      const result = transpiler.transformSync(input);
+      expect(result).toContain("g = this");
+      expect(result).not.toContain("g = null");
+      expect(result).not.toContain("exports");
+    });
   });
 
   describe("REPL session with node:vm", () => {

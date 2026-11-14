@@ -15,7 +15,7 @@ use std::ptr::NonNull;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum SymbolOrigin {
-    /// Declared in the file outside the function, or a global.
+    /// Declared in the file outside the function, a global, or the name that a function expression gives itself.
     Source,
     /// `namespace.name`, which the parser rewrote to a synthetic import.
     NamespaceMember(Ref),

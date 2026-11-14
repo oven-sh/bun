@@ -128,6 +128,14 @@ function expression). The bundler's renamer then numbers the new symbols like
 the locals of any other function. `Host::new_generated` is for a name declared
 at module level, such as an outlined `_temp`.
 
+The own name of a function expression is the one local that is not a new
+symbol: the function keeps the name it has, so a read of that name is a read of
+the parser's symbol. Upstream lowers the name to a local that nothing declares,
+and prints the function and the read under one text (facebook/react#38100 and
+facebook/react#37511 are open on it). `PendingCompile::own_name` goes to
+lowering, which tells codegen which identifier it became. The name of a nested
+function expression is still printed by its text.
+
 ### The compiler as a linter
 
 `bun lint` has the validations as rules (`react/refs`, `react-hooks/refs`, ...). `lint.rs` is upstream's

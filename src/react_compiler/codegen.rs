@@ -112,10 +112,21 @@ pub(crate) struct Codegen<'h> {
     well_known: [Option<Ref>; WellKnown::COUNT],
     name_to_ref: HashMap<StoreStr, Ref>,
     label_to_ref: IdMap<BlockId, Ref>,
+    own_name: Option<OwnName>,
+}
+
+/// Not in upstream (facebook/react#38100, facebook/react#37511): the name that a function expression declares in its
+/// own scope. The compiled function keeps the symbol of the parser for it, so a read of it is a read of `symbol` and
+/// not of a new one.
+#[derive(Clone, Copy)]
+pub(crate) struct OwnName {
+    /// What lowering made of the name.
+    pub(crate) declaration: DeclarationId,
+    pub(crate) symbol: Ref,
 }
 
 impl<'h> Codegen<'h> {
-    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h Arena) -> Self {
+    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h Arena, own_name: Option<OwnName>) -> Self {
         Codegen {
             host,
             arena,
@@ -123,6 +134,7 @@ impl<'h> Codegen<'h> {
             well_known: [None; WellKnown::COUNT],
             name_to_ref: HashMap::default(),
             label_to_ref: IdMap::new(),
+            own_name,
         }
     }
 
@@ -463,7 +475,15 @@ impl<'a, 'h> Context<'a, 'h> {
             self.cg.host.record_usage(r);
             return Ok(r);
         }
-        let Some(name) = &self.env.identifiers[id.0 as usize].name else {
+        let identifier = &self.env.identifiers[id.0 as usize];
+        if let Some(own_name) = self.cg.own_name
+            && identifier.declaration_id == own_name.declaration
+        {
+            self.cg.host.record_usage(own_name.symbol);
+            self.cg.id_to_ref.insert(id, own_name.symbol);
+            return Ok(own_name.symbol);
+        }
+        let Some(name) = &identifier.name else {
             return Err(unnamed_identifier_err(id.0));
         };
         let (IdentifierName::Named(s) | IdentifierName::Promoted(s)) = name;

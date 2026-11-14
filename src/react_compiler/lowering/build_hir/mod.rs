@@ -54,13 +54,20 @@ pub(super) use super::hir_builder::FunctionNode;
 type RefSet = crate::collections::FxHashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
+///
+/// Not in upstream (facebook/react#38100, facebook/react#37511): `own_name` is the name of `func`. A function
+/// expression declares it in its own scope, and a read of it is lowered to a local that nothing declares. Upstream
+/// prints the function and that read under one text. Here the function keeps the symbol of the parser, so this also
+/// returns the identifier that the reads became, for codegen to print that symbol. A declaration's name is bound
+/// outside of `func` and has no such identifier.
 pub(crate) fn lower(
     func: &FunctionNode<'_>,
     _id: Option<&str>,
     host: &dyn Host,
     env: &mut Environment,
     import_bindings: &IndexMap<Ref, VariableBinding>,
-) -> Result<HirFunction, CompilerError> {
+    own_name: Option<Ref>,
+) -> Result<(HirFunction, Option<IdentifierId>), CompilerError> {
     // Extract params, body, generator, is_async, loc, scope_id, and the AST function's own id
     // Note: `id` param may include inferred names (e.g., from `const Foo = () => {}`),
     // but the HIR function's `id` field should only include the function's own AST id
@@ -90,7 +97,7 @@ pub(crate) fn lower(
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
 
-    let (hir_func, _child_bindings) = lower_inner(
+    let (hir_func, bindings) = lower_inner(
         func,
         ast_id,
         loc,
@@ -108,7 +115,8 @@ pub(crate) fn lower(
         return Err(super::nested_too_deeply().into());
     }
 
-    Ok(hir_func)
+    let own_name_identifier = own_name.and_then(|name| bindings.get(&name).copied());
+    Ok((hir_func, own_name_identifier))
 }
 
 /// Port of upstream `lower_inner()` (build_hir.rs:5985).

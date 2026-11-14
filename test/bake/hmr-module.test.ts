@@ -1028,6 +1028,62 @@ test("server: a module whose require() was refused for a top-level await runs ag
   expect(take().filter(line => line.startsWith("route"))).toEqual(["route v1 1", "route failed", "route v2 1"]);
 });
 
+test("server: a module whose require() was refused on the first load runs again when the await is gone", async () => {
+  const { log, take, define, load, save } = await loader("server");
+  const x = (waits: boolean) =>
+    esm([], waits ? async hmr => void (hmr.exports = { x: 1 }) : hmr => void (hmr.exports = { x: 1 }), waits);
+  define({
+    route: esm(["lib"], (hmr, [lib]) => void (hmr.exports = { route: lib.lib })),
+    // `y` is refused for the top-level await of the module that it imports.
+    lib: esm([], hmr => void (hmr.exports = { lib: hmr.require("y").y })),
+    y: esm(["x"], (hmr, [x]) => void (hmr.exports = { y: "y" + x.x })),
+    x: x(true),
+  });
+  const request = async () =>
+    log(
+      await load("route").then(
+        (m: any) => m.route,
+        (e: Error) => e.message,
+      ),
+    );
+  await request();
+  await save({ x: x(false) });
+  await request();
+  expect(take()).toEqual([
+    `Cannot require "y" because "x" uses top-level await, but 'require' is a synchronous operation.`,
+    "y1",
+  ]);
+});
+
+for (const side of ["client", "server"] as const) {
+  test(side + ": an import() of a module that throws gives a rejected promise, each time", async () => {
+    const { log, take, define, load, save } = await loader(side);
+    const thrower = () => {
+      throw new Error("broken");
+    };
+    define({
+      app: esm([], hmr => {
+        hmr.accept();
+        for (const id of ["esm", "cjs", "above", "esm"]) {
+          const promise = hmr.dynamicImport(id);
+          promise.catch((e: Error) => log(id + ": " + e.message));
+        }
+        log("the body goes on");
+      }),
+      esm: esm([], thrower),
+      cjs: thrower,
+      above: esm(["esm"], () => {}),
+    });
+    await load("app");
+    await settleJobs();
+    expect(take()).toEqual(["the body goes on", "esm: broken", "cjs: broken", "above: broken", "esm: broken"]);
+    // The update that fixes the module still reaches the module with the import().
+    await save({ esm: esm([], hmr => void (hmr.exports = { fixed: true })) });
+    await settleJobs();
+    expect(take()).toEqual(["the body goes on", "cjs: broken"]);
+  });
+}
+
 describe("a module that an update holds only because it was bundled again with its importer", () => {
   const shared = (log: (line: string) => void, value: string) =>
     esm([], hmr => {

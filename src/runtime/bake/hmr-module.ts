@@ -197,6 +197,9 @@ export class HMRModule {
     let found: ReturnType<typeof loadModuleAsync<true>>;
     try {
       found = loadModuleAsync(id, true, this);
+    } catch (e) {
+      // `import()` does not throw. The module below can be one that the load registered before it failed.
+      found = Promise.reject(e);
     } finally {
       bodyLoads--;
     }
@@ -386,7 +389,16 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
       // The update that takes the top-level await away finds this importer through the edge.
-      if (mod && importer) addImporter(mod, importer);
+      if (importer) {
+        if (!mod) {
+          mod = new HMRModule(id, false);
+          mod.state = State.Stale;
+          // The evaluation that follows is the first one.
+          mod.evaluation = -1;
+          registry.set(id, mod);
+        }
+        addImporter(mod, importer);
+      }
       throw new AsyncImportError(id);
     }
     // After the refusal above, so that the module stays Stale for the async loader.

@@ -145,7 +145,6 @@ bitflags::bitflags! {
         const USES_EXPORT_KEYWORD = 1 << 2;
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
-        const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
         const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
@@ -256,9 +255,6 @@ impl<'arena> BundledAst<'arena> {
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
             commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
-            commonjs_module_exports_assigned_deoptimized: self
-                .flags
-                .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             directive: if self
                 .flags
                 .contains(Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
@@ -281,10 +277,6 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
         flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);
         flags.set(Flags::HAS_LAZY_EXPORT, ast.has_lazy_export);
-        flags.set(
-            Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
-            ast.commonjs_module_exports_assigned_deoptimized,
-        );
         flags.set(
             Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
             ast.directive.is_some_and(|d| d == b"use strict"),

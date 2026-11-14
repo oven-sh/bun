@@ -235,7 +235,7 @@ impl Default for New {
 
 #[derive(Clone, Copy)]
 pub enum Special {
-    /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
+    /// A source `module.exports`: as written, or the namespace in a file lifted to ESM.
     ModuleExports,
     /// `import.meta.hot`
     HotEnabled,
@@ -567,12 +567,7 @@ impl CommonJSExportIdentifier {
     }
 }
 
-/// The original variant of the dot expression must be known so that in the case that we
-/// - fail to convert this to ESM
-/// - ALSO see an assignment to `module.exports` (commonjs_module_exports_assigned_deoptimized)
-/// It must be known if `exports` or `module.exports` was written in source
-/// code, as the distinction will alter behavior. The fixup happens in the printer when
-/// printing this node.
+/// Which of `exports` or `module.exports` the source wrote. A wrapped file prints that one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CommonJSExportIdentifierBase {
     Exports,

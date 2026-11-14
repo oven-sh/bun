@@ -213,7 +213,7 @@ impl Channel {
         // The read callbacks are expressed via the `StreamReader` trait impl
         // below and routed through `read_start_ctx`, which stashes `self` in
         // `handle.data`.
-        let rc = pipe.read_start_ctx::<Self>(core::ptr::from_ref(self).cast_mut());
+        let rc = pipe.read_start_ctx::<Self>(self);
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
             bun_core::debug_warn!(
                 "Channel.adoptPipe: readStart failed: {}",
@@ -485,19 +485,15 @@ impl Channel {
 #[cfg(windows)]
 impl uv::StreamReader for Channel {
     #[inline]
-    fn on_read_alloc(this: &mut Self, _: usize) -> &mut [u8] {
-        this.backend.read_chunk.as_mut()
+    fn on_read_alloc(this: &Self, _: usize) -> *mut [u8] {
+        this.backend.read_chunk.as_ptr()
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         this.on_error(bun_sys::windows::translate_uv_error_to_e(err));
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
-        // `read_start_ctx`; `data` points into its `read_chunk` and is only
-        // read (copied by `ingest`).
-        let this = unsafe { &*this };
-        this.ingest(data);
+    fn on_read(this: &Self, nread: usize) {
+        this.ingest(&this.backend.read_chunk.get()[..nread]);
     }
 }

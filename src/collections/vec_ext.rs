@@ -406,18 +406,10 @@ pub trait ByteVecExt {
     fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
 
-    /// libuv `uv_alloc_cb`-style: ensure **at least** `suggested` bytes of
-    /// spare capacity past `len()`, typed `&mut [u8]` so the result can be
-    /// used directly as a `uv_buf_t` / `read(2)` target without a per-site
-    /// cast.
-    ///
-    /// # Safety
-    /// The returned bytes are **uninitialised**. Caller must only treat the
-    /// prefix actually written by the FFI/syscall as initialised (typically by
-    /// committing with [`uv_commit`]); the bytes must not be read before then.
-    unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8];
+    /// `suggested` bytes of spare capacity for libuv to read to.
+    fn uv_alloc_spare(&mut self, suggested: usize) -> *mut [u8];
     /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
-    /// returned by [`uv_alloc_spare_u8`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.
+    /// returned by [`uv_alloc_spare`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.
     ///
     /// # Safety
     /// The `nread` bytes at `[len, len + nread)` must have been initialised by
@@ -454,10 +446,9 @@ impl ByteVecExt for Vec<u8> {
         Ok((self.len() - initial) as u32)
     }
     #[inline]
-    unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
-        // SAFETY: caller contract on `uv_alloc_spare_u8` — the returned uninit
-        // bytes are only read after the FFI-written prefix is committed.
-        unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
+    fn uv_alloc_spare(&mut self, suggested: usize) -> *mut [u8] {
+        self.reserve(suggested);
+        &raw mut self.spare_capacity_mut()[..suggested] as *mut [u8]
     }
     #[inline]
     unsafe fn uv_commit(&mut self, nread: usize) {

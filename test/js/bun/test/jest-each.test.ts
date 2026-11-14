@@ -457,3 +457,218 @@ it("prints rows that are not an array as the messages of matchers print values",
   // @ts-expect-error
   expect(() => it.each("text")).toThrow("Expected array, got text");
 });
+
+// Jest 30.5.2 tests the table and each row with Array.isArray(), which is true for a Proxy of an array.
+describe.concurrent("a Proxy of an array", () => {
+  async function run(source: string) {
+    using dir = tempDir("jest-each-proxy", {
+      "each.test.ts": `
+        import { describe, test } from "bun:test";
+        const P = (target: any, handler = {}) => new Proxy(target, handler);
+        const show = (name: string, args: unknown[]) => console.log(name, args.length, JSON.stringify(args));
+        ${source}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "each.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      results: stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail|skip)\) /.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      exitCode,
+    };
+  }
+
+  it("is a table, and is a row that is spread", async () => {
+    expect(
+      await run(`
+        test.each(P([[1, 2], [3, 4]]))("table %i %i", (...args) => show("table", args));
+        // A row that is not spread leaves "b" to be a done callback, which nothing calls.
+        test.each([P([1, 2]), [3, 4]])("rows %i %i", (a, b) => show("rows", [a, b]), 500);
+        test.each([P([1, 2]), P([3, 4])])("proxies %i %i", (...args) => show("proxies", args));
+        test.each(P([1, 2]))("scalar %i", (...args) => show("scalar", args));
+        test.each([P(P([1, 2]))])("nested %i %i", (...args) => show("nested", args));
+        test.each([P([])])("empty", (...args) => show("empty", args));
+        const served = P([1, 2], { get: (target: any, key: any, receiver: any) => (key === "0" ? 9 : Reflect.get(target, key, receiver)) });
+        test.each([served])("served %i %i", (...args) => show("served", args));
+        describe.each(P([P([1, 2])]))("describe %i %i", (...args) => {
+          show("describe", args);
+          test("test", () => {});
+        });
+        test.skip.each(P([[1]]))("skipped %i", () => {});
+        // The table is read when the function that each() returned is called.
+        const target = [[1, 2]];
+        const late = test.each(P(target));
+        target.push([3, 4]);
+        late("late %i %i", (...args) => show("late", args));
+        late("again %i %i", (...args) => show("again", args));
+        // A trap runs in the middle of the read, as a getter of an array does.
+        let reads = 0;
+        const registers = P([1, 2], {
+          get(target: any, key: any, receiver: any) {
+            if (key === "0" && reads++ === 0) test("from a trap", () => {});
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        test.each([registers])("registers %i %i", (...args) => show("registers", args));
+      `),
+    ).toEqual({
+      log: [
+        "describe 2 [1,2]",
+        "table 2 [1,2]",
+        "table 2 [3,4]",
+        "rows 2 [1,2]",
+        "rows 2 [3,4]",
+        "proxies 2 [1,2]",
+        "proxies 2 [3,4]",
+        "scalar 1 [1]",
+        "scalar 1 [2]",
+        "nested 2 [1,2]",
+        "empty 0 []",
+        "served 2 [9,2]",
+        "late 2 [1,2]",
+        "late 2 [3,4]",
+        "again 2 [1,2]",
+        "again 2 [3,4]",
+        "registers 2 [1,2]",
+      ],
+      results: [
+        "(pass) table 1 2",
+        "(pass) table 3 4",
+        "(pass) rows 1 2",
+        "(pass) rows 3 4",
+        "(pass) proxies 1 2",
+        "(pass) proxies 3 4",
+        "(pass) scalar 1",
+        "(pass) scalar 2",
+        "(pass) nested 1 2",
+        "(pass) empty",
+        "(pass) served 9 2",
+        "(pass) describe 1 2 > test",
+        "(skip) skipped 1",
+        "(pass) late 1 2",
+        "(pass) late 3 4",
+        "(pass) again 1 2",
+        "(pass) again 3 4",
+        "(pass) from a trap",
+        "(pass) registers 1 2",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // jest-each spreads the rows only if every row is an array. A check of the row alone would spread these Proxy rows.
+  it("is not spread among rows that are not arrays", async () => {
+    expect(
+      await run(`
+        test.each([P([1, 2]), 3])("mixed %#", (...args) => show("mixed", args));
+        test.each([P([1, 2]), P([3, 4]), 5])("proxies %#", (...args) => show("proxies", args));
+        test.each([undefined, P([1, 2]), {}])("values %#", (...args) => show("values", args));
+        // Not as in Jest: "bun:test" spreads an array whatever the other rows are.
+        test.each([[1, 2], P([3, 4]), 5])("with an array %#", (...args) => show("with an array", args));
+      `),
+    ).toEqual({
+      log: [
+        "mixed 1 [[1,2]]",
+        "mixed 1 [3]",
+        "proxies 1 [[1,2]]",
+        "proxies 1 [[3,4]]",
+        "proxies 1 [5]",
+        "values 1 [null]",
+        "values 1 [[1,2]]",
+        "values 1 [{}]",
+        "with an array 2 [1,2]",
+        "with an array 1 [[3,4]]",
+        "with an array 1 [5]",
+      ],
+      results: [
+        "(pass) mixed 0",
+        "(pass) mixed 1",
+        "(pass) proxies 0",
+        "(pass) proxies 1",
+        "(pass) proxies 2",
+        "(pass) values 0",
+        "(pass) values 1",
+        "(pass) values 2",
+        "(pass) with an array 0",
+        "(pass) with an array 1",
+        "(pass) with an array 2",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  it("throws the TypeError of Array.isArray() once it is revoked, and is not an array if its target is not", async () => {
+    expect(
+      await run(`
+        const attempt = (name: string, fn: () => unknown) => {
+          try {
+            fn();
+            console.log(name + ": accepted");
+          } catch (error: any) {
+            console.log(name + ": " + error.name + ": " + error.message.split("\\n")[0]);
+          }
+        };
+        const revoked = (target: object) => {
+          const { proxy, revoke } = Proxy.revocable(target, {});
+          revoke();
+          return proxy;
+        };
+        attempt("table", () => test.each(revoked([[1]])));
+        attempt("table of describe", () => describe.each(revoked([[1]])));
+        const late = Proxy.revocable([[1]], {});
+        const each = test.each(late.proxy);
+        late.revoke();
+        attempt("table, after each()", () => each("revoked table", () => {}));
+        attempt("array-like", () => test.each(P({ 0: [1], length: 1 })));
+
+        // jest-each asks the rows in order, and stops at the first that is not an array.
+        const row = revoked([1]);
+        const whole = (name: string) => (...args: unknown[]) => console.log(name, args.length, args[0] === row);
+        attempt("only row", () => test.each([row])("only row", whole("only row")));
+        attempt("before a number", () => test.each([row, 1])("before a number %#", whole("before a number")));
+        attempt("after an array", () => test.each([[1], row])("after an array %#", whole("after an array")));
+        attempt("after a number", () => test.each([1, row])("after a number %#", whole("after a number")));
+        attempt("after an array and a number", () =>
+          test.each([[1, 2], 3, row])("after an array and a number %#", whole("after an array and a number")),
+        );
+      `),
+    ).toEqual({
+      log: [
+        "table: TypeError: Array.isArray cannot be called on a Proxy that has been revoked",
+        "table of describe: TypeError: Array.isArray cannot be called on a Proxy that has been revoked",
+        "table, after each(): TypeError: Proxy has already been revoked. No more operations are allowed to be performed on it",
+        "array-like: Error: Expected array, got {",
+        "only row: TypeError: Array.isArray cannot be called on a Proxy that has been revoked",
+        "before a number: TypeError: Array.isArray cannot be called on a Proxy that has been revoked",
+        "after an array: TypeError: Array.isArray cannot be called on a Proxy that has been revoked",
+        "after a number: accepted",
+        "after an array and a number: accepted",
+        // The array before the revoked row was registered before the error.
+        "after an array 1 false",
+        "after a number 1 false",
+        "after a number 1 true",
+        "after an array and a number 2 false",
+        "after an array and a number 1 false",
+        "after an array and a number 1 true",
+      ],
+      results: [
+        "(pass) after an array 0",
+        "(pass) after a number 0",
+        "(pass) after a number 1",
+        "(pass) after an array and a number 0",
+        "(pass) after an array and a number 1",
+        "(pass) after an array and a number 2",
+      ],
+      exitCode: 0,
+    });
+  });
+});

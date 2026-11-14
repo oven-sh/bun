@@ -148,7 +148,6 @@
 "always_unwrapped_option:src/runtime/bake/production/per_thread.rs" = 1
 "always_unwrapped_option:src/runtime/cli/init_command.rs" = 1
 "always_unwrapped_option:src/runtime/node/node_fs.rs" = 1
-"always_unwrapped_option:src/runtime/webcore/streams.rs" = 1
 "bool_beside_option:src/runtime/shell/subproc.rs" = 1
 "bool_cluster:src/runtime/test_runner/pretty_format.rs" = 1
 "bound_checked_only_in_debug:src/runtime/bake/dev_server/serialized_failure.rs" = 1

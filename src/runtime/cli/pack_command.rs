@@ -2,8 +2,8 @@ use bun_collections::VecExt;
 use core::fmt;
 use std::io::Write as _;
 
-use crate::cli::Command;
 use crate::cli::publish_command as Publish;
+use crate::cli::{Command, cli_arena};
 use bun_alloc::AllocError;
 use bun_archive::tar;
 use bun_ast::{E, Expr, ExprData};
@@ -27,15 +27,6 @@ use bun_sha_hmac::sha;
 use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
 };
-
-/// Process-lifetime arena for `Expr::as_string*` / `E::EString` data.
-fn pack_bump() -> &'static bun_alloc::Arena {
-    thread_local! {
-        static BUMP: bun_alloc::Arena = bun_alloc::Arena::new();
-    }
-    // SAFETY: the CLI thread lives as long as the process, so `BUMP` is never dropped; `Arena` is `!Sync`.
-    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
-}
 
 /// Returns a raw projection, because `pack()` holds the resulting `&mut MapEntry` across other uses
 /// of `ctx.manager`.
@@ -802,7 +793,7 @@ fn add_bundled_dep(
     };
     let mut parse = || {
         (source.as_ref())
-            .and_then(|source| JSON::parse_package_json_utf8(source, &mut *log, pack_bump()).ok())
+            .and_then(|source| JSON::parse_package_json_utf8(source, &mut *log, cli_arena()).ok())
             .inspect(|json| drop_shadowed_properties(*json))
     };
     let mut json = parse();
@@ -944,7 +935,7 @@ fn add_own_package(
             }
         },
     };
-    let (published, _) = published_files(&dir, real_path, &json, pack_bump(), log_level)?;
+    let (published, _) = published_files(&dir, real_path, &json, cli_arena(), log_level)?;
     for file in published.into_paths() {
         add_file(file.as_bytes(), None)?;
     }
@@ -1147,7 +1138,7 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Option<Vec<BundledDep>>
     let deps: Option<Vec<BundledDep>> = names.and_then(|names| {
         let dep = |name: &Expr| {
             Some(BundledDep {
-                name: name.as_string(pack_bump())?.into(),
+                name: name.as_string(cli_arena())?.into(),
             })
         };
         names.iter().map(dep).collect()
@@ -1179,7 +1170,7 @@ fn get_package_bins(json: &Expr) -> Vec<BinInfo> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut path_spill: Vec<u8> = Vec::new();
     let mut add = |value: &Expr, ty: BinType| {
-        let Some(value) = value.as_string(pack_bump()) else {
+        let Some(value) = value.as_string(cli_arena()) else {
             return;
         };
         if let Some(subpath) = bin_subpath(value, ty, &mut path_buf, &mut path_spill) {
@@ -1599,7 +1590,7 @@ fn apply_publish_config(
         .map_err(|_| PackError::InvalidPackageName)?;
     manager
         .options
-        .apply_publish_config(package_json, pack_bump(), package_name)?;
+        .apply_publish_config(package_json, cli_arena(), package_name)?;
     Publish::PublishCommand::refuse_provenance(manager, package_json);
     if manager.options.publish_config.access == Some(bun_install::Access::Restricted) && !is_scoped
     {
@@ -1616,7 +1607,7 @@ fn name_and_version(package_json: &Expr) -> Result<(&'static [u8], &'static [u8]
     let field =
         |name: &[u8], missing: PackError, invalid: PackError| -> Result<&'static [u8], PackError> {
             let value = (package_json.get(name).ok_or(missing)?)
-                .as_string_cloned(pack_bump())?
+                .as_string_cloned(cli_arena())?
                 .ok_or(invalid)?;
             if value.is_empty() || has_unsafe_tarball_filename_part(value) {
                 return Err(invalid);
@@ -1657,7 +1648,7 @@ pub(crate) fn pack(
     for_publish: bool,
 ) -> Result<Option<Publish::Context>, PackError> {
     let log_level = ctx.manager.options.log_level;
-    let bump = pack_bump();
+    let bump = cli_arena();
     let mut json = package_json_entry(ctx.manager, abs_package_json_path);
 
     let (mut package_name, mut package_version) = name_and_version(&json.root)?;
@@ -2670,7 +2661,7 @@ fn edit_root_package_json(
     source: &bun_ast::Source,
     indentation: bun_ast::Indentation,
 ) -> Result<Box<[u8]>, AllocError> {
-    let bump = pack_bump();
+    let bump = cli_arena();
     for_each_dependency(root, |dependency_group, dependency| {
         let (Some(name), Some(spec)) = (dependency.key.as_ref(), dependency.value.as_ref()) else {
             return;

@@ -2342,7 +2342,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     const libraries = {
       ...files,
       "node_modules/cjs-lib/package.json": `{ "name": "cjs-lib", "main": "index.js" }`,
-      "node_modules/cjs-lib/index.js": `const dual = require("dual"); module.exports = { which: () => dual.which };`,
+      "node_modules/cjs-lib/index.js": `const dual = require("dual"); module.exports = { which: () => dual.which, fn: () => dual.fn() };`,
       "node_modules/esm-lib/package.json": `{ "name": "esm-lib", "type": "module", "main": "index.js" }`,
       "node_modules/esm-lib/index.js": `import { which as of } from "dual"; export const which = () => of;`,
       "own.cjs": `const dual = require("dual"); exports.which = () => dual.which;`,
@@ -2397,6 +2397,67 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     });
   });
 
+
+    test.each(isolationFlags)(
+      "a factory with only some of the names, or only default, leaves the library without the rest %j",
+      async args => {
+        await expectFixturesToPass(
+          {
+            ...libraries,
+            "1.test.js": `
+              import { expect, jest, test } from "bun:test";
+              jest.mock("dual", () => ({ which: "mock" }));
+              import { which } from "dual";
+              import cjsLib from "cjs-lib";
+              test("only some of the names", () => {
+                expect([which, cjsLib.which()]).toEqual(["mock", "mock"]);
+                expect(() => cjsLib.fn()).toThrow("dual.fn is not a function");
+                expect(globalThis.loaded).toBeUndefined();
+              });
+            `,
+            "2.test.js": `
+              import { expect, mock, test } from "bun:test";
+              test("only default", async () => {
+                mock.module("dual", () => ({ default: { which: "mock", fn: () => "mock" } }));
+                const { default: dual } = await import("dual");
+                const { default: cjsLib } = await import("cjs-lib");
+                expect([dual.which, dual.fn(), cjsLib.which()]).toEqual(["mock", "mock", undefined]);
+                expect(() => cjsLib.fn()).toThrow("dual.fn is not a function");
+                expect(globalThis.loaded).toBeUndefined();
+              });
+            `,
+            "3.test.js": `
+              import { expect, jest, test } from "bun:test";
+              test("__esModule and default: the library gets the value of default", async () => {
+                jest.doMock("dual", () => ({ __esModule: true, default: { which: "mock" } }));
+                const { default: dual } = await import("dual");
+                const { default: cjsLib } = await import("cjs-lib");
+                expect([dual.which, cjsLib.which()]).toEqual(["mock", "mock"]);
+                expect(() => cjsLib.fn()).toThrow("dual.fn is not a function");
+                expect(globalThis.loaded).toBeUndefined();
+              });
+            `,
+            // The last file: it loads the CommonJS file, which stays loaded without --isolate. Over a loaded file
+            // require() gets the object of a factory with __esModule itself, not the value of its default.
+            "4.test.js": `
+              import { expect, jest, mock, test } from "bun:test";
+              test("the real package spread into the object of the factory keeps the rest", async () => {
+                mock.module("dual", () => {
+                  const real = jest.requireActual("dual");
+                  const mocked = { ...(real.default ?? real), which: "mock" };
+                  return { ...mocked, default: mocked };
+                });
+                const { default: dual } = await import("dual");
+                const { default: cjsLib } = await import("cjs-lib");
+                expect([dual.which, dual.fn(), cjsLib.which(), cjsLib.fn()]).toEqual(["mock", "real cjs", "mock", "real cjs"]);
+              });
+            `,
+          },
+          4,
+          args,
+        );
+      },
+    );
   test.each(isolationFlags)("a file of the name that ran before its mock %j", async args => {
     const patches = (mock: string) => `
       import { expect, jest, mock, test } from "bun:test";

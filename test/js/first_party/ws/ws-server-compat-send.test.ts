@@ -1,5 +1,5 @@
 // Tests send(), ping() and pong() on a `ws` server socket, using a raw TCP client. See ws-raw-peer.ts.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certificate, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
@@ -33,6 +33,7 @@ import {
   show,
   showFrame,
   shrinkBuffers,
+  syncPrefix,
   tooLong,
   tryCall,
   upgradeRequest,
@@ -74,9 +75,53 @@ async function readLargeFrames(client: RawClient, count: number) {
   return lines;
 }
 
+// The Pong that answers the Ping of roundTrip().
+const isSyncPong = (frame: Frame) => frame.opcode === OP.pong && frame.payload.toString().startsWith(syncPrefix);
+
+// For runScript(). Without a collection before the exit, the closed server and the loaded modules are still allocated
+// when LeakSanitizer looks. It then takes seconds to symbolize them, only for a suppression to drop the report.
+const collectBeforeExit = `process.on("beforeExit", () => Bun.gc(true));`;
+
 describe.each(implementations)("ws server send ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { OPEN, CLOSING, CLOSED } = implementation.WebSocket;
   const { WebSocketServer } = implementation;
+
+  // The server and socket that `sharedSocket()` gives out, while no test is using them.
+  let idle: Awaited<ReturnType<typeof openServer>> | undefined;
+  afterAll(async () => {
+    await idle?.[Symbol.asyncDispose]();
+  });
+
+  /**
+   * `openServer()` for a test that only sends: it adds no listener, changes no property and leaves no fragmented message
+   * unfinished. These tests use one socket, one after the other, because it takes several times longer to open one than
+   * to run the test. A test ends with a `roundTrip()` and then `keep()`. That checks that the socket emitted no event
+   * and has nothing left to write, and that the client got nothing behind the Pong, then keeps the socket for the next
+   * test. A test that fails doesn't get there: its socket is destroyed.
+   */
+  async function sharedSocket() {
+    const taken = idle;
+    idle = undefined;
+    const server = taken ?? (await openServer(implementation));
+    return {
+      ...server,
+      keep() {
+        const { events, ws, client } = server;
+        expect({
+          events,
+          readyState: ws.readyState,
+          bufferedAmount: ws.bufferedAmount,
+          unread: client.frames.slice(client.frames.findLastIndex(isSyncPong) + 1).map(showFrame),
+          unparsedBytes: client.unparsedBytes,
+          socketEvents: client.socketEvents,
+        }).toEqual({ events: [], readyState: OPEN, bufferedAmount: 0, unread: [], unparsedBytes: 0, socketEvents: [] });
+        idle ??= server;
+      },
+      async [Symbol.asyncDispose]() {
+        if (idle !== server) await server[Symbol.asyncDispose]();
+      },
+    };
+  }
 
   describe("send(data)", () => {
     test.each(
@@ -118,9 +163,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         { data: { length: 2, 0: 104, 1: 105 }, label: "an array-like object", frame: 'binary "hi"' },
       ]),
     )("send($label) sends $frame", async ({ data, frame }) => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       expect(tryCall(() => server.ws.send(data as any))).toBe("undefined");
       expect(await server.client.roundTrip()).toEqual([frame]);
+      server.keep();
     });
 
     test.each(
@@ -131,7 +177,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         { data: Symbol("s"), thrown: invalidData("type symbol (Symbol(s))") },
       ]),
     )("send($label) throws without sending anything or changing socket state", async ({ data, thrown }) => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const { ws, client } = server;
       const recorder = createRecorder();
       expect(tryCall(() => ws.send(data as any, { fin: false }, recorder.callback("send")))).toBe(thrown);
@@ -142,15 +188,17 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       ws.send("next");
       expect(await client.roundTrip()).toEqual(['text "next"']);
       expect(recorder.calls).toEqual([]);
+      server.keep();
     });
 
     test.each([
       { label: "a detached ArrayBuffer", data: () => detached().buffer },
       { label: "a view over a detached ArrayBuffer", data: detached },
     ])("send($label) throws a TypeError and sends nothing", async ({ data }) => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       expect(() => server.ws.send(data())).toThrow(TypeError);
       expect(await server.client.roundTrip()).toEqual([]);
+      server.keep();
     });
   });
 
@@ -172,9 +220,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
     ])(
       "$label: truthiness of `binary` picks the frame type and the payload is sent unchanged",
       async ({ data, payload }) => {
-        await using server = await openServer(implementation);
+        await using server = await sharedSocket();
         for (const binary of binaryValues) server.ws.send(data as any, { binary: binary as boolean });
         expect(await server.client.roundTrip()).toEqual(frameTypes.map(type => type + payload));
+        server.keep();
       },
     );
 
@@ -194,7 +243,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
 
   describe("send(data, { fin })", () => {
     test("fin: false starts a fragmented message and the next send() with fin: true ends it", async () => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const { ws, client } = server;
       ws.send("fra", { fin: false });
       ws.send("gme", { fin: false });
@@ -206,10 +255,11 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         'continuation "nt"',
         'text "after"',
       ]);
+      server.keep();
     });
 
     test("only the first fragment sets the frame type; later fragments ignore `binary` and the data type", async () => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const { ws, client } = server;
       ws.send(Buffer.from("a"), { binary: false, fin: false });
       ws.send("b", { binary: true, fin: false });
@@ -223,15 +273,17 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         'binary "d" !fin',
         "continuation",
       ]);
+      server.keep();
     });
 
     test("coerces `fin` to a boolean", async () => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const { ws, client } = server;
       ws.send("a", { fin: 0 as any });
       ws.send("b", { fin: undefined });
       ws.send("c", { fin: 1 as any });
       expect(await client.roundTrip()).toEqual(['text "a" !fin', 'continuation "b" !fin', 'continuation "c"']);
+      server.keep();
     });
 
     // npm ws reads every Blob asynchronously. The built-in can't read a file-backed Blob synchronously in send(), so it
@@ -244,7 +296,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       async ({ make }) => {
         using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
         const blob = await make(path.join(String(dir), "data.txt"));
-        await using server = await openServer(implementation);
+        await using server = await sharedSocket();
         const { ws, client: peer } = server;
         const results: unknown[] = [];
         expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
@@ -252,16 +304,18 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         expect(await peer.roundTrip()).toEqual(['text "x"']);
         expect(await sent).toBeNull();
         expect(results.filter(result => !(result instanceof Error))).toEqual([]);
+        server.keep();
       },
     );
 
     test("sends a ping between two fragments", async () => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const { ws, client } = server;
       ws.send("a", { fin: false });
       ws.ping("p");
       ws.send("b");
       expect(await client.roundTrip()).toEqual(['text "a" !fin', 'ping "p"', 'continuation "b"']);
+      server.keep();
     });
   });
 
@@ -288,18 +342,19 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
     ] as { call: string; act(ws: Socket, cb: Callback): void; frame: string }[])(
       "$call returns undefined and calls back asynchronously with null",
       async ({ act, frame }) => {
-        await using server = await openServer(implementation);
+        await using server = await sharedSocket();
         const recorder = createRecorder();
         expect(tryCall(() => act(server.ws, recorder.callback("cb")))).toBe("undefined");
         expect(recorder.calls).toEqual([]);
         await recorder.waitForCalls(1);
         expect(await server.client.roundTrip()).toEqual([frame]);
         expect(recorder.calls).toEqual([["cb", null]]);
+        server.keep();
       },
     );
 
     test("callbacks for empty messages fire too, in call order", async () => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const { ws, client } = server;
       const recorder = createRecorder();
       ws.send("", recorder.callback(0));
@@ -310,6 +365,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       expect(await client.roundTrip()).toEqual(["text", "binary", "ping", 'text "after"']);
       expect(recorder.lines).toEqual(["0 null", "1 null", "2 null", "3 null"]);
       expect(ws.bufferedAmount).toBe(0);
+      server.keep();
     });
   });
 
@@ -332,10 +388,11 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         { data: Buffer.alloc(125), payload: " 125 bytes" },
       ]),
     )("ping($label) sends ping$payload and pong($label) sends pong$payload", async ({ data, payload }) => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       expect(tryCall(() => server.ws.ping(data))).toBe("undefined");
       expect(tryCall(() => server.ws.pong(data))).toBe("undefined");
       expect(await server.client.roundTrip()).toEqual(["ping" + payload, "pong" + payload]);
+      server.keep();
     });
 
     test.each(
@@ -348,13 +405,14 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         { data: Buffer.alloc(126, "é").toString(), label: "63 two-byte characters", thrown: tooLong },
       ]),
     )("ping($label) and pong($label) throw, send nothing and leave the socket open", async ({ data, thrown }) => {
-      await using server = await openServer(implementation);
+      await using server = await sharedSocket();
       const recorder = createRecorder();
       expect(tryCall(() => server.ws.ping(data, undefined, recorder.callback("ping")))).toBe(thrown);
       expect(tryCall(() => server.ws.pong(data, undefined, recorder.callback("pong")))).toBe(thrown);
       expect(await server.client.roundTrip()).toEqual([]);
       expect(server.ws.readyState).toBe(OPEN);
       expect(recorder.calls).toEqual([]);
+      server.keep();
     });
   });
 
@@ -857,9 +915,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       test.concurrent(
         "can throw: the others still run, and 'close' fires once",
         async () => {
-          const { lines, exitCode } = await runScript(
+          const { lines, ...rest } = await runScript(
             { specifier },
             `
+            ${collectBeforeExit}
             const secure = ${secure};
             const { CERT: cert, KEY: key } = process.env;
             const server = secure ? require("node:https").createServer({ cert, key }) : require("node:http").createServer();
@@ -891,13 +950,11 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
             { CERT: certificate.cert, KEY: certificate.key },
           );
           // On Node, 'close' comes last. The built-in emits it while the exception is still propagating.
-          expect(lines.sort()).toEqual([
-            "close 1000",
-            "large null",
-            "small null",
-            'uncaught Error "thrown by the callback"',
-          ]);
-          expect(exitCode).toBe(0);
+          expect({ lines: lines.sort(), ...rest }).toEqual({
+            lines: ["close 1000", "large null", "small null", 'uncaught Error "thrown by the callback"'],
+            stderr: "",
+            exitCode: 0,
+          });
         },
         scriptTimeout,
       );
@@ -910,9 +967,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
     ])(
       "a pending callback that throws after $how doesn't skip 'close' or leave the socket in wss.clients",
       async ({ act }) => {
-        const { lines, exitCode } = await runScript(
+        const result = await runScript(
           { specifier },
           `
+          ${collectBeforeExit}
           const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }, () => {
             const socket = require("node:net").connect(wss.address().port, "127.0.0.1");
             socket.on("error", () => {});
@@ -937,8 +995,11 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         `,
         );
         // On Node, 'close' comes after the uncaught exception.
-        expect(lines).toEqual(["callback true", "close 1006 clients 0", 'uncaught Error "thrown by the callback"']);
-        expect(exitCode).toBe(0);
+        expect(result).toEqual({
+          lines: ["callback true", "close 1006 clients 0", 'uncaught Error "thrown by the callback"'],
+          stderr: "",
+          exitCode: 0,
+        });
       },
       scriptTimeout,
     );
@@ -950,9 +1011,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       async thrower => {
         const sizes = [MiB, 1, 1, 1];
         const frames = sizes.reduce((sum, size) => sum + size + (size < 126 ? 2 : 10), 0);
-        const { lines, exitCode } = await runScript(
+        const result = await runScript(
           { specifier },
           `
+          ${collectBeforeExit}
           const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }, () => {
             const socket = require("node:net").connect(wss.address().port, "127.0.0.1");
             socket.write(${JSON.stringify(upgradeRequest())});
@@ -982,8 +1044,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         );
         const expected = sizes.map((_, i) => `callback ${i} null`);
         expected.splice(thrower + 1, 0, 'uncaught Error "thrown by the callback"');
-        expect(lines).toEqual([...expected, "close 1000"]);
-        expect(exitCode).toBe(0);
+        expect(result).toEqual({ lines: [...expected, "close 1000"], stderr: "", exitCode: 0 });
       },
       scriptTimeout,
     );

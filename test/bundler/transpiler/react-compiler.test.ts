@@ -2013,6 +2013,162 @@ describe("bundler", () => {
     },
   });
 
+  // A function declaration is a hoisted context variable when something refers to it before it. When that reference
+  // is dead code the function is compiled, and a memo block that declares the function has to assign it: a declaration
+  // in the block would shadow the `let` outside of it (facebook/react#37833). `BeforeDeclaration` needs the declaration.
+  //
+  // An assignment is not hoisted, so the function is left as written when a function that is declared below it is
+  // referenced above it or in it (`IndirectEarlyCall`, `CallsALaterFunction`), and when its own early reference is live
+  // (`LiveEarlyReference`). `InRemovedBranchingCatch` is left as written only while the parser keeps the `const` in its
+  // `try`: with `minify.syntax`, and always at runtime, the `try` is empty and the function is compiled.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { sizes } from "react/compiler-runtime";
+
+          function UnusedClosure(p) {
+            const unused = () => helper();
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
+          }
+          function CalledAfter(p) {
+            const unused = () => helper();
+            function helper() {
+              return p.a + 1;
+            }
+            const v = helper();
+            return <button onClick={helper}>{v}</button>;
+          }
+          function ValueBetween(p) {
+            const unused = () => helper();
+            const x = [p.b];
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{x}</button>;
+          }
+          function InFoldedBranch(p) {
+            const DEBUG = false;
+            if (DEBUG) helper();
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
+          }
+          function InRemovedCatch(p) {
+            try {
+              const limit = 3;
+            } catch (e) {
+              helper(e);
+            }
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
+          }
+          function InRemovedBranchingCatch(p) {
+            try {
+              const limit = 3;
+            } catch (e) {
+              if (p.debug) helper(e);
+            }
+            const label = p.a + "!";
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{label}</button>;
+          }
+          function IndirectEarlyCall(p) {
+            const unused = () => helper();
+            const v = sibling();
+            function helper() {
+              return p.a;
+            }
+            function sibling() {
+              return helper();
+            }
+            return <button onClick={helper}>{v}</button>;
+          }
+          function CallsALaterFunction(p) {
+            const unused = () => helper();
+            function helper() {
+              return later() + 1;
+            }
+            function later() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
+          }
+          function BeforeDeclaration(p) {
+            const t = { a: p.a };
+            add(t);
+            function add(it) {
+              it.b = 1;
+            }
+            return <button>{JSON.stringify(t)}</button>;
+          }
+          function LiveEarlyReference(p) {
+            const early = () => helper();
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper} onFocus={early}>{p.a}</button>;
+          }
+
+          function render(fn, props) {
+            const before = sizes().length;
+            const { onClick, children } = fn(props).props;
+            return [typeof onClick, children, sizes().slice(before)];
+          }
+          console.log(JSON.stringify({
+            UnusedClosure: render(UnusedClosure, { a: 1 }),
+            CalledAfter: render(CalledAfter, { a: 2 }),
+            ValueBetween: render(ValueBetween, { a: 1, b: 2 }),
+            InFoldedBranch: render(InFoldedBranch, { a: 8 }),
+            InRemovedCatch: render(InRemovedCatch, { a: 3 }),
+            InRemovedBranchingCatch: render(InRemovedBranchingCatch, { a: 4 }),
+            IndirectEarlyCall: render(IndirectEarlyCall, { a: 2 }),
+            CallsALaterFunction: render(CallsALaterFunction, { a: 7 }),
+            BeforeDeclaration: render(BeforeDeclaration, { a: 5 }),
+            LiveEarlyReference: render(LiveEarlyReference, { a: 6 }),
+          }));
+        `,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          const sizes = [];
+          exports.c = size => {
+            sizes.push(size);
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+          exports.sizes = () => sizes;
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      run: {
+        stdout: JSON.stringify({
+          UnusedClosure: ["function", 1, [5]],
+          CalledAfter: ["function", 3, [6]],
+          ValueBetween: ["function", [2], [9]],
+          InFoldedBranch: ["function", 8, [5]],
+          InRemovedCatch: ["function", 3, [5]],
+          InRemovedBranchingCatch: ["function", "4!", minifySyntax ? [6] : []],
+          IndirectEarlyCall: ["function", 2, []],
+          CallsALaterFunction: ["function", 7, []],
+          BeforeDeclaration: ["undefined", '{"a":5,"b":1}', [4]],
+          LiveEarlyReference: ["function", 6, []],
+        }),
+      },
+    });
+  }
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this
@@ -5203,4 +5359,93 @@ describe("react-compiler does not overflow the stack on a component that is nest
     if (within.includes(name)) expect(out).toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
   });
+});
+
+// `bun test --react-compiler` compiles in the runtime transpiler, which always minifies syntax. The component is
+// `UnusedClosure` of react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned.
+test("react-compiler under bun test assigns a hoisted function that a memo block declares", async () => {
+  using dir = tempDir("react-compiler-bun-test-hoisted", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: {
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "Hoisted.jsx": `
+      export function Hoisted({ a }) {
+        const unused = () => helper();
+        function helper() {
+          return a;
+        }
+        return <button onClick={helper}>{a}</button>;
+      }
+    `,
+    "hoisted.test.jsx": `
+      import { test } from "bun:test";
+      import { Hoisted } from "./Hoisted";
+      test("the handler", () => {
+        const compiled = /\\$\\[\\d+\\]/.test(String(Hoisted));
+        console.log("compiled: " + compiled + ", onClick: " + typeof Hoisted({ a: 1 }).props.onClick);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./hoisted.test.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.match(/compiled: .*/)?.[0] ?? stderr).toBe("compiled: true, onClick: function");
+  expect(exitCode).toBe(0);
+});
+
+// `bun lint` runs the same passes and prints nothing. An error that a pass throws there replaces what the validations
+// recorded for the function, so the pass must not throw for `IndirectEarlyCall`: the read of the ref is still reported.
+test("react-compiler under bun lint reports a component that it leaves as written for a hoisted function", async () => {
+  using dir = tempDir("react-compiler-lint-hoisted", {
+    ".oxlintrc.json": JSON.stringify({
+      plugins: ["react"],
+      categories: { correctness: "off" },
+      rules: { "react/refs": "error" },
+    }),
+    "indirect.jsx": `import { useRef } from "react";
+export function Component(p) {
+  const ref = useRef(null);
+  const unused = () => helper();
+  const v = sibling();
+  const current = ref.current;
+  function helper() {
+    return p.a;
+  }
+  function sibling() {
+    return helper();
+  }
+  return (
+    <button onClick={helper}>
+      {v}
+      {current}
+    </button>
+  );
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "lint", "-f", "json"],
+    env: { ...bunEnv, AGENT: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!stdout.startsWith("{")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+  const found = JSON.parse(stdout).diagnostics.map(it => [it.filename, it.code, it.labels[0].span.line]);
+  expect(found).toEqual([["indirect.jsx", "react(refs)", 6]]);
+  expect(exitCode).toBe(1);
 });

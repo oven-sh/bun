@@ -13,7 +13,7 @@ use crate::diagnostics::{CompilerError, cold_invariant, cold_todo};
 use crate::hir::{
     EvaluationOrder, IdentifierId, InstructionKind, InstructionValue, Place, ReactiveFunction,
     ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
-    environment::Environment,
+    environment::{Environment, OutputMode},
 };
 
 use crate::reactive_scopes::visitors::{
@@ -35,6 +35,7 @@ pub(crate) fn prune_hoisted_contexts(
     let mut state = VisitorState {
         active_scopes: Vec::new(),
         uninitialized: IdMap::new(),
+        pending_functions: Vec::new(),
     };
     transform_reactive_function(func, &mut transform, &mut state)
 }
@@ -52,6 +53,8 @@ enum UninitializedKind {
 struct VisitorState {
     active_scopes: Vec<crate::collections::FxHashSet<IdentifierId>>,
     uninitialized: IdMap<IdentifierId, UninitializedKind>,
+    /// Not in upstream: the hoisted function declarations that are still ahead.
+    pending_functions: Vec<IdentifierId>,
 }
 
 impl VisitorState {
@@ -134,6 +137,9 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         {
             let maybe_non_hoisted = lvalue.kind.unhoisted();
             if let Some(non_hoisted) = maybe_non_hoisted {
+                if non_hoisted == InstructionKind::Function {
+                    state.pending_functions.push(lvalue.place.identifier);
+                }
                 if non_hoisted == InstructionKind::Function
                     && state.uninitialized.contains_key(lvalue.place.identifier)
                 {
@@ -151,6 +157,9 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         {
             if lvalue.kind != InstructionKind::Reassign {
                 let lvalue_id = lvalue.place.identifier;
+                if lvalue.kind == InstructionKind::Function {
+                    state.pending_functions.retain(|id| *id != lvalue_id);
+                }
                 let is_declared_by_scope = state.find_in_active_scopes(lvalue_id);
                 if is_declared_by_scope {
                     if lvalue.kind == InstructionKind::Let || lvalue.kind == InstructionKind::Const
@@ -168,6 +177,18 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
                             state.uninitialized.remove(lvalue_id);
+                            // Not in upstream. Lint prints nothing, and an error thrown here would hide what it recorded.
+                            if self.env.output_mode != OutputMode::Lint {
+                                // A function declared below could run above the assignment.
+                                if !state.pending_functions.is_empty() {
+                                    return Err(cold_todo(
+                                        "[PruneHoistedContexts] Rewrite hoisted function references",
+                                        instruction.loc,
+                                    ));
+                                }
+                                // facebook/react#37834 (open): the scope's `let` must be assigned.
+                                lvalue.kind = InstructionKind::Reassign;
+                            }
                         }
                     } else {
                         return Err(cold_todo(

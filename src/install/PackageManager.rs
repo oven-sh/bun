@@ -250,8 +250,8 @@ pub use self::progress_strings::ProgressStrings;
 pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
-    flush_dependency_queue, flush_network_queue, flush_patch_task_queue,
-    generate_network_task_for_tarball, get_network_task, schedule_tasks,
+    flush_dependency_queue, flush_network_queue, generate_network_task_for_tarball,
+    get_network_task, schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -287,7 +287,6 @@ pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
-type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
 
 pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
@@ -526,9 +525,8 @@ pub struct PackageManager {
     pub(crate) network_resolve_batch: Vec<Box<http::AsyncHTTP<'static>>>,
     pub(crate) network_task_fifo: NetworkQueue,
     pub(crate) retry_queue: crate::retry_timer::RetryQueue,
-    pub(crate) patch_apply_batch: thread_pool::Batch,
-    pub(crate) patch_calc_hash_batch: thread_pool::Batch,
-    pub(crate) patch_task_fifo: PatchTaskFifo,
+    /// Joins `task_batch` in `flush_dependency_queue`.
+    pub(crate) patch_batch: thread_pool::Batch,
     pub(crate) patch_task_queue: PatchTaskQueue,
     /// We actually need to calculate the patch file hashes
     /// every single time, because someone could edit the patchfile at anytime
@@ -1464,7 +1462,6 @@ fn allocate_package_manager(
         wr!(active_lifecycle_scripts, Default::default());
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(retry_queue, Default::default());
-        wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, log);
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
@@ -1528,8 +1525,7 @@ fn allocate_package_manager(
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, Vec::new());
         wr!(network_resolve_batch, Vec::new());
-        wr!(patch_apply_batch, thread_pool::Batch::default());
-        wr!(patch_calc_hash_batch, thread_pool::Batch::default());
+        wr!(patch_batch, thread_pool::Batch::default());
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));

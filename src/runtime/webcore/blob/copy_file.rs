@@ -858,18 +858,17 @@ fn read_write_loop_capped(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-    // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
-    let buf = unsafe { stack_buf.as_bytes_mut() };
+    let mut stack_buf = [const { core::mem::MaybeUninit::uninit() }; 64 * 1024];
     let mut remaining = cap;
     while remaining > 0 {
-        let want = (buf.len() as SizeType).min(remaining) as usize;
-        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
+        let want = (stack_buf.len() as SizeType).min(remaining) as usize;
+        let mut buf = bun_core::vec::BorrowedBuf::from(&mut stack_buf[..want]);
+        let amt = bun_sys::read_buf(src_fd, buf.unfilled())?;
         if amt == 0 {
             break;
         }
         remaining -= amt as SizeType;
-        let mut slice = &buf[..amt];
+        let mut slice = buf.filled();
         while !slice.is_empty() {
             match bun_sys::write(dest_fd, slice)? {
                 0 => return Ok(()),

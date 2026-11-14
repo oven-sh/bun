@@ -100,6 +100,13 @@ function cannotFindPackage(name: string, file: string) {
   ];
 }
 
+function notSupported(name: string, file: string) {
+  return [
+    `warn: The "${name}" test environment requested by "${file}" is not supported`,
+    `note: the supported environments are "node", "jsdom" and "happy-dom"`,
+  ];
+}
+
 const throwingJSDOM = {
   "node_modules/jsdom/package.json": JSON.stringify({ name: "jsdom", main: "index.js" }),
   "node_modules/jsdom/index.js": `
@@ -180,6 +187,139 @@ describe.concurrent("test environment", () => {
     });
     expect(summary(stderr)).toEqual([`${Object.keys(files).length} pass`, "0 fail"]);
     expect(exitCode).toBe(0);
+  });
+
+  describe("the name in an environment comment", () => {
+    // Runs one file for each comment in a project with happy-dom, where a file whose comment doesn't count has a window.
+    async function environmentsOf(comments: Record<string, [text: string, expected: string]>) {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        ...Object.fromEntries(
+          Object.entries(comments).map(([name, [text]]) => [`${name}.test.js`, text + logEnvironment]),
+        ),
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+      return {
+        dir: String(dir),
+        environments: Object.fromEntries(
+          stdout
+            .filter(line => !line.startsWith("open "))
+            .map(line => line.replace(/#\d+ .*| $/, "").split(" ") as [string, string]),
+        ),
+        warnings: warnings(stderr).sort(),
+        summary: summary(stderr),
+        exitCode,
+      };
+    }
+
+    test("a Jest comment with an unsupported name warns, and the file runs without a DOM", async () => {
+      // Each name is jest-docblock 30.5.0's `parse(extract(text))["jest-environment"]`, which Jest takes for a custom
+      // environment.
+      const comments: Record<string, [text: string, name: string]> = {
+        "path": [`/**\n * ${JEST} ./zz-env.js\n */\n`, "./zz-env.js"],
+        "path-one-line": [`/** ${JEST} ./zz-env.js */\n`, "./zz-env.js"],
+        "path-block": [`/* ${JEST} ./zz-env.js */\n`, "./zz-env.js"],
+        "path-crlf": [`/**\r\n * ${JEST} ./zz-env.js\r\n */\r\n`, "./zz-env.js"],
+        "path-closed": [`/**${JEST} ./zz-env.js*/\n`, "./zz-env.js"],
+        "parent-path": [`/** ${JEST} ../zz-env.js */\n`, "../zz-env.js"],
+        "absolute-path": [`/** ${JEST} /zz/env.js */\n`, "/zz/env.js"],
+        "root-dir": [`/** ${JEST} <rootDir>/zz-env.js */\n`, "<rootDir>/zz-env.js"],
+        "home": [`/** ${JEST} ~/zz-env.js */\n`, "~/zz-env.js"],
+        "windows-path": [`/** ${JEST} C:\\zz\\env.js */\n`, "C:\\zz\\env.js"],
+        "file-url": [`/** ${JEST} file:///zz/env.js */\n`, "file:///zz/env.js"],
+        "scoped": [`/** ${JEST} @zz/env */\n`, "@zz/env"],
+        "scoped-happy-dom": [`/**\n * ${JEST} @happy-dom/jest-environment\n */\n`, "@happy-dom/jest-environment"],
+        "subpath": [`/** ${JEST} happy-dom/sub.js */\n`, "happy-dom/sub.js"],
+        "node-subpath": [`/** ${JEST} node/sub.js */\n`, "node/sub.js"],
+        "extension": [`/** ${JEST} jsdom.js */\n`, "jsdom.js"],
+        "version": [`/** ${JEST} jsdom@25 */\n`, "jsdom@25"],
+        "words": [`/**\n * ${JEST} jsdom and more\n */\n`, "jsdom and more"],
+        "trailing-hyphen": [`/** ${JEST} jsdom- */\n`, "jsdom-"],
+        "only-hyphens": [`/** ${JEST} --- */\n`, "---"],
+        "not-ascii": [`/** ${JEST} zzé */\n`, "zzé"],
+        "line-comment": [`/**\n * ${JEST} ./zz-env.js // ours\n */\n`, "./zz-env.js"],
+        "two-slashes": [`/** ${JEST} ./zz//env.js */\n`, "./zz//env.js"],
+        "with-options": [
+          `/**\n * ${JEST} ./zz-env.js\n * ${JEST}-options {"url": "https://example.com/"}\n */\n`,
+          "./zz-env.js",
+        ],
+        "next-line": [`/**\n * ${JEST}\n * ./zz-env.js\n */\n`, "./zz-env.js"],
+        "next-line-crlf": [`/**\r\n * ${JEST}\r\n * ./zz-env.js\r\n */\r\n`, "./zz-env.js"],
+        "next-line-no-star": [`/** ${JEST}\n./zz-env.js\n*/\n`, "./zz-env.js"],
+        "next-line-subpath": [`/** ${JEST}\nhappy-dom/sub.js\n*/\n`, "happy-dom/sub.js"],
+        // Jest refuses two names. Bun takes the first, also when a Vitest comment follows.
+        "then-a-name": [`/**\n * ${JEST} ./zz-env.js\n * ${JEST} jsdom\n */\n`, "./zz-env.js"],
+        "then-vitest": [`/** ${JEST} ./zz-env.js */\n// ${VITEST} jsdom\n`, "./zz-env.js"],
+        // jest-docblock makes the next line a part of this name. Bun doesn't.
+        "then-prose": [`/**\n * ${JEST} ./zz-env.js\n * Some prose about this file.\n */\n`, "./zz-env.js"],
+      };
+      const { dir, environments, warnings, summary, exitCode } = await environmentsOf(comments);
+      expect({ environments, warnings }).toEqual({
+        environments: Object.fromEntries(Object.keys(comments).map(name => [`${name}.test.js`, "node"])),
+        warnings: Object.entries(comments)
+          .flatMap(([name, [, value]]) => notSupported(value, join(dir, `${name}.test.js`)))
+          .sort(),
+      });
+      expect(summary).toEqual([`${Object.keys(comments).length} pass`, "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    async function expectNoWarning(comments: Record<string, [text: string, environment: string]>) {
+      const { environments, warnings, summary, exitCode } = await environmentsOf(comments);
+      expect({ environments, warnings }).toEqual({
+        environments: Object.fromEntries(
+          Object.entries(comments).map(([name, [, environment]]) => [`${name}.test.js`, environment]),
+        ),
+        warnings: [],
+      });
+      expect(summary).toEqual([`${Object.keys(comments).length} pass`, "0 fail"]);
+      expect(exitCode).toBe(0);
+    }
+
+    test("a supported name is on a Jest comment's line or the next, or begins what a Vitest comment has", async () => {
+      await expectNoWarning({
+        // jest-docblock 30.5.0 reads this name too.
+        "line-comment": [`/**\n * ${JEST} jsdom // why\n */\n`, "jsdom"],
+        "no-star": [`/**\n${JEST} jsdom\n */\n`, "jsdom"],
+        "star-without-space": [`/**\n *${JEST} jsdom\n */\n`, "jsdom"],
+        "three-stars": [`/*** ${JEST} jsdom */\n`, "jsdom"],
+        "star-on-first-line": [`/** * ${JEST} jsdom */\n`, "jsdom"],
+        "placeholder": [`/**\n * Write ${JEST} <name> to pick one.\n * ${JEST} jsdom\n */\n`, "jsdom"],
+        "next-line": [`/**\n * ${JEST}\n * jsdom\n */\n`, "jsdom"],
+        "next-line-crlf": [`/**\r\n * ${JEST}\r\n * jsdom\r\n */\r\n`, "jsdom"],
+        "next-line-no-star": [`/** ${JEST}\njsdom\n*/\n`, "jsdom"],
+        "next-line-node": [`/**\n * ${JEST}\n * node\n */\n`, "node"],
+        // Jest fails these files: jest-docblock makes every next line of prose a part of the name, keeps the blanks
+        // behind a name, and skips only spaces before it. Bun reads the name, as Vitest does.
+        "then-prose": [`/**\n * ${JEST} jsdom\n * Some prose about this file.\n */\n`, "jsdom"],
+        "next-line-then-prose": [`/**\n * ${JEST}\n * jsdom\n * Some prose about this file.\n */\n`, "jsdom"],
+        "trailing-blanks": [`/**\n * ${JEST} jsdom \t\n * @flow\n */\n`, "jsdom"],
+        "tab-separated": [`/** ${JEST}\tjsdom */\n`, "jsdom"],
+        "no-break-space-separated": [`/** ${JEST}\u00a0jsdom */\n`, "jsdom"],
+        // Vitest's `[\w-]+` stops at the `/`, and matches the second comment when the first has a path.
+        "vitest-subpath": [`// ${VITEST} jsdom/sub.js\n`, "jsdom"],
+        "vitest-path-then-name": [`// ${VITEST} ./zz-env.js\n// ${VITEST} jsdom\n`, "jsdom"],
+      });
+    });
+
+    test("a comment that doesn't count leaves the file in the project's environment", async () => {
+      // jest-docblock 30.5.0 reads no environment from the Jest comments, and Vitest's `[\w-]+` matches no Vitest comment.
+      await expectNoWarning({
+        "no-name": [`/** ${JEST} */\n`, "happy-dom"],
+        "only-line-comment": [`/**\n * ${JEST} // why\n */\n`, "happy-dom"],
+        "mid-line": [`/** Runs with ${JEST} jsdom */\n`, "happy-dom"],
+        "mid-line-path": [`/** Runs with ${JEST} ./zz-env.js */\n`, "happy-dom"],
+        "tab-indented": [`/**\n\t${JEST} jsdom\n */\n`, "happy-dom"],
+        "two-stars": [`/**\n * * ${JEST} jsdom\n */\n`, "happy-dom"],
+        "next-line-of-one-character": [`/**\n * ${JEST}\n * j\n */\n`, "happy-dom"],
+        "next-line-with-comment": [`/**\n * ${JEST}\n * jsdom // why\n */\n`, "happy-dom"],
+        "next-line-with-pragma": [`/**\n * ${JEST}\n * @flow jsdom\n */\n`, "happy-dom"],
+        "next-line-after-empty-line": [`/** ${JEST}\n\njsdom\n*/\n`, "happy-dom"],
+        "next-line-closes-comment": [`/** ${JEST}\njsdom */\n`, "happy-dom"],
+        "vitest-path": [`// ${VITEST} ./zz-env.js\n`, "happy-dom"],
+        "vitest-scoped": [`// ${VITEST} @zz/env\n`, "happy-dom"],
+      });
+    });
   });
 
   test("options are passed to the package", async () => {
@@ -374,13 +514,17 @@ describe.concurrent("test environment", () => {
       using dir = tempDir("test-environment", {
         ...Object.fromEntries(names.map(name => [name, `/** ${JEST} jsdom */\n${logEnvironment}`])),
         "d.test.js": logEnvironment,
+        "e.test.js": `/**\n * ${JEST} ./zz-env.js\n */\n${logEnvironment}`,
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags.split(" "));
       expect(warnings(stderr).sort()).toEqual(
-        names.flatMap(name => cannotFindPackage("jsdom", join(String(dir), name))).sort(),
+        [
+          ...names.flatMap(name => cannotFindPackage("jsdom", join(String(dir), name))),
+          ...notSupported("./zz-env.js", join(String(dir), "e.test.js")),
+        ].sort(),
       );
       expect(warnings(stdout.join("\n"))).toEqual([]);
-      expect(summary(stderr)).toEqual([flags === "--rerun-each=3" ? "12 pass" : "4 pass", "0 fail"]);
+      expect(summary(stderr)).toEqual([flags === "--rerun-each=3" ? "15 pass" : "5 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
 
@@ -396,14 +540,7 @@ describe.concurrent("test environment", () => {
         "./a.test.js",
         "./b.test.js",
       );
-      expect(stderr).toContain(
-        [
-          "a.test.js:",
-          `warn: The "${name}" test environment requested by "${join(String(dir), "a.test.js")}" is not supported`,
-          `note: the supported environments are "node", "jsdom" and "happy-dom"`,
-          "",
-        ].join("\n"),
-      );
+      expect(stderr).toContain(["a.test.js:", ...notSupported(name, join(String(dir), "a.test.js")), ""].join("\n"));
       expect(warnings(stderr)).toHaveLength(2);
       expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
         "a.test.js node ",
@@ -921,6 +1058,23 @@ describe.concurrent("test environment", () => {
     expect(warnings(stderr)).toHaveLength(1);
     expect(stdout).toEqual(["a.test.js node "]);
     expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("many Jest comments on one line", async () => {
+    const line = (comment: string) => Buffer.alloc(comment.length * 200_000, comment).toString();
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      // Only the first begins the line, and its value is empty.
+      "empty.test.js": `/* ${line(`${JEST} // zz `)}*/\n// ${VITEST} happy-dom\n${logEnvironment}`,
+      "mid-line.test.js": `/* zz ${line(`${JEST} ./zz-env.js `)}*/\n// ${VITEST} happy-dom\n${logEnvironment}`,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir));
+    expect(warnings(stderr)).toEqual([]);
+    expect(stdout.filter(line => !line.startsWith("open ")).map(line => line.split(" ").slice(0, 2).join(" "))).toEqual(
+      ["empty.test.js happy-dom#1", "mid-line.test.js happy-dom#1"],
+    );
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 

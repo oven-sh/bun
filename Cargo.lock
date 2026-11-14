@@ -1620,6 +1620,7 @@ dependencies = [
  "bun_errno",
  "bun_event_loop",
  "bun_exe_format",
+ "bun_format",
  "bun_format_conformance",
  "bun_glob",
  "bun_hash",

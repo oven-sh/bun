@@ -58,6 +58,19 @@ impl AnyPromise {
         any_promise_dispatch!(self, |p| p.set_handled())
     }
 
+    /// See [`JSPromise::has_custom_then`].
+    #[inline]
+    pub fn has_custom_then(self, global: &JSGlobalObject) -> bool {
+        JSPromise::opaque_ref(self.as_js_promise()).has_custom_then(global)
+    }
+
+    /// The `StructureID` of the cell. In Rust for the reason `JSValue::js_type` is.
+    #[inline]
+    pub fn structure_id(self) -> u32 {
+        // SAFETY: a promise is a cell, and a cell starts with its `StructureID`, an aligned `u32`.
+        unsafe { *self.as_js_promise().cast::<u32>() }
+    }
+
     #[inline]
     pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         any_promise_dispatch!(self, |p| p.resolve(global_this, value))

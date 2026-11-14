@@ -33,10 +33,7 @@ use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
-use crate::runtime_transpiler_cache::{
-    Entry as CacheEntry, ModuleType as CacheModuleType,
-    RuntimeTranspilerCache as JscRuntimeTranspilerCache,
-};
+use crate::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
 use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, process_fetch_log};
@@ -44,12 +41,6 @@ use crate::{
     ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
     ResolvedSource,
 };
-
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
-// lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
-// JSC-tier disk-backed `Entry` is round-tripped through it type-erased via
-// `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
-use bun_ast::RuntimeTranspilerCache;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
@@ -450,32 +441,10 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
 //
 // `#[thread_local]` not `thread_local!`: the macro's `LocalKey::__getit`
 // wrapper showed up on the
-// async-import hot path. Const-init `Cell<ptr>` (no dtor).
+// async-import hot path. No destructor runs.
 #[thread_local]
-static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
-
-/// Get-or-leak accessor for the `#[thread_local]` `Cell<Option<NonNull<T>>>`
-/// slot above. Returns `&'static mut T` because the Box is leaked for the
-/// worker thread's lifetime and `#[thread_local]` guarantees per-thread
-/// exclusive access; callers reborrow `&'static T` where a shared ref suffices.
-#[inline]
-fn tls_get_or_leak<T>(
-    slot: &Cell<Option<NonNull<T>>>,
-    init: impl FnOnce() -> Box<T>,
-) -> &'static mut T {
-    let p = slot.get().unwrap_or_else(|| {
-        let p = bun_core::heap::into_raw_nn(init());
-        slot.set(Some(p));
-        p
-    });
-    // SAFETY: `p` is the `NonNull` produced by `heap::into_raw_nn(Box<T>)`
-    // (either just now or on a prior call) and never freed — the slot is a
-    // per-worker-thread leak. `#[thread_local]` storage means only this thread
-    // ever observes `p`, and every borrow returned here is scoped to one
-    // `TranspilerJob::run()` activation (no `&T`/`&mut T` from a prior call
-    // survives), so the `&mut` is exclusive for its actual use.
-    unsafe { &mut *p.as_ptr() }
-}
+static SOURCE_CODE_PRINTER: Cell<BufferPrinter> =
+    Cell::new(BufferPrinter::init(BufferWriter::init()));
 
 /// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
 fn fulfill(
@@ -692,15 +661,7 @@ impl TranspilerJob {
         let loader = this.loader;
         let this_tag = this.resolved_source.tag;
 
-        // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
-        // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
-        // wired with the JSC vtable so the parser's `cache.get()` reaches the
-        // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
-        // `*mut CacheEntry` which is unboxed below.
-        let mut cache = RuntimeTranspilerCache {
-            r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-            ..Default::default()
-        };
+        let mut cache = RuntimeTranspilerCache::default();
 
         let mut log = bun_ast::Log::init();
         let mut log_clone_guard = scopeguard::guard((&mut this.log, &mut log), |(dst, src)| {
@@ -730,7 +691,6 @@ impl TranspilerJob {
         }
         let macro_load_states = transpiler::MacroLoadStates::default();
 
-        let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init
@@ -740,11 +700,6 @@ impl TranspilerJob {
         // projection avoids forming `&VirtualMachine` per the `vm` note.
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.get().cast()) };
-        if let Some(iw) = import_watcher {
-            // Never read through the watchlist's stored fd; see
-            // `ImportWatcher::snapshot_package_json`.
-            package_json = iw.snapshot_package_json(hash);
-        }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
@@ -809,7 +764,7 @@ impl TranspilerJob {
                 .is_some_and(|d| d.set_breakpoint_on_first_line)
                 && is_main
                 && set_break_point_on_first_line(),
-            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
+            runtime_transpiler_cache: if !RuntimeTranspilerCache::is_disabled() {
                 Some(&mut cache)
             } else {
                 None
@@ -850,7 +805,7 @@ impl TranspilerJob {
             // `&ImportWatcher` is live here, and `add_file` is
             // thread-safe via watcher mutex.
             let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+            let _ = iw.add_owned_file(input_file, path.text, hash);
         }
 
         let Some(mut parse_result) = parse_result else {
@@ -865,12 +820,7 @@ impl TranspilerJob {
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 
-        if let Some(entry_ptr) = cache.entry.take() {
-            // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
-            // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
-            let mut entry: Box<CacheEntry> =
-                unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
-
+        if let Some(mut entry) = cache.entry.take() {
             let _ = source_mappings.put_mappings(
                 &parse_result.source,
                 MutableString {
@@ -947,9 +897,8 @@ impl TranspilerJob {
             }
         }
 
-        let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
-            let writer = BufferWriter::init();
-            Box::new(BufferPrinter::init(writer))
+        let mut source_code_printer = scopeguard::guard(SOURCE_CODE_PRINTER.take(), |printer| {
+            SOURCE_CODE_PRINTER.set(printer);
         });
 
         source_code_printer.ctx.reset();
@@ -986,19 +935,16 @@ impl TranspilerJob {
         }
 
         let print_result = {
-            let mapper = SourceMapHandlerGetter::new(
-                source_mappings,
-                debugger(),
-                &raw mut *source_code_printer,
-            );
+            let mapper = SourceMapHandlerGetter::new(source_mappings, debugger());
             transpiler.print_with_source_map(
                 // Same per-call `arena` that `transpiler.set_arena(&arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
                 &arena,
                 parse_result,
-                source_code_printer,
+                &mut source_code_printer,
                 js_printer::Format::EsmAscii,
                 mapper.get(),
+                cache.for_printer(),
                 module_info.as_deref_mut(),
             )
         };
@@ -1009,16 +955,12 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            dump_source(source_mappings, specifier, source_code_printer);
+            dump_source(source_mappings, specifier, &source_code_printer);
         }
 
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
-            // The `Jsc` vtable bridge `put()` does not write
-            // `cache.output_code` (only the `r#impl == None` fallback does,
-            // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
-            debug_assert!(cache.output_code.is_none());
             let result = String::clone_latin1(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.

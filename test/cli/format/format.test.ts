@@ -9962,6 +9962,50 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(result.files).toEqual({ "a.js": "/**\n * x\n *\n * @format\n */\n\nfoo;\n" });
   });
 
+  // jest-docblock joins a line to the pragma before it if `[^\s@][^\n\r@]+?` matches the line. The expression has no
+  // `u` flag, so the line needs two UTF-16 code units, not two bytes or two characters.
+  test("--insert-pragma counts the line after a pragma in UTF-16 code units", async () => {
+    const after = (line: string) => `/**\n * @flow\n * ${line}\n */\na;\n`;
+    const files = {
+      "one-unit-two-bytes.js": after("é"),
+      "one-unit-three-bytes.js": after("中"),
+      "two-units-one-character.js": after("😀"),
+      "two-units-two-characters.js": after("éé"),
+      // If `é` were joined, `keep me` would follow it, and `//` would cut both off the value.
+      "one-unit-under-a-line-comment.js": "/**\n * @flow // c\n * é\n * keep me\n */\na;\n",
+      // Without a name after `@` the joined line stays text, so the space that `+?` takes with `é` is printed.
+      "one-unit-and-a-space.css": "/**\n * @\n * é \n * z\n */\na{b:c}\n",
+      // JSON5 and JSONC insert the pragma with the same function as JavaScript.
+      "one-unit.json5": "/**\n * @flow\n * é\n */\n{a:1}\n",
+      "two-units.json5": "/**\n * @flow\n * 😀\n */\n{a:1}\n",
+    };
+    const result = await format(files, ["--no-config", "--insert-pragma", "."], { reads: Object.keys(files) });
+    expect(result.files).toEqual({
+      "one-unit-two-bytes.js": "/**\n * é\n *\n * @format\n * @flow\n */\n\na;\n",
+      "one-unit-three-bytes.js": "/**\n * 中\n *\n * @format\n * @flow\n */\n\na;\n",
+      "two-units-one-character.js": "/**\n * @format\n * @flow 😀\n */\n\na;\n",
+      "two-units-two-characters.js": "/**\n * @format\n * @flow éé\n */\n\na;\n",
+      "one-unit-under-a-line-comment.js": "/**\n * é\n * keep me\n *\n * @format\n * @flow\n */\n\na;\n",
+      "one-unit-and-a-space.css": "/**\n * @ é \n * z\n *\n * @format\n */\n\na {\n  b: c;\n}\n",
+      "one-unit.json5": "/**\n * é\n *\n * @format\n * @flow\n */\n\n{ a: 1 }\n",
+      "two-units.json5": "/**\n * @format\n * @flow 😀\n */\n\n{ a: 1 }\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // Prettier counts in the text that Node decodes: one U+FFFD for each byte that starts no sequence, and one for a
+  // sequence that is cut off. `bun fmt` keeps the bytes.
+  test("--insert-pragma counts a line that isn't UTF-8 as Node decodes it", async () => {
+    const after = (line: string) => Buffer.from(`/**\n * @flow\n * ${line}\n */\na;\n`, "latin1");
+    const files = { "three-units.js": after("\xED\xA0\x80"), "one-unit.js": after("\xE2\x82") };
+    const result = await bytesAfter(files, ["--insert-pragma"]);
+    expect(result.files).toEqual({
+      "three-units.js": "/**\n * @format\n * @flow \xED\xA0\x80\n */\n\na;\n",
+      "one-unit.js": "/**\n * \xE2\x82\n *\n * @format\n * @flow\n */\n\na;\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("insertFinalNewline: false with endOfLine: cr", async () => {
     const config = JSON.stringify({ endOfLine: "cr", insertFinalNewline: false });
     const result = await format(

@@ -925,6 +925,26 @@ describe("Query Execution", () => {
     expect(result.command).toBe("DELETE");
   });
 
+  // https://github.com/oven-sh/bun/issues/22569
+  test("a result with no rows prints count, command, lastInsertRowid and affectedRows", async () => {
+    await sql`CREATE TABLE printed (id INTEGER PRIMARY KEY, name TEXT)`;
+    const inserted = await sql`INSERT INTO printed (name) VALUES ('a')`;
+    const updated = await sql`UPDATE printed SET name = 'b'`;
+    const selected = await sql`SELECT * FROM printed WHERE id = 2`;
+
+    expect({
+      rows: [inserted.length, updated.length, selected.length],
+      inserted: Bun.inspect(inserted),
+      updated: Bun.inspect(updated),
+      selected: Bun.inspect(selected),
+    }).toEqual({
+      rows: [0, 0, 0],
+      inserted: '[ count: 1, command: "INSERT", lastInsertRowid: 1, affectedRows: 1 ]',
+      updated: '[ count: 1, command: "UPDATE", lastInsertRowid: 1, affectedRows: 1 ]',
+      selected: '[ count: 0, command: "SELECT", lastInsertRowid: null, affectedRows: 0 ]',
+    });
+  });
+
   test("SELECT with various clauses", async () => {
     await sql`CREATE TABLE scores (id INTEGER, player TEXT, score INTEGER, team TEXT)`;
     await sql`INSERT INTO scores VALUES

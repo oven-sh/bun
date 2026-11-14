@@ -243,6 +243,28 @@ describe("complex cookie parsing", () => {
     });
     expect(res.status).toBe(200);
   });
+
+  it("keeps a '%' that is not an escape in a cookie value", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => Response.json(Object.fromEntries(req.cookies)),
+      },
+    });
+    const res = await fetch(server.url, {
+      headers: {
+        "Cookie": "a=50%-off; b=a%zzb; c=abc%; d=x%2; e=100%25; f=caf%C3%A9",
+      },
+    });
+    expect(await res.json()).toEqual({
+      a: "50%-off",
+      b: "a%zzb",
+      c: "abc%",
+      d: "x%2",
+      e: "100%",
+      f: "café",
+    });
+  });
 });
 
 describe("CookieMap iterator", () => {

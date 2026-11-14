@@ -372,11 +372,14 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
-JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
-#if ENABLE(AOT)
-// The same for the namespace object of a compiled module. Null for any other object.
-JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
-#endif
+// An export that a module takes from a module mock: the object that the factory returned, and the name that the export has there.
+// A module may re-export it under another name. The object can be a namespace object, whose module may take the export from a mock too.
+struct ExportOfModuleMock {
+    JSC::JSObject* object { nullptr };
+    JSC::Identifier name;
+};
+// For `name` of the namespace object of a loaded or a compiled module. No object if the module does not take that export from a module mock.
+ExportOfModuleMock exportOfModuleMock(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);

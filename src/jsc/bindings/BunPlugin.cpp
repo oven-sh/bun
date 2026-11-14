@@ -10,6 +10,7 @@
 #include "ZigGlobalObject.h"
 #include "NodeAsyncHooks.h"
 
+#include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
@@ -951,6 +952,25 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
     if (entry.isNull())
         return {};
     return { resolution.moduleRecord, resolution.localName, entry.scopeOffset() };
+}
+
+static Bun::ExportOfModuleMock findExportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::AbstractModuleRecord* record, const JSC::Identifier& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // No record has live exports yet. A record of compiled code can get them while a name is resolved.
+    if (!vm.hasCompiledCode() && !vm.codeCache()->hasModuleRecordWithLiveExports())
+        return {};
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto resolution = record->resolveExport(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!resolution.isLiveExport(vm))
+        return {};
+    JSObject* source = resolution.moduleRecord->liveExportsSource();
+    auto* mock = source ? dynamicDowncast<JSModuleMock>(source) : nullptr;
+    JSObject* exports = mock ? mock->exports.get() : nullptr;
+    if (!exports)
+        return {};
+    return { exports, resolution.localName };
 }
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
@@ -9147,46 +9167,27 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     return given;
 }
 
-JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name)
+ExportOfModuleMock exportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::JSObject* moduleNamespace, const JSC::Identifier& name)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!resolution.isLiveExport(vm))
-        return nullptr;
-    JSObject* source = resolution.moduleRecord->liveExportsSource();
-    auto* mock = source ? dynamicDowncast<Zig::JSModuleMock>(source) : nullptr;
-    return mock ? mock->exports.get() : nullptr;
-}
-
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (auto* loaded = dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleNamespace))
+        RELEASE_AND_RETURN(scope, Zig::findExportOfModuleMock(globalObject, loaded->moduleRecord(), name));
 #if ENABLE(AOT)
-JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject* globalObject, JSC::JSObject* moduleNamespace, const JSC::Identifier& name)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     // A namespace object that was created under a mock keeps reading its names from that mock. The record is the module's current one.
     JSObject* readThrough = JSC::AOT::activeMockForNamespace(moduleNamespace);
     if (auto* mock = readThrough ? dynamicDowncast<Zig::JSModuleMock>(readThrough) : nullptr) {
         JSObject* exports = mock->exports.get();
         bool holdsName = exports && exports->hasProperty(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
         // With Vitest the object has no other names: reading a name that the mock lacks throws. A spy gives the mock the name.
         if (holdsName || (exports && mock->isOfVitest()))
-            return exports;
+            return { exports, name };
     }
-    JSC::AbstractModuleRecord* moduleRecord = JSC::AOT::isModuleNamespace(moduleNamespace) ? JSC::AOT::moduleRecordForNamespace(globalObject, moduleNamespace) : nullptr;
-    if (!moduleRecord)
-        return nullptr;
-    auto resolution = moduleRecord->resolveExport(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!resolution.isLiveExport(vm))
-        return nullptr;
-    JSObject* source = resolution.moduleRecord->liveExportsSource();
-    auto* mock = source ? dynamicDowncast<Zig::JSModuleMock>(source) : nullptr;
-    return mock ? mock->exports.get() : nullptr;
-}
+    if (JSC::AbstractModuleRecord* record = JSC::AOT::moduleRecordForNamespace(globalObject, moduleNamespace))
+        RELEASE_AND_RETURN(scope, Zig::findExportOfModuleMock(globalObject, record, name));
 #endif
+    return {};
+}
 
 } // namespace Bun
 

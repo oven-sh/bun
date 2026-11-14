@@ -1,0 +1,31 @@
+A spy through a file that hands a name on reaches the object of a mock past a mock that returns its original and a mock that returns another file.
+#### barrel.js
+export { fn } from "./dep.js";
+#### dep.js
+export { fn } from "./inner.js";
+#### fake-inner.js
+export { fn } from "./third.js";
+#### inner.js
+export function fn() { return "real inner"; }
+#### reader.js
+import { fn as viaBarrel } from "./barrel.js";
+import { fn as viaDep } from "./dep.js";
+import { fn as viaInner } from "./inner.js";
+import { fn as viaThird } from "./third.js";
+export const read = () => [viaBarrel(), viaDep(), viaInner(), viaThird()].join(" ");
+#### third.js
+export function fn() { return "real third"; }
+#### x.test.js
+import { mock, spyOn, test, vi } from "bun:test";
+const made = { fn: () => "made" };
+mock.module("./third.js", () => made);
+mock.module("./inner.js", () => import("./fake-inner.js"));
+vi.mock("./dep.js", importOriginal => importOriginal());
+const [barrel, { read }] = [await import("./barrel.js"), await import("./reader.js")];
+test("t", () => {
+  console.log("| CASE", read());
+  const spy = spyOn(barrel, "fn").mockReturnValue("spied");
+  console.log("| CASE", made.fn === spy, read(), spy.mock.calls.length);
+  spy.mockRestore();
+  console.log("| CASE", read());
+});

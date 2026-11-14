@@ -2748,7 +2748,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        if rc_candidate.is_taken {
+        if let Some(candidate) = rc_candidate
+            && candidate.is_taken
+        {
             let mut flags = bun_ast::flags::FUNCTION_NONE;
             if e_.is_async {
                 flags |= bun_ast::flags::Function::IsAsync;
@@ -2756,18 +2758,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.has_rest_arg {
                 flags |= bun_ast::flags::Function::HasRestArg;
             }
-            if e_.has_react_hooks_suppression {
-                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
-            }
             p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: e_.args,
                 flags,
                 body_loc: e_.body.loc,
                 args_loc: e_.body.loc,
-                binding: rc_candidate.binding,
+                binding: candidate.binding,
                 own_name: None,
-                in_react_hoc: rc_candidate.in_react_hoc,
-                is_top_level: rc_candidate.is_top_level,
+                in_react_hoc: candidate.in_react_hoc,
+                is_top_level: candidate.is_top_level,
             });
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
@@ -2778,14 +2777,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
             e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
             e_.prefer_expr = false;
-            if let Some(b) = rc_candidate.binding {
+            if let Some(b) = rc_candidate.and_then(|candidate| candidate.binding) {
                 p.record_usage(b);
             }
         }
         p.pop_scope();
         p.pop_scope();
 
-        p.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
+        if let Some(candidate) = rc_candidate {
+            p.react_compiler_search = candidate.prev_search;
+        }
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

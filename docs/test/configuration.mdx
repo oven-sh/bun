@@ -137,6 +137,10 @@ reactCompiler = true # default false
 
 Bun compiles every JavaScript and TypeScript file except test files, preload scripts and `node_modules`. It leaves alone a file or a function that has the `"use no memo"` directive, and a function that breaks the [Rules of React](https://react.dev/reference/rules).
 
+The directive in a function covers the functions inside it when the compiler takes that function for a component or a hook. That is a function that calls a hook or creates JSX itself, and that has a capitalized name or a `use` name, or is passed directly to `memo()` or `forwardRef()`.
+
+The compiler does not take the callback of another wrapper such as `observer()`, a default export with no name, or a component that an object property names. A component inside one of those is still compiled. For those, put the directive at the top of the file or in the inner function. `babel-plugin-react-compiler` behaves the same way ([facebook/react#35350](https://github.com/facebook/react/issues/35350)).
+
 To compile part of a project, list folders or glob patterns. They are relative to the directory you run `bun test` in.
 
 ```toml title="bunfig.toml" icon="settings"

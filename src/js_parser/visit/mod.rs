@@ -13,6 +13,7 @@ use crate::parser::{
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
     VisitDeclOpts, is_eval_or_arguments,
 };
+use crate::react_compiler_host::ReactCompilerSearch;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
 use bun_ast::G::{Decl, PropertyKind};
@@ -146,16 +147,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        if rc_candidate.is_taken {
+        if let Some(candidate) = rc_candidate
+            && candidate.is_taken
+        {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
                 body_loc,
                 args_loc: func.open_parens_loc,
-                binding: rc_candidate.binding,
+                binding: candidate.binding,
                 own_name: func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
-                in_react_hoc: rc_candidate.in_react_hoc,
-                is_top_level: rc_candidate.is_top_level,
+                in_react_hoc: candidate.in_react_hoc,
+                is_top_level: candidate.is_top_level,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
@@ -164,7 +167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(result) = self.react_compiler_result.take() {
             func.args = result.args;
             func.flags = result.flags;
-            if let Some(b) = rc_candidate.binding {
+            if let Some(b) = rc_candidate.and_then(|candidate| candidate.binding) {
                 self.record_usage(b);
             }
         }
@@ -212,7 +215,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
-        self.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
+        if let Some(candidate) = rc_candidate {
+            self.react_compiler_search = candidate.prev_search;
+        }
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -1793,7 +1798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
-            && p.react_compiler_may_replace_body
+            && p.react_compiler_search == ReactCompilerSearch::Replace
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending.binding.map(|r| p.load_name_from_ref(r));

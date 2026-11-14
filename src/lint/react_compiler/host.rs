@@ -8,17 +8,15 @@ use bun_react_compiler::{Host, JsxImportKind};
 pub(crate) struct LintHost<'c> {
     converted: &'c Converted,
     arena: &'c Arena,
-    source: &'c [u8],
     /// Always empty. [`Host::is_module_level`] tells the compiler what's bound outside the function.
     module_scope: Scope,
 }
 
 impl<'c> LintHost<'c> {
-    pub(crate) fn new(converted: &'c Converted, arena: &'c Arena, source: &'c [u8]) -> Self {
+    pub(crate) fn new(converted: &'c Converted, arena: &'c Arena) -> Self {
         LintHost {
             converted,
             arena,
-            source,
             module_scope: Scope::EMPTY,
         }
     }
@@ -46,9 +44,6 @@ impl Host for LintHost<'_> {
     fn is_module_level(&self, ref_: Ref) -> bool {
         let is_outside = self.converted.is_outside.get(ref_.inner_index() as usize);
         is_outside.copied().unwrap_or(true)
-    }
-    fn source(&self) -> &[u8] {
-        self.source
     }
     fn arena(&self) -> &Arena {
         self.arena

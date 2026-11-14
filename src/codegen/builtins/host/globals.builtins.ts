@@ -800,7 +800,7 @@ const subprocessOptionNames = [
 
 const subprocessHandlerNames = ["ipc", "onExit", "onDisconnect", "data", "exit", "drain"];
 
-const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
+const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "binaryType", "socket", "connect"];
 const datagramSocketHandlerNames = ["data", "drain", "error"];
 const datagramSocket = b.instance("UDPSocket");
 const receivedDatagram = b.union(

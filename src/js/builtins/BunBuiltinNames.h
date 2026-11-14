@@ -193,7 +193,6 @@ using namespace JSC;
     macro(secure) \
     macro(self) \
     macro(setColumnNameTransform) \
-    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \

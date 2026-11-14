@@ -171,6 +171,12 @@ Once installed, the binary can upgrade itself:
 bun upgrade
 ```
 
+When `bun upgrade` installs a stable release, or finds that the installed Bun already is the latest, it also looks for the nearest `package.json` with a `packageManager` field (for example `"packageManager": "bun@1.2.0"`). If that field pins an older Bun, `bun upgrade` rewrites the pin to the installed version. Pass `--no-save` to keep the pin as it is.
+
+```bash terminal icon="terminal"
+bun upgrade --no-save
+```
+
 <Tip>
 **Homebrew users** <br />
 To avoid conflicts with Homebrew, use `brew upgrade bun` instead.

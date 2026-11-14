@@ -737,6 +737,7 @@ fn relative_of_absolute_posix<'a>(
     latin1_answer(heap, relative_posix_t(from, to, buf, from_buf, tmp_buf))
 }
 
+#[derive(Clone, Copy)]
 enum NativePathError {
     ObservableCwd,
 }

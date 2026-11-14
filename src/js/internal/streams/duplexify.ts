@@ -89,12 +89,17 @@ function duplexify(body, name?: string): $Node.Duplex {
     const then = (value as { then?: Then } | null | undefined)?.then;
     if (typeof then === "function") {
       let d: Duplexify;
+      let finalized = false;
 
       const promise = then.$call(
         value,
         val => {
           if (val != null) {
             throw $ERR_INVALID_RETURN_VALUE("nully", "body", val);
+          }
+          // Returned before final() began: input was left unread (nodejs/node#65963). destroyer() adds Node's AbortError (nodejs/node#66349).
+          if (!finalized) {
+            destroyer(d);
           }
         },
         err => {
@@ -108,6 +113,7 @@ function duplexify(body, name?: string): $Node.Duplex {
         readable: false,
         write,
         final(cb) {
+          finalized = true;
           final(async () => {
             try {
               await promise;

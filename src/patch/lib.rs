@@ -9,7 +9,7 @@ pub use error::{ApplyError, Error, Result};
 use core::mem;
 
 use bun_core::strings;
-use bun_core::{ZBox, ZStr};
+use bun_core::{CStrList, CStrRef, ZBox, ZStr};
 use bun_paths as paths;
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -1366,26 +1366,16 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// spawnOpts / diffPostProcess / gitDiff*
+// spawn_git_diff / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The storage that `Options.envp` points into.
-pub struct GitDiffEnv {
-    _envp: Vec<*const core::ffi::c_char>,
-    _path: Option<Vec<u8>>,
-}
-
-// `bun_spawn::sync::Options` owns
-// `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
-// its storage is returned alongside as the second tuple element —
-// caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
-pub fn spawn_opts(
+pub fn spawn_git_diff(
     old_folder: &[u8],
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
     loop_: &bun_event_loop::AnyEventLoop,
-) -> (bun_spawn::sync::Options, GitDiffEnv) {
+) -> bun_spawn::Result<bun_sys::Result<bun_spawn::sync::Result>> {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
             b"-c",
@@ -1412,7 +1402,7 @@ pub fn spawn_opts(
     let path_var: Option<Vec<u8>> = bun_core::env_var::PATH
         .get()
         .map(|p| [&b"PATH="[..], p, b"\0"].concat());
-    const ENV_STATIC: &[&[u8]] = &[
+    const ENV_STATIC: [&[u8]; 6] = [
         b"GIT_CONFIG_NOSYSTEM=1\0",
         b"GIT_ATTR_NOSYSTEM=1\0",
         b"HOME=\0",
@@ -1422,24 +1412,18 @@ pub fn spawn_opts(
         // .gitattributes above the two folders.
         concat!("GIT_DIR=", bun_core::null_device!(), "\0").as_bytes(),
     ];
-    let mut envp_buf: Vec<*const core::ffi::c_char> =
-        Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);
-    if let Some(p) = &path_var {
-        envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
-    }
-    for s in ENV_STATIC {
-        envp_buf.push(s.as_ptr().cast::<core::ffi::c_char>());
-    }
-    envp_buf.push(core::ptr::null()); // sentinel
+    let mut envp = Vec::with_capacity(ENV_STATIC.len() + 2);
+    let variables = path_var.as_deref().into_iter().chain(ENV_STATIC);
+    envp.extend(variables.map(|variable| Some(CStrRef::from_bytes_with_nul(variable))));
 
     #[cfg(not(windows))]
     let _ = loop_;
 
-    let opts = bun_spawn::sync::Options {
+    bun_spawn::sync::spawn(&bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
-        envp: Some(envp_buf.as_ptr()),
+        envp: Some(CStrList::terminate(&mut envp)),
         argv,
         // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
         // zeroed.
@@ -1451,15 +1435,7 @@ pub fn spawn_opts(
             ..Default::default()
         },
         ..Default::default()
-    };
-
-    (
-        opts,
-        GitDiffEnv {
-            _envp: envp_buf,
-            _path: path_var,
-        },
-    )
+    })
 }
 
 pub fn diff_post_process(
@@ -1518,9 +1494,7 @@ pub fn git_diff_internal(
     )
     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
-    let (opts, _env) = spawn_opts(old_folder, new_folder, ZStr::EMPTY, git, loop_);
-
-    let mut result = bun_spawn::sync::spawn(&opts)??;
+    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, git, loop_)??;
     diff_post_process(&mut result, old_folder, new_folder)
 }
 

@@ -627,33 +627,6 @@ impl SocketGroups {
             && g.head_listen_sockets.get().is_null()
             && g.low_prio_count.get() == 0
     }
-
-    /// Detach every group from the thread's uSockets loop (each is empty). Idempotent.
-    fn detach_from_loop(&self) {
-        for g in self.each() {
-            detach_group_from_loop(g);
-        }
-    }
-}
-
-/// Detach an embedded, emptied group from its loop. Idempotent.
-fn detach_group_from_loop(g: &SocketGroup) {
-    // Groups whose lazy accessor was never called are still zero-initialised
-    // (`loop_ == null`, never `init`'d). The C `us_socket_group_deinit` happens
-    // to no-op on those, but `SocketGroup::destroy`'s safety contract requires a
-    // prior `init`, so honour it explicitly.
-    if !g.loop_.get().is_null() {
-        // SAFETY: embedded by-value group, previously `init`'d and emptied by
-        // its owner, so destroy reduces to the empty-list debug asserts.
-        unsafe { SocketGroup::destroy(g) };
-        g.loop_.set(core::ptr::null_mut());
-    }
-}
-
-impl Drop for SocketGroups {
-    fn drop(&mut self) {
-        self.detach_from_loop();
-    }
 }
 
 impl RareData {
@@ -1050,20 +1023,18 @@ impl Drop for RareData {
         {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
-
-        self.detach_socket_groups_from_loop();
     }
 }
 
 impl RareData {
     /// Detach every embedded socket group from the thread's uSockets loop
     /// (asserting each is empty). A thread teardown calls this before it frees
-    /// that loop; `Drop` calls it for every other owner. Idempotent.
+    /// that loop.
     pub(crate) fn detach_socket_groups_from_loop(&self) {
-        // closeAllSocketGroups() must have already run (before JSC teardown) so
-        // these are empty; deinit() asserts that in debug.
-        self.socket_groups.detach_from_loop();
-        detach_group_from_loop(&self.spawn_ipc_group);
-        detach_group_from_loop(&self.test_parallel_ipc_group);
+        let ipc = [&self.spawn_ipc_group, &self.test_parallel_ipc_group];
+        for group in self.socket_groups.each().into_iter().chain(ipc) {
+            // SAFETY: closeAllSocketGroups() ran before JSC teardown, and the loop no longer ticks.
+            unsafe { group.detach_from_loop() };
+        }
     }
 }

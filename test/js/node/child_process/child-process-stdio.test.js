@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -165,6 +165,124 @@ describe("child.stdin", () => {
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
     });
+  });
+
+  // A child that prints "ready", reads stdin only on SIGUSR1, then prints the byte count it read. On Windows a
+  // write to child.stdin is never held (one uv_write takes the whole chunk), so there is no backpressure to observe.
+  const gatedReader = `process.on("SIGUSR1", async () => {
+    let n = 0;
+    for await (const c of process.stdin) n += c.length;
+    process.stdout.write(String(n), () => process.exit(0));
+  });
+  setInterval(() => {}, 1 << 30);
+  process.stdout.write("ready\\n");`;
+
+  it.skipIf(isWindows)("a held write is pending in writableLength and writableNeedDrain until 'drain'", async () => {
+    const child = spawn(bunExe(), ["-e", gatedReader], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    const stdin = child.stdin;
+    const state = () => ({ length: stdin.writableLength, needDrain: stdin.writableNeedDrain });
+    const order = [];
+    // SIGUSR1 before the child installs its listener would kill it.
+    let stdout = "";
+    const ready = new Promise(resolve => {
+      child.stdout.on("data", c => {
+        stdout += c;
+        if (stdout.startsWith("ready\n")) resolve();
+      });
+    });
+
+    // 128 KiB chunks until the sink holds one. The chunks it took at once are done: only the held one is pending.
+    const chunk = 128 * 1024;
+    let held = 0;
+    for (;;) {
+      const i = held;
+      if (stdin.write(Buffer.alloc(chunk, "A"), () => order.push(i)) === false) break;
+      held++;
+      expect(held).toBeLessThan(64);
+    }
+    const lastCb = Promise.withResolvers();
+    const retB = stdin.write("B", () => {
+      order.push("B");
+      lastCb.resolve();
+    });
+    expect({ retB, order, ...state() }).toEqual({ retB: false, order: [], length: chunk + 1, needDrain: true });
+    const drained = once(stdin, "drain").then(() => order.push("drain"));
+
+    await ready;
+    child.kill("SIGUSR1");
+    await Promise.all([drained, lastCb.promise]);
+    const done = [];
+    for (let i = 0; i < held; i++) done.push(i);
+    // Callbacks run in write order. 'drain' fires once, when nothing is pending.
+    expect({
+      callbacks: order.filter(o => o !== "drain"),
+      drains: order.filter(o => o === "drain"),
+      ...state(),
+    }).toEqual({
+      callbacks: [...done, held, "B"],
+      drains: ["drain"],
+      length: 0,
+      needDrain: false,
+    });
+
+    const exited = once(child, "exit");
+    const closed = once(child, "close");
+    stdin.end();
+    const [[exitCode]] = await Promise.all([exited, closed]);
+    expect(stdout).toBe("ready\n" + String(chunk * (held + 1) + 1));
+    expect(exitCode).toBe(0);
+  });
+
+  // The sink is open from the start: nothing to open, so no 'open' or 'ready', and pending only once destroyed.
+  it("is constructed and not pending when created, and emits neither 'open' nor 'ready'", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
+    const stdin = child.stdin;
+    const atBirth = { constructed: stdin._writableState.constructed, pending: stdin.pending };
+    const events = [];
+    for (const name of ["open", "ready"]) stdin.on(name, () => events.push(name));
+    await once(child, "close");
+    expect({ atBirth, events, pendingOnceDestroyed: stdin.pending }).toEqual({
+      atBirth: { constructed: true, pending: false },
+      events: [],
+      pendingOnceDestroyed: true,
+    });
+  });
+
+  // The flush that destroy() makes fails with EPIPE. Node drops a write error on a stream destroyed before 'finish'.
+  it.skipIf(isWindows)("end(chunk) then destroy() to a child that closed its stdin reports no error", async () => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "inherit"] },
+    );
+    await once(child.stdout, "data");
+    const stdin = child.stdin;
+    const events = [];
+    const closed = Promise.withResolvers();
+    stdin.on("error", e => events.push("error:" + e.code));
+    stdin.on("close", () => {
+      events.push("close");
+      process.nextTick(closed.resolve);
+    });
+    stdin.end("hello");
+    stdin.destroy();
+    await closed.promise;
+    expect(events).toEqual(["close"]);
+    child.kill();
+    await once(child, "close");
+  });
+
+  it("write() is inherited from the prototype", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
+    expect({
+      own: Object.hasOwn(child.stdin, "write"),
+      proto: child.stdin.write === child.stdin.constructor.prototype.write,
+    }).toEqual({ own: false, proto: true });
+    child.stdin.end();
+    await once(child, "close");
   });
 });
 

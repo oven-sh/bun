@@ -1478,7 +1478,7 @@ impl Reader {
                 self.entry.path_is_utf8 = false;
                 assign(&mut self.entry.path, slice_to_nul(header::name(h)))?;
             }
-            if !npm {
+            if !npm && header::typeflag(h) == b'S' {
                 if gnu::real_size(h).first() != Some(&0) {
                     self.gnu_sparse_real_size = parse_field(gnu::real_size(h));
                     self.size_fields |= size_field::GNU_SPARSE_REALSIZE;
@@ -1696,6 +1696,9 @@ impl Reader {
     }
 
     fn finish_header(&mut self, status: Status) -> Result<()> {
+        if self.bytes_remaining == 0 {
+            self.sparse.clear();
+        }
         let mut end = 0;
         for block in self.sparse.iter().filter(|block| block.remaining != 0) {
             if block.offset < end {
@@ -1703,11 +1706,13 @@ impl Reader {
             }
             end = block.offset.saturating_add(block.remaining);
         }
-        if end > self.disk_size {
-            return Err(Error::MalformedSparseMap);
-        }
         if self.sparse.is_empty() {
             self.add_sparse_block(0, self.bytes_remaining, false)?;
+        }
+        // A file can grow while it is archived.
+        for block in &mut self.sparse {
+            let room = self.disk_size.saturating_sub(block.offset).max(0);
+            block.remaining = block.remaining.min(room);
         }
 
         let plain_file = matches!(self.typeflag, b'0' | 0);

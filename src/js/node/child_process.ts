@@ -677,6 +677,10 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   const resultError = result.error;
   if (resultError) {
+    if (resultError.syscall === "chdir") {
+      resultError.path = options.file;
+      resultError.message = `spawnSync ${options.file} ${resultError.code}`;
+    }
     resultError.syscall = "spawnSync " + options.file;
     resultError.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
@@ -1550,6 +1554,10 @@ class ChildProcess extends EventEmitter {
         exCode === "ENOENT"
       ) {
         this.#handle = null;
+        if ((ex as SystemError).syscall === "chdir") {
+          (ex as SystemError).path = this.spawnfile;
+          (ex as SystemError).message = `spawn ${this.spawnfile} ${exCode}`;
+        }
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
         (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {
@@ -1566,6 +1574,13 @@ class ChildProcess extends EventEmitter {
         if (exCode !== undefined) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
+          if ((ex as SystemError).syscall === "chdir") {
+            throw genericNodeError(`spawn ${exCode}`, {
+              errno: (ex as SystemError).errno,
+              code: exCode,
+              syscall: "spawn",
+            });
+          }
           (ex as SystemError).syscall = "spawn";
         }
         throw ex;

@@ -9092,12 +9092,88 @@ describe("rules", () => {
       // A browser that cannot parse the later value uses the earlier one.
       [".a{width:100%}.b{color:red}.a{width:-moz-available}"],
       [".a{width:100vh}.b{color:red}.a{width:100dvh}"],
+      [".a{color:#369}.b{top:0}.a{color:rgb(from color(display-p3 0 1 0) r g b)}"],
       [".a{color:red}.b{color:green}.a{color:#f00}", ".b{color:green}.a{color:red}"],
       [".a{--x:1}.b{top:0}.a{--x:1}", ".b{top:0}.a{--x:1}"],
       [".a{background:url(data:,a)}.b{top:0}.a{background:url(data:,a)}", ".b{top:0}.a{background:url(data:,a)}"],
     ]);
     // Chrome 80 has no `:where()`, so these neighbors are not merged.
     rows(chrome80, [[":where(.x){--a:1}:where(.x){--b:2}"]]);
+  });
+
+  describe("an earlier `color` or `text-shadow` is removed only if every browser keeps the later one", () => {
+    // A browser that cannot parse the later value uses the earlier one.
+    describe.each([
+      ["no targets", undefined],
+      ["chrome 80", chrome80],
+    ])("%s", (_, targets) => {
+      rows(targets, [
+        [".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b)}"],
+        [".a{color:red;color:rgb(from #369 300 g b)}"],
+        [".a{color:red;color:rgb(from currentcolor r g b/50%)}"],
+        [".a{color:red;color:color-mix(in srgb,currentcolor 50%,transparent)}"],
+        [".a{color:red;color:contrast-color(blue)}"],
+        [".a{color:red;color:attr(data-c type(<color>))}"],
+        [".a{color:red;color:foo(1 2 3)}"],
+        [".a{color:red;color:rgb(1 2 3/foo(1))}"],
+        [".a{color:red;color:revert}"],
+        [".a{color:red;color:revert-layer}"],
+        // A keyword that is not the whole value.
+        [".a{color:red;color:inherit foo}"],
+        [".a{text-shadow:1px 1px red;text-shadow:1px 1px inherit}"],
+        // Vendor syntax after a standard color: Lighthouse's viewer.css, an Apple keyword, an IE expression.
+        [".a{color:#0000ee;color:-webkit-link}", ".a{color:#00e;color:-webkit-link}"],
+        [".a{color:red;color:-apple-system-label}"],
+        [".a{color:inherit;color:expression(parentNode.currentStyle.color)}"],
+        [".a{color:red;color:foo(1);color:bar(2)}"],
+        [".a{color:red!important;color:foo(1)!important}"],
+        [".a{text-shadow:1px 1px red;text-shadow:1px 1px rgb(from #369 300 g b)}"],
+        [".a{text-shadow:1px 1px red;text-shadow:1px 1px color-mix(in srgb,currentcolor 50%,transparent)}"],
+        // `none` is kept as tokens, as `box-shadow:1px 1px red;box-shadow:none` is.
+        [".a{text-shadow:1px 1px red;text-shadow:none}"],
+        // `var(--x)` replaces `red`, and stays as the fallback of `foo(1)`.
+        [".a{color:red;color:var(--x);color:foo(1)}", ".a{color:var(--x);color:foo(1)}"],
+        // A later declaration replaces the one before it, not the fallback before that.
+        [".a{color:red;color:foo(1);color:var(--x)}", ".a{color:red;color:var(--x)}"],
+        [".a{color:red;color:foo(1);color:blue}", ".a{color:red;color:#00f}"],
+        // Rules that merge are minified again as one block.
+        [".a{color:#369}.a{color:foo(1 2 3)}", ".a{color:#369;color:foo(1 2 3)}"],
+        [".a{color:red;color:foo(1)}.a{top:0}", ".a{color:red;color:foo(1);top:0}"],
+      ]);
+    });
+    rows(undefined, [[".a{& .b{top:0}color:red;color:foo(1)}"], [".a{color:red;color:light-dark(foo(1),blue)}"]]);
+    rows(chrome80, [
+      [".a{& .b{top:0}color:red;color:foo(1)}", ".a .b{top:0}.a{color:red;color:foo(1)}"],
+      // The earlier declaration stays with the fallbacks that the targets need.
+      [".a{color:lab(50% 20 30);color:foo(1)}", ".a{color:#a16945;color:lab(50% 20 30);color:foo(1)}"],
+      [".a{color:#a16945;color:lab(50% 20 30);color:foo(1)}"],
+      [".a{color:var(--c,lab(50% 20 30));color:foo(1)}", ".a{color:var(--c,#a16945);color:foo(1)}"],
+      // The shape that @csstools/postcss-contrast-color-function prints. The later value takes its own fallbacks.
+      [
+        ".a{color:rgb(0, 0, 0);color:contrast-color(lab(50% 20 30))}",
+        ".a{color:#000;color:contrast-color(#a16945)}@supports (color:lab(0% 0 0)){.a{color:contrast-color(lab(50% 20 30))}}",
+      ],
+    ]);
+
+    // `var()` and `env()` are checked after substitution, and every browser reads these three keywords.
+    rows(undefined, [
+      [".a{color:red;color:var(--x)}", ".a{color:var(--x)}"],
+      [".a{color:red;color:foo(var(--x))}", ".a{color:foo(var(--x))}"],
+      [".a{color:red;color:rgb(1 2 3/var(--x))}", ".a{color:rgb(1 2 3/var(--x))}"],
+      [".a{color:red;color:hsl(1 2% 3%/var(--x))}", ".a{color:hsl(1 2% 3%/var(--x))}"],
+      [".a{color:red;color:light-dark(var(--x),blue)}", ".a{color:light-dark(var(--x),blue)}"],
+      [".a{color:red;color:light-dark(blue,var(--x))}", ".a{color:light-dark(blue,var(--x))}"],
+      [".a{color:red;color:env(foo)}", ".a{color:env(foo)}"],
+      [".a{color:red;color:inherit}", ".a{color:inherit}"],
+      [".a{color:red;color:initial}", ".a{color:initial}"],
+      [".a{color:red;color:UNSET}", ".a{color:UNSET}"],
+      [".a{text-shadow:1px 1px red;text-shadow:1px 1px var(--c)}", ".a{text-shadow:1px 1px var(--c)}"],
+      [".a{color:foo(1);color:var(--x)}", ".a{color:var(--x)}"],
+      [".a{color:foo(1);color:red}", ".a{color:red}"],
+      // Equal declarations are one.
+      [".a{color:foo(1);color:foo(1)}", ".a{color:foo(1)}"],
+      [".a{color:foo(1)}.a{color:foo(1)}", ".a{color:foo(1)}"],
+    ]);
   });
 
   describe("property names that have no type are compared", () => {

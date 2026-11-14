@@ -2757,9 +2757,7 @@ pub mod parse_worker {
 
     fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
         let ctx = this.ctx.expect("ParseTask.ctx unset");
-        let worker: &mut crate::Worker = crate::Worker::get(ctx.get());
-        // `defer worker.unget()` — handled at function exit (scopeguard
-        // would alias the `&mut worker` borrows below).
+        let mut worker = crate::Worker::get(ctx.get());
         scoped_log!(
             ParseTask,
             "ParseTask(0x{:x}, {}) callback",
@@ -2773,7 +2771,7 @@ pub mod parse_worker {
 
         let value: ResultValue = 'value: {
             if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
-                match get_source_code(this, worker, &mut log) {
+                match get_source_code(this, &mut worker, &mut log) {
                     Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),
                     Err(e) => {
                         break 'value ResultValue::Err(ResultError {
@@ -2800,7 +2798,6 @@ pub mod parse_worker {
                     // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
                     // bundle pass.
                     ctx.graph.pool().schedule_inside_thread_pool(this);
-                    worker.unget();
                     return;
                 }
             }
@@ -2817,7 +2814,7 @@ pub mod parse_worker {
                     ParseTaskStage::NeedsParse(e) => e,
                     ParseTaskStage::NeedsSourceCode => unreachable!(),
                 };
-            let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
+            let parsed = run_with_source_code(this, &mut worker, &mut step, &mut log, &mut entry);
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
                 Ok(ast) => {
@@ -2917,8 +2914,6 @@ pub mod parse_worker {
                 }
             }
         }
-        // Runs at function exit, i.e. after enqueue.
-        worker.unget();
     }
 
     // The struct-only `dealloc` below skips field Drop; the `Log` is the only

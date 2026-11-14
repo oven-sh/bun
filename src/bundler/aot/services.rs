@@ -63,7 +63,7 @@ impl BuildContext {
         &self,
         work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
     ) -> R {
-        let mut worker = scopeguard::guard(Worker::get(self.bundle()), |worker| worker.unget());
+        let mut worker = Worker::get(self.bundle());
         let data = worker.data.as_mut().expect("Worker::get creates it");
         with_ast_scope(|arena| work(&mut data.transpiler, arena))
     }

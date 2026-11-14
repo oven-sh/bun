@@ -57,7 +57,6 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
         let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
-    let worker = scopeguard::guard(worker, |w| w.unget());
 
     // SAFETY: `linker` outlives this task (owned by the bundle) and is shared
     // across every concurrently-running `PrepareCssAstTask`, so it must be a

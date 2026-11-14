@@ -8,6 +8,7 @@
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -493,6 +494,28 @@ impl Worker {
     }
 }
 
+/// This thread's [`Worker`], whose AST store is the active one until the drop.
+pub(crate) struct WorkerGuard(&'static mut Worker);
+
+impl Deref for WorkerGuard {
+    type Target = Worker;
+    fn deref(&self) -> &Worker {
+        self.0
+    }
+}
+
+impl DerefMut for WorkerGuard {
+    fn deref_mut(&mut self) -> &mut Worker {
+        self.0
+    }
+}
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.0.ast_memory_store.pop();
+    }
+}
+
 pub struct WorkerData {
     // Kept raw because the pointee's arena
     // is the sibling field `Worker.heap`, which Rust cannot express as a borrow.
@@ -581,11 +604,11 @@ impl Worker {
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 
-    // returns `&'static mut` (detached) — the `Worker` is
+    // holds `&'static mut` (detached) — the `Worker` is
     // heap-pinned (heap::alloc in `get_worker`) and outlives any `ctx`
     // borrow. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
-    pub(crate) fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
+    pub(crate) fn get(ctx: &BundleV2<'_>) -> WorkerGuard {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
         // pointing at the bundle-owned pool that outlives every worker. We only
         // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
@@ -599,11 +622,7 @@ impl Worker {
 
         worker.ast_memory_store.push();
 
-        worker
-    }
-
-    pub(crate) fn unget(&mut self) {
-        self.ast_memory_store.pop();
+        WorkerGuard(worker)
     }
 
     pub(crate) fn init(&mut self, v2: &BundleV2<'_>) {

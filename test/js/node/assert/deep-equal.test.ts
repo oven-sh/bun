@@ -4615,19 +4615,28 @@ describe("util.isDeepStrictEqual", () => {
         [withHiddenProperty([1], "x", 1), [2]],
         [[1], withHiddenProperty([2], "x", 1)],
         [Subclass.of(1), Subclass.of(2)],
+        [new Proxy([1], {}), [2]],
       ];
-      const answers: boolean[] = [];
       let reads = 0;
-      for (const prototype of [Array.prototype, Object.prototype]) {
+      const withSizeOn = (prototype: object, compare: () => boolean[]) => {
         Object.defineProperty(prototype, "size", { configurable: true, get: () => (reads++, 0) });
         try {
-          for (const [first, second] of pairs()) answers.push(util.isDeepStrictEqual(first, second));
+          return compare();
         } finally {
           delete (prototype as { size?: number }).size;
         }
-      }
-      same(answers, new Array(8).fill(!isBun));
+      };
+      const prototypes = [Array.prototype, Object.prototype];
+      const answers = prototypes.flatMap(prototype =>
+        withSizeOn(prototype, () => pairs().map(([first, second]) => util.isDeepStrictEqual(first, second))),
+      );
+      same(answers, new Array(10).fill(!isBun));
       assert.strictEqual(reads > 0, !isBun);
+      // A second array behind a Proxy answers through the `get` of the Proxy, which finds that `size`.
+      const behindProxy = prototypes.flatMap(prototype =>
+        withSizeOn(prototype, () => [util.isDeepStrictEqual([1], new Proxy([2], {}))]),
+      );
+      same(behindProxy, [true, true]);
       // A `size` of its own is read, and so is one on a prototype between the array and Array.prototype.
       assert.strictEqual(util.isDeepStrictEqual([1], withHiddenProperty([2], "size", 0)), true);
       Object.defineProperty(Subclass.prototype, "size", { value: 0 });

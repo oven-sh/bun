@@ -253,6 +253,20 @@ bool hasUnequalTagSlow(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope
     return !sameString;
 }
 
+bool hasSizeOfZero(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array2)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::PropertySlot slot(array2, JSC::PropertySlot::InternalMethodType::Get);
+    bool hasSize = array2->getPropertySlot(globalObject, vm.propertyNames->size, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    // A Proxy is itself the base of what its `get` answers, so its `size` is always read.
+    if (!hasSize || slot.slotBase() == JSC::JSValue(globalObject->arrayPrototype()) || slot.slotBase() == JSC::JSValue(globalObject->objectPrototype()))
+        return false;
+    JSC::JSValue size = slot.getValue(globalObject, vm.propertyNames->size);
+    RETURN_IF_EXCEPTION(scope, false);
+    return size.isNumber() && !size.asNumber();
+}
+
 // What node does with two arrays before their elements: nullopt where the elements decide. Not inline, to keep it off the stack of the element loop.
 static NEVER_INLINE std::optional<bool> proxiedArrayOtherKeysEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const CompareValues& compareValues)
 {
@@ -297,9 +311,9 @@ static NEVER_INLINE std::optional<bool> proxiedArrayOtherKeysEqual(JSC::JSGlobal
         RETURN_IF_EXCEPTION(scope, false);
         if (length2.isNumber() && !length2.asNumber())
             return true;
-        JSC::JSValue size2 = o2->get(globalObject, vm.propertyNames->size);
+        bool sizeIsZero = hasSizeOfZero(globalObject, scope, o2);
         RETURN_IF_EXCEPTION(scope, false);
-        if (size2.isNumber() && !size2.asNumber())
+        if (sizeIsZero)
             return true;
     }
     return std::nullopt;

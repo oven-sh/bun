@@ -170,6 +170,9 @@ bool mapsEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSMap* map1, JSC::JS
 // slowHasUnequalTag (#L274-L279) for a pair that holds a Proxy. False for an array: node compares its tag after its length.
 bool hasUnequalTagSlow(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* o1, JSC::JSObject* o2);
 
+// `val2.size === 0` (#L523-L528), for a second array with no other key. Not as node: no `size` that the realm's Array.prototype or Object.prototype holds is read for an array that is no Proxy, because two plain arrays skip this read.
+bool hasSizeOfZero(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* array2);
+
 // The array arm for a pair that holds a Proxy: lengths (#L294-L295), tags (#L296), other keys (#L300-L305), the empty case (#L523-L528), elements.
 bool proxiedArraysEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* o1, JSC::JSObject* o2, const CompareValues&);
 

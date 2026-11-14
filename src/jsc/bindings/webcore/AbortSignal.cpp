@@ -34,6 +34,7 @@
 #include "JSDOMException.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
+#include "ScriptWrappableInlines.h"
 #include "WebCoreOpaqueRoot.h"
 #include "wtf/DebugHeap.h"
 #include <wtf/TZoneMallocInlines.h>

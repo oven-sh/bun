@@ -1759,6 +1759,18 @@ it("readdirSync works on directories with under 32 files", () => {
   expect(results[0]).toBe("a");
 });
 
+// NTFS counts UTF-16 units, so a name can be three times as long in UTF-8.
+it.if(isWindows).each([180, 255])("lists and removes a name of %d three-byte characters", async length => {
+  const name = Buffer.alloc(3 * length, "あ").toString();
+  using dir = tempDir("long-name", { tree: { [name]: { [name]: "" } } });
+  const tree = join(String(dir), "tree");
+  expect(readdirSync(tree, { recursive: true })).toEqual([name, join(name, name)]);
+  expect((await promises.readdir(tree, { recursive: true })).sort()).toEqual([name, join(name, name)]);
+  expect(readdirSync(tree, { encoding: "buffer" })).toEqual([Buffer.from(name)]);
+  rmSync(tree, { recursive: true });
+  expect(existsSync(tree)).toBe(false);
+});
+
 it("readdirSync throws when given a file path", () => {
   try {
     readdirSync(import.meta.path);

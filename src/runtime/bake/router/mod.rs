@@ -555,7 +555,7 @@ impl FrameworkRouter {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        self.scan_inner(ty, r, root_info, &mut arena_state, ctx)
     }
 
     fn scan_inner(
@@ -614,7 +614,7 @@ impl FrameworkRouter {
                         if let Some(child_info) =
                             r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
                         {
-                            self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
+                            self.scan_inner(t_index, r, child_info, arena_state, ctx)?;
                         }
                     }
                     bun_resolver::fs::EntryKind::File => {

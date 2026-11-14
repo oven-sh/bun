@@ -4,6 +4,7 @@ import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { namesWithTheSameWyhash } from "../../cli/install/wyhash-std-collision";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -101,6 +102,68 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// The watcher keeps a 32-bit hash of each watched path. Here two folders, and the modules in them, have the same hash.
+devTest("rebuilds on a save of each of two modules in sibling folders with the same watcher hash", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+  },
+  async test(dev) {
+    const [a, b] = namesWithTheSameWyhash(dev.rootDir, path.sep);
+    expect(Bun.hash.wyhash(dev.join(`${a}/mod.ts`), 0n)).toBe(Bun.hash.wyhash(dev.join(`${b}/mod.ts`), 0n));
+    dev.mkdir(a);
+    dev.mkdir(b);
+    fs.writeFileSync(dev.join(`${a}/mod.ts`), `export default "a1";`);
+    fs.writeFileSync(dev.join(`${b}/mod.ts`), `export default "b1";`);
+    fs.writeFileSync(
+      dev.join("index.ts"),
+      `
+        import a from ${JSON.stringify(`./${a}/mod.ts`)};
+        import b from ${JSON.stringify(`./${b}/mod.ts`)};
+        console.log(a + " " + b);
+      `,
+    );
+    await using c = await dev.client("/");
+    await c.expectMessage("a1 b1");
+
+    await c.expectReload(async () => {
+      await dev.write(`${b}/mod.ts`, `export default "b2";`);
+    });
+    await c.expectMessage("a1 b2");
+
+    await c.expectReload(async () => {
+      await dev.write(`${a}/mod.ts`, `export default "a2";`);
+    });
+    await c.expectMessage("a2 b2");
+  },
+});
+// The dev server watches the folder of a failed import. Outside the project root, nothing else watches that folder.
+devTest("recovers from a failed import into a folder with the same watcher hash as a watched file", {
+  skip: ["win32"], // The Windows watcher watches nothing outside the project root.
+  files: {
+    "web/index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+  },
+  cwd: "web",
+  async test(dev) {
+    const [file, folder] = namesWithTheSameWyhash(dev.join("outside"), ".ts");
+    dev.mkdir(`outside/${folder}.ts`);
+    fs.writeFileSync(dev.join(`outside/${file}.ts`), `export default "a1";`);
+    const importFile = `import a from ${JSON.stringify(`../outside/${file}.ts`)};`;
+    const missing = `../outside/${folder}.ts/late.ts`;
+    fs.writeFileSync(dev.join("web/index.ts"), `${importFile}\nconsole.log(a);`);
+    await using c = await dev.client("/");
+    await c.expectMessage("a1");
+
+    await dev.write(
+      "web/index.ts",
+      `import b from ${JSON.stringify(missing)};\n${importFile}\nconsole.log(a + " " + b);`,
+      { errors: [`index.ts:1:15: error: Could not resolve: "${missing}"`] },
+    );
+    await c.expectReload(async () => {
+      await dev.write(`outside/${folder}.ts/late.ts`, `export default "b1";`);
+    });
+    await c.expectMessage("a1 b1");
   },
 });
 // After a failed resolution, the dev server evicts the specifier's path and its parent from the

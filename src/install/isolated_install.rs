@@ -361,7 +361,7 @@ fn dependency_is_contained_folder(
     declarer: &Resolution,
     dep: &install::Dependency,
 ) -> bool {
-    if declarer.tag.is_local_package() || dep.version.tag != VersionTag::Folder {
+    if declarer.tag.is_local_package() || dep.version.tag() != VersionTag::Folder {
         return false;
     }
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -752,7 +752,7 @@ fn build_store(
             // dependencies when root also declares that workspace; the
             // root-declared entry does. (If root does not declare it, the
             // protocol reference is the only one and must keep them.)
-            if entry_dep.version.tag == VersionTag::Workspace
+            if entry_dep.version.tag() == VersionTag::Workspace
                 && !entry_dep.behavior.is_workspace()
                 && root_declares_workspace.is_set(entry.pkg_id as usize)
             {
@@ -771,7 +771,7 @@ fn build_store(
                 } = nodes.split_mut();
 
                 let ctx_hash: u64 =
-                    if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
+                    if entry_dep.version.tag() == VersionTag::Workspace || peer_name_count == 0 {
                         0
                     } else {
                         'ctx: {
@@ -842,14 +842,14 @@ fn build_store(
                         break 'dont_dedupe;
                     }
 
-                    if (dedupe_dep.version.tag == VersionTag::Workspace)
-                        != (entry_dep.version.tag == VersionTag::Workspace)
+                    if (dedupe_dep.version.tag() == VersionTag::Workspace)
+                        != (entry_dep.version.tag() == VersionTag::Workspace)
                     {
                         break 'dont_dedupe;
                     }
 
-                    if dedupe_dep.version.tag == VersionTag::Workspace
-                        && entry_dep.version.tag == VersionTag::Workspace
+                    if dedupe_dep.version.tag() == VersionTag::Workspace
+                        && entry_dep.version.tag() == VersionTag::Workspace
                     {
                         if dedupe_dep.behavior.is_workspace() != entry_dep.behavior.is_workspace() {
                             break 'dont_dedupe;
@@ -1250,8 +1250,8 @@ fn build_store(
                     let curr_dep = &dependencies[curr_dep_id as usize];
                     let existing_dep = &dependencies[info.dep_id as usize];
 
-                    if existing_dep.version.tag == VersionTag::Workspace
-                        && curr_dep.version.tag == VersionTag::Workspace
+                    if existing_dep.version.tag() == VersionTag::Workspace
+                        && curr_dep.version.tag() == VersionTag::Workspace
                     {
                         if existing_dep.behavior.is_workspace() != curr_dep.behavior.is_workspace()
                         {
@@ -1343,7 +1343,7 @@ fn build_store(
 
         let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
         let new_entry_is_workspace = !new_entry_is_root
-            && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
+            && dependencies[new_entry_dep_id as usize].version.tag() == VersionTag::Workspace;
 
         let new_entry_dependencies: store::entry::Dependencies =
             if dedupe_entry.found_existing && new_entry_is_workspace {

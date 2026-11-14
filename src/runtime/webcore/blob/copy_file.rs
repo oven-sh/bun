@@ -885,7 +885,7 @@ fn read_write_loop_capped(
 // Ownership is encoded in the types, so cleanup is all field `Drop`:
 // `source_file_store.pathlike` is a `PathLike` clone that is independently
 // droppable — `PathLike::clone` dupes owned string buffers (freed by the
-// clone's own `CowSlice` drop), bumps refs for WTF-backed slices, and only
+// clone's own drop), bumps refs for WTF-backed slices, and only
 // shares the backing for borrowed-string/Buffer variants (whose owner is kept
 // alive by the `source_store` `RefPtr<Store>`). Each clone's field `Drop` frees
 // exactly what it owns; the `RefPtr<Store>`s release just their Store refcounts on

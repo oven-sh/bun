@@ -914,6 +914,72 @@ for (const side of ["client", "server"] as const) {
     });
   });
 
+  test(side + ": accept(dep) is called once for a copy that two overlapping updates made", async () => {
+    const { log, take, define, load, save } = await loader(side);
+    const gate = Promise.withResolvers<void>();
+    const dep = (version: string, waits: boolean) =>
+      esm([], hmr => {
+        if (waits) hmr.dispose(() => gate.promise);
+        hmr.exports = { dep: version };
+      });
+    define({
+      main: esm(["dep"], hmr => hmr.acceptSpecifiers("dep", (next: any) => log("accepted " + next.dep))),
+      dep: dep("v1", true),
+    });
+    await load("main");
+    const updates = [save({ dep: dep("v2", false) }), save({ dep: dep("v3", false) })];
+    await settleJobs();
+    gate.resolve();
+    await Promise.all(updates);
+    expect(take()).toEqual(["accepted v3"]);
+  });
+
+  test(side + ": accept(dep) is not called for a dependency that takes the update of another file itself", async () => {
+    const { log, take, define, load, save } = await loader(side);
+    const mid = (version: string) =>
+      esm(["leaf"], hmr => {
+        hmr.accept(() => log("mid took it"));
+        hmr.exports = { mid: version };
+      });
+    define({
+      app: esm(["mid"], hmr => hmr.acceptSpecifiers("mid", () => log("app accepted mid"))),
+      mid: mid("v1"),
+      leaf: leaf(log, "v1"),
+    });
+    await load("app");
+    take();
+    await save({ leaf: leaf(log, "v2") });
+    expect(take()).toEqual(["leaf ran", "mid took it"]);
+    await save({ mid: mid("v2") });
+    expect(take()).toEqual(["mid took it", "app accepted mid"]);
+  });
+
+  test(side + ": import.meta.hot.data holds a function or a class as it is, also with top-level await", async () => {
+    const { log, take, define, load } = await loader(side);
+    class Store {
+      static n = 1;
+    }
+    const f = Object.assign(() => 1, { count: 5 });
+    define({
+      app: esm(
+        [],
+        async hmr => {
+          await null;
+          hmr.data = f;
+          log(hmr.data.count + " " + (hmr.data === f));
+          hmr.data = Store;
+          log(hmr.data.n + " " + (hmr.data === Store));
+          // The methods still belong to the module.
+          const { accept } = hmr;
+          accept();
+        },
+        true,
+      ),
+    });
+    await load("app");
+    expect(take()).toEqual(["5 true", "1 true"]);
+  });
+
   test(side + ": accept(dep) of a body that was disposed of is not called while the next body waits", async () => {
     const { log, take, define, load, save } = await loader(side);
     const gate = Promise.withResolvers<void>();

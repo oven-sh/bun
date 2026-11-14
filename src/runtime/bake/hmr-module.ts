@@ -104,6 +104,8 @@ interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;
   single: boolean;
+  /** For a dependency, the evaluation of it that the callback was called for last. */
+  calls?: Map<Id, number>;
 }
 
 interface CJSModule {
@@ -707,7 +709,7 @@ function evaluationView(mod: HMRModule, evaluation: number, late: HotDisposeFunc
       }
       const value = target[key as keyof HMRModule];
       // The methods take the module itself, not this view, as the importer and as the owner of the hooks.
-      return typeof value === "function" ? value.bind(target) : value;
+      return typeof value === "function" && !Object.hasOwn(target, key) ? value.bind(target) : value;
     },
     set(target, key, value) {
       if (isBodyReplaced()) {
@@ -919,7 +921,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           continue;
         }
         isImported = true;
-        if (accept && !didNotLoad) {
+        // A module between that takes the update itself hides it from the modules that accept it.
+        if (accept && !didNotLoad && (propagates || mod.id in modules)) {
           let entry = toAccept.get(accept);
           if (!entry) toAccept.set(accept, (entry = { importer, evaluation: importer.evaluation, keys: new Set() }));
           entry.keys.add(mod.id);
@@ -1110,12 +1113,18 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Call all accept callbacks, once for each accepted module that was replaced.
-  for (const [{ cb, modules: accepted, single }, { importer, evaluation, keys }] of toAccept) {
+  for (const [accept, { importer, evaluation, keys }] of toAccept) {
+    const { cb, modules: accepted, single } = accept;
     // An update that overlaps this one evaluated the importer again: the callback is of its old code.
     if (importer.evaluation !== evaluation) continue;
     for (const key of keys) {
       // Server only: the load of the accepted module can have failed.
-      if (registry.get(key)!.state !== State.Loaded) continue;
+      const dep = registry.get(key)!;
+      if (dep.state !== State.Loaded) continue;
+      // An update that overlaps this one can have called it for the same copy.
+      const calls = (accept.calls ??= new Map());
+      if (calls.get(key) === dep.evaluation) continue;
+      calls.set(key, dep.evaluation);
       attempt(errors, cb, single ? getEsmExports(registry.get(key)!) : createAcceptArray(accepted, key));
     }
   }

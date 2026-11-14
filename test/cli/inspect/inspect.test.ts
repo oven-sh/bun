@@ -292,32 +292,71 @@ describe("websocket", () => {
     });
   }
 
-  // FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
-  test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
-
   afterEach(() => {
     inspectee?.kill();
   });
 });
 
-// Bun.serve() listens on a TCP port when `unix` is empty. An inspector there would check neither the Host header nor
-// the path of the request.
-describe("a ws+unix URL with no socket path", () => {
-  test.each(["ws+unix://localhost", "ws+unix://inspect.sock", "ws+unix://localhost?wait=1"])(
-    "bun --inspect=%s does not start an inspector",
-    async url => {
-      await using proc = spawn({
-        cmd: [bunExe(), `--inspect=${url}`, "-e", "setInterval(() => {}, 1 << 30)"],
-        env: bunEnv,
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("Failed to start inspector");
-      expect(stderr).toContain("has no unix socket path");
-      expect(exitCode).toBe(1);
-    },
-  );
+describe.concurrent("ws+unix", () => {
+  const script = ["-e", "setInterval(() => {}, 1 << 30)"];
+
+  test.skipIf(!isPosix)("bun --inspect=ws+unix:///path/to.sock listens on the socket", async () => {
+    using dir = tempDir("inspect", {});
+    const unix = join(String(dir), "i.sock");
+    // The inspector prints nothing for a unix socket. It sends a byte to BUN_INSPECT_NOTIFY once it listens.
+    const notify = join(String(dir), "n.sock");
+    const listening = Promise.withResolvers<void>();
+    using listener = Bun.listen({ unix: notify, socket: { data: () => listening.resolve() } });
+    await using proc = spawn({
+      cmd: [bunExe(), `--inspect=ws+unix://${unix}`, ...script],
+      env: { ...bunEnv, BUN_INSPECT_NOTIFY: `unix://${notify}` },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const started = await Promise.race([listening.promise.then(() => true), proc.exited.then(() => false)]);
+    if (!started) throw new Error(`The inspector did not start:\n${await proc.stderr.text()}`);
+
+    const webSocket = new WebSocket(`ws+unix://${unix}`);
+    const reply = Promise.withResolvers<unknown>();
+    webSocket.addEventListener("open", () => {
+      webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "6 * 7" } }));
+    });
+    webSocket.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(data.toString());
+      if (message.id === 1) reply.resolve(message);
+    });
+    webSocket.addEventListener("error", cause => reply.reject(new Error("WebSocket error", { cause })));
+    webSocket.addEventListener("close", () => reply.reject(new Error("WebSocket closed")));
+    expect(await reply.promise).toMatchObject({ id: 1, result: { result: { type: "number", value: 42 } } });
+    webSocket.close();
+  });
+
+  // Bun.serve() listens on a TCP port when `unix` is empty. An inspector there would check neither the Host header
+  // nor the path of the request.
+  async function expectNoSocketPath(host: string, args: string[], env: Record<string, string> = {}) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args, ...script],
+      env: { ...bunEnv, ...env },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Failed to start inspector");
+    expect(stderr).toContain(
+      `TypeError: 'ws+unix://${host}' has no unix socket path (expected a URL like 'ws+unix:///tmp/bun.sock')`,
+    );
+    expect(exitCode).toBe(1);
+  }
+
+  test.each([
+    ["ws+unix://localhost", "localhost"],
+    ["ws+unix://inspect.sock", "inspect.sock"],
+    ["ws+unix://localhost:9229?x=1", "localhost:9229"],
+  ])("bun --inspect=%s does not start an inspector", (url, host) => expectNoSocketPath(host, [`--inspect=${url}`]));
+
+  // The main thread waits for a debugger here. Bun's VS Code extension starts the inspector with this variable.
+  test("BUN_INSPECT=ws+unix://localhost?wait=1 does not start an inspector", () =>
+    expectNoSocketPath("localhost", [], { BUN_INSPECT: "ws+unix://localhost?wait=1" }));
 });
 
 describe("http metadata endpoint", () => {

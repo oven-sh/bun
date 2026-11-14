@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
@@ -14,6 +15,7 @@ use bun_threading::thread_pool::Batch;
 use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask};
 
 use crate::package_installer::NodeModulesFolder;
+use crate::package_manager::{INBOX, THREAD_POOL};
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
@@ -23,7 +25,7 @@ bun_output::declare_scope!(install, hidden);
 
 pub struct PackageInstall<'a> {
     /// Borrowed view of the cache directory fd. The owner is either
-    /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
+    /// the `CacheDirectory`, the cwd sentinel, or a
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
@@ -35,6 +37,7 @@ pub struct PackageInstall<'a> {
 
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
+    pub(crate) total_tasks: &'a Cell<u32>,
 }
 
 /// The file work of a `PackageInstall`. No lockfile and no manager, so any thread can do it.
@@ -808,9 +811,7 @@ impl<TaskType> NewTaskQueue<TaskType> {
         TaskType: OwnedTask,
     {
         self.wait_group.add_one();
-        PackageManager::get()
-            .thread_pool
-            .schedule(Batch::from_owned(task));
+        THREAD_POOL.schedule(Batch::from_owned(task));
     }
 
     pub(crate) fn wait(&self) {
@@ -957,21 +958,12 @@ impl HardLinkWindowsInstallTask {
 
 // ───────────────────────────── UninstallTask ─────────────────────────────
 
-fn wake_main_thread() {
-    // SAFETY: the manager lives as long as the process. `wake_raw` is the documented
-    // thread-safe wake path that never forms `&mut PackageManager` (the main thread
-    // holds the install borrow).
-    unsafe { PackageManager::wake_raw(crate::package_manager::get()) };
-}
-
 struct PendingTaskDone;
 
 impl Drop for PendingTaskDone {
     fn drop(&mut self) {
-        PackageManager::get()
-            .pending_tasks
-            .fetch_sub(1, Ordering::Release);
-        wake_main_thread();
+        INBOX.pending_tasks.fetch_sub(1, Ordering::Release);
+        INBOX.wake();
     }
 }
 
@@ -1074,7 +1066,7 @@ impl LinkBatch {
         if let [job] = self.jobs.as_slice() {
             return self.link(job);
         }
-        let pool = &PackageManager::get().thread_pool;
+        let pool = &*THREAD_POOL;
         // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
         // run.
         pool.warm(1);
@@ -1090,7 +1082,7 @@ impl LinkBatch {
                     batch.link(job);
                 }
                 if batch.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
-                    wake_main_thread();
+                    INBOX.wake();
                 }
             },
             &mut vec![(); threads],
@@ -2082,7 +2074,7 @@ impl<'a> PackageInstall<'a> {
         };
         // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
         // run.
-        let pool = &PackageManager::get().thread_pool;
+        let pool = &*THREAD_POOL;
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
@@ -2098,16 +2090,8 @@ impl<'a> PackageInstall<'a> {
             absolute_path: absolute_path.to_vec().into_boxed_slice(),
             task: WorkPoolTask::default(),
         });
-        let pm = crate::package_manager::get();
-        // SAFETY: `uninstall_before_install` runs on the install main thread.
-        // Raw-pointer field projection avoids forming `&mut PackageManager`
-        // (the caller `PackageInstaller` already holds one); `total_tasks` is
-        // main-thread-only state, `pending_tasks` is atomic. Mirrors
-        // `increment_pending_tasks`.
-        unsafe {
-            *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
-            (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
-        }
+        self.total_tasks.update(|total| total + 1);
+        INBOX.pending_tasks.fetch_add(1, Ordering::Relaxed);
         pool.schedule(Batch::from_owned(task));
     }
 

@@ -167,9 +167,11 @@ fn import_record_key_loader(
     use bun_ast::Loader;
     let loader = import_record.loader.unwrap_or(path_loader);
     // `with { type: "json" }` on package.json or tsconfig.json, which are jsonc by default, is not a second module.
+    // Neither is `with { type: "js" }` on a .js file, which is jsx by default, nor another language of a script.
     let is_path_loader = loader == path_loader
         || (matches!(loader, Loader::Json | Loader::Jsonc)
-            && matches!(path_loader, Loader::Json | Loader::Jsonc));
+            && matches!(path_loader, Loader::Json | Loader::Jsonc))
+        || (loader.is_javascript_like() && path_loader.is_javascript_like());
     // The dev server's incremental graph is keyed by path alone.
     let bare_path_only = for_dev_server
         // The linker finds a server-side HTML import's manifest and browser entry point by bare path.
@@ -3351,6 +3353,28 @@ pub mod bv2_impl {
             main_target
         }
 
+        /// An onLoad plugin made something else of an HTML entry point: it is no page. See `target_of_entry_point`.
+        fn build_entry_point_for_main_target(&mut self, task: &mut ParseTask<'_>) {
+            let main_target = self.transpiler.options.target;
+            if !task.is_entry_point
+                || self.framework.is_some()
+                || self.dev_server.is_some()
+                || task.known_target != Target::Browser
+                || !main_target.is_server_side()
+                || task.path.loader(&self.transpiler.options.loaders) != Some(Loader::Html)
+            {
+                return;
+            }
+            let source_index = task.source_index.get();
+            let path = self.graph.input_files.items_source()[source_index as usize].path;
+            self.path_to_source_index_map(Target::Browser)
+                .remove_path(&path);
+            self.path_to_source_index_map(main_target)
+                .put_path(&path, source_index)
+                .expect("oom");
+            task.known_target = main_target;
+        }
+
         /// Puts the module of a plugin-routed entry point in the place held for it, or at the end of the list.
         fn set_entry_point(&mut self, slot: u32, source_index: bun_ast::Index) {
             match self.graph.entry_points.get_mut(slot as usize) {
@@ -4803,6 +4827,9 @@ pub mod bv2_impl {
                             [source_index.get() as usize] =
                             bun_ast::SideEffects::NoSideEffectsPureData;
                         this.graph.estimated_file_loader_count += 1;
+                    }
+                    if code.loader != Loader::Html {
+                        this.build_entry_point_for_main_target(load.parse_task_mut());
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
@@ -6861,6 +6888,9 @@ pub mod bv2_impl {
                         resolve_result.primary_side_effects_data
                             != bun_ast::SideEffects::HasSideEffects,
                     );
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL);
                     continue;
                 }
 
@@ -7229,9 +7259,10 @@ pub mod bv2_impl {
                 });
                 if let Some(source_index) =
                     path_to_source_index_map.get_keyed(&record.path, key_loader)
-                    && !record
-                        .flags
-                        .contains(bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS)
+                    && !record.flags.intersects(
+                        bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS
+                            | bun_ast::ImportRecordFlags::IS_EXTERNAL,
+                    )
                 {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
@@ -7514,7 +7545,7 @@ pub mod bv2_impl {
                     if is_dev_server {
                         record.source_index = Index::INVALID;
                         waited.push((importer, record.range));
-                    } else {
+                    } else if record.kind == ImportKind::Stmt {
                         record.kind = ImportKind::HtmlManifest;
                     }
                 }

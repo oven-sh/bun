@@ -109,6 +109,9 @@ bitflags::bitflags! {
 
         /// The bundler keyed this record's module by (path, loader), not by path alone.
         const KEYED_BY_LOADER = 1 << 20;
+
+        /// The resolver made the import external. A module of the bundle can have the same path: it is not that module.
+        const IS_EXTERNAL = 1 << 21;
     }
 }
 

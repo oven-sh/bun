@@ -864,6 +864,32 @@ ${printManifest}`,
     },
   });
 
+  for (const [how, again] of [
+    ["require", `require("./page.html")`],
+    ["import-call", `(await import("./page.html")).default`],
+  ]) {
+    itBundled(`html-import/onload-fallthrough-beside-${how}`, {
+      outdir: "out/",
+      files: {
+        ...pluginResolvedHtmlFiles,
+        "/server.js": `
+import page from "./page.html";
+const again = ${again};
+console.log(page.index, (again.default ?? again).index);
+`,
+      },
+      entryPoints: ["/server.js"],
+      target: "bun",
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, () => undefined);
+        builder.onLoad({ filter: /\.html$/ }, () => undefined);
+      },
+      run: {
+        stdout: "./page.html ./page.html",
+      },
+    });
+  }
+
   itBundled("html-import/onresolve-fallthrough-keeps-type-file-attribute", {
     outdir: "out/",
     files: {

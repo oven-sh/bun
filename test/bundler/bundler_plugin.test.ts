@@ -2997,4 +2997,64 @@ describe("bundler", () => {
       scriptsForBun: scripts.filter(script => script.startsWith("// @bun")).length,
     }).toEqual({ pages: 1, scripts: 1, scriptsForBun: 0 });
   });
+
+  // An HTML entry point that onLoad turns into a script is no page: it is built for the server.
+  test.concurrent.each(["the path", "a namespace", "nothing"])(
+    "plugin/HTML entry point that onLoad turns into a script, where onResolve returns %s",
+    async answer => {
+      using dir = tempDir("plugin-html-entry-to-script", { "app.html": `<p>x</p>` });
+      const app = join(String(dir), "app.html");
+      const namespace = answer === "a namespace" ? "virtual" : "file";
+      const result = await Bun.build({
+        entrypoints: [app],
+        target: "bun",
+        throw: false,
+        plugins: [
+          {
+            name: "script",
+            setup(build) {
+              build.onResolve({ filter: /app\.html$/ }, () =>
+                answer === "nothing" ? undefined : { path: app, namespace },
+              );
+              build.onLoad({ filter: /app\.html$/, namespace }, () => ({
+                contents: `import { readFileSync } from "fs"; console.log(typeof readFileSync);`,
+                loader: "ts",
+              }));
+            },
+          },
+        ],
+      });
+      expect(result.logs.map(String)).toEqual([]);
+      expect(result.outputs).toHaveLength(1);
+      expect(await result.outputs[0].text()).toStartWith("// @bun");
+    },
+  );
+
+  // A module of the bundle can have the path that an external import is written with.
+  test.concurrent(
+    "plugin/external import that onResolve declines stays external beside a module of that path",
+    async () => {
+      using dir = tempDir("plugin-declined-external", {
+        "entry.js": `import x from "shim"; import r from "/assets/x.js"; console.log(x, r);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        external: ["/assets/*"],
+        throw: false,
+        plugins: [
+          {
+            name: "shim",
+            setup(build) {
+              build.onResolve({ filter: /.*/ }, args => (args.path === "shim" ? { path: "/assets/x.js" } : undefined));
+              build.onLoad({ filter: /assets/ }, () => ({ contents: "export default 'SHIM'", loader: "js" }));
+            },
+          },
+        ],
+      });
+      expect(result.logs.map(String)).toEqual([]);
+      const text = await result.outputs[0].text();
+      expect(text).toContain("SHIM");
+      expect(text).toMatch(/from ?"\/assets\/x\.js"/);
+    },
+  );
 });

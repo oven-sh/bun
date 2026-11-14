@@ -18,6 +18,30 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // A file that is a script anyway is one module, whatever language an import names.
+      for (const [extension, type] of [
+        ["js", "js"],
+        ["js", "jsx"],
+        ["mjs", "js"],
+        ["ts", "ts"],
+        ["tsx", "ts"],
+        ["js", "ts"],
+      ]) {
+        itBundled(`bun/loader-script-type-on-${extension}-as-${type}-is-one-module`, {
+          target: "bun",
+          files: {
+            "/entry.js": /* js */ `
+          import { id } from "./state.${extension}";
+          import { id as typed } from "./state.${extension}" with { type: "${type}" };
+          const later = await import("./state.${extension}", { with: { type: "${type}" } });
+          console.log(id, typed, later.id);
+        `,
+            [`/state.${extension}`]: `globalThis.runs = (globalThis.runs ?? 0) + 1; export const id = globalThis.runs;`,
+          },
+          run: { stdout: "1 1 1" },
+        });
+      }
+
       itBundled("bun/loader-text-file", {
         target,
         outfile: "",

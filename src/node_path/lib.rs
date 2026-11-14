@@ -15,6 +15,8 @@ pub use tidy::{
 use bun_core::strings::CodeUnitsMut;
 use bun_core::strings::{self, CodeUnits};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
+use core::ops::Range;
+use std::borrow::Cow;
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
 
@@ -51,7 +53,7 @@ fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if let (CodeUnits::U8(a), CodeUnits::U8(b)) = (T::units(a), T::units(b)) {
-        return strings::eql_case_insensitive_ascii(a, b, true);
+        return a.eq_ignore_ascii_case(b);
     }
     if a.len() != b.len() {
         return false;
@@ -1883,8 +1885,299 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     Ok(&buf[0..buf_size])
 }
 
-/// Based on Node v21.6.1 path.win32.relative:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
+/// ".." `ups` times with a backslash between them, and then `rest` of the resolved `to`.
+struct RelativeWindows {
+    ups: usize,
+    rest: Range<usize>,
+}
+
+impl RelativeWindows {
+    /// The answer, written to `buf`, which has the resolved `to` at its start.
+    #[cold]
+    #[inline(never)]
+    fn write_to<T: PathCharCwd>(self, buf: &mut [T]) -> &[T] {
+        let Self { ups, rest } = self;
+        if ups == 0 {
+            return &buf[rest];
+        }
+        let ups_len = 3 * ups - 1;
+        let len = ups_len + rest.len();
+        // `rest` is in `buf`, where the ".." go.
+        buf.copy_within(rest, ups_len);
+        for up in 0..ups {
+            if up > 0 {
+                buf[3 * up - 1] = T::from_u8(CHAR_BACKWARD_SLASH);
+            }
+            buf[3 * up] = T::from_u8(CHAR_DOT);
+            buf[3 * up + 1] = T::from_u8(CHAR_DOT);
+        }
+        buf[len] = T::default();
+        &buf[0..len]
+    }
+}
+
+/// Whether `path` ends with a character that is no backslash.
+#[inline]
+fn ends_with_name(path: &[u8]) -> bool {
+    path.last().is_some_and(|&last| last != CHAR_BACKWARD_SLASH)
+}
+
+/// Node's `win32.relative` of two resolved paths that are not the same bytes: it compares `toLowerCase()` of them.
+#[cold]
+#[inline(never)]
+fn relative_windows_lowered(from: &[u8], to: &[u8]) -> RelativeWindows {
+    // The parts that both start with are not compared if the last has a name: Node answers the same when they are one part.
+    let mut common = None;
+    if ends_with_name(from) && ends_with_name(to) {
+        // How many bytes both start with, where an ASCII letter can be in another case.
+        let mut same = 0;
+        while let (Some(from_byte), Some(to_byte)) = (from.get(same), to.get(same))
+            && from_byte.eq_ignore_ascii_case(to_byte)
+        {
+            same += 1 + bun_highway::common_prefix_length(&from[same + 1..], &to[same + 1..]);
+        }
+        if same == from.len() && to.get(same) == Some(&CHAR_BACKWARD_SLASH) {
+            // `from` is the exact base path for `to`.
+            return RelativeWindows {
+                ups: 0,
+                rest: same + 1..to.len(),
+            };
+        }
+        common = strings::last_index_of_char(&from[..same], CHAR_BACKWARD_SLASH)
+            .filter(|&separator| ends_with_name(&from[..separator]));
+    }
+    // What is compared starts with the separator behind those parts.
+    let base = common.unwrap_or(0);
+    let (from, to) = (&from[base..], &to[base..]);
+    let has_dotted_i = |path: &[u8]| strings::contains(path, "İ".as_bytes());
+    // Node compares part by part when a lower case has more UTF-16 code units, which only that of İ has. Behind parts in common its two compares answer the same.
+    let by_index = match common {
+        None if has_dotted_i(from) || has_dotted_i(to) => None,
+        None => {
+            relative_windows_by_index(&with_sigmas_lowered(from), &with_sigmas_lowered(to), false)
+        }
+        Some(_) => relative_windows_by_index(from, to, true),
+    };
+    let RelativeWindows { ups, rest } = by_index.unwrap_or_else(|| {
+        relative_windows_by_part(&with_sigmas_lowered(from), &with_sigmas_lowered(to))
+    });
+    RelativeWindows {
+        ups,
+        rest: base + rest.start..base + rest.end,
+    }
+}
+
+/// `path` with each Σ in the lower case that `toLowerCase()` gives it: ς at the end of a word, σ elsewhere. Both have as many bytes as Σ.
+fn with_sigmas_lowered(path: &[u8]) -> Cow<'_, [u8]> {
+    if !strings::contains(path, "Σ".as_bytes()) {
+        return Cow::Borrowed(path);
+    }
+    let mut lowered = path.to_vec();
+    let mut start = 0;
+    for chunk in path.utf8_chunks() {
+        let valid = chunk.valid();
+        let lower = valid.to_lowercase();
+        let mut lower = lower.chars();
+        for (at, character) in valid.char_indices() {
+            // The last character of its lower case, which is the only one but for İ.
+            let lower = lower.nth(character.to_lowercase().len() - 1);
+            if let (Some(sigma), 'Σ') = (lower, character) {
+                sigma.encode_utf8(&mut lowered[start + at..]);
+            }
+        }
+        start += valid.len() + chunk.invalid().len();
+    }
+    Cow::Owned(lowered)
+}
+
+/// A byte that is in no sequence of UTF-8, as a character that no text has.
+#[inline]
+fn ill_formed(byte: u8) -> u32 {
+    0xDC00 | u32::from(byte)
+}
+
+/// The character of `path` at `at`, and how many bytes it has.
+#[inline(always)]
+fn char_at(path: &[u8], at: usize) -> (u32, usize) {
+    let byte = path[at];
+    if byte.is_ascii() {
+        return (u32::from(byte), 1);
+    }
+    match strings::wtf8_codepoint_at(path, at) {
+        (strings::UNICODE_REPLACEMENT, 1) | (0xD800..=0xDFFF, _) => (ill_formed(byte), 1),
+        character => character,
+    }
+}
+
+/// The first character of the lower case of `character`. But for İ and Σ it is all of it, and has as many UTF-16 code units.
+#[inline]
+fn lower_case(character: u32) -> u32 {
+    let lower = char::from_u32(character).and_then(|character| character.to_lowercase().next());
+    lower.map_or(character, u32::from)
+}
+
+/// Whether more than the two characters decide if `character` has the lower case of `other`, which is another character.
+#[inline]
+fn needs_context(character: u32, other: u32) -> bool {
+    match char::from_u32(character) {
+        // Its lower case is two characters.
+        Some('İ') => lower_case(other) == u32::from('i'),
+        // Its lower case is ς at the end of a word.
+        Some('Σ') => matches!(char::from_u32(other), Some('σ' | 'ς')),
+        _ => false,
+    }
+}
+
+/// Node's compare by index, one character of each path at a time. With `common`, both start with the separator behind their common parts. `None` if an İ or a Σ decides.
+fn relative_windows_by_index(from: &[u8], to: &[u8], common: bool) -> Option<RelativeWindows> {
+    // Trim any leading backslashes, and trailing ones (applicable to UNC paths only)
+    let trimmed = |path: &[u8]| {
+        let mut start = 0;
+        while !common && path.get(start) == Some(&CHAR_BACKWARD_SLASH) {
+            start += 1;
+        }
+        let mut end = path.len();
+        while end > start + 1 && path[end - 1] == CHAR_BACKWARD_SLASH {
+            end -= 1;
+        }
+        (start, end)
+    };
+    let ((from_start, from_end), (to_start, to_end)) = (trimmed(from), trimmed(to));
+
+    // Compare paths to find the longest common path from root. `i` is in UTF-16 code units, and the parts in common count as a drive.
+    let (mut from_at, mut to_at) = (from_start, to_start);
+    let mut last_common_sep = None;
+    let mut i = if common { 2 } else { 0 };
+    let mut is_mismatch = false;
+    while from_at < from_end && to_at < to_end {
+        let ((from_char, from_size), (to_char, to_size)) =
+            (char_at(from, from_at), char_at(to, to_at));
+        if from_char == to_char {
+            // Two Σ have another lower case only if what follows them differs, which is compared next.
+            if from_char == u32::from(CHAR_BACKWARD_SLASH) {
+                last_common_sep = Some((from_at, to_at));
+            }
+        } else if needs_context(from_char, to_char) || needs_context(to_char, from_char) {
+            return None;
+        } else if lower_case(from_char) != lower_case(to_char) {
+            is_mismatch = true;
+            break;
+        }
+        (from_at, to_at) = (from_at + from_size, to_at + to_size);
+        i += strings::codepoint_len_utf16(from_char);
+    }
+
+    if !is_mismatch {
+        if (from_at, to_at) == (from_end, to_end)
+            && (from_start, from.len() - from_end) == (to_start, to.len() - to_end)
+        {
+            // The same path in lower case.
+            return Some(RelativeWindows { ups: 0, rest: 0..0 });
+        }
+        if to_at < to_end {
+            if to[to_at] == CHAR_BACKWARD_SLASH {
+                // `from` is the exact base path for `to`: from='C:\foo\bar', to='C:\foo\bar\baz'
+                return Some(RelativeWindows {
+                    ups: 0,
+                    rest: to_at + 1..to.len(),
+                });
+            }
+            if i == 2 {
+                // `from` is the device root: from='C:\', to='C:\foo'
+                return Some(RelativeWindows {
+                    ups: 0,
+                    rest: to_at..to.len(),
+                });
+            }
+        }
+        if from_at < from_end {
+            if from[from_at] == CHAR_BACKWARD_SLASH {
+                // `to` is the exact base path for `from`: from='C:\foo\bar', to='C:\foo'
+                last_common_sep = Some((from_at, to_at));
+            } else if i == 2 {
+                // `to` is the device root: from='C:\foo\bar', to='C:\'. Node's separator is then the code unit behind the next one.
+                let mut units = 0;
+                while units < 2 && from_at < from_end {
+                    let (character, size) = char_at(from, from_at);
+                    (units, from_at) = (
+                        units + strings::codepoint_len_utf16(character),
+                        from_at + size,
+                    );
+                }
+                last_common_sep = Some((if units < 2 { from_end } else { from_at - 1 }, to_end));
+            }
+        }
+        last_common_sep = last_common_sep.or(Some((from_start, to_start)));
+    }
+    // A mismatch before the first common path separator was seen: the original `to`.
+    let Some((from_sep, to_sep)) = last_common_sep else {
+        return Some(RelativeWindows {
+            ups: 0,
+            rest: 0..to.len(),
+        });
+    };
+
+    // Generate the relative path based on the path difference between `to` and `from`
+    let ups = match from.get(from_sep + 1..from_end) {
+        Some(left) => 1 + strings::count_char(left, CHAR_BACKWARD_SLASH),
+        None => 0,
+    };
+    Some(RelativeWindows {
+        ups,
+        rest: to_sep.min(to_end)..to_end,
+    })
+}
+
+/// The characters of the lower case of `part`, which has no Σ.
+fn lowered(part: &[u8]) -> impl Iterator<Item = u32> {
+    part.utf8_chunks().flat_map(|chunk| {
+        let characters = chunk
+            .valid()
+            .chars()
+            .flat_map(char::to_lowercase)
+            .map(u32::from);
+        characters.chain(chunk.invalid().iter().copied().map(ill_formed))
+    })
+}
+
+/// Node's compare part by part, which it makes when a lower case is longer, for paths with no Σ.
+fn relative_windows_by_part(from: &[u8], to: &[u8]) -> RelativeWindows {
+    // What `split('\\')` gives, less an empty last part.
+    let without_last_separator =
+        |path: &[u8]| path.len() - usize::from(path.ends_with(CHAR_STR_BACKWARD_SLASH));
+    let end = without_last_separator(to);
+    let mut from_parts = strings::split(
+        &from[..without_last_separator(from)],
+        CHAR_STR_BACKWARD_SLASH,
+    );
+    let mut to_parts = strings::split(&to[..end], CHAR_STR_BACKWARD_SLASH);
+    // Where the part of `to` starts.
+    let mut start = 0;
+    loop {
+        let (from_part, to_part) = (from_parts.next(), to_parts.next());
+        if let (Some(from_part), Some(to_part)) = (from_part, to_part)
+            && (from_part == to_part || lowered(from_part).eq(lowered(to_part)))
+        {
+            start += to_part.len() + 1;
+            continue;
+        }
+        if start == 0 {
+            return RelativeWindows {
+                ups: 0,
+                rest: 0..to.len(),
+            };
+        }
+        // One ".." for each part of `from` that is left. The backslash in front of the part of `to` comes behind the last.
+        let ups = from_part.map_or(0, |_| 1 + from_parts.count());
+        let rest = match to_part {
+            Some(_) => start - usize::from(ups != 0)..end,
+            None => 0..0,
+        };
+        return RelativeWindows { ups, rest };
+    }
+}
+
+/// Based on Node v26.3.0 path.win32.relative: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/path.js#L610
 pub fn relative_windows_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
@@ -1917,7 +2210,17 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         len
     };
 
-    if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
+    if from_orig == &buf[0..to_orig_len] {
+        return Ok(&[]);
+    }
+    if let (CodeUnits::U8(from_bytes), CodeUnits::U8(to_bytes)) =
+        (T::units(from_orig), T::units(&buf[0..to_orig_len]))
+        && !(is_ascii(from_bytes) && is_ascii(to_bytes))
+    {
+        return Ok(relative_windows_lowered(from_bytes, to_bytes).write_to(buf));
+    }
+    // Both are ASCII, where the fold of ASCII is `toLowerCase()`.
+    if eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
         return Ok(&[]);
     }
 
@@ -2723,4 +3026,22 @@ pub fn join_buf_len<T: PathCharCwd>(is_windows: bool, paths: &[&[T]]) -> usize {
 pub fn normalize_buf_len<T: PathCharCwd>(path: &[T]) -> usize {
     // +1 for null terminator
     path.len().max(path_size::<T>()) + 1
+}
+
+#[cfg(test)]
+mod tests {
+    /// What `relative_windows_lowered` takes from the case table of `char`.
+    #[test]
+    fn only_the_lower_case_of_dotted_i_has_another_length() {
+        for character in '\0'..=char::MAX {
+            let lower = character.to_lowercase();
+            if character == 'İ' {
+                assert!(lower.eq("i\u{307}".chars()));
+                continue;
+            }
+            assert_eq!(lower.len(), 1, "{character:?}");
+            let units: usize = lower.map(char::len_utf16).sum();
+            assert_eq!(units, character.len_utf16(), "{character:?}");
+        }
+    }
 }

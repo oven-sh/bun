@@ -44,6 +44,7 @@ const crates = [
   "bun_http_types",
   "bun_lint_react_compiler",
   "bun_md",
+  "bun_node_path",
   "bun_options_types",
   "bun_paths",
   "bun_pod",

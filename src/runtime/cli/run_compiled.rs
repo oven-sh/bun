@@ -33,7 +33,7 @@ static FILES_THAT_KEPT_THEIR_RUN: Guarded<BTreeSet<Vec<u8>>> = Guarded::new(BTre
 static NEWEST_REFUSAL_OF_RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 const MAX_LISTED_REFUSED_CHANGES: usize = 100;
 static CRASH_REPORT: OnceLock<&'static [u8]> = OnceLock::new();
-/// The entry points that stand in for what the runner does and no file of the run spells.
+/// The entry point that stands in for what the runner does and no file of the run spells.
 static STAND_IN: Guarded<Option<&'static FileMap>> = Guarded::new(None);
 
 pub(crate) enum NonFileTarget<'a> {
@@ -98,11 +98,6 @@ pub(crate) fn set_stand_in(path: &[u8], text: &[u8]) {
     }
     let key = key_of_stand_in(path);
     let mut files = FileMap::default();
-    if let Some(earlier) = *STAND_IN.lock() {
-        for (key, text) in earlier.map.iter() {
-            bun_core::handle_oom(files.map.put(key, text.clone()));
-        }
-    }
     bun_core::handle_oom(files.map.put(&key, Box::from(text)));
     // It lives as long as the build, which is the last thing the process does.
     *STAND_IN.lock() = Some(Box::leak(Box::new(files)));
@@ -114,27 +109,6 @@ fn key_of_stand_in(path: &[u8]) -> Vec<u8> {
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut key);
     }
     key
-}
-
-// No file of the run spells what the runner does for `--globals=vitest`: `Jest::define_vitest_globals()` stores the names on `globalThis` before any file runs. This file
-// stands in for that, so that a name which nothing else stores isn't taken for absent.
-fn make_stand_in_for_globals_of_vitest() -> Box<[u8]> {
-    use bun_js_parser::Jest;
-    let mut text = b"const value = process.argv.at(-1)!;\nif (value === \"\\0never\") {\n".to_vec();
-    for name in (Jest::GLOBALS.iter()).filter(|name| !Jest::is_of_bun_only(name)) {
-        text.extend_from_slice(b"  (globalThis as any).");
-        text.extend_from_slice(name.as_bytes());
-        text.extend_from_slice(b" = JSON.parse(value);\n");
-    }
-    text.extend_from_slice(b"}\n");
-    // The name of the module. No file is there.
-    let path = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
-        bun_resolver::fs::FileSystem::get().top_level_dir(),
-        &[b"node_modules/.cache/bun-test-globals-of-vitest.ts"],
-    )
-    .to_vec();
-    set_stand_in(&path, &text);
-    path.into_boxed_slice()
 }
 
 pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
@@ -178,10 +152,6 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
     // SAFETY: nothing else borrows the log in front of the build.
     unsafe { ctx.log_mut() }.append_to(&mut said_before_the_build);
 
-    let mut entry_points = entry_points;
-    if has_globals_of_vitest {
-        entry_points.push(make_stand_in_for_globals_of_vitest());
-    }
     ctx.args.entry_points = entry_points;
     ctx.bundler_options.compile = true;
     ctx.bundler_options.inline_entrypoint_import_meta_main = true;

@@ -1,5 +1,7 @@
+import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { basename } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -602,6 +604,57 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
+  // One in-memory file under two `with { type }` loaders is two modules. The
+  // plugin variant sends both imports through the resolver that runs after an
+  // onResolve plugin declines.
+  for (const withPlugin of [false, true]) {
+    test(`in-memory file imported under two import attributes${withPlugin ? " (onResolve declines)" : ""}`, async () => {
+      const deferred: string[] = [];
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        target: "bun",
+        metafile: true,
+        files: {
+          "/entry.js": `
+            import obj from "./data.json";
+            import { text } from "./as-text.js";
+            console.log(typeof obj, typeof text);
+          `,
+          "/as-text.js": `import text from "./data.json" with { type: "text" }; export { text };`,
+          "/data.json": `{"k":1}`,
+        },
+        plugins: withPlugin
+          ? [
+              {
+                name: "decline",
+                setup(build) {
+                  build.onResolve({ filter: /\.json$/ }, args => {
+                    deferred.push(args.path);
+                    return undefined;
+                  });
+                },
+              },
+            ]
+          : [],
+      });
+
+      expect(result.success).toBe(true);
+      expect(deferred).toEqual(withPlugin ? ["./data.json", "./data.json"] : []);
+
+      const name = (key: string) => key.split(/[\\/]/).pop()!;
+      expect(Object.keys(result.metafile!.inputs).map(name).sort()).toEqual([
+        "as-text.js",
+        "data.json",
+        "data.json with { type: 'text' }",
+        "entry.js",
+      ]);
+
+      const output = await result.outputs[0].text();
+      expect(output).toContain("k: 1");
+      expect(output).toMatch(/["'`]\{\\?"k\\?":1\}["'`]/);
+    });
+  }
+
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These
@@ -698,5 +751,221 @@ describe("bundler files option", () => {
         logs: ['ModuleNotFound resolving "<entry point>" (entry point)'],
       });
     });
+  });
+
+  // An onResolve filter that matches the entry point runs before the files map
+  // is consulted. When the callback declines, the entry point must still come
+  // from the files map, exactly as it does when no plugin matches it.
+  describe("onResolve plugin matching an in-memory entry point and declining", () => {
+    function decliningPlugin(
+      filter: RegExp,
+      seen: string[] = [],
+      result: ReturnType<OnResolveCallback> = undefined,
+    ): BunPlugin {
+      return {
+        name: "declining",
+        setup(build) {
+          build.onResolve({ filter }, args => {
+            seen.push(`${args.kind} ${args.path}`);
+            return result;
+          });
+        },
+      };
+    }
+
+    async function buildOutputs(entrypoint: string, files: Record<string, string>, plugins: BunPlugin[]) {
+      const result = await Bun.build({ entrypoints: [entrypoint], files, plugins, throw: false });
+      expect(result.logs.map(String)).toEqual([]);
+      expect(result.success).toBe(true);
+      return Promise.all(result.outputs.map(async output => [output.path, await output.text()]));
+    }
+
+    const byPath = ([a]: string[], [b]: string[]) => (a < b ? -1 : a > b ? 1 : 0);
+
+    const jsFiles = {
+      "/app/entry.js": `import { value } from "./lib.js"; console.log(value);`,
+      "/app/lib.js": `export const value = "js entry from files";`,
+    };
+
+    const htmlFiles = {
+      "/app/index.html": `<!doctype html><html><body><script src="./app.js"></script></body></html>`,
+      "/app/app.js": `console.log("html entry from files");`,
+    };
+
+    test("JS entry point is bundled from the files map", async () => {
+      const seen: string[] = [];
+      const outputs = await buildOutputs("/app/entry.js", jsFiles, [decliningPlugin(/.*/, seen)]);
+
+      expect(seen).toEqual(["entry-point-build /app/entry.js", "import-statement ./lib.js"]);
+      expect(outputs).toEqual([[expect.any(String), expect.stringContaining("js entry from files")]]);
+    });
+
+    test("HTML entry point is bundled from the files map", async () => {
+      const seen: string[] = [];
+      const outputs = await buildOutputs("/app/index.html", htmlFiles, [decliningPlugin(/.*/, seen)]);
+
+      expect(seen).toEqual(["entry-point-build /app/index.html", "import-statement ./app.js"]);
+      expect(outputs.sort(byPath)).toEqual([
+        [expect.stringMatching(/\.js$/), expect.stringContaining("html entry from files")],
+        [expect.stringMatching(/\.html$/), expect.stringContaining("<script")],
+      ]);
+    });
+
+    test("declining asynchronously is bundled from the files map too", async () => {
+      const outputs = await buildOutputs("/app/entry.js", jsFiles, [
+        decliningPlugin(/.*/, [], Promise.resolve(undefined)),
+      ]);
+
+      expect(outputs).toEqual([[expect.any(String), expect.stringContaining("js entry from files")]]);
+    });
+
+    // These filters match only the entry point, so the imports take the same
+    // route in both builds and the outputs have to be byte-for-byte identical.
+    test.each([
+      ["JS", "/app/entry.js", /entry\.js$/, jsFiles],
+      ["HTML", "/app/index.html", /index\.html$/, htmlFiles],
+    ])("%s build output is identical to a build without the plugin", async (_, entrypoint, filter, files) => {
+      const withPlugin = await buildOutputs(entrypoint, files, [decliningPlugin(filter)]);
+      const withoutPlugin = await buildOutputs(entrypoint, files, []);
+
+      expect(withPlugin).toEqual(withoutPlugin);
+    });
+
+    test("in-memory and on-disk entry points in one build", async () => {
+      using dir = tempDir("bundler-files-declining-plugin", {
+        "disk.js": `console.log("disk entry");`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/disk.js`, `${dir}/virtual.js`],
+        files: {
+          [`${dir}/virtual.js`]: `console.log("virtual entry");`,
+        },
+        plugins: [decliningPlugin(/.*/)],
+        throw: false,
+      });
+      expect(result.logs.map(String)).toEqual([]);
+      expect(result.success).toBe(true);
+
+      const outputs = await Promise.all(
+        result.outputs.map(async output => [basename(output.path), await output.text()]),
+      );
+      expect(outputs.sort(byPath)).toEqual([
+        ["disk.js", expect.stringContaining("disk entry")],
+        ["virtual.js", expect.stringContaining("virtual entry")],
+      ]);
+    });
+
+    test("entry point missing from both the files map and disk is still an error", async () => {
+      using dir = tempDir("bundler-files-declining-plugin-missing", {});
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/missing.js`],
+        files: {
+          [`${dir}/other.js`]: `console.log("other");`,
+        },
+        plugins: [decliningPlugin(/.*/)],
+        throw: false,
+      });
+
+      expect(result.logs.map(String)).toEqual([
+        expect.stringMatching(/^BuildMessage: ModuleNotFound resolving ".*missing\.js" \(entry point\)$/),
+      ]);
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // The page exists only in `files`, and the answer of onResolve names it. A build for a server
+  // gives the import the manifest of the page, as it does for a page on disk.
+  test("onResolve plugin that names an in-memory HTML file gives a server build the manifest of the page", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/server.js"],
+      target: "bun",
+      throw: false,
+      files: {
+        "/app/server.js": `import page from "app:page"; export default page;`,
+        "/app/page.html": `<!doctype html><html><head><link rel="stylesheet" href="./page.css"></head><body><script type="module" src="./client.js"></script></body></html>`,
+        "/app/page.css": `body { color: red; }`,
+        "/app/client.js": `console.log("client of the in-memory page");`,
+      },
+      plugins: [
+        {
+          name: "names-the-page",
+          setup(build) {
+            build.onResolve({ filter: /^app:page$/ }, () => ({ path: "/app/page.html" }));
+          },
+        },
+      ],
+    });
+    expect(result.logs.map(String)).toEqual([]);
+    // The page is one output.
+    expect(result.outputs.map(output => basename(output.path)).filter(name => name.endsWith(".html"))).toEqual([
+      "page.html",
+    ]);
+
+    const outputs = new Map(
+      await Promise.all(result.outputs.map(async output => [basename(output.path), await output.text()] as const)),
+    );
+    const manifests: { index: string; files: { path: string; loader: string }[] }[] = [
+      ...(outputs.get("server.js") ?? "").matchAll(/__jsonParse\("(.+?)"\)/gs),
+    ].map(match => JSON.parse(JSON.parse('"' + match[1] + '"')));
+    expect(
+      manifests.map(manifest => ({
+        index: basename(manifest.index),
+        loaders: manifest.files.map(file => file.loader).sort(),
+      })),
+    ).toEqual([{ index: "page.html", loaders: ["css", "html", "js"] }]);
+
+    // The script of the page is a build for the browser: it has no "// @bun" line.
+    const client = outputs.get(basename(manifests[0].files.find(file => file.loader === "js")!.path)) ?? "";
+    expect({ client: client.includes("client of the in-memory page"), forBun: client.includes("// @bun") }).toEqual({
+      client: true,
+      forBun: false,
+    });
+  });
+
+  for (const plugins of ["none", "onResolve", "onResolve and onLoad"]) {
+    test(`an html page in files is a page of a server build, with plugins: ${plugins}`, async () => {
+      using dir = tempDir("files-html-server", {
+        "entry.ts": `import page from "./page.html"; console.log(page.index);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.ts`],
+        outdir: `${dir}/out`,
+        target: "bun",
+        files: { [`${dir}/page.html`]: "<!doctype html><p>hi</p>" },
+        plugins:
+          plugins === "none"
+            ? []
+            : [
+                {
+                  name: "declines",
+                  setup(build) {
+                    build.onResolve({ filter: /.*/ }, () => undefined);
+                    if (plugins === "onResolve and onLoad") build.onLoad({ filter: /\.html$/ }, () => undefined);
+                  },
+                },
+              ],
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({ cmd: [bunExe(), `${dir}/out/entry.js`], env: bunEnv, stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("./page.html\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("an html entry point in files of a server build is a page for the browser", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/page.html"],
+      files: {
+        "/app/page.html": `<!doctype html><script type="module" src="./client.js"></script>`,
+        "/app/client.js": `console.log(typeof window);`,
+      },
+      target: "bun",
+    });
+    expect(result.success).toBe(true);
+    const script = result.outputs.find(output => output.path.endsWith(".js"))!;
+    expect(await script.text()).not.toContain("// @bun");
   });
 });

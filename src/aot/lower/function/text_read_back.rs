@@ -430,9 +430,7 @@ pub(super) fn find_difference_in_kept_texts(
         .iter()
         .filter(|it| it.flags.contains(Flags::REPLACED_BODY));
     let rewritten: Vec<u32> = rewritten.map(|function| function.anchor).collect();
-    let of_tree = find_parts(hir, atoms, &texts).into_iter();
-    let (directives, mut of_tree): (Vec<Part<'_>>, Vec<Part<'_>>) =
-        of_tree.partition(|part| part.what == What::Directive);
+    let mut of_tree = find_parts(hir, atoms, &texts);
     of_tree.retain(|part| part.what != What::Type);
     for part in &mut of_tree {
         part.name = written_name_of_local(part.name);
@@ -466,12 +464,6 @@ pub(super) fn find_difference_in_kept_texts(
         let text = &kept[kept_start as usize..ranges.map_end(end) as usize];
         if rewritten.iter().any(|&at| start <= at && at < end) {
             return None;
-        }
-        let mut directives = directives.iter();
-        if text == original
-            && let Some(kept) = directives.find(|part| start <= part.start && part.start < end)
-        {
-            return differs(say(kept, " stands in the text"));
         }
         let Some((read_back, wrapper)) = reader.read(text) else {
             let (_, wrapper) = reader_of_file.read(original)?;
@@ -643,15 +635,27 @@ mod tests {
 
     #[test]
     fn directive_that_erasure_makes_is_found() {
-        let text = "function sloppy(this: unknown) { \"use strict\" as string; return this; }";
+        let text = "function sloppy(this: unknown) { <any>\"use strict\"; return this; }";
         let found = read_back("a.ts", text, &[]);
         let expected = "the directive use strict stands in the text and not in the tree";
         assert_eq!(found.as_deref(), Some(expected));
         assert_eq!(read_back("a.ts", text, &[("\"use", ";\"use")]), None);
-        let text = "function strict() { \"use strict\"; return this; }";
-        let found = read_back("a.js", text, &[]);
-        let expected = "the directive use strict stands in the text";
-        assert_eq!(found.as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn directive_that_the_text_lacks_is_missed() {
+        let expected = "the directive use strict is not in the text";
+        for (path, text) in [
+            ("a.js", "function strict() { \"use strict\"; return this; }"),
+            (
+                "a.ts",
+                "function strict(this: unknown) { \"use strict\" as string; return this; }",
+            ),
+        ] {
+            assert_eq!(read_back(path, text, &[]), None);
+            let missed = read_back(path, text, &[("\"use", ";\"use")]);
+            assert_eq!(missed.as_deref(), Some(expected));
+        }
     }
 
     #[test]

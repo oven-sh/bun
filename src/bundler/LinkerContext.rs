@@ -677,7 +677,7 @@ impl<'a> LinkerContext<'a> {
         self.worker_pool().schedule(batch);
     }
 
-    fn process_html_import_files(&mut self) {
+    fn process_html_import_files(&mut self) -> Result<(), LinkError> {
         // SAFETY: `parse_graph` points to `BundleV2.graph`, a sibling of `BundleV2.linker` (= `*self`), so these four
         // fields are disjoint from `*self` and from each other. The source map workers that may be running hold
         // `&Graph` and `&BundleV2`; of the graph they read only `input_files` and `pool`.
@@ -690,16 +690,26 @@ impl<'a> LinkerContext<'a> {
                 &(*parse_graph).build_graphs,
             )
         };
+        let mut is_page_missing = false;
         if !server_source_indices.is_empty() {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
             let sources = input_files.items_source();
             let browser_paths = &build_graphs[Target::Browser];
 
             for &html_import in server_source_indices.iter() {
-                let path_text = sources[html_import as usize].path.text;
-                let source_index: u32 = browser_paths.get(path_text).unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
+                let path = &sources[html_import as usize].path;
+                let Some(source_index) = browser_paths.get_path(path) else {
+                    self.log_disjoint().add_error_fmt(
+                        Some(&sources[html_import as usize]),
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} is imported as an HTML page, but the build has no page of it",
+                            bun_core::fmt::quote(path.pretty)
+                        ),
+                    );
+                    is_page_missing = true;
+                    continue;
+                };
 
                 html_source_indices.push(source_index);
 
@@ -732,6 +742,10 @@ impl<'a> LinkerContext<'a> {
                     )
                     .expect("OOM");
             }
+        }
+        match is_page_missing {
+            true => Err(LinkError::BuildFailed),
+            false => Ok(()),
         }
     }
 
@@ -788,7 +802,7 @@ impl<'a> LinkerContext<'a> {
             self.compute_data_for_source_map(reachable);
         }
 
-        self.process_html_import_files();
+        self.process_html_import_files()?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -5053,6 +5067,13 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
+    /// A directive stays ahead of the dependency calls inserted at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
+        self.stmts.push(stmt);
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())

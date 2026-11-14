@@ -1457,6 +1457,104 @@ describe("bundler", () => {
       });
     }
 
+    // Like react-refresh's Babel plugin, so that a component keeps its state when its module runs again.
+    itBundled("jsx/FastRefreshRegistersWrappedComponents", {
+      files: {
+        "/index.tsx": /* js */ `
+          import { Other, other } from "./other";
+          const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
+          const React = { memo };
+          const globals: any = globalThis;
+          globals.$RefreshSig$ = () => (t: unknown) => t;
+          globals.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          const Memo = memo(function Memo() { return useThing(); });
+          const Fwd = forwardRef((props: unknown, ref: unknown) => null);
+          const Both = memo(forwardRef((props: unknown, ref: unknown) => null));
+          const Dotted = React.memo(() => null);
+          const Plain = () => null;
+          const Wrapped = memo(Plain);
+          const Imported = memo(Other);
+          const NotImported = memo(other);
+          const Theme = createContext("none");
+          const Total = Math.max(1, 2);
+          const Nothing = memo();
+          const lower = memo(() => null);
+          console.log([Memo, Fwd, Both, Dotted, Plain, Wrapped, Imported, NotImported, Theme, Total, Nothing, lower].length);
+        `,
+        "/other.ts": `export const Other = 1; export const other = 2;`,
+      },
+      backend: "cli",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        const registered = [...api.readFile("out.js").matchAll(/:(\w+)"\);/g)].map(m => m[1]);
+        expect(registered).toEqual(["Memo", "Fwd", "Both", "Dotted", "Plain", "Wrapped", "Imported"]);
+      },
+      run: { stdout: "12" },
+    });
+
+    for (const [value, registers] of [
+      ["memo(() => null)", true],
+      ["React.memo(Plain)", true],
+      ["memo(forwardRef(() => null))", true],
+      ["memo(Other)", true],
+      ["createContext('none')", false],
+      ["Plain", false],
+    ] as const) {
+      itBundled(`jsx/FastRefreshDefaultExportOf ${value}`, {
+        files: {
+          "/index.tsx": /* js */ `
+            import { Other } from "./other";
+            const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
+            const React = { memo };
+            const Plain = () => null;
+            console.log([Other, memo, forwardRef, createContext, React, Plain].length);
+            export default ${value};
+          `,
+          "/other.ts": `export const Other = 1;`,
+        },
+        backend: "cli",
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(api.readFile("out.js").includes(`:default");`)).toBe(registers);
+        },
+      });
+    }
+
+    // Each component gets its own signature binding, in the scope its `var` is
+    // declared in. Two siblings used to share one name under minification.
+    itBundled("jsx/FastRefreshSiblingSignaturesAreDistinct", {
+      files: {
+        "/index.tsx": /* js */ `
+          const calls = [];
+          let next = 0;
+          globalThis.$RefreshSig$ = () => {
+            const id = next++;
+            return t => (t ? t : calls.push(id));
+          };
+          globalThis.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          function A() { return useThing(); }
+          function B() { return useThing(); }
+          function make() {
+            function C() { return useThing(); }
+            function D() { return useThing(); }
+            if (useThing()) { function E() { return useThing(); } return [C, D, E]; }
+          }
+          const [C, D, E] = make();
+          A(); B(); C(); D(); E();
+          console.log(JSON.stringify(calls));
+        `,
+      },
+      backend: "cli",
+      reactFastRefresh: true,
+      minifyIdentifiers: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(6);
+      },
+      run: { stdout: "[2,0,1,3,4,5]" },
+    });
+
     // The call in the method counts for neither function. The one in the function inside it does.
     itBundled("jsx/FastRefreshFunctionsAroundAndInsideAMethod", {
       files: {

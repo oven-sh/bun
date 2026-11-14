@@ -114,6 +114,8 @@ pub struct ParseTask<'a> {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The import of this HTML file waits for the onLoad plugins: see `BundleV2::html_import_after_on_load`.
+    pub(crate) on_load_decides_html_import: bool,
 }
 
 pub enum ParseTaskStage {
@@ -205,6 +207,28 @@ pub(crate) struct Success<'a> {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
+
+    /// Set for a "use client" file, which is parsed once more for another graph.
+    pub(crate) client_copy_options: Option<Box<TsconfigOptions>>,
+}
+
+/// The options of one file that its tsconfig.json decides.
+pub(crate) struct TsconfigOptions {
+    pub(crate) jsx: options::jsx::Pragma,
+    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) experimental_decorators: bool,
+    pub(crate) use_define_for_class_fields: bool,
+}
+
+impl Default for TsconfigOptions {
+    fn default() -> Self {
+        Self {
+            jsx: Default::default(),
+            emit_decorator_metadata: false,
+            experimental_decorators: false,
+            use_define_for_class_fields: true,
+        }
+    }
 }
 
 pub(crate) struct ResultError {
@@ -301,6 +325,7 @@ impl<'a> ParseTask<'a> {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 
@@ -342,6 +367,7 @@ impl Default for ParseTask<'_> {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 }
@@ -634,6 +660,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         };
         let source = Source {
             path: bun_paths::fs::Path {
@@ -2734,6 +2761,14 @@ pub mod parse_worker {
             side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
+            client_copy_options: (use_directive == UseDirective::Client).then(|| {
+                Box::new(TsconfigOptions {
+                    jsx: task.jsx.clone(),
+                    emit_decorator_metadata: task.emit_decorator_metadata,
+                    experimental_decorators: task.experimental_decorators,
+                    use_define_for_class_fields: task.use_define_for_class_fields,
+                })
+            }),
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
@@ -2921,11 +2956,14 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
-    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
+    // The struct-only `dealloc` below skips field Drop, so take the heap-owning
+    // fields that `on_parse_task_complete` doesn't always move out here.
     fn drop_result_owned_fields(result: &mut Result) {
         match &mut result.value {
-            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
+            ResultValue::Success(s) => {
+                drop(core::mem::take(&mut s.log));
+                drop(s.client_copy_options.take());
+            }
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
             ResultValue::Empty { .. } => {}
         }

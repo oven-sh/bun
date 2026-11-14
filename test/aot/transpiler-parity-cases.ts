@@ -53,6 +53,10 @@ const untypedParameters = "TS7006: the parameters of the decorator have no types
 // A type error stops the build.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
+  "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
+    '"use strict"; after another directive preserves strict mode with the inspector enabled':
+      "--aot does not support the debugger (BUN_INSPECT) for a program that is compiled",
+  },
   "test/bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
     [`${classFields} > false: computed literal keys use [[Set]] semantics`]: fieldOverridesAccessor,
     [`${classFields} > false: computed non-literal key keeps the class native`]:
@@ -83,6 +87,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > autoImportTreeShaking > jsx/AutoImportDroppedWhenJsxUnusedBundledCjs": undeclaredIntrinsicElements,
     "bundler > autoImportTreeShaking > jsx/AutoImportKeptWhenJsxUsedBundledCjs": undeclaredIntrinsicElements,
     [`${fastRefresh} > jsx/FastRefreshClassStatementMethods.tsx`]: "TS2339: the class C declares neither c nor v",
+    [`${fastRefresh} > jsx/FastRefreshSiblingSignaturesAreDistinct`]:
+      "TS2488: `make` does not return a list on every path",
   },
   "test/bundler/esbuild/ts.test.ts": {
     "bundler > ts/DeclareClassFields": "TS2304: nothing declares c, d, C and D",

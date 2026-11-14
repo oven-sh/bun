@@ -166,6 +166,68 @@ pub(super) fn finalize_bundle(
     finalized
 }
 
+/// Evaluates the server chunk: an object of the functions of its modules. None of them runs.
+fn load_server_chunk(dev: &mut DevServer) -> crate::Result<jsc::JsResult<JSValue>> {
+    let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
+        let mut source_map_entry = source_map_store::Entry::default();
+        dev.server_graph.take_source_map(&mut source_map_entry)?;
+        Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
+    } else {
+        None
+    };
+    let server_bundle =
+        dev.server_graph
+            .take_js_bundle_server(&incremental_graph::TakeJSBundleOptionsServer {
+                kind: ChunkKind::HmrChunk,
+            })?;
+    Ok(match source_map_json {
+        Some(json) => {
+            // This memory will be owned by the `DevServerSourceProvider` in C++
+            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
+            server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+                dev.global(),
+                BunString::clone_utf8(&server_bundle),
+                json.as_ptr(),
+                json.len(),
+            )
+        }
+        None => server_hmr_ffi::bake_load_server_hmr_patch(
+            dev.global(),
+            BunString::clone_latin1(&server_bundle),
+        ),
+    })
+}
+
+/// Takes the modules that JavaScriptCore refuses out of the server chunk, and marks their files stale. Returns whether
+/// any module is left.
+fn leave_out_refused_modules(dev: &mut DevServer) -> bool {
+    let global = dev.global();
+    let codes = ::core::mem::take(&mut dev.server_graph.current_chunk_code);
+    let source_maps = ::core::mem::take(&mut dev.server_graph.current_chunk_source_maps);
+    dev.server_graph.current_chunk_len = 0;
+    let mut any_refused = false;
+    for (code, source_map) in codes.into_iter().zip(source_maps) {
+        let alone = [b"[{".as_slice(), &code, b"}]"].concat();
+        match server_hmr_ffi::bake_load_server_hmr_patch(global, BunString::clone_utf8(&alone)) {
+            Ok(_) => {
+                dev.server_graph.current_chunk_len += code.len();
+                dev.server_graph.current_chunk_code.push(code);
+                dev.server_graph.current_chunk_source_maps.push(source_map);
+            }
+            Err(err) => {
+                let exception = global.take_exception(err);
+                // The error of the chunk was the first one's.
+                if ::core::mem::replace(&mut any_refused, true) {
+                    dev.vm().print_error_like_object_to_console(exception);
+                }
+                let index = source_map.file_index.get() as usize;
+                dev.server_graph.stale_files.set(index);
+            }
+        }
+    }
+    !dev.server_graph.current_chunk_code.is_empty()
+}
+
 fn finalize_bundle_inner(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
@@ -641,91 +703,52 @@ fn finalize_bundle_inner(
 
     // Load all new chunks into the server runtime.
     if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
-        // Generate a script_id for server bundles
-
-        // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            // Create a temporary source map entry to render
-            let mut source_map_entry = source_map_store::Entry::default();
-
-            // Fill the source map entry
-            dev.server_graph.take_source_map(&mut source_map_entry)?;
-
-            Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
-        } else {
-            None
-        };
-
-        let server_bundle = dev.server_graph.take_js_bundle_server(
-            &incremental_graph::TakeJSBundleOptionsServer {
-                kind: ChunkKind::HmrChunk,
-            },
-        )?;
-
-        let global = dev.global();
-        let server_modules = if let Some(json) = source_map_json {
-            // This memory will be owned by the `DevServerSourceProvider` in C++
-            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
-
-            match server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+        'load: {
+            let global = dev.global();
+            let server_modules = match load_server_chunk(dev)? {
+                Ok(modules) => modules,
+                Err(err) => {
+                    // JavaScriptCore can refuse text that Bun's parser takes, such as `/(/`. The error is printed,
+                    // the module stays as it was, and the others of the chunk are loaded without it.
+                    dev.vm()
+                        .print_error_like_object_to_console(global.take_exception(err));
+                    if !leave_out_refused_modules(dev) {
+                        break 'load;
+                    }
+                    match load_server_chunk(dev)? {
+                        Ok(modules) => modules,
+                        Err(err) => {
+                            dev.vm()
+                                .print_error_like_object_to_console(global.take_exception(err));
+                            break 'load;
+                        }
+                    }
+                }
+            };
+            let errors = match dev.server_register_update_callback.get().unwrap().call(
                 global,
-                BunString::clone_utf8(&server_bundle),
-                json.as_ptr(),
-                json.len(),
+                global.to_js_value(),
+                &[
+                    server_modules,
+                    dev.make_array_for_server_components_patch(
+                        global,
+                        &dev.incremental_result.client_components_added,
+                    )?,
+                    dev.make_array_for_server_components_patch(
+                        global,
+                        &dev.incremental_result.client_components_removed,
+                    )?,
+                ],
             ) {
                 Ok(v) => v,
                 Err(err) => {
                     dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
+                    break 'load;
                 }
-            }
-        } else {
-            match server_hmr_ffi::bake_load_server_hmr_patch(
-                global,
-                BunString::clone_latin1(&server_bundle),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    dev.vm()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
-                }
-            }
-        };
-        let errors = match dev.server_register_update_callback.get().unwrap().call(
-            global,
-            global.to_js_value(),
-            &[
-                server_modules,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.incremental_result.client_components_added,
-                )?,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.incremental_result.client_components_removed,
-                )?,
-            ],
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                dev.vm()
-                    .print_error_like_object_to_console(global.take_exception(err));
-                panic!(
-                    "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
-                );
-            }
-        };
-        let _ = errors; // TODO:
+            };
+            let _ = errors; // TODO:
+        }
     }
 
     let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;

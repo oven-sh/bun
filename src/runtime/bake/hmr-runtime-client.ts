@@ -8,6 +8,7 @@ import {
   addMapping,
   clearDisconnectedSourceMaps,
   configureSourceMapGCSize,
+  derefMapping,
   getKnownSourceMaps,
   SourceMapURL,
 } from "./client/stack-trace";
@@ -15,8 +16,10 @@ import { initWebSocket } from "./client/websocket";
 import "./debug";
 import { MessageId } from "./generated";
 import {
+  dropHeldModules,
   emitEvent,
   fullReload,
+  loadExports,
   loadModuleAsync,
   onEvent,
   onServerSideReload,
@@ -84,7 +87,7 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
-globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
+globalThis[Symbol.for("bun:hmr")] = (modules: any, bundledAgain: string[], id: string) => {
   const queue = scriptTags.get(id);
   let entry = queue?.shift() ?? null;
   if (queue && queue.length === 0) {
@@ -96,6 +99,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   }
 
   const { script, size, url } = entry;
+  dropHeldModules(modules, bundledAgain);
   const map: SourceMapURL = {
     id,
     url,
@@ -103,6 +107,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
     size,
   };
   addMapping(url, map);
+  if (map.refs === 0) derefMapping(map);
   script.remove();
   replaceModules(modules, map).catch(e => {
     console.error(e);
@@ -368,7 +373,7 @@ try {
     setRefreshRuntime(refreshRuntime);
   }
 
-  await loadModuleAsync(config.main, false, null);
+  await loadExports(config.main);
 
   emitEvent("bun:ready", null);
 } catch (e) {

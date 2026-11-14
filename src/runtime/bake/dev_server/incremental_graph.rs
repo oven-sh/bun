@@ -306,6 +306,11 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: file indices contributing to the current chunk (emit order).
     /// Server side: unused (server stores code slices in `current_chunk_code`).
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
+    /// Client side: the files of the chunk that were bundled again only because an importer was. A tab
+    /// that holds the same code of one leaves it as it is.
+    pub(crate) bundled_again: Vec<FileIndex<SIDE>>,
+    /// Server side: the same, as the printed ids with commas between them.
+    pub(crate) bundled_again_ids: Vec<u8>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -313,6 +318,18 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
+}
+
+/// The string literal that a module of a chunk is printed with as its key.
+fn printed_module_id(code: &[u8]) -> Option<&[u8]> {
+    // The printer takes single quotes when the key has a double quote.
+    let start = strings::index_of_any(code, b"\"'")?;
+    let quote = code[start];
+    let mut end = start + 1;
+    while *code.get(end)? != quote {
+        end += 1 + usize::from(code[end] == b'\\');
+    }
+    Some(&code[start..=end])
 }
 
 /// Byte-count breakdown of an incremental graph's memory usage (graph
@@ -407,6 +424,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
+                graph += self.bundled_again.capacity() * size_of::<FileIndex<SIDE>>();
                 graph += self.current_css_files.capacity() * size_of::<u64>();
                 for f in self.bundled_files.values() {
                     if let Some(c) = f.content.js_code() {
@@ -416,6 +434,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Server => {
+                graph += self.bundled_again_ids.capacity();
                 graph += self.current_chunk_code.capacity() * size_of::<Box<[u8]>>();
                 graph += self.current_chunk_source_maps.capacity()
                     * size_of::<CurrentChunkSourceMapData>();
@@ -443,9 +462,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 // `Box<[u8]>` drops on clear; ditto `Shared` in source_maps.
                 self.current_chunk_code.clear();
                 self.current_chunk_source_maps.clear();
+                self.bundled_again_ids.clear();
             }
         }
         self.current_chunk_parts.clear();
+        self.bundled_again.clear();
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -611,7 +632,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
-        if self.stale_files.bit_length > file_index.get() as usize {
+        let was_stale = self.stale_files.bit_length > file_index.get() as usize
+            && self.stale_files.is_set(file_index.get() as usize);
+        if was_stale {
             self.stale_files.unset(file_index.get() as usize);
         }
 
@@ -701,6 +724,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if let Some(len) = code_len {
                     self.current_chunk_parts.push(file_index);
                     self.current_chunk_len += len;
+                    if found_existing && !was_stale {
+                        self.bundled_again.push(file_index);
+                    }
                 }
             }
             Side::Server => {
@@ -741,8 +767,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         self.dev_incremental_result()
                             .client_components_added
                             .push(ServerFileIndex::init(file_index.get()));
-                    } else if self.bundled_files.values()[file_index.get() as usize]
-                        .is_client_component_boundary
+                    } else if !is_ssr_graph
+                        && self.bundled_files.values()[file_index.get() as usize]
+                            .is_client_component_boundary
                     {
                         // SAFETY: cross-graph access via `owner()`. We hold
                         // `&mut self` (server_graph); `client_graph` and
@@ -752,13 +779,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         let key = bun_ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
-                        let client_index =
-                            client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                                bun_core::Output::panic(format_args!(
-                                    "Client graph's SCB was already deleted",
-                                ))
-                            });
-                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
+                        if let Some(client_index) = client_graph.get_file_index(key.slice()) {
+                            let i = client_index.get() as usize;
+                            if client_graph.edge_lists[i].first_dep.is_some() {
+                                // Another client component imports it.
+                                client_graph.bundled_files.values_mut()[i].is_hmr_root = false;
+                            } else {
+                                client_graph
+                                    .disconnect_and_delete_file(directory_watchers, client_index);
+                            }
+                        }
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()
@@ -783,6 +813,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if let ReceiveChunkContent::Js { code, source_map } = content {
                     let code_len = code.len();
                     let line_count = strings::count_char(&code, b'\n') as u32;
+                    let file = &self.bundled_files.values()[file_index.get() as usize];
+                    // A file in both graphs is received twice, and stale only the first time.
+                    if found_existing
+                        && !was_stale
+                        && !(file.is_rsc && file.is_ssr)
+                        && let Some(id) = printed_module_id(&code)
+                    {
+                        if !self.bundled_again_ids.is_empty() {
+                            self.bundled_again_ids.extend_from_slice(b", ");
+                        }
+                        self.bundled_again_ids.extend_from_slice(id);
+                    }
                     self.current_chunk_code.push(code);
                     self.current_chunk_len += code_len;
 
@@ -1180,13 +1222,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     );
                     // SAFETY: cross-graph sibling access; `server_graph` disjoint.
                     let server_graph = unsafe { &mut (*dev).server_graph };
-                    let index = server_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Server Incremental Graph is missing component for {:?}",
-                            bstr::BStr::new(key.slice()),
-                        ))
-                    });
-                    server_graph.trace_dependencies(index, gts, goal, index)?;
+                    if let Some(index) = server_graph.get_file_index(key.slice()) {
+                        server_graph.trace_dependencies(index, gts, goal, index)?;
+                    }
                 } else if let Some(route_bundle_index) = html_rbi {
                     // HTML modified or asset modified → hard reload; else soft.
                     let hard = from_file_index == file_index
@@ -1252,13 +1290,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     );
                     // SAFETY: disjoint sibling `client_graph`.
                     let client_graph = unsafe { &mut (*dev).client_graph };
-                    let index = client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                        bun_core::Output::panic(format_args!(
-                            "Client Incremental Graph is missing component for {:?}",
-                            bstr::BStr::new(key.slice()),
-                        ))
-                    });
-                    client_graph.trace_imports(index, gts, goal)?;
+                    if let Some(index) = client_graph.get_file_index(key.slice()) {
+                        client_graph.trace_imports(index, gts, goal)?;
+                    }
 
                     if cfg!(debug_assertions) && kind == FileKind::Css {
                         // Server CSS files never have imports.
@@ -1901,7 +1935,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 end_list.extend_from_slice(b"\n})");
             }
             ChunkKind::HmrChunk => {
-                end_list.extend_from_slice(b"}, \"");
+                end_list.extend_from_slice(b"}, [");
+                let mut separator: &[u8] = b"";
+                for file in &self.bundled_again {
+                    let content = &self.bundled_files.values()[file.get() as usize].content;
+                    if let Some(id) = content.js_code().and_then(printed_module_id) {
+                        end_list.extend_from_slice(separator);
+                        end_list.extend_from_slice(id);
+                        separator = b", ";
+                    }
+                }
+                end_list.extend_from_slice(b"], \"");
                 let _ = write!(
                     end_list,
                     "{}",
@@ -1956,13 +2000,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
+                code: bun_core::ZStr::from_static(b"[{\0"),
                 line_count: 0,
             },
         };
         // Server `.InitialResponse` is unreachable per spec; only HmrChunk hits
         // the end-builder.
-        let end: &[u8] = b"})";
+        let end = [b"}, [", &*self.bundled_again_ids, b"]]"].concat();
 
         let runtime_code = runtime.code.as_bytes();
         let start = list.len();
@@ -1971,7 +2015,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         for code in &self.current_chunk_code {
             list.extend_from_slice(code);
         }
-        list.extend_from_slice(end);
+        list.extend_from_slice(&end);
 
         let _ = start;
         Ok(())

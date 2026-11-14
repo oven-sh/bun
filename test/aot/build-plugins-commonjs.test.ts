@@ -420,9 +420,8 @@ exports.sum = a.n + a.b.n; exports.names = a.b.seen;`,
     },
     plugins: [`build.onResolve({ filter: /written/ }, () => ({ path: join(folder, "picked.cjs") }));`],
     options: entry("main.cjs"),
-    prints: "written.cjs picked\n",
     // The path of the file that `require` loads.
-    differs: { stdout: "picked.cjs picked\n" },
+    prints: "picked.cjs picked\n",
   },
   "the paths that a CommonJS file is told, where onResolve picked it": {
     files: {

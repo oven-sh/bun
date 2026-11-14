@@ -90,7 +90,9 @@ build.onLoad({ filter: /style\\.css$/ }, (args: any) => { tell("onLoad", args); 
       `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "virtual" }));
 build.onLoad({ filter: /.*/, namespace: "virtual" }, (args: any) => { tell("onLoad", args); return { contents: "<!doctype html><html><body><h1>virtual</h1></body></html>", loader: "html" }; });`,
     ],
-    fails: "page.html",
+    prints: "true\n",
+    // With `aot` a page is a file on the disk.
+    refused: "page.html",
   },
   "a page that becomes text": {
     files: {

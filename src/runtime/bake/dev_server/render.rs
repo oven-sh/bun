@@ -380,10 +380,13 @@ impl DevServer {
         w.extend_from_slice(b": [ [");
         let mut any = false;
         for import in import_records[index.get() as usize].as_slice() {
-            if import.source_index.is_valid() {
-                if !loaders[import.source_index.get() as usize].is_javascript_like() {
+            let module_id = if import.source_index.is_valid() {
+                let import_index = import.source_index.get() as usize;
+                if !loaders[import_index].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
                 }
+                // The record can still hold the specifier as written.
+                input_file_sources[import_index].path.pretty
             } else {
                 // Find the in-graph import.
                 let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {
@@ -392,15 +395,15 @@ impl DevServer {
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {
                     continue;
                 }
-            }
+                import.path.pretty
+            };
             if !any {
                 any = true;
                 w.extend_from_slice(b"\n");
             }
             w.extend_from_slice(b"    ");
             bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                import.path.pretty,
-                w,
+                module_id, w,
             )?;
             w.extend_from_slice(b", 0,\n");
         }

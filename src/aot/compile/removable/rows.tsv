@@ -909,7 +909,7 @@
 -	.	.	-	-	ts	export * as MARK from "./dep.ts";
 # other statements
 +	.	.	-	-	ts	/* MARK */ ;
-+	-	+	inert	-	ts	"MARK";
++	+	+	-	-	ts	"MARK";
 +	.	.	-	-	ts	/* MARK */ "use strict";
 +	+	+	-	-	ts	const a = 1; "MARK";
 +	+	+	-	-	ts	1, "MARK";

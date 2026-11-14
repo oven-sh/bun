@@ -877,6 +877,93 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
     },
   });
 }
+// Every copy of a "use client" file is compiled with the file's own tsconfig.json.
+{
+  const files = {
+    "app/tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        jsx: "react-jsx",
+        jsxImportSource: "own-jsx",
+        experimentalDecorators: true,
+        useDefineForClassFields: false,
+      },
+    }),
+    "app/Comp.tsx": `
+      "use client";
+      function countArgs(...args) {
+        Base.decoratorArgs = args.length;
+      }
+      class Base {
+        static decoratorArgs = 0;
+        static setterCalls = 0;
+        set field(value) {
+          Base.setterCalls++;
+        }
+      }
+      class Derived extends Base {
+        field = 1;
+        @countArgs method() {}
+      }
+      new Derived();
+      export const compiled = {
+        jsx: <div />,
+        decoratorArgs: Base.decoratorArgs,
+        setterCalls: Base.setterCalls,
+      };
+    `,
+    "node_modules/own-jsx/package.json": JSON.stringify({ name: "own-jsx", version: "1.0.0" }),
+    "node_modules/own-jsx/jsx-runtime.js": `export const jsx = () => "own-jsx";`,
+    "node_modules/own-jsx/jsx-dev-runtime.js": `export const jsxDEV = () => "own-jsx dev";`,
+    "node_modules/react/package.json": JSON.stringify({ name: "react", version: "1.0.0" }),
+    "node_modules/react/jsx-runtime.js": `export const jsx = () => "react";`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => "react dev";`,
+    "routes/index.ts": `
+      import * as Comp from "../app/Comp";
+      export default function (req, meta) {
+        return Response.json({ compiled: Comp.compiled, modules: meta.modules });
+      }
+    `,
+  };
+  // A legacy decorator of a method gets (target, key, descriptor). With
+  // "useDefineForClassFields": false a field assignment calls the setter.
+  const compiled = { jsx: "own-jsx dev", decoratorArgs: 3, setterCalls: 1 };
+
+  devTest("the SSR copy of a 'use client' file keeps the file's tsconfig options", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      ...files,
+      "routes/ssr.ts": `
+        import { compiled } from "../app/Comp" with { bunBakeGraph: "ssr" };
+        export default function () {
+          return Response.json(compiled);
+        }
+      `,
+    },
+    async test(dev) {
+      // This page makes the SSR copy. The second one loads it.
+      expect((await dev.fetch("/")).status).toBe(200);
+      expect(await dev.fetch("/ssr").json()).toEqual(compiled);
+    },
+  });
+  devTest("the browser copy of a 'use client' file keeps the file's tsconfig options", {
+    framework: {
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+      serverComponents: oneServerGraph,
+    },
+    files: { ...files, "client.ts": `import "bun:bake/client";` },
+    async test(dev) {
+      const page = await dev.fetch("/").json();
+      const script = await dev.fetch(page.modules[0]).text();
+      // The runtime comes first and names every helper, so look at the module only.
+      const start = script.indexOf('"app/Comp.tsx":');
+      const module = script.slice(start, script.indexOf("\n  },", start));
+      expect(module).toContain("own-jsx/jsx-dev-runtime");
+      expect(module).not.toContain("react/jsx-dev-runtime");
+      expect(module).toContain("__legacyDecorateClassTS");
+      expect(module).toContain("this.field = 1");
+    },
+  });
+}
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,
   files: {
@@ -1168,6 +1255,105 @@ devTest("barrel optimization skips unused submodules", {
   },
 });
 
+// A barrel with a deferred re-export is bundled again with each importer. Its
+// output is the same, so it stays out of the hot update. In the update it made
+// a page reload when the entry does not accept (#47857).
+for (const [where, specifier, barrel] of [
+  ["a package", "barrel-lib", "node_modules/barrel-lib"],
+  ["a folder of the project", "./lib", "lib"],
+] as const) {
+  devTest(`barrel with a deferred re-export in ${where} does not run again when an importer changes`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import { label } from "./page.ts";
+        import { Alpha } from "${specifier}";
+        globalThis.read = () => label() + ", index " + Alpha;
+        console.log("index");
+      `,
+      "page.ts": `
+        import { Alpha } from "${specifier}";
+        export const label = () => "page 1 " + Alpha;
+        import.meta.hot.accept();
+      `,
+      [`${barrel}/package.json`]: JSON.stringify({
+        name: "barrel-lib",
+        version: "1.0.0",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      [`${barrel}/index.js`]: `
+        export { Alpha } from "./alpha.js";
+        export { Beta } from "./beta.js";
+      `,
+      [`${barrel}/alpha.js`]: `export const Alpha = "ALPHA";`,
+      [`${barrel}/beta.js`]: `export const Beta = "BETA";`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { storeHotChunks: true });
+      await c.expectMessage("index");
+      expect(await c.js<string>`read()`).toBe("page 1 ALPHA, index ALPHA");
+      for (const n of [2, 3]) {
+        await dev.patch("page.ts", { find: `page ${n - 1}`, replace: `page ${n}` });
+        const chunk = await c.getMostRecentHmrChunk();
+        const again: string[] = JSON.parse(chunk.match(/^\}, (\[.*\]), "[0-9a-f]{16}"\)$/m)![1]);
+        const keys: string[] = [...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]));
+        expect(keys.filter(key => !again.includes(key))).toEqual(["page.ts"]);
+        expect(await c.js<string>`read()`).toBe(`page ${n} ALPHA, index ALPHA`);
+      }
+    },
+  });
+}
+
+// The barrel file is bundled again with the saved file, and its output is the
+// same. It copies the exports of `x.ts` when it runs (`export *`), so it must
+// run again after `x.ts`.
+devTest("saved module read through a barrel that re-exports it and that it imports", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import { v, readY } from './lib';
+      globalThis.read = () => v + ' ' + readY();
+      console.log('main');
+      import.meta.hot.accept();
+    `,
+    "lib/package.json": JSON.stringify({ name: "app-lib", sideEffects: false }),
+    "lib/index.ts": `export * from './x'; export { y } from './y'; export { z } from './z';`,
+    "lib/x.ts": `import { y } from './index'; export const v = 1; export const readY = () => y;`,
+    "lib/y.ts": `export const y = "Y";`,
+    "lib/z.ts": `export const z = "Z";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("main");
+    expect(await c.js<string>`read()`).toBe("1 Y");
+    await dev.write("lib/x.ts", `import { y } from './index'; export const v = 2; export const readY = () => y;`);
+    await c.expectMessage("main");
+    expect(await c.js<string>`read()`).toBe("2 Y");
+  },
+});
+
+// Each module is named in a scope of its own, so a name does not get a number
+// because another module of the bundle declares it too.
+devTest("top-level function keeps its name when another module declares the same name", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { name as otherName } from "./other.ts";
+      export default function App() {}
+      console.log(App.name + " " + otherName);
+    `,
+    "other.ts": `
+      function App() {}
+      export const name = App.name;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("App App");
+  },
+});
+
 devTest("barrel optimization: adding a new import triggers reload", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
@@ -1219,6 +1405,295 @@ devTest("barrel optimization: adding a new import triggers reload", {
       );
     });
     await c.expectMessage("result: ALPHA BETA GAMMA");
+  },
+});
+
+// A `sideEffects: false` package whose entry only re-exports. The tests that use it never import
+// `Gamma`, so the barrel keeps a deferred export, and every build that gets to it has it again.
+const barrelLib = {
+  "node_modules/barrel-lib/package.json": JSON.stringify({
+    name: "barrel-lib",
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/barrel-lib/index.js": `
+    export { Alpha } from './alpha.js';
+    export { Beta } from './beta.js';
+    export { Gamma } from './gamma.js';
+  `,
+  "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+  "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+  "node_modules/barrel-lib/gamma.js": `export const Gamma = "GAMMA";`,
+};
+
+const barrelEntry = (version: string) => `
+  import { Alpha } from 'barrel-lib';
+  console.log("entry ${version} " + Alpha);
+  import.meta.hot.accept();
+  import.meta.hot.dispose(() => console.log("entry disposed"));
+`;
+// #29418. One save makes an update that has the entry and a module that the entry imports, so the
+// update gets to the entry twice. The dispose callbacks ran, then the update threw
+// `TypeError: mod.onDispose is not iterable`, and the page reloaded.
+devTest("a hot update that gets to a self-accepting entry twice disposes of it once (#29418)", {
+  files: {
+    "barrel.html": emptyHtmlFile({ scripts: ["barrel/index.ts"] }),
+    "barrel/index.ts": barrelEntry("v1"),
+    "json.html": emptyHtmlFile({ scripts: ["json/index.ts"] }),
+    "json/index.ts": `
+      import data from "./data.json";
+      console.log("entry " + data.name);
+      import.meta.hot.accept();
+      import.meta.hot.dispose(() => console.log("entry disposed"));
+    `,
+    "json/data.json": `{ "name": "one" }`,
+    ...barrelLib,
+  },
+  async test(dev) {
+    // dev.write() throws when the page reloads.
+    {
+      // A save of the entry. The dev server sends the barrel again with it.
+      await using c = await dev.client("/barrel");
+      await c.expectMessage("entry v1 ALPHA");
+      await dev.write("barrel/index.ts", barrelEntry("v2"));
+      await c.expectMessage("entry disposed", "entry v2 ALPHA");
+      await dev.write("barrel/index.ts", barrelEntry("v3"));
+      await c.expectMessage("entry disposed", "entry v3 ALPHA");
+    }
+    {
+      // A save of the JSON file. The dev server sends the entry with it.
+      await using c = await dev.client("/json");
+      await c.expectMessage("entry one");
+      await dev.write("json/data.json", `{ "name": "two" }`);
+      await c.expectMessage("entry disposed", "entry two");
+      await dev.write("json/data.json", `{ "name": "three" }`);
+      await c.expectMessage("entry disposed", "entry three");
+    }
+  },
+});
+
+const barrelApp = (version: string) => `
+  import { Alpha } from 'barrel-lib';
+  import { other } from './other';
+  import.meta.hot.accept();
+  console.log("app ${version} " + Alpha + " " + other());
+`;
+// The barrel is bundled again with app.ts and its output is the same, so the page leaves it as it is. The
+// other importers of the barrel do not run again, and helper.ts keeps its count.
+devTest("barrel optimization: a save of one importer of a barrel does not evaluate its other importers again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "app.ts": barrelApp("v1"),
+    "other.ts": `
+      import { Beta } from 'barrel-lib';
+      import { helper } from './helper';
+      console.log("other ran");
+      export const other = () => "other(" + Beta + ") " + helper();
+    `,
+    "helper.ts": `
+      import { Beta } from 'barrel-lib';
+      let calls = 0;
+      console.log("helper ran");
+      export const helper = () => "helper(" + Beta + ") call " + ++calls;
+    `,
+    ...barrelLib,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("helper ran", "other ran", "app v1 ALPHA other(BETA) helper(BETA) call 1");
+    await dev.write("app.ts", barrelApp("v2"));
+    // The barrel is in the update only because app.ts is, and the page has it.
+    expect(await c.getMostRecentHmrChunk()).toMatch(/^\}, \[.*"node_modules\/barrel-lib\/index\.js".*\], "/m);
+    await c.expectMessage("app v2 ALPHA other(BETA) helper(BETA) call 2");
+    await dev.write("app.ts", barrelApp("v3"));
+    await c.expectMessage("app v3 ALPHA other(BETA) helper(BETA) call 3");
+  },
+});
+for (const separateSSRGraph of [false, true]) {
+  // A client component that another one imports stays in the browser graph without its directive.
+  devTest(`use client is removed from a file that a client component imports (separateSSRGraph: ${separateSSRGraph})`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+    },
+    files: {
+      "A.ts": `"use client"; import { B } from "./B"; export const A = "A" + B;`,
+      "B.ts": `"use client"; export const B = "B1";`,
+      "routes/index.ts": `
+        import * as A from "../A";
+        import * as B from "../B";
+        export default () => new Response(Object.keys(A).join() + " " + Object.keys(B).join());
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("A B");
+      await dev.write("B.ts", `export const B = "B2";`);
+      await dev.fetch("/").equals("A B");
+      await dev.write("B.ts", `"use client"; export const B = "B3";`);
+      await dev.fetch("/").equals("A B");
+      await dev.write("A.ts", `"use client"; export const A = "A alone";`);
+      await dev.write("B.ts", `export const B = "B4";`);
+      await dev.fetch("/").equals("A B");
+    },
+  });
+}
+
+// The barrel is bundled again with each importer, and has the same code.
+devTest("barrel optimization: server: a save of one importer of a barrel does not evaluate its other importers again", {
+  framework: minimalFramework,
+  files: {
+    "counter.ts": `
+      import { Beta } from 'barrel-lib';
+      let requests = 0;
+      export const count = () => Beta + " request " + ++requests;
+    `,
+    "routes/index.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { count } from '../counter';
+      export default function () {
+        return new Response("v1 " + Alpha + " " + count());
+      }
+    `,
+    ...barrelLib,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1 ALPHA BETA request 1");
+    await dev.patch("routes/index.ts", { find: "v1", replace: "v2" });
+    await dev.fetch("/").equals("v2 ALPHA BETA request 2");
+    await dev.patch("routes/index.ts", { find: "v2", replace: "v3" });
+    await dev.fetch("/").equals("v3 ALPHA BETA request 3");
+    // A save of the module itself starts over.
+    await dev.patch("counter.ts", { find: " request ", replace: " call " });
+    await dev.fetch("/").equals("v3 ALPHA BETA call 1");
+  },
+});
+
+// Bun's parser takes this regular expression.
+devTest("server: text that JavaScriptCore refuses does not abort the dev server", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `export default () => new Response("v1");`,
+    "routes/other.ts": `export default () => new Response("other");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    await dev.write("routes/index.ts", `const r = /(/; export default () => new Response("v2 " + r);`);
+    await dev.fetch("/other").equals("other");
+    await dev.write("routes/index.ts", `export default () => new Response("v3");`);
+    await dev.fetch("/").equals("v3");
+  },
+});
+
+devTest("server: the error of every file that JavaScriptCore refuses is printed", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `import "../a"; import "../b"; export default () => new Response("v1");`,
+    "a.ts": `export {};`,
+    "b.ts": `export {};`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("a.ts", `export const a = /(/;`);
+      await dev.write("b.ts", `export const b = /+/;`);
+    }
+    await Promise.all([
+      dev.output.waitForLine(/Invalid regular expression: missing \)/),
+      dev.output.waitForLine(/Invalid regular expression: nothing to repeat/),
+    ]);
+    await dev.fetch("/").equals("v1");
+  },
+});
+
+for (const name of ["eval", "arguments"]) {
+  // The import is named after the file.
+  devTest(`server: a strict file that re-exports a file with the name ${name}`, {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `import * as lib from "../lib.js"; export default () => Response.json(lib);`,
+      "lib.js": `"use strict"; export * from "./${name}.js";`,
+      [name + ".js"]: `export const value = "${name}";`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(JSON.stringify({ value: name }));
+    },
+  });
+}
+
+// The other files of the save are loaded without the one that is refused.
+devTest("server: the files that come with text that JavaScriptCore refuses are loaded", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `export default () => new Response("v1");`,
+    "routes/other.ts": `import { other } from "../other"; export default () => new Response(other);`,
+    "other.ts": `export const other = "other 1";`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    await dev.fetch("/other").equals("other 1");
+    {
+      await using _batch = await dev.batchChanges();
+      // New, and imported by the refused file alone.
+      await dev.write("helper.ts", `export const helper = "helper";`);
+      await dev.write("other.ts", `export const other = "other 2";`);
+      await dev.write(
+        "routes/index.ts",
+        `import { helper } from "../helper"; const r = /(/; export default () => new Response(helper + r);`,
+      );
+    }
+    await dev.fetch("/other").equals("other 2");
+    await dev.write(
+      "routes/index.ts",
+      `import { helper } from "../helper"; export default () => new Response("v3 " + helper);`,
+    );
+    await dev.fetch("/").equals("v3 helper");
+  },
+});
+
+// Pins a known cost. The first request for /other makes a build in which the barrel has one more
+// re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
+// counter.ts runs again at that request, which imports it, and its count starts over.
+devTest("barrel optimization: server: the first request for a route evaluates the importers of its barrel again", {
+  framework: minimalFramework,
+  files: {
+    "counter.ts": `
+      import { Beta } from 'barrel-lib';
+      let requests = 0;
+      export const count = () => Beta + " request " + ++requests;
+    `,
+    "routes/index.ts": `
+      import { count } from '../counter';
+      export default function () {
+        return new Response("index " + count());
+      }
+    `,
+    "routes/other.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { count } from '../counter';
+      export default function () {
+        return new Response("other " + Alpha + " " + count());
+      }
+    `,
+    "routes/plain.ts": `
+      export default function () {
+        return new Response("plain");
+      }
+    `,
+    ...barrelLib,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index BETA request 1");
+    await dev.fetch("/").equals("index BETA request 2");
+    // The first request for a route that does not import the barrel leaves counter.ts as it is.
+    await dev.fetch("/plain").equals("plain");
+    await dev.fetch("/").equals("index BETA request 3");
+    // The first request for /other. Its build has the barrel again, so counter.ts runs again.
+    await dev.fetch("/other").equals("other ALPHA BETA request 1");
+    await dev.fetch("/").equals("index BETA request 2");
+    // The second request for /other makes no build.
+    await dev.fetch("/other").equals("other ALPHA BETA request 3");
   },
 });
 
@@ -1682,6 +2157,183 @@ devTest("a route module that throws when a save reloads it is reported and recov
       `,
     );
     await dev.fetch("/").equals("index v3");
+  },
+});
+devTest("server: a hot update evaluates the modules between the saved file and the route again", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "derived.ts": `
+      import { value } from "./config";
+      export const derived = "derived(" + value + ")";
+    `,
+    // The route makes `banner` when it is evaluated, so the route has to run again too.
+    "routes/index.ts": `
+      import { derived } from "../derived";
+      const banner = "banner(" + derived + ")";
+      export default function () {
+        return new Response(banner);
+      }
+    `,
+    // The route imports `config` before `watcher`. The walk up from `config` gets to the route first
+    // and still has to get to `watcher`, which self-accepts.
+    "watcher.ts": `
+      import { value } from "./config";
+      export const watcher = "watcher(" + value + ")";
+      import.meta.hot.accept();
+    `,
+    "routes/watcher.ts": `
+      import { value } from "../config";
+      import { watcher } from "../watcher";
+      export default function () {
+        return new Response(value + " " + watcher);
+      }
+    `,
+    // The route and `component` import each other, so the route is imported by a module that it imports.
+    "part.ts": `
+      export const part = "p1";
+    `,
+    "component.ts": `
+      import { part } from "./part";
+      import * as route from "./routes/cycle";
+      export const component = "component(" + part + ")";
+      export const routeName = () => route.name;
+    `,
+    "routes/cycle.ts": `
+      import { component, routeName } from "../component";
+      export const name = "cycle";
+      export default function () {
+        return new Response(component + " " + routeName());
+      }
+    `,
+    // `a` and `b` both import `t`, which gets a top-level await with the save. `a` starts `t`. `b` is an
+    // import of the same request, so it waits for `t` too.
+    "tla/t.ts": `
+      export const t = "t1";
+    `,
+    "tla/a.ts": `
+      import { t } from "./t";
+      export const a = "a(" + t + ")";
+    `,
+    "tla/b.ts": `
+      import { t } from "./t";
+      export const b = "b(" + t + ")";
+    `,
+    "routes/tla.ts": `
+      import { a } from "../tla/a";
+      import { b } from "../tla/b";
+      const made = a + " " + b;
+      export default function () {
+        return new Response(made);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("banner(derived(v1))");
+    await dev.fetch("/watcher").equals("v1 watcher(v1)");
+    await dev.fetch("/cycle").equals("component(p1) cycle");
+
+    await dev.write("config.ts", `export const value = "v2";`);
+    await dev.fetch("/").equals("banner(derived(v2))");
+    await dev.fetch("/watcher").equals("v2 watcher(v2)");
+    // The modules that ran again take part in the next update like the first ones did.
+    await dev.write("config.ts", `export const value = "v3";`);
+    await dev.fetch("/").equals("banner(derived(v3))");
+    await dev.fetch("/watcher").equals("v3 watcher(v3)");
+
+    await dev.write("part.ts", `export const part = "p2";`);
+    await dev.fetch("/cycle").equals("component(p2) cycle");
+
+    await dev.fetch("/tla").equals("a(t1) b(t1)");
+    await dev.write("tla/t.ts", `await Promise.resolve(); export const t = "t2";`);
+    await dev.fetch("/tla").equals("a(t2) b(t2)");
+  },
+});
+devTest("server: a hot update that fails does not block the save after it", {
+  framework: minimalFramework,
+  files: {
+    // dispose: route -> mid -> config. The dispose callback of `mid` throws. The update is applied, and so is the next one.
+    "dispose/config.ts": `
+      export const value = "v1";
+    `,
+    "dispose/mid.ts": `
+      import { value } from "./config";
+      export const mid = "mid(" + value + ")";
+      import.meta.hot.dispose(() => {
+        throw new Error("dispose of " + mid + " failed");
+      });
+    `,
+    "routes/dispose.ts": `
+      import { mid } from "../dispose/mid";
+      export default function () {
+        return new Response(mid);
+      }
+    `,
+    // thrown: route -> mid -> dep. `mid` throws while `dep` is not ok. The save that repairs `dep` evaluates `mid` again.
+    "thrown/dep.ts": `
+      export const ok = false;
+    `,
+    "thrown/mid.ts": `
+      import { ok } from "./dep";
+      if (!ok) throw new Error("mid needs dep to be ok");
+      export const mid = "mid(ok)";
+    `,
+    "routes/thrown.ts": `
+      import { mid } from "../thrown/mid";
+      export default function () {
+        return new Response(mid);
+      }
+    `,
+    // hooks: route -> boundary -> mid -> config. A save makes `config` throw, so `mid` and `boundary` are not
+    // evaluated again. `boundary` still accepts the save that repairs `config`.
+    "hooks/config.ts": `
+      export const value = "v1";
+    `,
+    "hooks/mid.ts": `
+      import { value } from "./config";
+      export const mid = "mid(" + value + ")";
+      import.meta.hot.dispose(() => (globalThis.hooksLog ??= []).push("mid disposed " + mid));
+    `,
+    "hooks/boundary.ts": `
+      import { mid } from "./mid";
+      export const boundary = "boundary(" + mid + ")";
+      import.meta.hot.accept(newModule => (globalThis.hooksLog ??= []).push("boundary accepted " + newModule.boundary));
+    `,
+    "routes/hooks.ts": `
+      import { boundary } from "../hooks/boundary";
+      export default function () {
+        return Response.json({ boundary, log: globalThis.hooksLog ?? [] });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/dispose").equals("mid(v1)");
+    await dev.write("dispose/config.ts", `export const value = "v2";`);
+    await dev.fetch("/dispose").equals("mid(v2)");
+    await dev.output.waitForLine(/dispose of mid\(v1\) failed/);
+    await dev.write("dispose/config.ts", `export const value = "v3";`);
+    await dev.fetch("/dispose").equals("mid(v3)");
+    await dev.output.waitForLine(/dispose of mid\(v2\) failed/);
+
+    const failed = await dev.fetch("/thrown");
+    expect(await failed.text()).toContain("mid needs dep to be ok");
+    expect(failed.status).toBe(500);
+    await dev.write("thrown/dep.ts", `export const ok = true;`);
+    await dev.fetch("/thrown").equals("mid(ok)");
+
+    expect(await dev.fetch("/hooks").json()).toEqual({ boundary: "boundary(mid(v1))", log: [] });
+    await dev.write("hooks/config.ts", `throw new Error("config failed"); export const value = "v2";`);
+    expect(await dev.fetch("/hooks").json()).toEqual({
+      boundary: "boundary(mid(v1))",
+      log: ["mid disposed mid(v1)"],
+    });
+    await dev.write("hooks/config.ts", `export const value = "v3";`);
+    expect(await dev.fetch("/hooks").json()).toEqual({
+      boundary: "boundary(mid(v3))",
+      log: ["mid disposed mid(v1)", "boundary accepted boundary(mid(v3))"],
+    });
   },
 });
 devTest("a route loads after a request for it was answered with 413", {

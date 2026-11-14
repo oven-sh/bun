@@ -123,6 +123,17 @@ impl SideEffects {
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
+            // The parser made every directive an `S::Directive`, so this string is not one. It
+            // prints as a template literal: as a string at the head of a body it would be one.
+            // The mark goes on a copy, because an inlined constant shares its node.
+            if let ExprData::EString(string) = expr.data
+                && !string.prefer_template
+                && !p.options.keep_directives
+            {
+                let mut copy = string.shallow_clone();
+                copy.prefer_template = true;
+                return Some(p.new_expr(copy, expr.loc));
+            }
             return Some(expr);
         }
         if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {

@@ -35,7 +35,7 @@ fn directives() {
         (r#"function f() { x; "use strict" }"#, 0, false),
         (r#"function f() { { "use strict" } }"#, 0, false),
         (r#"function f() { "use\x20strict" }"#, 1, false),
-        (r#"namespace N { "use strict"; () => 1 }"#, 0, false),
+        (r#"namespace N { "use strict"; () => 1 }"#, 1, true),
         (r#"class A { static { "use strict" } }"#, 0, true),
         (r#"class A { m() { "use strict" } }"#, 1, true),
     ] {
@@ -88,25 +88,23 @@ fn directives_of_compiled_file() {
     for (text, values, is_strict) in [
         (r#""use strict" as any;"#, &["use strict"][..], true),
         (r#""use strict"!;"#, &["use strict"][..], true),
-        (r#"<any>"use strict";"#, &["use strict"][..], true),
+        (r#"<any>"use strict";"#, &[][..], false),
         (
             r#""use strict" satisfies string;"#,
             &["use strict"][..],
             true,
         ),
         (r#""use strict" as const;"#, &["use strict"][..], true),
-        (r#"("use strict");"#, &["use strict"][..], true),
+        (r#"("use strict");"#, &[][..], false),
+        (r#"("use strict" as any);"#, &[][..], false),
+        (r#"(<any>("use strict")!) as any;"#, &[][..], false),
+        (r"'use\x20strict';", &[r"use\x20strict"][..], false),
         (
-            r#"(<any>("use strict")!) as any;"#,
-            &["use strict"][..],
+            r#""a" as any; "use strict";"#,
+            &["a", "use strict"][..],
             true,
         ),
-        (r"'use\x20strict';", &["use strict"][..], true),
-        (
-            r#""a" as any; ("b"); "use strict";"#,
-            &["a", "b", "use strict"][..],
-            true,
-        ),
+        (r#""a" as any; ("b"); "use strict";"#, &["a"][..], false),
         (
             r#"import type A = require("a"); "use strict";"#,
             &["use strict"][..],
@@ -154,7 +152,8 @@ fn directives_of_file_under_the_mark_of_the_transpiler() {
         ("// @bun @bun-cjs\n(\"use strict\");", 0, false),
         ("// @bun @bun-cjs\n'use\\x20strict';", 1, false),
         ("// @bun @bun-cjs\n(\"a\"); \"use strict\";", 0, false),
-        ("// bun\n(\"use strict\");", 1, true),
+        ("// bun\n(\"use strict\");", 0, false),
+        ("// bun\n\"use strict\";", 1, true),
     ] {
         let (file, _) = parsed(text, compiled_javascript());
         assert_eq!(file.directives(file.body).count(), directives, "{text}");
@@ -165,24 +164,33 @@ fn directives_of_file_under_the_mark_of_the_transpiler() {
 #[test]
 fn erased_namespaces() {
     for (text, is_erased) in [
-        (r#"namespace N { "use strict" }"#, true),
-        (r#"namespace N { "use strict" as any }"#, true),
-        (r#"namespace N { <any>("use strict")! }"#, true),
+        (r#"namespace N { "use strict" }"#, false),
+        (r#"namespace N { "use strict" as any }"#, false),
+        (r#"namespace N { <any>("use asm")! }"#, false),
+        (r#"namespace N { ("use asm") }"#, false),
+        (r"namespace N { 'use\x20strict' }", true),
         (r#"namespace N { "use asm" }"#, true),
+        (r#"namespace N { "use asm" as any }"#, true),
         (
-            r#"namespace N { "use strict"; type A = 1; "use asm" }"#,
+            r"namespace N { 'use\x20strict'; type A = 1; 'use asm' }",
             true,
         ),
-        (r#"namespace N { import type A = B.C; "use strict" }"#, true),
+        (r#"namespace N { import type A = B.C; "use asm" }"#, true),
         ("namespace N { export import type A = B.C }", true),
         ("namespace N { import A = B.C }", true),
         ("namespace N { export import A = B.C }", false),
         (r#"namespace N { "a" as any }"#, false),
-        (r#"namespace N { import A = B.C; "use strict" }"#, false),
-        ("namespace N { `use strict` as any }", false),
+        (r#"namespace N { import A = B.C; "use asm" }"#, false),
+        ("namespace N { `use asm` as any }", false),
     ] {
-        let (file, _) = parsed(text, typescript());
-        assert_eq!(file.modules[0].is_erased, is_erased, "{text}");
+        let compiled = Options {
+            compiles: true,
+            ..typescript()
+        };
+        for options in [typescript(), compiled] {
+            let (file, _) = parsed(text, options);
+            assert_eq!(file.modules[0].is_erased, is_erased, "{text}");
+        }
     }
 }
 

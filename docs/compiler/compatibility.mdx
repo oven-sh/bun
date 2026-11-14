@@ -324,7 +324,6 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | In your program                                                                | `bun run`                                   | An executable                           |
 | ------------------------------------------------------------------------------ | ------------------------------------------- | --------------------------------------- |
 | `{ function inner() {} }` in a CommonJS file that isn't in strict mode         | `inner` stays inside the block              | `inner` is visible after it             |
-| `"use strict"` at the start of a function, in such a file                      | Dropped                                     | The function is in strict mode          |
 | `const first = read(), limit = 5`, where `read()` returns `limit`              | `5`                                         | A `ReferenceError`                      |
 | `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws             | Throws                                  |
 | `(Color as any).Red = 2`, then `Color.Red`, for an `enum` imported from a file | `2`                                         | `1`. The member is a constant           |

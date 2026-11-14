@@ -18,19 +18,20 @@ const DIRECTIVE_PROLOGUES: &[(&str, &[&str], bool)] = &[
     (r#""a"; 'use strict';"#, &["a", "use strict"], true),
     (FUNCTION_WITH_DIRECTIVE, &["use strict"], false),
     (ESCAPED_DIRECTIVE, &[r"use\x20strict"], false),
-    (r"'use\x20strict';", &["use strict"], true),
-    (r#"("use strict");"#, &["use strict"], true),
-    (r#"("a"); "use strict";"#, &["a", "use strict"], true),
+    (r"'use\x20strict';", &[r"use\x20strict"], false),
+    (r#""a"; ("b"); "use strict";"#, &["a"], false),
 ];
 
 const STRINGS_OUTSIDE_PROLOGUES: &[(&str, &str)] = &[
     (DEFAULT_PATH, r#"function f() { ("use strict"); }"#),
+    (DEFAULT_PATH, r#"("use strict");"#),
+    (DEFAULT_PATH, r#"("a"); "use strict";"#),
     (DEFAULT_PATH, "`use strict`;"),
     (DEFAULT_PATH, r#""use strict" + 1;"#),
     (DEFAULT_PATH, r#""use strict".length;"#),
     (DEFAULT_PATH, r#"x; "use strict";"#),
     (DEFAULT_PATH, r#"{ "use strict"; }"#),
-    ("a.ts", r#"namespace N { "use strict"; }"#),
+    ("a.ts", r#"namespace N { ("use strict"); }"#),
     ("a.ts", r#"namespace N { a b } "use strict";"#),
     (
         "a.ts",
@@ -141,6 +142,16 @@ fn directive_prologues() {
         assert_eq!(directives(w, hir), ["use strict"]);
         assert!(hir.is_strict_by_syntax);
         assert_eq!(strict_functions(w, hir), [Named("f")]);
+    });
+}
+
+#[test]
+fn prologue_of_a_namespace() {
+    let text = r#"namespace N { "use strict"; function s() {} } function after() {}"#;
+    parsed("a.ts", text, |w, hir| {
+        assert_eq!(directives(w, hir), ["use strict"]);
+        assert!(!hir.is_strict_by_syntax);
+        assert_eq!(strict_functions(w, hir), [Named("s")]);
     });
 }
 

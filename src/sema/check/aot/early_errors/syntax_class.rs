@@ -1,7 +1,7 @@
 use crate::bind::{Binding, BindingStability};
 use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
-use crate::hir::{ExprId, Flags, has_body_node, rare};
+use crate::hir::{ExprId, Flags, StmtKind, has_body_node, rare};
 use crate::node::{Kind, Node, NodeData};
 use crate::program::FileId;
 
@@ -13,9 +13,17 @@ impl Checker<'_, '_> {
             return true;
         }
         let function = hir.function_of(hir.get_containing_function(node));
-        hir.fns
+        let is_in_strict_function = hir
+            .fns
             .get(function.idx())
-            .is_some_and(|function| function.is_strict)
+            .is_some_and(|function| function.is_strict);
+        let is_strict_namespace = |ancestor: Node| match hir.data(ancestor) {
+            NodeData::Stmt(statement) => {
+                matches!(hir[statement].kind, StmtKind::Module(it) if hir.is_strict_namespace(it))
+            }
+            _ => false,
+        };
+        is_in_strict_function || hir.find_ancestor(node, is_strict_namespace).is_some()
     }
 
     pub(in crate::check) fn is_erased_syntax(&self, file: FileId, node: Node) -> bool {

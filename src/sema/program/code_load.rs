@@ -128,10 +128,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             .collect()
     }
 
-    pub(super) fn written_entry_point_count(&self) -> usize {
-        self.written_entry_points.len()
-    }
-
     pub(super) fn entry_point_count(&self) -> usize {
         self.written_entry_points.len() + self.found_entry_points.lock().len()
     }

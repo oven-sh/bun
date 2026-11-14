@@ -167,8 +167,13 @@ fn run<'h>(
     bundle.enqueue_entry_points_normal::<&[u8]>(&[])?;
 
     let mut source = create_entry_source(pages, heap);
-    let index =
-        bundle.enqueue_parse_task2(&mut source, Loader::Js, Target::Bun, ModuleType::Esm)?;
+    let index = bundle.enqueue_parse_task2(
+        &mut source,
+        Loader::Js,
+        Target::Bun,
+        ModuleType::Esm,
+        Default::default(),
+    )?;
     bundle.graph.entry_points.push(Index::init(index));
 
     bundle.wait_for_parse();
@@ -178,6 +183,7 @@ fn run<'h>(
     bundle.fail_if_no_entry_points()?;
 
     bundle.scan_for_secondary_paths();
+    bundle.disambiguate_pretty_paths();
     bundle.process_server_component_manifest_files()?;
     bundle.clone_ast()?;
 

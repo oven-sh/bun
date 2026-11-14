@@ -2140,56 +2140,60 @@ struct OrderedFiles<'s, 'r> {
 fn share_modules_among_types<'r>(
     host: &dyn CodeHost,
     files: &mut [WalkedFile<'_, 'r>],
-    mut entry_points: VecDeque<u32>,
-    scanned: usize,
+    entry_points: VecDeque<u32>,
+    builds_executable: bool,
 ) {
     let is_call_with_written_type = |target: &CodeTarget<'_>| {
-        !target.has_shared_type
+        builds_executable
+            && !target.has_shared_type
             && target.has_type_of_shared_kind
             && target.has_loader_attribute
             && target.is_linked_by_bundler
     };
-    let is_shared = |target: &CodeTarget<'_>| {
-        target.has_shared_type || (scanned > 0 && is_call_with_written_type(target))
-    };
+    let is_shared =
+        |target: &CodeTarget<'_>| target.has_shared_type || is_call_with_written_type(target);
     let has_shared_type = |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(is_shared);
     if !files.iter().any(has_shared_type) {
         return;
     }
-    let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
     let mut seen = vec![false; files.len()];
-    let mut scanned_level: Vec<u32> = entry_points.drain(..scanned).collect();
-    while !scanned_level.is_empty() {
-        scanned_level.retain(|&index| !std::mem::replace(&mut seen[index as usize], true));
-        for shares_statements in [true, false] {
-            for &index in &scanned_level {
+    // Another entry point of an executable is the file of a Worker, which has modules of its own.
+    let graphs: Vec<VecDeque<u32>> = match builds_executable {
+        true => entry_points
+            .into_iter()
+            .map(|it| VecDeque::from([it]))
+            .collect(),
+        false => vec![entry_points],
+    };
+    for mut later in graphs {
+        let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
+        // What one load reaches by statements runs before the calls in it do.
+        while let Some(root) = later.pop_front() {
+            let mut level = VecDeque::from([root]);
+            let mut loaded_together = Vec::new();
+            while let Some(index) = level.pop_front() {
+                if std::mem::replace(&mut seen[index as usize], true) {
+                    continue;
+                }
+                loaded_together.push(index);
                 for next in 0..files[index as usize].code_targets().len() {
                     let target = files[index as usize].code_targets()[next];
-                    if is_shared(&target) && target.has_shared_type == shares_statements {
+                    if target.has_shared_type {
                         share_form(host, files, &mut first_forms, index, next);
+                    }
+                    let reached = files[index as usize].targets[next];
+                    match target.is_loaded_with_importer {
+                        true => level.push_back(reached),
+                        false => later.push_back(reached),
                     }
                 }
             }
-        }
-        let targets = scanned_level
-            .iter()
-            .flat_map(|&index| &files[index as usize].targets);
-        scanned_level = targets.copied().collect();
-    }
-    let (mut level, mut later) = (VecDeque::new(), entry_points);
-    while let Some(index) = level.pop_front().or_else(|| later.pop_front()) {
-        if std::mem::replace(&mut seen[index as usize], true) {
-            continue;
-        }
-        for next in 0..files[index as usize].code_targets().len() {
-            let target = files[index as usize].code_targets()[next];
-            if target.has_shared_type {
-                share_form(host, files, &mut first_forms, index, next);
-            }
-            let reached = files[index as usize].targets[next];
-            match target.is_loaded_with_importer {
-                true => level.push_back(reached),
-                false => later.push_back(reached),
+            for index in loaded_together {
+                for next in 0..files[index as usize].code_targets().len() {
+                    if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
+                        share_form(host, files, &mut first_forms, index, next);
+                    }
+                }
             }
         }
     }
@@ -2278,11 +2282,8 @@ fn order_files<'s, 'r>(
         (entry_points.iter().copied()).partition(|it| context.runs_first(it.key));
     let indexes = first.into_iter().chain(others);
     let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
-    let scanned = match context.inputs.code.builds_executable {
-        true => context.written_entry_point_count(),
-        false => 0,
-    };
-    share_modules_among_types(context.host, files, indexes.collect(), scanned);
+    let builds_executable = context.inputs.code.builds_executable;
+    share_modules_among_types(context.host, files, indexes.collect(), builds_executable);
     let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];

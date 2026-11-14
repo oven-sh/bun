@@ -673,6 +673,16 @@ fn use_strict_prologue() {
         let found = hir.find_use_strict_prologue(statements);
         assert_eq!(found, hir.id_at(statements, 1));
     });
+    for (text, at) in [
+        (r#"function f(a = 1) { "use strict" as any; }"#, 0),
+        (r#"function f(a = 1) { type A = 1; "use strict"; }"#, 1),
+    ] {
+        parsed("a.ts", text, |w, hir| {
+            let statements = block_of(w, hir, "f");
+            let found = hir.find_use_strict_prologue(statements);
+            assert_eq!(found, hir.id_at(statements, at), "{text}");
+        });
+    }
     for &body in BODIES_WITHOUT_USE_STRICT {
         let text = format!("function f(a = 1) {{ {body} }}");
         parsed(DEFAULT_PATH, &text, |w, hir| {

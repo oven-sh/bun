@@ -3195,7 +3195,7 @@ pub(crate) fn is_object_but_no_array(global: &JSGlobalObject, value: JSValue) ->
 /// jest-snapshot's `deepMerge` and Vitest's `deepMergeSnapshot`. `source` is the property matchers.
 #[cold]
 #[optimize(size)]
-fn deep_merge(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
+pub(crate) fn deep_merge(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return Err(global.throw_stack_overflow());
     }

@@ -45,6 +45,7 @@ unsafe extern "C" {
         on_fulfilled: JSValue,
     ) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
+    safe fn ExpectDeferred__isThrown(global: &JSGlobalObject) -> bool;
     safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
@@ -564,6 +565,11 @@ impl ExpectDeferred {
             is_abandoned: Cell::new(false),
         }
         .to_js(global)
+    }
+
+    /// The pending exception is a matcher's wait for a promise, not an error.
+    pub(crate) fn is_thrown(global: &JSGlobalObject) -> bool {
+        ExpectDeferred__isThrown(global)
     }
 
     /// Captures the stack as a `JSC::Exception`, which keeps its frames alive. GC can flatten an Error's frames to text.

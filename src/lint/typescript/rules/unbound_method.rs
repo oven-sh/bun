@@ -323,8 +323,187 @@ fn is_member_of(node: Expr, is_object: fn(ExprKind) -> bool) -> bool {
     }
 }
 
+/// The matchers of `bun test` that only inspect the value and their arguments and don't return the expectation. Sorted.
+const INSPECTING_MATCHERS: [&str; 78] = [
+    "fail",
+    "lastCalledWith",
+    "lastReturnedWith",
+    "nthCalledWith",
+    "nthReturnedWith",
+    "pass",
+    "toBe",
+    "toBeArray",
+    "toBeArrayOfSize",
+    "toBeBoolean",
+    "toBeCalled",
+    "toBeCalledTimes",
+    "toBeCalledWith",
+    "toBeCloseTo",
+    "toBeDate",
+    "toBeDefined",
+    "toBeEmpty",
+    "toBeEven",
+    "toBeFalse",
+    "toBeFalsy",
+    "toBeFinite",
+    "toBeFunction",
+    "toBeGreaterThan",
+    "toBeGreaterThanOrEqual",
+    "toBeInstanceOf",
+    "toBeInteger",
+    "toBeLessThan",
+    "toBeLessThanOrEqual",
+    "toBeNaN",
+    "toBeNegative",
+    "toBeNil",
+    "toBeNull",
+    "toBeNumber",
+    "toBeOdd",
+    "toBeOneOf",
+    "toBePositive",
+    "toBeString",
+    "toBeSymbol",
+    "toBeTrue",
+    "toBeTruthy",
+    "toBeTypeOf",
+    "toBeUndefined",
+    "toBeWithin",
+    "toContain",
+    "toEndWith",
+    "toEqual",
+    "toEqualIgnoringWhitespace",
+    "toHaveBeenCalled",
+    "toHaveBeenCalledAfter",
+    "toHaveBeenCalledBefore",
+    "toHaveBeenCalledExactlyOnceWith",
+    "toHaveBeenCalledOnce",
+    "toHaveBeenCalledTimes",
+    "toHaveBeenCalledWith",
+    "toHaveBeenLastCalledWith",
+    "toHaveBeenNthCalledWith",
+    "toHaveLastResolvedWith",
+    "toHaveLastReturnedWith",
+    "toHaveLength",
+    "toHaveNthResolvedWith",
+    "toHaveNthReturnedWith",
+    "toHaveProperty",
+    "toHaveResolved",
+    "toHaveResolvedTimes",
+    "toHaveResolvedWith",
+    "toHaveReturned",
+    "toHaveReturnedTimes",
+    "toHaveReturnedWith",
+    "toInclude",
+    "toIncludeRepeated",
+    "toMatch",
+    "toMatchFileSnapshot",
+    "toMatchInlineSnapshot",
+    "toMatchObject",
+    "toMatchSnapshot",
+    "toReturn",
+    "toStartWith",
+    "toStrictEqual",
+];
+
+fn is_inspecting_matcher(name: &[u8]) -> bool {
+    INSPECTING_MATCHERS.binary_search_by(|it| it.as_bytes().cmp(name)).is_ok()
+}
+
+/// `expect(..)` and `expect.soft(..)`. `expect.poll()` calls what it gets.
+fn is_expect(call: Call) -> bool {
+    let callee = call.callee();
+    callee.is_ident("expect") || ast_utils::is_specific_member_access(callee, Some("expect"), Some("soft"))
+}
+
+/// `expect(argument).toBe(..)`, also after `.not`, but not after `.resolves` or `.rejects`: they call a function.
+fn is_received_by_inspecting_matcher<'a>(argument: Expr<'a>, expect: Call<'a>, mut expectation: Expr<'a>) -> bool {
+    if expect.args().first() != Some(argument) {
+        return false;
+    }
+    loop {
+        let Node::Expr(member) = expectation.parent() else {
+            return false;
+        };
+        let Some(name) = ast_utils::get_static_property_name(member) else {
+            return false;
+        };
+        if *name == *b"not" {
+            expectation = member;
+            continue;
+        }
+        let Node::Expr(call) = member.parent() else {
+            return false;
+        };
+        // Where a matcher returns the expectation, as in Vitest, the next one could call the value.
+        let is_last = !matches!(call.parent(), Node::Expr(it) if it.object() == Some(call));
+        return is_last && call.as_call().is_some_and(|it| it.callee() == member) && is_inspecting_matcher(&name);
+    }
+}
+
+/// `expect(..).toBe`, also after `.not`, `.resolves` or `.rejects`: these do nothing to the arguments of the matcher.
+fn is_inspecting_matcher_of_expect<'a>(matcher: Expr<'a>, mut expectation: Expr<'a>) -> bool {
+    loop {
+        if let Some(expect) = expectation.as_call() {
+            break is_expect(expect)
+                && ast_utils::get_static_property_name(matcher).is_some_and(|name| is_inspecting_matcher(&name));
+        }
+        let is_modifier = ast_utils::get_static_property_name(expectation)
+            .is_some_and(|name| matches!(&*name, b"not" | b"resolves" | b"rejects"));
+        match expectation.object() {
+            Some(object) if is_modifier => expectation = object,
+            _ => break false,
+        }
+    }
+}
+
+/// `mocked(argument).mockX()` or `expect(mocked(argument))`. Anywhere else the result is the method, still unbound.
+fn is_mocked_for_inspection<'a>(argument: Expr<'a>, mocked: Call<'a>, result: Expr<'a>) -> bool {
+    if mocked.args().first() != Some(argument) {
+        return false;
+    }
+    let Node::Expr(parent) = result.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        ExprKind::Dot { .. } => true,
+        ExprKind::Index { obj, .. } => obj == result,
+        ExprKind::Call(outer) => is_inspected_by_test_runner(result, outer, parent),
+        _ => false,
+    }
+}
+
+/// True if `call` is a test runner's and only inspects `argument`. Not inlined: [`is_safe_use`] runs for every member.
+#[inline(never)]
+fn is_inspected_by_test_runner<'a>(argument: Expr<'a>, call: Call<'a>, call_expr: Expr<'a>) -> bool {
+    let callee = call.callee();
+    // Each call below starts with `expect`, `jest`, `vi` or a `(`: a byte of the text rules most others out.
+    if !matches!(callee.text().first(), Some(b'e' | b'j' | b'v' | b'(')) {
+        return false;
+    }
+    if is_expect(call) {
+        return is_received_by_inspecting_matcher(argument, call, call_expr);
+    }
+    let Some(object) = callee.object() else {
+        return false;
+    };
+    // `jest.mocked(argument)`
+    if let Some(name) = object.as_ident() {
+        return name.is_any(&["jest", "vi"])
+            && callee.member_name().is_some_and(|it| it.name().is("mocked"))
+            && is_mocked_for_inspection(argument, call, call_expr);
+    }
+    // `expect(..).toBe(argument)`
+    is_inspecting_matcher_of_expect(callee, object)
+}
+
 /// A `ChainExpression` has the same answer as the expression inside it, so it doesn't matter that it isn't a node here.
-fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>, is_oxlint: bool) -> bool {
+/// `inspects_tests`: there's no ESLint or oxlint config, so what `expect()` or `mocked()` only inspects is used safely.
+fn is_safe_use<'a>(
+    node: Expr<'a>,
+    known: &mut AncestorMemo<'a, bool>,
+    inspects_tests: bool,
+    is_oxlint: bool,
+) -> bool {
     let decide = |node: Node<'a>, parent: Node<'a>| {
         let (node, parent) = match (node, parent) {
             (_, Node::Stmt(parent)) => {
@@ -335,7 +514,10 @@ fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>, is_oxlint
         };
         match parent.kind() {
             ExprKind::Dot { .. } | ExprKind::Index { .. } => Some(true),
-            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => Some(call.callee() == node),
+            ExprKind::TaggedTemplate(call) => Some(call.callee() == node),
+            ExprKind::Call(call) => {
+                Some(call.callee() == node || (inspects_tests && is_inspected_by_test_runner(node, call, parent)))
+            }
             ExprKind::Cond { test, .. } => Some(test == node),
             ExprKind::Unary { op, .. } => Some(!matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot)),
             ExprKind::Binary { op, left, .. } => match op {
@@ -455,8 +637,9 @@ impl UnboundMethod {
 
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
+        let inspects_tests = cx.language().has_no_foreign_config;
         // In tsgolint the name in a JSX tag is a `PropertyAccessExpression` like any other.
-        if is_safe_use(node, &mut cx.state.safe_uses, is_oxlint)
+        if is_safe_use(node, &mut cx.state.safe_uses, inspects_tests, is_oxlint)
             || (!is_oxlint && node.is_jsx_tag_name())
             || node.is_in_type_query()
         {

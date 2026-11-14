@@ -25,11 +25,16 @@ UCollationResult ucol_strcollUTF8(const UCollator* coll, const char* source, int
 }
 #endif
 
+// bun_icu_default_locale.cpp
+extern "C" void Bun__ensureICUDefaultLocale();
+
 namespace Bun {
 namespace ICUCollate {
 
 static const UCollator* open(bool isNumericAndBase)
 {
+    // `bun lint` and `bun fmt` compare without a JS VM, which is what sets the default locale otherwise.
+    Bun__ensureICUDefaultLocale();
     UErrorCode status = U_ZERO_ERROR;
     UCollator* collator = ucol_open("en", &status);
     RELEASE_ASSERT(U_SUCCESS(status));

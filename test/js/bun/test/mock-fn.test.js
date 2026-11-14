@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import Module from "node:module";
 import util from "node:util";
 import vm from "node:vm";
 import test_interop from "./test-interop.js";
@@ -2199,6 +2200,314 @@ describe("spyOn", () => {
           expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual(original);
           expect(obj[key]).toBe(value);
         }
+      });
+
+      // Script sees a writable data property. Native code computes the value.
+      describe("values implemented natively", () => {
+        // A native setter takes every store to `holder[key]`, and native code calls what was stored. `use` makes it do that once.
+        function expectSpyThatNativeCodeCalls(holder, key, use) {
+          const original = Object.getOwnPropertyDescriptor(holder, key);
+          const keys = Reflect.ownKeys(holder);
+
+          using fn = spyOn(holder, key);
+          expect(Object.getOwnPropertyDescriptor(holder, key)).toEqual({ ...original, value: fn });
+          expect(spyOn(holder, key)).toBe(fn);
+          use();
+          expect(fn).toHaveBeenCalledTimes(1);
+
+          const heir = Object.create(holder);
+          const own = () => {};
+          heir[key] = own;
+          expect(Object.getOwnPropertyDescriptor(heir, key)).toEqual({
+            value: own,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+          expect(holder[key]).toBe(fn);
+
+          const stored = jest.fn(original.value);
+          holder[key] = stored;
+          expect(Object.getOwnPropertyDescriptor(holder, key)).toEqual({ ...original, value: stored });
+          use();
+          expect(stored).toHaveBeenCalledTimes(1);
+          expect(fn).toHaveBeenCalledTimes(1);
+
+          fn.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(holder, key)).toEqual(original);
+          expect(Reflect.ownKeys(holder)).toEqual(keys);
+          use();
+          expect(stored).toHaveBeenCalledTimes(1);
+          expect(fn).not.toHaveBeenCalled();
+        }
+
+        test.each([
+          ["Error.prepareStackTrace", Error, "prepareStackTrace", () => void new Error("message").stack],
+          ["Module.prototype.require", Module.prototype, "require", () => void require("node:path")],
+        ])("native code calls a spy on %s", (_, holder, key, use) => {
+          expectSpyThatNativeCodeCalls(holder, key, use);
+        });
+
+        test.each([
+          ["onmessage", () => new MessageEvent("message")],
+          ["onerror", () => new ErrorEvent("error")],
+        ])("an event calls a spy on globalThis.%s", (key, event) => {
+          expect(() => spyOn(globalThis, key)).toThrow(
+            new TypeError(`Cannot spy on the \`${key}\` property because it is not a function; null given instead`),
+          );
+          globalThis[key] = () => {};
+          try {
+            expectSpyThatNativeCodeCalls(globalThis, key, () => void dispatchEvent(event()));
+          } finally {
+            globalThis[key] = null;
+          }
+        });
+
+        test.each([
+          ["spyOn", spyOn],
+          ["jest.spyOn", jest.spyOn],
+          ["vi.spyOn", vi.spyOn],
+        ])("%s: the engine formats a stack with a spy on Error.prepareStackTrace", (_, spyOn) => {
+          using fn = spyOn(Error, "prepareStackTrace");
+          // Without an implementation the spy calls the formatter it replaced.
+          const error = new Error("message");
+          expect(error.stack).toStartWith("Error: message\n    at ");
+          expect(fn.mock.calls).toEqual([[error, expect.any(Array)]]);
+          const target = {};
+          Error.captureStackTrace(target);
+          expect(target.stack).toStartWith("Error\n    at ");
+          // util.getCallSites() stores a formatter of its own, reads a stack and stores the spy back.
+          expect(util.getCallSites()[0]).toEqual(expect.objectContaining({ functionName: expect.any(String) }));
+          expect(Error.prepareStackTrace).toBe(fn);
+
+          fn.mockImplementation((error, callSites) => `${error.message} in ${callSites[0].getFunctionName()}`);
+          function caller() {
+            return new Error("thrown").stack;
+          }
+          expect(caller()).toBe("thrown in caller");
+        });
+
+        test("a spy on the getter goes on top and the two restore in either order", () => {
+          const original = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+          for (const getterFirst of [true, false]) {
+            using fn = spyOn(Error, "prepareStackTrace");
+            using getter = spyOn(Error, "prepareStackTrace", "get");
+            const stacked = { get: getter, set: undefined, enumerable: false, configurable: true };
+            expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(stacked);
+            expect(Error.prepareStackTrace).toBe(fn);
+            expect(getter).toHaveBeenCalledTimes(1);
+
+            if (getterFirst) {
+              getter.mockRestore();
+              expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual({ ...original, value: fn });
+              fn.mockRestore();
+            } else {
+              // The spy on the getter stays until it is restored itself, and the engine has the original back already.
+              fn.mockRestore();
+              expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(stacked);
+              expect(new Error("message").stack).toStartWith("Error: message\n    at ");
+              expect(fn).not.toHaveBeenCalled();
+              void Error.prepareStackTrace;
+              expect(getter).toHaveBeenCalledTimes(2);
+              getter.mockRestore();
+            }
+            expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(original);
+          }
+        });
+
+        test.each([
+          [
+            "Object.defineProperty() with a value",
+            () => Object.defineProperty(Error, "prepareStackTrace", { value: () => "defined" }),
+          ],
+          [
+            "Object.defineProperty() with an accessor",
+            () => Object.defineProperty(Error, "prepareStackTrace", { get: () => () => "got", set() {} }),
+          ],
+          ["delete", () => delete Error.prepareStackTrace],
+        ])("mockRestore() after %s under the spy", (_, change) => {
+          const original = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+          using fn = spyOn(Error, "prepareStackTrace");
+          change();
+          fn.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(original);
+
+          // The native setter is back too: the engine calls what a store gives it.
+          Error.prepareStackTrace = () => "stored";
+          const { stack } = new Error("message");
+          Error.prepareStackTrace = original.value;
+          expect(stack).toBe("stored");
+          expect(new Error("message").stack).toStartWith("Error: message\n    at ");
+        });
+
+        test("restoreAllMocks() gives native code the original back", () => {
+          const original = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+          using fn = spyOn(Error, "prepareStackTrace").mockReturnValue("mocked");
+          expect(new Error("message").stack).toBe("mocked");
+          jest.restoreAllMocks();
+          expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(original);
+          expect(new Error("message").stack).toStartWith("Error: message\n    at ");
+          expect(fn).not.toHaveBeenCalled();
+        });
+
+        // No native setter stands behind these: a store replaces the native getter with a plain value, and so does the spy.
+        test.each([
+          ["URL.prototype", URL.prototype],
+          ["AbortController.prototype", AbortController.prototype],
+        ])("the constructor of %s", (_, prototype) => {
+          const original = Object.getOwnPropertyDescriptor(prototype, "constructor");
+          using fn = spyOn(prototype, "constructor");
+          expect(Object.getOwnPropertyDescriptor(prototype, "constructor")).toEqual({ ...original, value: fn });
+
+          const heir = Object.create(prototype);
+          const own = () => {};
+          heir.constructor = own;
+          expect(Object.getOwnPropertyDescriptor(heir, "constructor")).toEqual({
+            value: own,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+          prototype.constructor = own;
+          expect(Object.getOwnPropertyDescriptor(prototype, "constructor")).toEqual({ ...original, value: own });
+
+          fn.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(prototype, "constructor")).toEqual(original);
+        });
+
+        test("an object that inherits one gets a spy of its own", () => {
+          class Heir extends Error {}
+          for (const [obj, key, holder] of [
+            [new URL("http://localhost/"), "constructor", URL.prototype],
+            [Heir, "prepareStackTrace", Error],
+          ]) {
+            const inherited = Object.getOwnPropertyDescriptor(holder, key);
+            using fn = spyOn(obj, key);
+            expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual({ ...inherited, value: fn });
+            expect(Object.getOwnPropertyDescriptor(holder, key)).toEqual(inherited);
+            fn.mockRestore();
+            expect(Object.hasOwn(obj, key)).toBe(false);
+            expect(obj[key]).toBe(inherited.value);
+          }
+        });
+
+        // The getter of console.Console replaces itself with a plain value on the first read.
+        test("a lazy value that spyOn is the first to read", async () => {
+          const { bunEnv, bunExe } = require("harness");
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
+              const { spyOn } = Bun.jest(import.meta.path);
+              const shape = () => {
+                const { value, ...attributes } = Object.getOwnPropertyDescriptor(console, "Console");
+                return { ...attributes, value: value === fn ? "the spy" : value.name };
+              };
+              const fn = spyOn(console, "Console");
+              const spied = shape();
+              console.Console = function stored() {};
+              const stored = shape();
+              fn.mockRestore();
+              console.log(JSON.stringify({ spied, stored, restored: shape() }));
+              `,
+            ],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const data = { writable: true, enumerable: true, configurable: true };
+          expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+            stdout: {
+              spied: { ...data, value: "the spy" },
+              stored: { ...data, value: "stored" },
+              restored: { ...data, value: "Console" },
+            },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // A store to a frozen object throws. A spy goes in all the same, as it does for any method of a frozen object.
+        test("a frozen holder", async () => {
+          const { bunEnv, bunExe } = require("harness");
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
+              import Module from "node:module";
+              const { spyOn } = Bun.jest(import.meta.path);
+              const original = Module.prototype.require;
+              Object.freeze(Module.prototype);
+              const shape = (object, fn) => {
+                const { value, ...attributes } = Object.getOwnPropertyDescriptor(object, "require");
+                return { ...attributes, value: value === fn ? "the spy" : value === original ? "the original" : typeof value };
+              };
+
+              const heir = Object.create(Module.prototype);
+              const onHeir = spyOn(heir, "require");
+              const shadow = shape(heir, onHeir);
+              onHeir.mockRestore();
+              const isShadowGone = !Object.hasOwn(heir, "require");
+
+              const fn = spyOn(Module.prototype, "require");
+              const spied = shape(Module.prototype, fn);
+              import.meta.require("node:path");
+              const calls = fn.mock.calls;
+              fn.mockRestore();
+              console.log(JSON.stringify({ shadow, isShadowGone, spied, calls, restored: shape(Module.prototype, fn) }));
+              `,
+            ],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const frozen = { writable: false, enumerable: true, configurable: false };
+          expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+            stdout: {
+              shadow: { ...frozen, configurable: true, value: "the spy" },
+              isShadowGone: true,
+              spied: { ...frozen, value: "the spy" },
+              calls: [["node:path"]],
+              restored: { ...frozen, value: "the original" },
+            },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        test("a spy that one test file leaves behind is gone in the next file", async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          using dir = tempDir("spy-on-native-value", {
+            "a.test.js": `
+              import { spyOn, test } from "bun:test";
+              test("leaves a spy", () => {
+                spyOn(Error, "prepareStackTrace").mockReturnValue("from the spy");
+                console.log(new Error("first").stack);
+              });
+            `,
+            "b.test.js": `
+              import { test } from "bun:test";
+              test("reads a stack", () => {
+                console.log(new Error("second").stack.split("\\n")[0]);
+              });
+            `,
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(" 2 pass\n 0 fail\n");
+          expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({
+            stdout: "from the spy\nError: second\n",
+            exitCode: 0,
+          });
+        });
       });
 
       test("the exports of a module namespace object are not accessors", async () => {

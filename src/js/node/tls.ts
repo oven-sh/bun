@@ -1,5 +1,5 @@
 // Hardcoded module "node:tls"
-const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
+const { isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
@@ -16,6 +16,7 @@ const {
   processPfxOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
+  validateSession,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
@@ -726,10 +727,7 @@ function TLSSocket(socket?, options?) {
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   const session = options.session;
-  // Node's handle refuses the session here too: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
-  if (session && typeof session !== "string" && !isArrayBufferView(session) && !isAnyArrayBuffer(session)) {
-    throw $ERR_INVALID_ARG_TYPE("options.session", ["string", "Buffer", "TypedArray", "DataView"], session);
-  }
+  validateSession(session, "options.session");
   this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
@@ -960,6 +958,7 @@ TLSSocket.prototype.setServername = function setServername(name) {
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
+  validateSession(session, "session");
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);

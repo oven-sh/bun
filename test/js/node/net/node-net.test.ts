@@ -1057,6 +1057,8 @@ describe("a socket made with a signal", () => {
         "tls.connect() with a port out of range: threw ERR_SOCKET_BAD_PORT",
         "tls.connect() with a negative timeout: threw ERR_OUT_OF_RANGE",
         "tls.connect() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
+        "new tls.TLSSocket() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
+        "tls.TLSSocket#setSession() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
         "http2.connect() with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
         "http2.connect() to https with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
         "http2.connect() with a lookup that is not a function: threw ERR_INVALID_ARG_TYPE",
@@ -1265,6 +1267,18 @@ describe("a socket made with a signal", () => {
     expect(socket.destroyed).toBe(true);
   });
 
+  // Node.js does not read `session` from the options of connect(). Bun does, and refuses there what setSession() refuses.
+  it("a TLS socket refuses a `session` of connect() that is no buffer", () => {
+    const socket = new TLSSocket(undefined as any, { signal: new AbortController().signal });
+    try {
+      expect(() => socket.connect({ host: "127.0.0.1", port: 1, session: 5 } as any)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    } finally {
+      socket.destroy();
+    }
+  });
+
   // Node.js keeps the handle of a socket that it sent until the child process has it:
   // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/child_process.js#L93-L109
   it.concurrent.skipIf(isWindows)("the callback of net.connect() sends the socket to a child process", async () => {
@@ -1444,6 +1458,7 @@ describe("a socket made with a signal", () => {
     `;
       try {
         await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const stderrText = proc.stderr.text();
         let stdout = "";
         let reset = false;
         for await (const chunk of proc.stdout) {
@@ -1456,13 +1471,12 @@ describe("a socket made with a signal", () => {
             await Bun.write(resetDone, "");
           }
         }
-        expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([
-          "write callback write",
-          "uncaught the callback of the write",
-          "error write",
-          "close true",
-        ]);
-        expect(await proc.exited).toBe(0);
+        const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+        expect({ events: JSON.parse(stdout.trim().split("\n").at(-1)!), stderr, exitCode }).toEqual({
+          events: ["write callback write", "uncaught the callback of the write", "error write", "close true"],
+          stderr: "",
+          exitCode: 0,
+        });
       } finally {
         server.close();
       }

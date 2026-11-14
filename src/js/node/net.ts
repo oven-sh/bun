@@ -2442,6 +2442,7 @@ Socket.prototype.connect = function connect(...args) {
       if (tls) {
         applyRejectUnauthorized(this, tls, rejectUnauthorized);
         tls.requestCert = true;
+        if (session) require("internal/tls").validateSession(session, "options.session");
         tls.session = session || tls.session;
         this.servername = tls.servername;
         if (checkServerIdentity !== undefined) {

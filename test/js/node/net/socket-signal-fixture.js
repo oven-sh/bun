@@ -41,6 +41,10 @@ const calls = {
   "tls.connect() with a negative timeout": signal => tls.connect({ host: "127.0.0.1", port: 1, timeout: -1, signal }),
   "tls.connect() with a session that is no buffer": signal =>
     tls.connect({ host: "127.0.0.1", port: 1, session: 5, signal }),
+  "new tls.TLSSocket() with a session that is no buffer": signal =>
+    new tls.TLSSocket(undefined, { session: 5, signal }),
+  "tls.TLSSocket#setSession() with a session that is no buffer": signal =>
+    new tls.TLSSocket(undefined, { signal }).setSession(5),
   "http2.connect() with a localAddress that is not an IP address": signal =>
     require("node:http2").connect("http://127.0.0.1:1", { localAddress: "nope", signal }),
   "http2.connect() to https with a localAddress that is not an IP address": signal =>

@@ -1,4 +1,4 @@
-const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/types");
+const { isTypedArray, isArrayBuffer, isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const { validateString, validateBuffer } = require("internal/validators");
 
 const StringPrototypeSplit: (this: string, separator: string | RegExp, limit?: number) => string[] =
@@ -37,6 +37,13 @@ function findInvalidTLSItem(obj: unknown) {
     }
   }
   return obj;
+}
+
+// What the handle's setSession() takes. Node's handle refuses the rest when the caller gives it: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1249-L1253
+function validateSession(session: unknown, name: string) {
+  if (session && typeof session !== "string" && !isArrayBufferView(session) && !isAnyArrayBuffer(session)) {
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "Buffer", "TypedArray", "DataView"], session);
+  }
 }
 
 function throwOnInvalidTLSArray(name: string, value: unknown) {
@@ -489,4 +496,5 @@ export {
   tlsStringToProtocolVersion,
   unsealPfxForNative,
   validateSecureContextOptions,
+  validateSession,
 };

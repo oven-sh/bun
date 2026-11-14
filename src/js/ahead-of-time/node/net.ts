@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6f6331566d81ba6f6ac25a341c2ec9c21b581189fe5a50ce9364c6dc6c67583b.
+// Written against that file with the SHA-256 8fb06b31947ce81c1307702391aa8cff4bc8c9b3fb892e40485784bb26664e3a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2834,6 +2834,7 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
       if (tls) {
         applyRejectUnauthorized(this, tls, rejectUnauthorized);
         tls.requestCert = true;
+        if (session) require("internal/tls").validateSession(session, "options.session");
         tls.session = session || tls.session;
         this.servername = tls.servername;
         if (checkServerIdentity !== undefined) {

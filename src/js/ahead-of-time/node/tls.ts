@@ -1,9 +1,9 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0a078b62690543c4b3aee67aff603b2847843cbf7818b3758a95c7ca4b15c380.
+// Written against that file with the SHA-256 4fe046470d8cadf0a60a09e2ae960a55897f39a7f52923d92a7218645bac45be.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
-const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
+const { isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
@@ -31,6 +31,7 @@ const {
   processPfxOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
+  validateSession,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
@@ -866,10 +867,7 @@ function TLSSocket(this: $Node.TLSSocket, socket?, options?) {
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   const session = options.session;
-  // Node's handle refuses the session here too: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
-  if (session && typeof session !== "string" && !isArrayBufferView(session) && !isAnyArrayBuffer(session)) {
-    throw $ERR_INVALID_ARG_TYPE("options.session", ["string", "Buffer", "TypedArray", "DataView"], session);
-  }
+  validateSession(session, "options.session");
   this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
@@ -1109,6 +1107,7 @@ TLSSocket.prototype.setServername = function setServername(this: $Node.TLSSocket
 };
 
 TLSSocket.prototype.setSession = function setSession(this: $Node.TLSSocket, session: string | Uint8Array) {
+  validateSession(session, "session");
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);

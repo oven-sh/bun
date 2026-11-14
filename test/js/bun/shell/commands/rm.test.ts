@@ -6,8 +6,8 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -410,18 +410,135 @@ test.skipIf(process.platform === "win32")(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const result = JSON.parse(stdout.trim());
     expect(result.exitCode).toBe(1);
+    // The error names "." in the shell cwd, not "/" from the process cwd.
     expect(result.stderr).toMatch(/^rm: \.: /);
-    if (process.platform === "linux") {
-      // Only Linux permits unlinking "." out from under itself; macOS returns
-      // before iterating, so its children survive there.
-      expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
-      expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
-    }
+    // rm does nothing with ".", so what is in it stays.
+    expect(existsSync(path.join(base, "work", "file.txt"))).toBeTrue();
+    expect(existsSync(path.join(base, "work", "sub", "inner.txt"))).toBeTrue();
     expect(existsSync(path.join(base, "work"))).toBeTrue();
     expect(existsSync(path.join(base, "keep.txt"))).toBeTrue();
     expect(exitCode).toBe(0);
   },
 );
+
+// What is in `dir`: a directory as "name/", a symlink as "name@", a file as "name".
+function listTree(dir: string, prefix = ""): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .flatMap(entry =>
+      entry.isDirectory()
+        ? [prefix + entry.name + "/", ...listTree(path.join(dir, entry.name), prefix + entry.name + "/")]
+        : [prefix + entry.name + (entry.isSymbolicLink() ? "@" : "")],
+    )
+    .sort();
+}
+
+// POSIX: rm writes a diagnostic and does nothing more with an operand whose
+// last component is "." or "..". On Linux `rm -r` used to walk such an operand
+// and remove what is in it. Only the rmdir of the operand itself failed, after
+// that: `rm -rf d/..` emptied the shell cwd and exited 0, `rm -r ..` emptied
+// the parent of the shell cwd.
+describe.concurrent("rm -r does nothing with an operand that ends in . or ..", () => {
+  // The shell cwd is "w". "keep" and "o" are outside it. "d/link" is a symlink
+  // to "o/sub": the kernel resolves "d/link/.." to "o", and a join of the two
+  // names gives "d".
+  function fixture() {
+    const dir = tempDir("rm-dot", { keep: "", o: { g: "", sub: { h: "" } }, w: { f: "", d: { g: "" }, e: {} } });
+    if (!isWindows) symlinkSync("../../o/sub", path.join(String(dir), "w", "d", "link"));
+    return dir;
+  }
+  const all = ["keep", "o/", "o/g", "o/sub/", "o/sub/h", "w/", "w/d/", "w/d/g", "w/d/link@", "w/e/", "w/f"].filter(
+    name => !isWindows || !name.includes("link"),
+  );
+
+  async function run(line: string, dir: string) {
+    const { stdout, stderr, exitCode } = await $`${{ raw: line }}`.cwd(path.join(dir, "w")).quiet();
+    return { left: listTree(dir), stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  }
+
+  // On Linux the message is the same for every operand. macOS tries an rmdir
+  // of a directory operand before the walk, so there the error can be the one
+  // of that rmdir, and only the name in it is checked.
+  const refused = (operand: string) =>
+    isLinux ? `rm: ${operand}: Invalid argument\n` : expect.stringContaining(`rm: ${operand}: `);
+
+  const operands = [
+    ".",
+    "./",
+    ".//",
+    "..",
+    "../",
+    "d/.",
+    "d/./",
+    "d/..",
+    "d/../.",
+    "e/.",
+    "d/link/.",
+    "d/link/..",
+  ].filter(operand => !isWindows || !operand.includes("link"));
+  const refusals = [
+    ...["-r", "-rf", "-rfv"].flatMap(flags => operands.map(operand => ({ line: `rm ${flags} ${operand}`, operand }))),
+    { line: "rm -R ..", operand: ".." },
+    { line: "rm --recursive d/..", operand: "d/.." },
+  ];
+  test.each(refusals)("$line", async ({ line, operand }) => {
+    using dir = fixture();
+    const { left, ...output } = await run(line, String(dir));
+    expect(left).toEqual(all);
+    // Windows does not resolve "." and ".." in a name (#13523). rm finds no
+    // directory there, so it has nothing to refuse and its output is not the same.
+    if (!isWindows) expect(output).toEqual({ stdout: "", stderr: refused(operand), exitCode: 1 });
+  });
+
+  test("bun exec 'rm -rf d/..'", async () => {
+    using dir = fixture();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", "rm -rf d/.."],
+      env: bunEnv,
+      cwd: path.join(String(dir), "w"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(listTree(String(dir))).toEqual(all);
+    // As above: on Windows (#13523) rm has nothing to refuse.
+    if (!isWindows) expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: refused("d/.."), exitCode: 1 });
+  });
+
+  // `gone` is what the line removes.
+  const lines: { line: string; gone: string[]; stderr: unknown; exitCode: number }[] = [
+    // A file next to a refused operand is removed, before it and after it.
+    { line: "rm -rf d/. f", gone: ["w/f"], stderr: refused("d/."), exitCode: 1 },
+    { line: "rm -rf f d/.", gone: ["w/f"], stderr: refused("d/."), exitCode: 1 },
+    // The lines below did not change. An operand that does not exist, or is
+    // not a directory, keeps its own error.
+    { line: "rm -rf missing/.", gone: [], stderr: "", exitCode: 0 },
+    { line: "rm -r missing/.", gone: [], stderr: "rm: missing/.: No such file or directory\n", exitCode: 1 },
+    { line: "rm -r f/.", gone: [], stderr: "rm: f/.: Not a directory\n", exitCode: 1 },
+    // Without -r there is no walk. The error is the one of the unlink or of the rmdir.
+    { line: "rm .", gone: [], stderr: "rm: .: Is a directory\n", exitCode: 1 },
+    { line: "rm -d e/.", gone: [], stderr: refused("e/."), exitCode: 1 },
+    // Only the last component counts.
+    { line: "rm -rf e/../d", gone: ["w/d/", "w/d/g", "w/d/link@"], stderr: "", exitCode: 0 },
+  ];
+  // Windows does not resolve these names (#13523), so its messages are not the same.
+  test.skipIf(isWindows).each(lines)("$line", async ({ line, gone, stderr, exitCode }) => {
+    using dir = fixture();
+    expect(await run(line, String(dir))).toEqual({
+      left: all.filter(name => !gone.includes(name)),
+      stdout: "",
+      stderr,
+      exitCode,
+    });
+  });
+
+  // Windows does not keep a name that ends in a dot, and a backslash separates names there.
+  test.skipIf(isWindows)("a name that only looks like . or .. is removed", async () => {
+    const names = ["...", "..b", ".hid", "a.", "c..", "x\\.", "y\\.."];
+    using dir = tempDir("rm-dot", { keep: "", w: Object.fromEntries(names.map(name => [name, { g: "" }])) });
+    const line = `rm -rf ${names.map(name => `'${name}'`).join(" ")}`;
+    expect(await run(line, String(dir))).toEqual({ left: ["keep", "w/"], stdout: "", stderr: "", exitCode: 0 });
+  });
+});
 
 // The preserve-root check resolved every operand through the fixed-size
 // thread-local path buffers (1024 bytes for normalizing, 4096 for joining),

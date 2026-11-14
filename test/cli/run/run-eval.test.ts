@@ -236,6 +236,14 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
     expect(JSON.parse(stdout.toString("utf8"))).toEqual([exe, "-"]);
   });
 
+  // Bun read the script from stdin to its end, so the script's own stdin has nothing left.
+  test("process.stdin is at the end of the script", async () => {
+    const { stdout } = run(
+      `let n = 0; process.stdin.on("data", chunk => (n += chunk.length)).on("end", () => console.log("read", n));`,
+    );
+    expect(stdout.toString("utf8")).toEqual("read 0\n");
+  });
+
   test("process._eval", async () => {
     const code = "console.log(process._eval)";
     const { stdout } = run(code);

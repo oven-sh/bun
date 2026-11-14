@@ -9,6 +9,8 @@ Every day, Bun gets closer to 100% Node.js API compatibility. Popular frameworks
 
 We update this page regularly. It reflects the latest version of Bun's compatibility with _Node.js v26_.
 
+`CallSite.getLineNumber()` and `getColumnNumber()` return one-based positions, or `null` when a frame has no source position. Stack strings include column 1 and use the same constructor positions as CallSites, including across line breaks. Some expression positions still differ from Node.js because JavaScriptCore and Bun's transpiler select different syntax locations.
+
 ## Built-in Node.js modules
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)

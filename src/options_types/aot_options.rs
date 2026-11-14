@@ -1,5 +1,5 @@
 use core::fmt;
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 use core::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -91,6 +91,8 @@ pub struct AotOptions {
     pub discards_first_visits: bool,
     /// `--aot-testing=LowersInParts`: a JavaScript file that nobody checks is lowered in parts, however small it is, as a large one always is.
     pub lowers_small_files_in_parts: bool,
+    /// `--aot-testing=Passes=<n>`: the program is checked and lowered in that many passes, with a new checker for each, however small it is, as a large one is in two.
+    pub lowering_passes: Option<NonZeroUsize>,
     /// `--aot-testing=CheckOrder=<odd number>`: the order in which the checker's threads take the files. 1: as always. 4294967295: the last file first. Any other number: a fixed permutation. The program and its type errors are the same.
     pub check_order: u32,
     /// `--aot-testing=TypeErrorsWarn`: a type error is printed as `bun test --aot` prints it, and the executable is built. What is compiled is the same.
@@ -191,6 +193,7 @@ impl Default for AotOptions {
             writes_no_executable: false,
             discards_first_visits: false,
             lowers_small_files_in_parts: false,
+            lowering_passes: None,
             check_order: 1,
             type_errors_warn: false,
             runs_in_place: false,
@@ -258,6 +261,7 @@ mod tests {
             writes_no_executable,
             discards_first_visits,
             lowers_small_files_in_parts,
+            lowering_passes,
             check_order,
             type_errors_warn,
             runs_in_place,
@@ -316,6 +320,7 @@ mod tests {
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
         assert!(!lowers_small_files_in_parts);
+        assert!(lowering_passes.is_none());
         assert_eq!(check_order, 1);
         assert!(!type_errors_warn);
         assert!(!runs_in_place);

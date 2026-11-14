@@ -1,4 +1,4 @@
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_aot::engine::{self, RejectedOptionWord, StoredStringsForm};
@@ -649,6 +649,15 @@ pub(crate) fn apply_developer_word<'a>(
         "testing" if text == b"FirstTexts" => options.takes_first_texts = true,
         "testing" if text == b"DiscardsFirstVisits" => options.discards_first_visits = true,
         "testing" if text == b"LowersInParts" => options.lowers_small_files_in_parts = true,
+        "testing" if text.starts_with(b"Passes=") => {
+            let count = strings::parse_int::<usize>(&text[b"Passes=".len()..], 10);
+            let invalid = OptionError::DeveloperWord {
+                key,
+                word: option_word(key, value),
+                sentence: b"takes a number above zero".to_vec(),
+            };
+            options.lowering_passes = Some(count.ok().and_then(NonZeroUsize::new).ok_or(invalid)?);
+        }
         "testing" if text.starts_with(b"CheckOrder=") => {
             let order = strings::parse_int::<u32>(&text[b"CheckOrder=".len()..], 10);
             let is_permutation = |order: &u32| order % 2 == 1;

@@ -113,6 +113,7 @@ struct ProjectToLower<'a, 'b, 's> {
     keys: KeyContext<'a>,
     inputs: &'a LoweringInputs<'a>,
     threads: NonZeroUsize,
+    passes: driver::PassCount,
     counts_instructions: bool,
     instructions_of_lowering: AtomicU64,
 }
@@ -125,6 +126,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
         project: ProjectId,
         inputs: &'a LoweringInputs<'a>,
         threads: NonZeroUsize,
+        passes: driver::PassCount,
         counts_instructions: bool,
     ) -> ProjectToLower<'a, 'b, 's> {
         ProjectToLower {
@@ -137,6 +139,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             },
             inputs,
             threads,
+            passes,
             counts_instructions,
             instructions_of_lowering: AtomicU64::new(0),
         }
@@ -178,7 +181,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 }
             },
             &driver::Passes {
-                count: driver::PassCount::TwoAboveBytesOfText(TEXT_BYTES_OF_ONE_PASS),
+                count: self.passes,
                 before_next: &|| self.inputs.said_types.forget(),
             },
         )
@@ -495,6 +498,10 @@ impl Build<'_> {
         let (threads, runtime_threads) = (threads_of(application), threads_of(runtime));
         let has_one_thread = self.threads == NonZeroUsize::MIN;
         let counts_instructions = has_one_thread && logs_stages();
+        let passes = match self.options.aot.lowering_passes {
+            Some(count) => driver::PassCount::Exactly(count.get()),
+            None => driver::PassCount::TwoAboveBytesOfText(TEXT_BYTES_OF_ONE_PASS),
+        };
         self.with_inputs_for_reached_code(
             loaded,
             bound,
@@ -509,6 +516,7 @@ impl Build<'_> {
                     application,
                     inputs,
                     threads,
+                    passes,
                     counts_instructions,
                 );
                 self.with_inputs_for_reached_code(
@@ -525,6 +533,7 @@ impl Build<'_> {
                             runtime,
                             inputs,
                             runtime_threads,
+                            passes,
                             counts_instructions,
                         );
                         let (runtime, application) = match has_one_thread {

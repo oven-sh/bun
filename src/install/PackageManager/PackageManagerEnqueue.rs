@@ -263,55 +263,48 @@ pub(crate) fn add_dependency_error(
     }
 }
 
-pub fn enqueue_tarball_for_download(
+/// Brings a package of the lockfile into the cache. `can_enqueue_install_task` must hold for it.
+pub fn enqueue_package_for_cache(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
-    url: &[u8],
     task_context: TaskCallbackContext,
+    patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), ForTarballError> {
-    let name = this.lockfile.packages.items_name()[package_id as usize];
-    let name = this.lockfile.str_detached(&name);
-    enqueue_download(
-        this,
-        Task::Id::for_tarball(url),
-        name,
-        dependency_id,
-        package_id,
-        url,
-        task_context,
-    )
-}
-
-pub fn enqueue_package_for_download(
-    this: &mut PackageManager,
-    name: &[u8],
-    dependency_id: DependencyID,
-    package_id: PackageID,
-    version: Semver::Version,
-    url: &[u8],
-    task_context: TaskCallbackContext,
-) -> Result<(), ForTarballError> {
-    enqueue_download(
-        this,
-        Task::Id::for_npm_package(name, version),
-        name,
-        dependency_id,
-        package_id,
-        url,
-        task_context,
-    )
+    match this.lockfile.packages.items_resolution()[package_id as usize].tag {
+        ResolutionTag::Git => enqueue_git_for_checkout(
+            this,
+            dependency_id,
+            package_id,
+            task_context,
+            patch_name_and_version_hash,
+        ),
+        ResolutionTag::LocalTarball => {
+            enqueue_tarball_for_reading(this, dependency_id, package_id, task_context)
+        }
+        _ => enqueue_download(this, dependency_id, package_id, task_context),
+    }
 }
 
 fn enqueue_download(
     this: &mut PackageManager,
-    task_id: Task::Id,
-    name: &[u8],
     dependency_id: DependencyID,
     package_id: PackageID,
-    url: &[u8],
     task_context: TaskCallbackContext,
 ) -> Result<(), ForTarballError> {
+    let name = this.lockfile.packages.items_name()[package_id as usize];
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
+    let mut github_url = Vec::new();
+    let task_id = match resolution.tag {
+        ResolutionTag::Npm => {
+            Task::Id::for_npm_package(this.lockfile.str(&name), resolution.npm().version)
+        }
+        ResolutionTag::Github => {
+            github_url = this.alloc_github_url(resolution.github());
+            Task::Id::for_tarball(&github_url)
+        }
+        _ => Task::Id::for_tarball(this.lockfile.str(resolution.remote_tarball())),
+    };
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
     }
@@ -330,7 +323,7 @@ fn enqueue_download(
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        url,
+        &github_url,
         is_required,
         dependency_id,
         &package,
@@ -342,17 +335,14 @@ fn enqueue_download(
     Ok(())
 }
 
-pub fn enqueue_tarball_for_reading(
+fn enqueue_tarball_for_reading(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
-    alias: &[u8],
-    resolution: &Resolution,
     task_context: TaskCallbackContext,
 ) -> Result<(), ForTarballError> {
-    // `enqueue_local_tarball` copies `path` into the filename store before `string_bytes` can grow.
-    let path = this.lockfile.str_detached(resolution.local_tarball());
-    let task_id = Task::Id::for_tarball(path);
+    let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
+    let task_id = Task::Id::for_tarball(this.lockfile.str(resolution.local_tarball()));
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
     }
@@ -362,13 +352,13 @@ pub fn enqueue_tarball_for_reading(
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
+    let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
     let task = enqueue_local_tarball(
         this,
         task_id,
         dependency_id,
         alias,
-        path,
-        resolution,
+        &resolution,
         Some(&integrity),
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
@@ -377,21 +367,19 @@ pub fn enqueue_tarball_for_reading(
 
 /// Returns `Err(Offline)` if the repository isn't cached. Nothing is queued then, and the caller
 /// counts the package as failed or skipped.
-pub fn enqueue_git_for_checkout(
+fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
-    alias: &[u8],
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), ForTarballError> {
     let resolution: Resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let repository: Repository = *resolution.git();
-    // The enqueue callees copy these into the filename store before `string_bytes` grows.
-    let url = this.lockfile.str_detached(&repository.repo);
+    let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
+    let url = this.lockfile.str(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
-    let resolved = this.lockfile.str_detached(&repository.resolved);
-    let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    let checkout_id = Task::Id::for_git_checkout(url, this.lockfile.str(&repository.resolved));
     let repo_fd = this.git_repositories.get(&clone_id).copied();
     let is_required = repo_fd.is_some() || this.is_package_required(dependency_id, package_id);
     // --offline: decide before any queue registration, so an optional miss leaves
@@ -411,6 +399,7 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = repo_fd {
+        let resolved = stored_string(this.lockfile.str(&repository.resolved));
         let task = enqueue_git_checkout(
             this,
             checkout_id,
@@ -503,7 +492,7 @@ pub(crate) fn offline_miss(
     this: &mut PackageManager,
     task_id: Task::Id,
     what: &str,
-    name: &[u8],
+    name: SemverString,
     is_required: bool,
 ) {
     if is_required && !this.network_task_has_failed(task_id) {
@@ -515,7 +504,7 @@ pub(crate) fn offline_miss(
             bun_ast::Loc::EMPTY,
             format_args!(
                 "--offline: {what}\"{}\" is not in the cache",
-                bun_fmt::for_terminal(bstr::BStr::new(name))
+                bun_fmt::for_terminal(bstr::BStr::new(this.lockfile.str(&name)))
             ),
         );
     }
@@ -526,7 +515,7 @@ pub(crate) fn offline_miss(
 fn offline_git_miss(
     this: &mut PackageManager,
     clone_id: Task::Id,
-    name: &[u8],
+    name: SemverString,
     is_required: bool,
 ) -> bool {
     if this.options.offline != OfflineMode::Offline {
@@ -726,14 +715,12 @@ pub fn download_missing_package(
     package_id: PackageID,
 ) -> crate::Result<()> {
     let dependency_id = (this.lockfile.buffers).legacy_package_to_dependency_id(package_id)?;
-    let package = *this.lockfile.packages.get(package_id as usize);
-    let npm = *package.resolution.npm();
-    let name = this.lockfile.str(&package.name).to_vec();
-    let url = this.lockfile.str(&npm.url).to_vec();
+    let name = this.lockfile.packages.items_name()[package_id as usize];
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
 
     // A failed download is remembered for the rest of this turn of the event loop, like a failed
     // lookup. After that it is tried again.
-    let task_id = Task::Id::for_npm_package(&name, npm.version);
+    let task_id = Task::Id::for_npm_package(this.lockfile.str(&name), resolution.npm().version);
     let turn = this.event_loop.iteration_number();
     if (this.network_dedupe_map.get(&task_id))
         .is_some_and(|entry| entry.failed && entry.missed_in != Some(turn))
@@ -741,13 +728,10 @@ pub fn download_missing_package(
         let _ = this.network_dedupe_map.remove(&task_id);
     }
 
-    enqueue_package_for_download(
+    enqueue_download(
         this,
-        &name,
         dependency_id,
         package_id,
-        npm.version,
-        &url,
         TaskCallbackContext::RootRequestId(0),
     )?;
     wait_for_tasks(this)?;
@@ -1371,9 +1355,8 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
         dependency::Value::Folder(folder) => *folder,
         _ => return,
     };
-    let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(abs) = project_path(path, &mut buf[..]) else {
+    let Some(abs) = project_path(this.lockfile.str(&path), &mut buf[..]) else {
         return;
     };
     if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag(), abs, this) {
@@ -2231,17 +2214,15 @@ fn bind_row_without_manifest(
                 return Ok(());
             }
 
-            // The enqueue callees copy these into the filename store before `string_bytes` grows.
-            let alias = this.lockfile.str_detached(&dependency.name);
-            let url = this.lockfile.str_detached(&dep.repo);
+            let alias = dependency.name;
+            let url = this.lockfile.str(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
                 let needs_ctx = this.lockfile.awaits_resolve(id);
 
                 // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
-                let committish = this.lockfile.str_detached(&dep.committish);
-                let commit_id = Task::Id::for_git_commit(url, committish);
+                let commit_id = Task::Id::for_git_commit(url, this.lockfile.str(&dep.committish));
                 let resolved = match this.git_commits.get(&commit_id) {
                     Some(resolved) => resolved.clone(),
                     None => {
@@ -2258,7 +2239,8 @@ fn bind_row_without_manifest(
                             return Ok(());
                         }
 
-                        let task = enqueue_git_commit(this, commit_id, clone_id, alias, committish);
+                        let task =
+                            enqueue_git_commit(this, commit_id, clone_id, alias, dep.committish);
                         this.enqueue_git_task(task);
                         return Ok(());
                     }
@@ -2293,7 +2275,7 @@ fn bind_row_without_manifest(
                     id,
                     alias,
                     &res,
-                    &resolved,
+                    stored_string(&resolved),
                     None,
                 );
                 this.enqueue_git_task(task);
@@ -2423,17 +2405,15 @@ fn bind_row_without_manifest(
                 return Ok(());
             }
 
-            // The enqueue callees copy `url` into the filename store before `string_bytes` grows.
-            let github_url;
-            let url: &[u8] = match res.tag {
+            let mut github_url = Vec::new();
+            let task_id = Task::Id::for_tarball(match res.tag {
                 ResolutionTag::Github => {
                     github_url = this.alloc_github_url(res.github());
                     &github_url
                 }
-                ResolutionTag::LocalTarball => this.lockfile.str_detached(res.local_tarball()),
-                _ => this.lockfile.str_detached(res.remote_tarball()),
-            };
-            let task_id = Task::Id::for_tarball(url);
+                ResolutionTag::LocalTarball => this.lockfile.str(res.local_tarball()),
+                _ => this.lockfile.str(res.remote_tarball()),
+            });
 
             if this.lockfile.awaits_resolve(id) {
                 if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
@@ -2455,8 +2435,8 @@ fn bind_row_without_manifest(
                     return Ok(());
                 }
                 if !this.has_created_network_task(task_id, dependency.behavior.is_required()) {
-                    let dep_name = this.lockfile.str_detached(&dependency.name);
-                    let task = enqueue_local_tarball(this, task_id, id, dep_name, url, &res, None);
+                    let task =
+                        enqueue_local_tarball(this, task_id, id, dependency.name, &res, None);
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 return Ok(());
@@ -2468,7 +2448,7 @@ fn bind_row_without_manifest(
                 match run_tasks::generate_network_task_for_tarball(
                     this,
                     task_id,
-                    url,
+                    &github_url,
                     dependency.behavior.is_required(),
                     id,
                     &Package {
@@ -2778,13 +2758,13 @@ fn requires_local_target(
 /// Allocated up front on the main thread, because `preallocated_resolve_tasks` isn't thread-safe.
 pub(crate) fn create_extract_task_for_streaming(
     this: &mut PackageManager,
-    tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task {
     // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
     // before this task is done, which is what the `'static` stands for.
     let network = unsafe { &mut *network_task };
     let id = network.task_id;
+    let tarball = network.tarball();
     let job = Task::Job::Extract {
         tarball: ExtractTarball {
             skip_verify: this.skips_verify(tarball.resolution.tag),
@@ -2798,10 +2778,9 @@ pub(crate) fn create_extract_task_for_streaming(
 
 pub fn enqueue_extract_npm_package(
     this: &mut PackageManager,
-    tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
-    let task = create_extract_task_for_streaming(this, tarball, network_task);
+    let task = create_extract_task_for_streaming(this, network_task);
     // SAFETY: a valid, initialized pool slot
     unsafe { &raw mut (*task).threadpool_task }
 }
@@ -2809,12 +2788,12 @@ pub fn enqueue_extract_npm_package(
 fn enqueue_git_clone(
     this: &mut PackageManager,
     task_id: Task::Id,
-    name: &[u8],
+    name: SemverString,
     repository: &Repository,
 ) -> NonNull<Task::Task> {
     let job = Task::Job::GitClone {
         request: Task::GitCloneRequest {
-            name: stored_string(name),
+            name: stored_string(this.lockfile.str(&name)),
             url: stored_string(this.lockfile.str(&repository.repo)),
         },
         repo: Fd::invalid(),
@@ -2827,14 +2806,14 @@ fn enqueue_git_commit(
     this: &mut PackageManager,
     task_id: Task::Id,
     clone_id: Task::Id,
-    name: &[u8],
-    committish: &[u8],
+    name: SemverString,
+    committish: SemverString,
 ) -> NonNull<Task::Task> {
     let job = Task::Job::GitCommit {
         request: Task::GitCommitRequest {
             clone_id,
-            name: stored_string(name),
-            committish: stored_string(committish),
+            name: stored_string(this.lockfile.str(&name)),
+            committish: stored_string(this.lockfile.str(&committish)),
         },
         sha: Vec::new(),
     };
@@ -2846,9 +2825,9 @@ pub fn enqueue_git_checkout(
     task_id: Task::Id,
     dir: Fd,
     dependency_id: DependencyID,
-    name: &[u8],
+    name: SemverString,
     resolution: &Resolution,
-    resolved: &[u8],
+    resolved: StringOrTinyString,
     // the package to patch and its name-and-version hash, if an apply step follows the checkout
     patch: Option<(PackageID, u64)>,
 ) -> NonNull<Task::Task> {
@@ -2872,9 +2851,9 @@ pub fn enqueue_git_checkout(
             repo_dir: dir,
             resolution: *resolution,
             dependency_id,
-            name: stored_string(name),
+            name: stored_string(this.lockfile.str(&name)),
             url: stored_string(this.lockfile.str(&resolution.git().repo)),
-            resolved: stored_string(resolved),
+            resolved,
             apply_patch_task: patch.map(|(pkg_id, h, patch_hash)| {
                 let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 pt.callback.apply_mut().task_id = Some(task_id);
@@ -2890,12 +2869,14 @@ fn enqueue_local_tarball(
     this: &mut PackageManager,
     task_id: Task::Id,
     dependency_id: DependencyID,
-    name: &[u8],
-    path: &[u8],
+    name: SemverString,
     resolution: &Resolution,
     // Of the package in the loaded lockfile.
     locked_integrity: Option<&Integrity>,
 ) -> *mut ThreadPool::Task {
+    let cache_dir = open_cache_directory(this);
+    let temp_dir = get_temporary_directory(this).handle.fd();
+    let path = this.lockfile.str(resolution.local_tarball());
     // Resolve the on-disk tarball path here on the main thread. The task
     // callback runs on a ThreadPool worker and must not read
     // `lockfile.packages` / `lockfile.buffers.string_bytes`: those buffers
@@ -2917,10 +2898,10 @@ fn enqueue_local_tarball(
     let job = Task::Job::Extract {
         tarball: ExtractTarball {
             registry: None,
-            name: stored_string(name),
+            name: stored_string(this.lockfile.str(&name)),
             resolution: *resolution,
-            cache_dir: open_cache_directory(this),
-            temp_dir: get_temporary_directory(this).handle.fd(),
+            cache_dir,
+            temp_dir,
             dependency_id,
             integrity: locked_integrity.copied().unwrap_or_default(),
             stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
@@ -3189,7 +3170,6 @@ fn tarball_task(
     package: &Package,
     behavior: Behavior,
     dependency_id: DependencyID,
-    url: &[u8],
 ) -> crate::Result<Option<ResolvedPackageTask>> {
     let task_id =
         Task::Id::for_npm_package(this.lockfile.str(&name), package.resolution.npm().version);
@@ -3198,7 +3178,7 @@ fn tarball_task(
     let task = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        url,
+        b"",
         behavior.is_required(),
         dependency_id,
         package,
@@ -3355,8 +3335,7 @@ fn get_or_put_resolved_package_with_find_result(
             }
             // Do we need to download the tarball?
             install::PreinstallState::Extract => {
-                let url = manifest.str(&find_result.package.tarball_url);
-                tarball_task(this, name, &package, behavior, dependency_id, url)?
+                tarball_task(this, name, &package, behavior, dependency_id)?
             }
             install::PreinstallState::CalcPatchHash => Some(ResolvedPackageTask::PatchTask(
                 PatchTask::new_calc_patch_hash(
@@ -3365,7 +3344,6 @@ fn get_or_put_resolved_package_with_find_result(
                     Some(EnqueueAfterState {
                         pkg_id: package.meta.id,
                         dependency_id,
-                        url: Box::<[u8]>::from(manifest.str(&find_result.package.tarball_url)),
                     }),
                 ),
             )),
@@ -3528,16 +3506,18 @@ fn get_or_put_resolved_package(
             // Resolve the version from the loaded NPM manifest
             let cache_ctx = this.manifest_disk_cache_ctx();
             let needs_ext = this.options.minimum_release_age_ms.is_some();
-            let this_ptr: *mut PackageManager = this;
-            // `string_bytes` is not resized between here and the `find_result` lookup.
-            let name_str = this.lockfile.str_detached(&name);
+            // Taken out, so that the manifest can be read while the manager changes.
+            let manifests = core::mem::take(&mut this.manifests);
+            let mut lent = scopeguard::guard((this, manifests), |(this, manifests)| {
+                debug_assert!(this.manifests.hash_map.is_empty());
+                this.manifests = manifests;
+            });
+            let (ref mut this, ref mut manifests) = *lent;
 
+            let name_str = this.lockfile.str(&name);
             let scope = this.options.scope_for_package_name(name_str);
-            // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
-            // only that disjoint field borrow alongside the shared `options`
-            // / `lockfile` borrows above.
-            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests })
-                .by_name_hash(cache_ctx, scope, name_str, name_hash, needs_ext)
+            let Some(manifest) =
+                manifests.by_name_hash(cache_ctx, scope, name_str, name_hash, needs_ext)
             else {
                 // The registry doesn't have the name. `run_tasks` sent the dependency back here
                 // after the 404.
@@ -3650,7 +3630,7 @@ fn get_or_put_resolved_package(
                 None => 'instead_of_latest: {
                     // An unmet peer only warns.
                     if !behavior.is_peer()
-                        && refetch_stale_manifest(this, name_str, behavior.is_optional())?
+                        && refetch_stale_manifest(this, manifest.name(), behavior.is_optional())?
                     {
                         return Ok(None);
                     }
@@ -3742,9 +3722,7 @@ fn get_or_put_resolved_package(
             }
 
             get_or_put_resolved_package_with_find_result(
-                // SAFETY: the callee doesn't touch `this.manifests`, which `manifest` and
-                // `find_result` point into.
-                unsafe { &mut *this_ptr },
+                this,
                 name_hash,
                 name,
                 dependency,
@@ -3849,39 +3827,32 @@ fn get_or_put_resolved_package(
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::Value::Symlink(symlink) => {
-            // `get_or_put` copies it into the lockfile string buffer before any other mutation.
-            let symlink_path = this.lockfile.str_detached(symlink);
-            if dependency::is_link_path(symlink_path) {
-                let mut buf2 = bun_paths::path_buffer_pool::get();
-                let res =
-                    match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let (base, path) = if dependency::is_link_path(this.lockfile.str(symlink)) {
+                (
+                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                    Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
                         FileSystem::get().top_level_dir(),
-                        &mut buf2[..],
-                        &[symlink_path],
-                    ) {
-                        Some(symlink_path_abs) => FolderResolution::get_or_put(
-                            GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
-                            version,
-                            symlink_path_abs,
-                            this,
-                        ),
-                        None => FolderResolutionValue::Err(crate::Error::Sys(
-                            bun_errno::SystemErrno::ENAMETOOLONG,
-                        )),
-                    };
-                return resolved_folder_package(this, res, dependency_id, success_fn);
-            }
-            if let Err(why) = try_global_link_dir(this) {
-                this.exit_or_log(&why);
-                return Err(crate::Error::MissingPackageJSON);
-            }
-            let link_dir = package_manager_real::global_link_dir_path(this);
-            let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(link_dir),
-                version,
-                symlink_path,
-                this,
-            );
+                        &mut buf[..],
+                        &[this.lockfile.str(symlink)],
+                    ),
+                )
+            } else {
+                if let Err(why) = try_global_link_dir(this) {
+                    this.exit_or_log(&why);
+                    return Err(crate::Error::MissingPackageJSON);
+                }
+                (
+                    GlobalOrRelative::Global(package_manager_real::global_link_dir_path(this)),
+                    copy_path(this.lockfile.str(symlink), &mut buf[..]),
+                )
+            };
+            let res = match path {
+                Some(path) => FolderResolution::get_or_put(base, version, path, this),
+                None => FolderResolutionValue::Err(crate::Error::Sys(
+                    bun_errno::SystemErrno::ENAMETOOLONG,
+                )),
+            };
 
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
@@ -3916,10 +3887,8 @@ fn resolve_project_folder(
     version: &dependency::Version,
     path: SemverString,
 ) -> FolderResolutionValue {
-    // `get_or_put` copies the path into the lockfile string buffer before any other mutation.
-    let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(abs) = project_path(path, &mut buf[..]) else {
+    let Some(abs) = project_path(this.lockfile.str(&path), &mut buf[..]) else {
         return FolderResolutionValue::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
     FolderResolution::get_or_put(
@@ -3932,15 +3901,22 @@ fn resolve_project_folder(
 
 /// Returns `path` as an absolute path, or `None` if it's too long for `buf`. Relative paths are
 /// resolved against the project root.
-fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+fn project_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
     if bun_paths::is_absolute(path) {
-        return (path.len() < buf.len()).then_some(path);
+        return copy_path(path, buf);
     }
     Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
         FileSystem::get().top_level_dir(),
         buf,
         &[path],
     )
+}
+
+/// Reading a package.json grows the lockfile's string buffer, so a path cannot stay in there.
+fn copy_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    let copy = buf.get_mut(..path.len())?;
+    copy.copy_from_slice(path);
+    Some(copy)
 }
 
 /// For `bun update <name>`: returns true if the dependency refers to a requested package, either by

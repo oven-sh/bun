@@ -50,7 +50,12 @@ impl From<JsError> for ReadFromBlobError {
 type CStrSlice = Option<Box<[SensitiveCString]>>;
 
 fn from_string(string: &bun_core::String) -> SensitiveCString {
-    SensitiveCString::new(string.to_utf8().slice())
+    let mut utf8 = string.to_utf8();
+    let copy = SensitiveCString::new(utf8.slice());
+    if let bun_core::Utf8Bytes::Owned(transcoded) = &mut utf8 {
+        bun_core::secure_zero(transcoded);
+    }
+    copy
 }
 
 fn read_from_blob(
@@ -83,13 +88,10 @@ fn read_from_blob(
             return Err(global.throw_value(err.to_js(global)).into());
         }
     };
-    let node_fs::ret::ReadFileWithOptions::NullTerminated(zbox) = result else {
+    let node_fs::ret::ReadFileWithOptions::NullTerminated(contents) = result else {
         unreachable!("ReadFileStringType::NullTerminated always yields the NullTerminated variant");
     };
-    if zbox.is_empty() {
-        return Err(ReadFromBlobError::EmptyFile);
-    }
-    Ok(SensitiveCString::new(zbox.as_bytes()))
+    contents.ok_or(ReadFromBlobError::EmptyFile)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

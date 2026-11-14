@@ -3643,6 +3643,26 @@ const hand: Project[] = [
     },
   },
   {
+    name: "no-useless-assignment/continue-to-an-outer-label",
+    about: "a `continue` with a label that isn't the one right before the loop leads nowhere, as in ESLint",
+    config: rules([], { "no-useless-assignment": "error" }),
+    files: {
+      "a.cjs": lines(
+        `let turns = 0; outer: inner: while (turns < 3) { turns++; continue outer; } console.log(turns);`,
+        `function a() { let v = 0; outer: inner: while (v < 3) { v++; continue inner; } return v; }`,
+        `function b() { let v = 0; outer: inner: while (v < 3) { v++; break outer; } return v; }`,
+        `function c() { let v = 0; one: two: three: for (let i = 0; i < 4; i++) { v++; if (i % 2) continue one; continue two; } return v; }`,
+        `function d() { let v = 0; one: two: three: for (let i = 0; i < 4; i++) { v++; if (i % 2) continue one; continue three; } return v; }`,
+        `function e() { let v = 0; outer: inner: do { v++; continue outer; } while (v < 3); return v; }`,
+        `function f(w) { let v = 0; outer: inner: for (const x of w) { v = x; continue outer; } return v; }`,
+        `function h() { let v = 0; outer: inner: for (; v < 3; v++) { v = v * 2; continue outer; } return v; }`,
+        `function i() { let v = 0; outer: middle: while (v < 3) { inner: while (v < 2) { v++; continue outer; } } return v; }`,
+        `function j() { let v = 0; outer: middle: while (v < 3) { inner: while (v < 2) { v++; continue middle; } } return v; }`,
+        `function k() { let v = 0; outer: while (v < 3) { inner: while (v < 2) { v++; continue outer; } } return v; }`,
+      ),
+    },
+  },
+  {
     name: "no-shadow/import-that-is-exported",
     about: "`export { a }` is no use as a type",
     config: rules([], { "no-shadow": "error" }),

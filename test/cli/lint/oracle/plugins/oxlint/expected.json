@@ -1582,6 +1582,14 @@
   "a.js:6:27+1 eslint(no-useless-assignment)",
   "a.js:8:27+1 eslint(no-useless-assignment)"
  ],
+ "no-useless-assignment/continue-to-an-outer-label": [
+  "a.cjs:1:50+5 eslint(no-useless-assignment)",
+  "a.cjs:4:74+1 eslint(no-useless-assignment)",
+  "a.cjs:6:46+1 eslint(no-useless-assignment)",
+  "a.cjs:7:63+1 eslint(no-useless-assignment)",
+  "a.cjs:8:62+1 eslint(no-useless-assignment)",
+  "a.cjs:9:81+1 eslint(no-useless-assignment)"
+ ],
  "no-shadow/import-that-is-exported": [
   "a.ts:2:19+1 eslint(no-shadow)"
  ],

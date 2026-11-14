@@ -27,6 +27,19 @@ test("fs.promises.writeFile async iterator", async () => {
   expect(await Bun.file(path).text()).toBe("2 Hello, world!");
 });
 
+// Node's getOptions() returns the defaults for a function in the `options` slot:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1882-L1883
+test("fs.promises.writeFile with iterable data takes a function in the options slot as the defaults", async () => {
+  await using dir = tempDir("fs-promises-writeFile-async-iterator", {
+    "file.txt": "old",
+  });
+  const path = dir + "/file.txt";
+  // Each property changes the outcome if it is read.
+  const options = Object.assign(() => {}, { encoding: "hex", flag: "a", signal: AbortSignal.abort() });
+  await writeFile(path, ["68", "69"], options as any);
+  expect(await Bun.file(path).text()).toBe("6869");
+});
+
 test("fs.promises.writeFile async iterator throws on invalid input", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {
     "file1.txt": "0 Hello, world!",

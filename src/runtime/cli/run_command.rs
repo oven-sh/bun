@@ -166,8 +166,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
-    /// hardcoded list. Returns a NUL-terminated path borrowed from the
-    /// process-lifetime cache populated by `find_shell`.
+    /// hardcoded list. Returns the length of the path in `path_buf`.
     fn find_shell_impl(path: &[u8], cwd: &[u8], path_buf: &mut PathBuffer) -> Option<usize> {
         #[cfg(windows)]
         {
@@ -211,22 +210,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Find the "best" shell to use. Cached to only run once.
     pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
-        // Process-lifetime; written exactly once on the CLI thread.
-        // PORTING.md §Global mutable state: scratch buffer behind
-        // a `Once` gate → RacyCell.
-        static SHELL_BUF: bun_core::RacyCell<PathBuffer> =
-            bun_core::RacyCell::new(PathBuffer::ZEROED);
-        static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
-        ONCE.call(|| {
-            // SAFETY: single-writer (Once gate), process-lifetime storage,
-            // CLI is single-threaded at this point.
-            let buf = unsafe { &mut *SHELL_BUF.get() };
-            let path = bun_install::lifecycle_script_runner::strip_bin_dirs(path);
-            let len = Self::find_shell_impl(&path, cwd, buf)?;
-            buf[len] = 0;
-            // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
-            Some(ZStr::from_buf(&buf[..], len))
-        })
+        static SHELL: bun_core::Once<Option<bun_core::ZBox>> = bun_core::Once::new();
+        SHELL
+            .get_or_init(|| {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let path = bun_install::lifecycle_script_runner::strip_bin_dirs(path);
+                let len = Self::find_shell_impl(&path, cwd, &mut buf)?;
+                Some(bun_core::ZBox::from_bytes(&buf[..len]))
+            })
+            .as_deref()
     }
 
     // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
@@ -2112,10 +2104,7 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && executable.ends_with(b".exe") {
             debug_assert!(paths::is_absolute(executable));
 
-            // SAFETY: `DIRECT_LAUNCH_BUFFER` is a process-lifetime static used
-            // single-threaded from CLI dispatch. The returned slice points into
-            // it; we keep the borrow scoped until `try_launch` consumes it.
-            let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
+            let buf = &mut *bun_paths::w_path_buffer_pool::get();
             let w = strings::to_nt_path(buf, executable);
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
@@ -2124,7 +2113,7 @@ impl RunCommand {
             buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
             buf[new_len] = 0;
 
-            BunXFastPath::try_launch(ctx, new_len, env, passthrough);
+            BunXFastPath::try_launch(ctx, buf, new_len, env, passthrough);
         }
 
         Self::run_binary_without_bunx_path(
@@ -2697,8 +2686,7 @@ impl RunCommand {
             && !ctx.runtime_options.check
             && !crate::cli::run_compiled::is_requested(ctx)
         {
-            // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-            let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
+            let buf = &mut *bun_paths::w_path_buffer_pool::get();
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
@@ -2726,7 +2714,7 @@ impl RunCommand {
                 buf[ptr] = 0;
 
                 let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, buf, ptr, env_loader, &passthrough);
             }
         }
 
@@ -3637,13 +3625,7 @@ impl RunCommand {
         }
 
         if FILTER == Filter::Bin || FILTER == Filter::All || FILTER == Filter::AllPlusBunJs {
-            // `bin_dirs()` reads process-static storage but its return slice is
-            // tied to `&self`, which would conflict with the `&mut self` borrow
-            // taken by `read_dir_info` inside the loop. Snapshot the `'static`
-            // path slices into a local Vec to detach the borrow.
-            let bin_dirs_snapshot: Vec<&'static [u8]> =
-                this_transpiler.resolver.bin_dirs().to_vec();
-            for bin_path in bin_dirs_snapshot {
+            for bin_path in bun_resolver::Resolver::bin_dirs() {
                 if let Some(bin_dir) = this_transpiler
                     .resolver
                     .read_dir_info(bin_path)
@@ -3890,15 +3872,6 @@ bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 pub(crate) enum BunXFastPath {}
 
 #[cfg(windows)]
-mod bunx_fast_path_buffers {
-    use super::*;
-    // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
-    // buffers (bunx fast-path runs once on the main thread) → RacyCell.
-    pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
-        bun_core::RacyCell::new(WPathBuffer::ZEROED);
-}
-
-#[cfg(windows)]
 impl BunXFastPath {
     /// Convert a
     /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
@@ -3973,6 +3946,7 @@ impl BunXFastPath {
     /// If this returns, it implies the fast path cannot be taken.
     pub(crate) fn try_launch(
         ctx: &mut ContextData,
+        path_then_command_line: &mut WPathBuffer,
         path_len: usize,
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
@@ -3981,10 +3955,7 @@ impl BunXFastPath {
             return;
         }
 
-        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        let direct_launch_buffer =
-            unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
-        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
+        let (path_to_use, command_line) = path_then_command_line.split_at_mut(path_len);
 
         bun_core::scoped_log!(
             BUNX_FAST_PATH_LOG,
@@ -4055,28 +4026,14 @@ impl BunXFastPath {
     }
 
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
-        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        // `try_launch` (still on the call stack) holds live `&mut [u16]`
-        // reborrows (`path_to_use`/`command_line`) and raw pointers
-        // (`run_ctx.base_path`/`arguments`) into this same UnsafeCell.
-        // Materialising a fresh `&mut WPathBuffer` here would push a Unique
-        // tag over the whole buffer and pop those tags under Stacked Borrows.
-        // Derive the byte slice directly from the raw `*mut WPathBuffer` so no
-        // intermediate `&mut` retag covers the caller's borrows.
-        // WPathBuffer is `#[repr(transparent)] [u16; PATH_MAX_WIDE]` —
-        // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
-        let out_buf = unsafe {
-            let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
-            ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
-        };
-        let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        let utf8 = strings::to_utf8_alloc(wpath).into_boxed_slice();
+        if let Err(err) = RunCommand::boot(ctx, utf8, None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",
-                (bstr::BStr::new(paths::basename(utf8)),),
+                (bun_core::fmt::utf16(paths::basename_windows(wpath)),),
             );
             Global::exit(1);
         }

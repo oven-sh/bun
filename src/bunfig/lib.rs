@@ -3,9 +3,6 @@
 //! Split out so that `bun_install::PackageManager::init` can call
 //! `Arguments::loadConfig`
 //! without a tier-6 dependency or fn-pointer hook.
-//! Every dependency of this crate was already a transitive dependency of
-//! `bun_install` (via `bun_transpiler` → `bun_bundler`), so no cycle is
-//! introduced; this only makes the existing edge direct.
 
 pub mod arguments;
 pub mod bunfig;

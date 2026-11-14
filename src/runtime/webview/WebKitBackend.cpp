@@ -546,12 +546,11 @@ void HostClient::onData(const char* data, int length)
 
 namespace Ops {
 
-// Create promise, store in barrier, write frame. Caller guarantees the slot
-// is empty (INVALID_STATE thrown in the prototype method before calling into
-// the instance method that ends up here).
+// Create promise, store in barrier, write frame. The view is open and the slot is empty: checkReady() in JSWebViewPrototype.cpp.
 static JSPromise* sendOp(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSPromise>& slot,
     Op op, const uint8_t* payload, uint32_t len)
 {
+    view->assertReady(slot);
     auto& vm = g->vm();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
     auto& c = client();

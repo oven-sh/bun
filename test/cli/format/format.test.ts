@@ -2016,6 +2016,96 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // A list item that starts with indented code: its content begins one space after the marker, and every further
+    // space is part of the code. Prettier 3.9.9 pads the marker of such an ordered item to a multiple of `tabWidth`
+    // like the others' (`100.  `), so the code gains a space. Before an indented code block that follows the list, it
+    // pads the marker with trailing spaces (`1.        x`). Bun pads that marker with leading spaces, at most three
+    // together with the indentation of a nested list, none on the line of the parent's marker, and fewer than the
+    // previous item's content column, and the last item keeps its number as written if those are not enough and that
+    // number is wider. A later child of such an item goes in the column after the
+    // marker and one space, where Prettier puts it on its second run. Each row is the text, Bun's output, Prettier's, the flags of both, and the extension of the
+    // file. `Bun.markdown.html` checks the meaning, in the oxfmt flavor too.
+    test.each([
+      ["99. a\n99.       x\n", "99. a\n100.       x\n", "99. a\n100.        x\n", []],
+      ["99. a\n99.       x\n", "99. a\n100.       x\n", "99. a\n100.          x\n", ["--tab-width=4"]],
+      ["1.  a\n1.      x\n", "1.  a\n1.      x\n", "1.  a\n1.       x\n", []],
+      ["- a\n\n  1.  b\n  1.      x\n", "- a\n\n  1.  b\n  1.      x\n", "- a\n\n  1.  b\n  1.       x\n", []],
+      ["1.\n        x\n", "1.      x\n", "1.       x\n", []],
+      ["99. a\n99.       x\n\n     p\n", "99. a\n100.       x\n\n     p\n", "99. a\n100.        x\n\n      p\n", []],
+      [
+        "1.      x\n1.    foo\n\n    code\n",
+        "  1.      x\n1.   foo\n\n    code\n",
+        "1.        x\n1.   foo\n\n    code\n",
+        [],
+      ],
+      ["   -      x\n\n    y\n", "   -      x\n\n    y\n", "-         x\n\n    y\n", []],
+      [
+        "1.  a\n\n   10.      x\n\n      b\n",
+        " 1.    a\n\n   10.      x\n\n      b\n",
+        " 1.    a\n\n 2.         x\n\n      b\n",
+        [],
+      ],
+      [
+        "- a\n\n    10.      x\n\n       y\n",
+        "- a\n\n    10.      x\n\n       y\n",
+        "- a\n\n    10.        x\n\n       y\n",
+        ["--tab-width=4"],
+      ],
+      [
+        "- 1.      x\n  100. b\n\n      code\n",
+        "- 1.      x\n  2.   b\n\n      code\n",
+        "- 1.        x\n  2.   b\n\n      code\n",
+        [],
+      ],
+      [
+        "- a\n\n  <!-- prettier-ignore -->\n  - b\n\n1.  a\n\n   10.      x\n\n      b\n",
+        "- a\n\n  <!-- prettier-ignore -->\n    - b\n\n 1.    a\n\n   10.      x\n\n      b\n",
+        "- a\n\n  <!-- prettier-ignore -->\n    - b\n\n 1.    a\n\n 2.         x\n\n      b\n",
+        ["--tab-width=4"],
+      ],
+      [
+        "- 1.      x\n    10.      y\n\n       code\n",
+        "- 1.      x\n    10.      y\n\n       code\n",
+        "- 1.         x\n  2.         y\n\n       code\n",
+        [],
+      ],
+      [
+        "1.\n2.      x\n1000. b\n\n     y\n",
+        "1.\n  2.      x\n3.    b\n\n     y\n",
+        "1.\n2.         x\n3.    b\n\n     y\n",
+        [],
+      ],
+      [
+        "- b\n\n  99.  a\n     2.      x\n\n       outside\n",
+        "- b\n\n    99.   a\n    100.      x\n\n       outside\n",
+        "- b\n\n    99.   a\n    100.       x\n\n       outside\n",
+        ["--tab-width=4"],
+      ],
+      ["1. a\n1.      x\n", "1.  a\n1.      x\n", "1.  a\n1.       x\n", [], "mdx"],
+      ["9. a\n9.       x\n", "9.  a\n10.       x\n", "9.  a\n10.       x\n", [], "mdx"],
+      ["1.\n        x\n", "1.      x\n", "1.        x\n", [], "mdx"],
+    ])("an item that starts with indented code: %j %j %j", async (before, after, byPrettier, args, ext = "md") => {
+      const html = Bun.markdown.html(before);
+      expect(Bun.markdown.html(after)).toBe(html);
+      if (after !== byPrettier) expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+      const names = [`a.${ext}`, `b.${ext}`];
+      const files = { [names[0]!]: before, [names[1]!]: after };
+      const [result, asOxfmt] = await Promise.all([
+        format(files, args, { reads: names }),
+        format(files, ["--flavor=oxfmt", ...args], { reads: names }),
+      ]);
+      expect(result.files).toEqual({ [names[0]!]: after, [names[1]!]: after });
+      expect(result.exitCode).toBe(0);
+      expect(names.map(name => Bun.markdown.html(asOxfmt.files[name]!))).toEqual(names.map(() => html));
+      expect(asOxfmt.exitCode).toBe(0);
+      // That flavor's output is stable too.
+      const again = await format(asOxfmt.files as Record<string, string>, ["--flavor=oxfmt", ...args], {
+        reads: names,
+      });
+      expect(again.files).toEqual(asOxfmt.files);
+      expect(again.exitCode).toBe(0);
+    });
+
     // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output
     // differently. All are emphasis nested three deep, or runs of `*` and `_` that are text inside an emphasis. Telling
     // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.

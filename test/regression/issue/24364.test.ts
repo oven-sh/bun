@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+const repoRoot = join(import.meta.dir, "../../..");
+const bunTypes = join(repoRoot, "packages/bun-types/index.d.ts").replaceAll("\\", "/");
 
 test("react-tailwind template passes tsc --noEmit", async () => {
   // Read template files from source
@@ -9,31 +12,48 @@ test("react-tailwind template passes tsc --noEmit", async () => {
   // (no SeCreateSymbolicLinkPrivilege / core.symlinks=false) write a
   // 12-byte text file instead of a directory link, so go to the canonical
   // path directly.
-  const templateDir = join(import.meta.dir, "../../../src/runtime/cli/init/react-tailwind");
+  const templateDir = join(repoRoot, "src/runtime/cli/init/react-tailwind");
   const buildTs = readFileSync(join(templateDir, "build.ts"), "utf8");
   const tsconfigJson = readFileSync(join(templateDir, "tsconfig.json"), "utf8");
 
-  // Create temp directory with template files
+  // Create temp directory with template files. The only package build.ts
+  // imports is bun-plugin-tailwind, whose published type declarations amount
+  // to `declare const plugin: BunPlugin; export default plugin;`.
+  // The published @types/bun is one line, `/// <reference types="bun-types" />`.
+  // The one here names the bun-types of this checkout.
   using dir = tempDir("issue-24364", {
     "build.ts": buildTs,
     "tsconfig.json": tsconfigJson,
+    "node_modules/bun-plugin-tailwind/package.json": JSON.stringify({
+      name: "bun-plugin-tailwind",
+      version: "0.0.0",
+      types: "./index.d.ts",
+    }),
+    "node_modules/bun-plugin-tailwind/index.d.ts": `import type { BunPlugin } from "bun";
+declare const plugin: BunPlugin;
+export default plugin;
+`,
+    "node_modules/@types/bun/index.d.ts": `/// <reference path="${bunTypes}" />\n`,
   });
 
-  // Install typescript and bun types
-  await using install = Bun.spawn({
-    cmd: [bunExe(), "add", "-d", "typescript", "@types/bun", "@types/react", "bun-plugin-tailwind"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  // The template's tsconfig asks for `"types": ["bun", "react"]`. Nothing is
+  // installed for them: `bun` is the file above, and @types/react comes from
+  // test/node_modules.
+  const typeRoots = [
+    join(String(dir), "node_modules/@types"),
+    dirname(dirname(require.resolve("@types/react/package.json"))),
+  ];
 
-  const [, , installExitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
-  expect(installExitCode).toBe(0);
-
-  // Run tsc --noEmit (use bunExe() x for cross-platform compatibility)
+  // What matters is that the template typechecks, not which runtime runs the
+  // compiler: tsc takes 2 seconds under node and 160 under a debug+ASAN bun.
   await using tsc = Bun.spawn({
-    cmd: [bunExe(), "x", "tsc", "--noEmit"],
+    cmd: [
+      nodeExe() ?? bunExe(),
+      require.resolve("typescript/lib/tsc.js"),
+      "--noEmit",
+      "--typeRoots",
+      typeRoots.join(","),
+    ],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

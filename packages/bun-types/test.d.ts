@@ -3146,7 +3146,8 @@ declare module "bun:test" {
        * Vitest's call of `printDiffOrStringify`: `received` is first, and the labels are options. It prints
        * what Jest's call prints for the same values and labels.
        *
-       * @param options the other keys of Vitest's `DiffOptions` are ignored
+       * @param options Bun applies these three keys. A value that has other keys of Vitest's `DiffOptions` is
+       * accepted, and those keys do nothing.
        */
       printDiffOrStringify(
         received: unknown,

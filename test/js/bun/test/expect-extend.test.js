@@ -942,7 +942,9 @@ describe("MatcherContext", () => {
           printedDiff(received, expected, {}),
           printedDiff(received, expected, { aAnnotation: "Expected", bAnnotation: "Received", expand: false }),
           printedDiff(received, expected, null),
-        ]).toEqual([text, text, text, text, text]);
+          // The other keys of Vitest's options do nothing.
+          printedDiff(received, expected, { contextLines: 0, omitAnnotationLines: true, includeChangeCounts: false }),
+        ]).toEqual([text, text, text, text, text, text]);
         expect(printedDiff(received, expected, { aAnnotation: "Want", bAnnotation: "Got" })).toBe(
           printedDiff(expected, received, "Want", "Got", false),
         );
@@ -951,6 +953,12 @@ describe("MatcherContext", () => {
       expect(printedDiff(2, 1, { bAnnotation: "Got" })).toBe("Expected: 1\nGot:      2");
       // In Jest's call a missing label is the default one. Jest itself throws a TypeError here.
       expect(printedDiff(1, 2, "Want")).toBe("Want:     1\nReceived: 2");
+      // A String object is a label, as in Jest, and not an options object.
+      expect(printedDiff(1, 2, new String("Want"), new String("Got"), false)).toBe("Want: 1\nGot:  2");
+      expect(printedDiff("a\nb", "a\nc", new String("Want"), "Got it", false).split("\n").slice(-2)).toEqual([
+        "- Want    - 1",
+        "+ Got it  + 1",
+      ]);
       expect(printedDiff()).toBe("Expected: undefined\nReceived: serializes to the same string");
       expect(utils.printDiffOrStringify(1, 2)).toBeString();
     });

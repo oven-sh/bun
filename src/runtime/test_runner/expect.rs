@@ -3055,7 +3055,8 @@ impl ExpectMatcherUtils {
         };
 
         let (expected, received, expected_label, received_label, expand);
-        if argument(2).is_string_literal() {
+        // A `String` object is a label too, as in Jest.
+        if argument(2).is_string() {
             (expected, received) = (argument(0), argument(1));
             expected_label = label(argument(2), "Expected")?;
             received_label = label(argument(3), "Received")?;

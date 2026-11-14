@@ -132,19 +132,24 @@ impl TestContext {
         global.throw(format_args!("Cannot call {name}() after its test has finished"))
     }
 
-    /// Lets `expect()` attribute a call to this test even when other tests run concurrently.
-    fn state_data(&self, this_value: JSValue) -> Option<RefDataValue> {
-        let (_buntest, sequence) = self.running(this_value)?;
+    /// Lets `expect()` attribute a call to this test when other tests run concurrently, and after this test has finished.
+    fn state_data(&self) -> RefDataValue {
+        // A file's `BunTest` does not outlive its run.
+        let Some((_buntest, sequence)) = self.sequence() else {
+            return RefDataValue::OF_AN_ENDED_FILE;
+        };
         // SAFETY: as in `running`.
         let sequence = unsafe { sequence.as_ref() };
-        Some(RefDataValue::Execution {
+        // A finished sequence has no active entry, and its test entry is never taken for a running one.
+        let entry = sequence.active_entry.or(sequence.test_entry);
+        RefDataValue::Execution {
             group_index: self.group_index,
             entry_data: Some(EntryData {
                 sequence_index: self.sequence_index,
-                entry: sequence.active_entry.map_or(core::ptr::null(), |entry| entry.as_ptr().cast_const().cast()),
+                entry: entry.map_or(core::ptr::null(), |entry| entry.as_ptr().cast_const().cast()),
                 attempt: sequence.attempt,
             }),
-        })
+        }
     }
 
     pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
@@ -387,49 +392,49 @@ impl TestContext {
 #[optimize(size)]
 pub(crate) fn expect(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::call_in(global, received.to_js(), message.to_js(), state)
 }
 
 #[optimize(size)]
 pub(crate) fn soft(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::soft_in(global, received.to_js(), message.to_js(), state)
 }
 
 #[optimize(size)]
 pub(crate) fn poll(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, callback: JsLocal<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::poll_in(global, callback.to_js(), options.to_js(), state)
 }
 
 #[optimize(size)]
 pub(crate) fn assertions(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, count: JsLocal<'_>) -> JsResult<()> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::assertions_in(global, count.to_js(), state)
 }
 
 #[optimize(size)]
 pub(crate) fn has_assertions(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<()> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::has_assertions_in(global, state)
 }
 
 #[optimize(size)]
 pub(crate) fn get_state(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::get_state_in(global, state)
 }
 
 #[optimize(size)]
 pub(crate) fn set_state(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, state_to_merge: JsLocal<'_>) -> JsResult<()> {
     let global = cx.global();
-    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    let state = Some(TestContext::of_call(global, this_value)?.state_data());
     Expect::set_state_in(global, state_to_merge.to_js(), state)
 }
 

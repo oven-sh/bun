@@ -99,7 +99,7 @@ bun_opaque::opaque_ffi! {
 }
 
 /// Dawn numbers what it submits to a queue.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Serial(u64);
 
@@ -355,21 +355,12 @@ impl OwnedDevice {
         self.device.clone()
     }
 
-    /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. It replaces the last request.
+    /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. Wakes that were asked for before need not come.
     pub fn wake_after(&self, serial: Option<Serial>) -> Wake {
         self.watcher.get().map_or(Wake::None, |watcher| {
             // SAFETY: only `destroy` frees it, which takes it out first.
             unsafe { BunDawn__armQueueWatcher(watcher, serial.unwrap_or(Serial(u64::MAX))) }
         })
-    }
-
-    /// From now on it is the result that destroys the device.
-    pub fn take(&self) -> Self {
-        Self {
-            device: self.handle(),
-            watcher: Cell::new(self.watcher.take()),
-            _instance: Rc::clone(&self._instance),
-        }
     }
 
     /// Waits for the GPU.

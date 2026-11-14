@@ -69,7 +69,9 @@ impl Events {
         }
         // SAFETY: a device clears this before it is dropped, on this thread.
         let device = unsafe { self.device.load(Ordering::SeqCst).as_ref() };
-        let loop_kind = device.map(Device::stay_alive_for_events);
+        let loop_kind = device
+            .filter(|device| !device.instance.is_processing_events())
+            .map(Device::stay_alive_for_events);
         self.queue.lock().push((event, loop_kind));
     }
 }
@@ -140,7 +142,6 @@ bun_jsc::impl_abort_handle_owner!(
 impl Drop for Device {
     fn drop(&mut self) {
         self.stop_events();
-        self.instance.retire_device(&self.dawn);
     }
 }
 
@@ -153,8 +154,13 @@ pub(super) struct QueueWait {
 impl QueueWait {
     /// The device is not to be dropped while Dawn calls back.
     pub(super) fn finish(self) -> Rc<Device> {
+        Rc::clone(&self.device)
+    }
+}
+
+impl Drop for QueueWait {
+    fn drop(&mut self) {
         self.device.queue_waits.borrow_mut().swap_remove(&self.id);
-        self.device
     }
 }
 
@@ -178,9 +184,12 @@ impl Device {
     pub(super) fn wait_for_queue(self: &Rc<Self>, start: impl FnOnce(QueueWait) -> Serial) {
         let id = self.last_queue_wait.get().wrapping_add(1);
         self.last_queue_wait.set(id);
+        self.queue_waits.borrow_mut().insert(id, Serial::default());
         let device = Rc::clone(self);
         let serial = start(QueueWait { device, id });
-        self.queue_waits.borrow_mut().insert(id, serial);
+        if let Some(entry) = self.queue_waits.borrow_mut().get_mut(&id) {
+            *entry = serial;
+        }
     }
 
     pub(super) fn watch_queue(&self) {

@@ -192,7 +192,7 @@ The garbage collector frees buffers, textures and devices that nothing refers to
 
 - `GPUCanvasContext`, `device.importExternalTexture()` and `queue.copyExternalImageToTexture()` do not exist. Upload pixels with `queue.writeTexture()`.
 - `adapter.limits` and `adapter.info` have the values of the driver, and timestamp queries have its full resolution. Browsers round or hide them for privacy.
-- The driver runs in the same process as your code. `requestAdapter()`, `requestDevice()`, `createShaderModule()`, `createComputePipeline()`, `createRenderPipeline()` and `device.destroy()` block the thread while they work. `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile on another thread.
+- The driver runs in the same process as your code. `requestAdapter()`, `requestDevice()`, `createShaderModule()`, `createComputePipeline()`, `createRenderPipeline()` and `device.destroy()` block the thread while they work. So does the garbage collector when it destroys a device that the GPU still works for. `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile on another thread.
 - A browser isolates the shader compiler and the driver in a sandboxed process. Bun does not, so compile only shaders that you trust.
 - `structuredClone()` refuses `GPUCompilationInfo` and `GPUCompilationMessage`, and clones a `GPUPipelineError` as a plain `DOMException`.
 

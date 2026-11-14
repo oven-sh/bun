@@ -75,7 +75,7 @@ pub struct EventLoop {
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    /// the loop poll). Promoted into `tasks` before the loop polls.
     yield_tasks: Cell<Vec<Task>>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
@@ -1057,7 +1057,7 @@ impl EventLoop {
         !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
     }
 
-    /// `auto_tick`, before it polls: last iteration's yielded tasks become
+    /// Before the loop polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&self) -> bool {
         if !self.has_yield_tasks() {
@@ -1373,6 +1373,9 @@ impl EventLoop {
         }
 
         vm.gc_controller.process_gc_timer();
+        if self.promote_yield_tasks() {
+            self.wakeup();
+        }
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.

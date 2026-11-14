@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use bun_collections::smallvec::SmallVec;
 use bun_core::thread_id::{self, ThreadId};
-use bun_dawn_sys::{self as dawn, OwnedDevice, OwnedInstance, Wake, WorkerTask};
+use bun_dawn_sys::{self as dawn, OwnedInstance, WorkerTask};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{ContextId, Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
@@ -54,14 +54,13 @@ impl Host {
         }
     }
 
-    fn post_to_regular_loop(self: &Arc<Self>) {
-        if !self.is_queued_on_regular_loop.swap(true, Ordering::SeqCst) {
+    /// Returns false if the task is there already.
+    fn post_to_regular_loop(self: &Arc<Self>) -> bool {
+        let was_queued = self.is_queued_on_regular_loop.swap(true, Ordering::SeqCst);
+        if !was_queued {
             self.post(LoopKind::Regular);
         }
-    }
-
-    fn has_operations_of_macros(&self) -> bool {
-        self.operations_of_macros.load(Ordering::SeqCst) > 0
+        !was_queued
     }
 
     /// SAFETY: `task` came off a queue of the VM.
@@ -103,8 +102,11 @@ impl Taskable for Host {
 
 impl dawn::Host for Host {
     fn wake(self: &Arc<Self>) {
-        self.post_to_regular_loop();
-        if self.has_operations_of_macros() {
+        if !self.post_to_regular_loop() {
+            // It may wait for the next turn of a loop that has gone to sleep.
+            self.vm.wake();
+        }
+        if self.operations_of_macros.load(Ordering::SeqCst) > 0 {
             self.post(LoopKind::Macro);
         }
     }
@@ -123,12 +125,12 @@ pub(crate) struct Instance {
     host: Arc<Host>,
     dawn: OnceCell<Option<Rc<OwnedInstance>>>,
     devices: RefCell<Vec<Weak<Device>>>,
-    /// Nothing refers to them any more, but the GPU still works for them.
-    retired_devices: RefCell<Vec<OwnedDevice>>,
     /// Since the last [`process_events`](Self::process_events).
     new_completions: RefCell<Vec<Completion>>,
     completions: RefCell<VecDeque<Completion>>,
+    /// Not counting what is posted, which the regular loop takes over when the macro returns.
     is_queued_on_macro_loop: Cell<bool>,
+    is_processing_events: Cell<bool>,
     operations: Cell<u32>,
     keep_alive: RefCell<KeepAlive>,
 }
@@ -145,10 +147,10 @@ impl Instance {
             }),
             dawn: OnceCell::new(),
             devices: RefCell::default(),
-            retired_devices: RefCell::default(),
             new_completions: RefCell::default(),
             completions: RefCell::default(),
             is_queued_on_macro_loop: Cell::new(false),
+            is_processing_events: Cell::new(false),
             operations: Cell::new(0),
             keep_alive: RefCell::default(),
         });
@@ -170,32 +172,42 @@ impl Instance {
         self.devices.borrow_mut().push(Rc::downgrade(device));
     }
 
-    /// Destroying a device waits for the GPU, which a finalizer is not to do.
-    pub(super) fn retire_device(&self, device: &OwnedDevice) {
-        let vm = VirtualMachine::get();
-        let runs_regular_loop = vm.is_main_thread.get() || vm.worker_ref().is_some();
-        if runs_regular_loop && device.wake_after(None) == Wake::Follows {
-            self.retired_devices.borrow_mut().push(device.take());
-        }
+    /// Dawn runs after the event loop has polled, or a script that only waits for Dawn would starve timers and sockets.
+    pub(super) fn schedule(&self) {
+        self.enqueue_after_yield(VirtualMachine::get());
     }
 
-    /// Both ways wake a loop that is about to sleep, and neither starves timers and sockets.
-    pub(super) fn schedule(&self) {
-        self.host.post_to_regular_loop();
-        if !self.host.has_operations_of_macros() {
-            return;
-        }
+    /// The event loop may have made up its mind to sleep.
+    pub(super) fn schedule_from_finalizer(&self) {
         let vm = VirtualMachine::get();
-        if vm.current_loop_kind() == LoopKind::Macro && !self.is_queued_on_macro_loop.replace(true)
-        {
-            // What is posted goes to the regular loop when the macro returns. This stays for the next one.
-            vm.event_loop().enqueue_task_after_yield(self.host.task());
+        if self.enqueue_after_yield(vm) {
             vm.wakeup();
         }
     }
 
+    /// Returns false if the task is there already.
+    fn enqueue_after_yield(&self, vm: &VirtualMachine) -> bool {
+        let was_queued = match vm.current_loop_kind() {
+            LoopKind::Regular => (self.host.is_queued_on_regular_loop).swap(true, Ordering::SeqCst),
+            LoopKind::Macro => {
+                // The macro may return first.
+                self.host.post_to_regular_loop();
+                self.is_queued_on_macro_loop.replace(true)
+            }
+        };
+        if !was_queued {
+            vm.event_loop().enqueue_task_after_yield(self.host.task());
+        }
+        !was_queued
+    }
+
+    pub(super) fn is_processing_events(&self) -> bool {
+        self.is_processing_events.get()
+    }
+
     fn process_events(self: &Rc<Self>, vm: &VirtualMachine) {
-        match vm.current_loop_kind() {
+        let kind = vm.current_loop_kind();
+        match kind {
             LoopKind::Regular => {
                 (self.host.is_queued_on_regular_loop).swap(false, Ordering::SeqCst);
             }
@@ -209,11 +221,10 @@ impl Instance {
         }
 
         if let Some(Some(dawn)) = self.dawn.get() {
+            self.is_processing_events.set(true);
             dawn.process_events();
+            self.is_processing_events.set(false);
         }
-        (self.retired_devices.borrow_mut())
-            .retain(|device| device.wake_after(None) == Wake::Follows);
-
         let mut devices = SmallVec::<[Rc<Device>; 2]>::new();
         self.devices.borrow_mut().retain(|device| {
             devices.extend(device.upgrade());
@@ -224,24 +235,29 @@ impl Instance {
             device.watch_queue();
             device.complete_events();
         }
-        let mut new = self.new_completions.borrow_mut();
         // A result can follow from an event: an error, or the loss of the device.
-        new.rotate_left(results);
-        self.completions.borrow_mut().extend(new.drain(..));
+        self.new_completions.borrow_mut().rotate_left(results);
+        (self.completions.borrow_mut()).extend(self.new_completions.borrow_mut().drain(..));
+
+        if kind == LoopKind::Regular && self.next_completion(LoopKind::Macro).is_some() {
+            // A macro that waits for it may start first.
+            self.host.post(LoopKind::Macro);
+        }
         self.enqueue_completion(vm);
     }
 
     /// A macro runs in the middle of the program, which it is not to continue.
-    fn next_completion(&self, vm: &VirtualMachine) -> Option<usize> {
-        let kind = vm.current_loop_kind();
+    fn next_completion(&self, kind: LoopKind) -> Option<usize> {
         self.completions.borrow().iter().position(|completion| {
             kind == LoopKind::Regular || completion.operation.loop_kind() == LoopKind::Macro
         })
     }
 
     fn enqueue_completion(self: &Rc<Self>, vm: &VirtualMachine) {
-        if self.next_completion(vm).is_some() {
+        if self.next_completion(vm.current_loop_kind()).is_some() {
             vm.enqueue_task(Task::init(Rc::into_raw(Rc::clone(self)).cast_mut()));
+            // A wake that comes while the script runs waits for this, and so for the poll.
+            self.enqueue_after_yield(vm);
         }
     }
 
@@ -251,7 +267,7 @@ impl Instance {
             self.release_operations();
             return Ok(());
         }
-        let next = self.next_completion(vm);
+        let next = self.next_completion(vm.current_loop_kind());
         let next = next.and_then(|index| self.completions.borrow_mut().remove(index));
         let Some(Completion { operation, run }) = next else {
             return Ok(());

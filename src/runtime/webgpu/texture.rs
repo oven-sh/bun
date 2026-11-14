@@ -28,7 +28,7 @@ pub(crate) struct Texture {
 
 impl Drop for Texture {
     fn drop(&mut self) {
-        self.device.instance.schedule();
+        self.device.instance.schedule_from_finalizer();
     }
 }
 

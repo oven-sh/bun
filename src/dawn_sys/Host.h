@@ -51,7 +51,7 @@ public:
     static std::unique_ptr<QueueWatcher> create(dawn::native::DeviceBase*);
     virtual ~QueueWatcher() = default;
 
-    // Asks for a wake at this serial, or at the last one submitted if that comes first. It replaces what was asked for before.
+    // Asks for a wake at this serial, or at the last one submitted if that comes first. Wakes that were asked for before need not come.
     Wake arm(dawn::native::ExecutionSerial);
 
     // Called before the device is destroyed. The watcher is deleted after.

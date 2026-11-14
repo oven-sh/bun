@@ -92,7 +92,7 @@ pub(crate) struct Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.device.instance.schedule();
+        self.device.instance.schedule_from_finalizer();
     }
 }
 

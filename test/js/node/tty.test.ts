@@ -192,6 +192,82 @@ describe("ReadStream.prototype.setRawMode", () => {
     });
     expect(await proc.exited).toBe(0);
   });
+
+  // On Windows, libuv cancels the console read that is pending when the mode
+  // changes. It used to choose the cancel from the current mode, not from the
+  // read that was pending. A second change in the same turn then marked a line
+  // read as cancelled when no line read existed, and the mark made libuv
+  // discard the next line that the user typed.
+  test("delivers the first line typed after three setRawMode calls in one turn", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const ready = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let cooked = false;
+          let typed = "";
+          process.stdin.setRawMode(true);
+          // Starts the raw read that is pending during the three calls.
+          process.stdin.on("data", chunk => {
+            if (!cooked) return;
+            typed += chunk;
+            if (!typed.includes("two")) return;
+            process.stdout.write("GOT " + JSON.stringify(typed.split(/\\r?\\n/).filter(Boolean)) + " END");
+            process.exit(0);
+          });
+          setImmediate(() => {
+            process.stdin.setRawMode(false);
+            process.stdin.setRawMode(true);
+            process.stdin.setRawMode(false);
+            cooked = true;
+            process.stdout.write("READY");
+          });
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        // Wide enough that ConPTY does not hard-wrap the GOT line.
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("READY")) ready.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([ready.promise, eof.promise]);
+    if (!proc.terminal!.closed) {
+      proc.terminal!.write("one\r");
+      proc.terminal!.write("two\r");
+    }
+
+    // The child exits when it has the second line. The terminal reports its end
+    // after it has delivered all of the child's output.
+    const exitCode = await proc.exited;
+    await eof.promise;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    const report = Bun.stripANSI(output)
+      .replace(/[\r\n]/g, "")
+      .match(/GOT (\[[^\]]*\]) END/);
+    if (!report) {
+      throw new Error(
+        `child exited with code ${exitCode} and no report; terminal output was: ${JSON.stringify(output)}`,
+      );
+    }
+    expect(JSON.parse(report[1])).toEqual(["one", "two"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("ReadStream destroy()", () => {

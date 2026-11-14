@@ -686,7 +686,12 @@ pub fn generate_code_for_file_in_chunk_js(
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
-                {
+                'hoist_declarations: {
+                    // A name that a `with` body reads cannot be renamed apart from another file's.
+                    if ast.flags.contains(AstFlags::KEEP_TOP_LEVEL_IN_WRAPPER) {
+                        break 'hoist_declarations;
+                    }
+
                     let mut end: usize = 0;
                     // Iterate by index since we mutate
                     // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.

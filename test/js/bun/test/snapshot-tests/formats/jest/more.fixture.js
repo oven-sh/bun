@@ -42,6 +42,14 @@ test("closeTo()", () => {
     expect.closeTo(Infinity, 0),
     expect.not.closeTo(1e21, 3),
   ]).toMatchSnapshot();
+  expect([
+    expect.closeTo(1.5, 2.7),
+    expect.not.closeTo(7.25, 1.5),
+    expect.closeTo(2 ** 31, 2 ** 32),
+    expect.closeTo(NaN, Infinity),
+    expect.not.closeTo(1, -Infinity),
+    expect.closeTo(1, NaN),
+  ]).toMatchSnapshot("a precision that is not a 32-bit integer");
 });
 
 test("", () => {

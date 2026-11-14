@@ -91,12 +91,22 @@ async function run(exe: string, code: string, env: Record<string, string> = {}) 
 function scripts(target: string) {
   const prelude = `
     const collect = () => (typeof Bun === "object" ? Bun.gc(true) : global.gc());
+    // Spins until the condition holds. A condition that never holds ends the script with a line on stderr, so the
+    // row fails with that line and not with a timeout.
+    const until = (what, condition) => {
+      const deadline = performance.now() + 3000;
+      while (!condition()) {
+        if (performance.now() < deadline) continue;
+        require("node:fs").writeSync(2, "gave up waiting for " + what + "\\n");
+        process.exit(1);
+      }
+    };
     // Bun's thread pool holds a ticket of the VM until it has posted the completion of async work. Node waits for
     // the work when it tears the env down.
     const untilPosted = () => {
       if (typeof Bun !== "object") return;
       const { getEventLoopStats } = require("bun:internal-for-testing");
-      while (getEventLoopStats().ticketsOutstanding > 0);
+      until("the post of the completion", () => !(getEventLoopStats().ticketsOutstanding > 0));
     };
     const addon = require(${JSON.stringify(addonPath(target))});
     const create = () => ${JSON.stringify(everyKind)}.map(kind => addon.create(kind, 3));
@@ -155,7 +165,7 @@ describe.skipIf(!canBuildNodeAddons())(
       const { script, inWorker } = scripts(targets[0]);
       const created = `addon.reportCleanupHook(); let values = create();`;
       const collected = created + ` values = null; collect();`;
-      const queuedWork = `addon.queueWork(); while (!addon.workExecuted());`;
+      const queuedWork = `addon.queueWork(); until("execute()", () => addon.workExecuted());`;
       const completedWork = queuedWork + ` untilPosted();`;
       const everyValue = [hook(3 * everyKind.length), ...finalized(everyKind)];
       const completion = [
@@ -450,7 +460,7 @@ describe.skipIf(!canBuildNodeAddons())(
       // it holds the mutex of the function that the thread needs to wake. So the row runs on Bun only.
       it("a thread that calls a threadsafe function while a Worker exits", async () => {
         const code = inWorker(
-          `addon.reportCleanupHook(); globalThis.producer = addon.startProducer(); while (addon.producerCalls() < 1); process.exit(0);`,
+          `addon.reportCleanupHook(); globalThis.producer = addon.startProducer(); until("a call of the thread", () => addon.producerCalls() >= 1); process.exit(0);`,
         );
         expect(await run(bunExe(), code)).toEqual({
           stdout: ["cleanup hook: 0 of 1 values finalized before it", ...finalized(["wrap"], 1)],
@@ -496,7 +506,7 @@ describe.skipIf(!canBuildNodeAddons())(
         let values = addon.create("external", 3);
         const before = descriptors();
         for (let i = 0; i < 8; i++) fs.open(process.execPath, "r", () => console.log("an open() callback ran"));
-        while (descriptors() < before + 8);
+        until("8 open descriptors", () => descriptors() >= before + 8);
         values = null;
         collect();
         process.exit(0);
@@ -581,7 +591,7 @@ describe.skipIf(!canBuildNodeAddons())(
         const { stdout, exitCode } = await run(
           bunExe(),
           inWorker(
-            `globalThis.keep = addon.createWrapThatPosts(); addon.queueWork(); while (!addon.workExecuted()); process.exit(0);`,
+            `globalThis.keep = addon.createWrapThatPosts(); addon.queueWork(); until("execute()", () => addon.workExecuted()); process.exit(0);`,
           ),
           gate,
         );

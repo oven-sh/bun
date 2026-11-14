@@ -1052,6 +1052,15 @@ impl SourceProvider for BundlerServices {
         files.is_embedded(source_path, is_query)
     }
 
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        let files = self.files_for_file_system.lock();
+        let embedded = files.implicitly_embedded.iter().chain(&files.asked_about);
+        let mut paths: Vec<Vec<u8>> = embedded.map(|it| it.to_vec()).collect();
+        paths.sort_unstable();
+        paths.dedup();
+        paths
+    }
+
     fn fill_package_json_gaps(&self, module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {
         let has_any = !(self.files_for_file_system.lock().embedded_manifests).is_empty();
         let (mut added, mut closed) = (Vec::new(), FxHashSet::default());

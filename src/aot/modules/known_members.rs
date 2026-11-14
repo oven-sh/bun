@@ -685,7 +685,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
             return None;
         }
         let is_in_place = match known_to {
-            KnownTo::EveryTranspiler => true,
+            KnownTo::EveryTranspiler => enumeration.file == file || !self.graph.runs_tests(),
             KnownTo::BunRun => enumeration.file == file,
             KnownTo::BuildAlone => false,
         };

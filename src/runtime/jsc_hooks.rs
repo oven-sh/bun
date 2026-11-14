@@ -3858,7 +3858,8 @@ fn get_loader_and_virtual_source<'a>(
                 | Loader::Yaml
                 | Loader::Xml
                 | Loader::Md
-                | Loader::Text,
+                | Loader::Text
+                | Loader::Css,
             ) => bun_standalone_graph::find_written_file(path.text),
             _ => bun_standalone_graph::find_written_code(path.text),
         }

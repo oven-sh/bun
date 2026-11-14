@@ -94,10 +94,15 @@ function hold(plain: ReturnType<typeof listRuns>, compiled: ReturnType<typeof li
   );
 }
 
-// Plain Bun reads the files of two tests on one thread ("evicting modules stays fast while many loads are pending", "files that mock it between files that don't"): with threads it completes loads in the order in which the threads finish.
+// Plain Bun reads the files of three tests on one thread ("evicting modules stays fast while many loads are pending", "files that mock it between files that don't",
+// "with jest.mock(), the mock reaches modules the preload loaded and mocked"): with threads it completes loads in the order in which the threads finish.
+// In the third one the original of an automock races with the test file. Under --isolate it always comes behind the test file, but not on one thread.
 const filesOfTestsOnOneThread = ["uses39.ts", "5.test.js"];
+const runsOnOneThread = ({ cmd, cwd = process.cwd() }: Options) =>
+  filesOfTestsOnOneThread.some(file => existsSync(join(cwd, file))) ||
+  (!cmd.includes("--isolate") && existsSync(join(cwd, "automock.test.js")));
 function asPlainRuns(options: Options) {
-  if (!filesOfTestsOnOneThread.some(file => existsSync(join(options.cwd ?? process.cwd(), file)))) return options;
+  if (!runsOnOneThread(options)) return options;
   return { ...options, env: { ...(options.env ?? process.env), BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } };
 }
 

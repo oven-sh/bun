@@ -25,6 +25,8 @@ use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
 };
 use bun_sourcemap as SourceMap;
+#[cfg(windows)]
+use bun_sys::FdExt as _;
 use bun_sys::{self as Syscall, E, Fd, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
@@ -82,6 +84,7 @@ pub struct StandaloneModuleGraph {
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
     pub compiled_program: Option<CompiledProgram>,
+    pub(crate) sources_on_disk: bun_threading::Guarded<StringArrayHashMap<Option<Box<[u8]>>>>,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -1241,6 +1244,7 @@ impl StandaloneModuleGraph {
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
                 compiled_program: None,
+                sources_on_disk: bun_threading::Guarded::default(),
             });
         }
 
@@ -1615,6 +1619,7 @@ impl StandaloneModuleGraph {
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
             compiled_program,
+            sources_on_disk: bun_threading::Guarded::default(),
         })
     }
 
@@ -2391,19 +2396,19 @@ impl CompileResult {
 /// renames into place (an fd cannot be mapped back to a path on every
 /// filesystem).
 pub(crate) struct Injected<'a> {
-    pub file: bun_sys::File,
+    pub file: ExecutableFile,
     pub temp_path: &'a ZStr,
 }
 
 /// The temp copy while `inject` writes it: deleted unless `file` is taken out.
 struct UnfinishedCopy<'a> {
-    file: Option<bun_sys::File>,
+    file: Option<ExecutableFile>,
     name: &'a ZStr,
 }
 
 impl<'a> UnfinishedCopy<'a> {
     fn new(fd: Fd, name: &'a ZStr) -> Self {
-        let file = Some(bun_sys::File::from_fd(fd));
+        let file = Some(ExecutableFile(fd));
         Self { file, name }
     }
 }
@@ -2437,6 +2442,23 @@ impl<'a> Injected<'a> {
             file: copy.file.take().expect("taken once"),
             temp_path: ZStr::from_buf(&temp_path_buf[..], len),
         }
+    }
+}
+
+pub(crate) struct ExecutableFile(Fd);
+
+impl ExecutableFile {
+    fn fd(&self) -> Fd {
+        self.0
+    }
+}
+
+impl Drop for ExecutableFile {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        bun_sys::close_on_fork::close(self.0);
+        #[cfg(windows)]
+        self.0.close();
     }
 }
 
@@ -2567,7 +2589,8 @@ pub(crate) fn inject<'a>(
         let fd: Fd = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match Syscall::open(
+                match bun_sys::close_on_fork::openat(
+                    Fd::cwd(),
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
                     // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).

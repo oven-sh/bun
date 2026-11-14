@@ -67,7 +67,6 @@ describe("compile/aot/an executable keeps the text at the top level that an erro
     expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 
-  // The text that errors quote and the text of functions lie compressed in the file. The printer of stored strings opens them.
   const storedStrings = async (name: string) =>
     Buffer.from((await spawned([bunExe(), "build", "--aot-stored-strings", path(name)], root, bunEnv)).stdout);
 

@@ -1,16 +1,15 @@
-// The text of functions lies in an executable in blocks of 64 KB, each compressed by itself. A block is opened at the first look into it.
+// An executable stores the source of functions as it is. Function.prototype.toString() reads it in place.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-const sizeOfBlock = 64 * 1024;
 const numberOfFunctions = 4000;
 
-// Functions of many lengths, some with text that is not ASCII, and one that is longer than two blocks: so texts begin and end anywhere in a block, and cross from one into the next.
+// Functions of many lengths, some with text that is not ASCII, and one long function.
 function writeProgram() {
   const lines = ["const all = [];"];
   for (let at = 0; at < numberOfFunctions; at++) {
@@ -35,8 +34,8 @@ function writeProgram() {
   return lines.join("\n") + "\n";
 }
 
-test("every function prints its text, in whatever order the blocks are opened, and the text takes a third of its size at most", async () => {
-  using dir = tempDir("aot-text-in-blocks", { "program.js": writeProgram() });
+test("every function prints its source, and the executable holds the source as it is", async () => {
+  using dir = tempDir("aot-function-source-in-place", { "program.js": writeProgram() });
   const cwd = String(dir);
   const executable = (name: string) => join(cwd, isWindows ? name + ".exe" : name);
   const ways: Record<string, string[]> = { compiled: [], withoutSource: ["--no-compile-function-source"] };
@@ -53,7 +52,6 @@ test("every function prints its text, in whatever order the blocks are opened, a
     });
   }
 
-  let length = 0;
   for (const order of ["forward", "backward"]) {
     const expected = await run([bunExe(), "program.js", order], cwd, bunEnv);
     for (const way of canTrim ? ["compiled", "trimmed"] : ["compiled"])
@@ -63,12 +61,20 @@ test("every function prints its text, in whatever order the blocks are opened, a
         ...expected,
       });
     expect(expected.exitCode).toBe(0);
-    length = Number(expected.stdout.split(" ")[1]);
   }
-  expect(length).toBeGreaterThan(6 * sizeOfBlock);
-  const stored = statSync(executable("compiled")).size - statSync(executable("withoutSource")).size;
-  expect(stored).toBeGreaterThan(0);
-  expect(stored).toBeLessThan(length / 3);
+  const sources = [1, 1717, numberOfFunctions - 1].map(
+    at => `function named${at}(left, right) {\n  return left * ${at} + right + "${"word ".repeat(at % 11)}";\n}`,
+  );
+  for (const [name, isStored] of [
+    ["compiled", true],
+    ["withoutSource", false],
+  ] as const) {
+    const file = readFileSync(executable(name));
+    expect({ name, isStored: sources.map(source => file.includes(source)) }).toEqual({
+      name,
+      isStored: sources.map(() => isStored),
+    });
+  }
 }, 600_000);
 
 test("a context of node:vm gets the text of a function that is handed in", async () => {

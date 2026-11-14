@@ -112,6 +112,12 @@ typedef struct bun_spawn_request_t {
     int cgroup_fd; // -1 = unset; Linux: directory fd of the cgroup the child starts in
 } bun_spawn_request_t;
 
+typedef struct bun_pending_fork_t {
+    const int* fds;
+    size_t fd_count;
+    std::atomic<bool> has_closed_fds;
+} bun_pending_fork_t;
+
 // Raw exit syscall that doesn't go through libc.
 // This avoids potential deadlocks when forking from a multi-threaded process,
 // as _exit() may try to acquire locks held by threads that don't exist in the child.
@@ -227,6 +233,7 @@ extern "C" ssize_t posix_spawn_bun(
     int* pid,
     const char* path,
     const bun_spawn_request_t* request,
+    bun_pending_fork_t* pending_fork,
     char* const argv[],
     char* const envp[])
 {
@@ -307,6 +314,13 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     const auto startChild = [&]() -> ssize_t {
+        if (pending_fork) {
+            for (size_t i = 0; i < pending_fork->fd_count; i++) {
+                close(pending_fork->fds[i]);
+            }
+            pending_fork->has_closed_fds.store(true, std::memory_order_release);
+        }
+
         sigset_t childmask = oldmask;
 
         // Reset signals

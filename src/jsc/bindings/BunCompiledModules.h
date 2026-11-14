@@ -29,7 +29,6 @@ class JSCommonJSModule;
 enum class ErrorCode : uint16_t;
 
 extern const JSC::AOT::ModuleHost compiledModuleHost;
-bool decompressSource(std::span<uint8_t> text, std::span<const uint8_t> compressed);
 
 // On this thread. A Worker that starts from source text runs no compiled program.
 inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }

@@ -33,7 +33,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
-#include <zstd.h>
 
 #if OS(WINDOWS)
 #include <fcntl.h>
@@ -97,18 +96,6 @@ extern "C" size_t Bun__AOT__applyOptionWord(Wire::CompileOptions* options, BunAO
     return utf8.length();
 }
 
-static size_t maxCompressedSize(size_t sourceSize)
-{
-    return ZSTD_compressBound(sourceSize);
-}
-
-template<int level>
-static size_t compressSource(std::span<uint8_t> compressed, std::span<const uint8_t> text)
-{
-    size_t written = ZSTD_compress(compressed.data(), compressed.size(), text.data(), text.size(), level);
-    return ZSTD_isError(written) ? 0 : written;
-}
-
 extern "C" void Bun__encoding__encodeLatin1(const uint8_t* input, size_t length, uint8_t encoding, void* sink, void (*append)(void* sink, const uint8_t* bytes, size_t size));
 extern "C" void Bun__encoding__encodeUTF16(const char16_t* input, size_t length, uint8_t encoding, void* sink, void (*append)(void* sink, const uint8_t* bytes, size_t size));
 
@@ -153,11 +140,8 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
     _set_fmode(_O_BINARY);
 #endif
 
-    // The image of a test run lives as long as the run.
-    bool isTestRun = JSC::AOT::hasFlag(options->admittedCode, Wire::AdmittedCode::ReplacedBuiltins);
-    auto compress = isTestRun ? compressSource<1> : compressSource<3>;
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, functionSourceSize, copyFunctionSource, maxCompressedSize, compress, viewFunctionSource, releaseFunctionSources }, releaseBytesOfProgram, { encodeForBuffer } });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, functionSourceSize, copyFunctionSource, viewFunctionSource, releaseFunctionSources }, releaseBytesOfProgram, { encodeForBuffer } });
     return result;
 }
 
@@ -189,7 +173,7 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
 
 extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, uint8_t form, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
 {
-    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::decompressSource, static_cast<JSC::AOT::StoredStringsForm>(form));
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, static_cast<JSC::AOT::StoredStringsForm>(form));
     take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
     return static_cast<uint32_t>(read.verdict);
 }

@@ -248,6 +248,10 @@ pub trait SourceProvider: Sync {
         false
     }
 
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
     /// Embeds each `package.json` between `module_path` and the root of its package in `node_modules`, and returns those not embedded before.
     fn embed_package_json_files(&self, _module_path: &[u8]) -> Vec<Vec<u8>> {
         Vec::new()

@@ -80,9 +80,8 @@ const relative = (returns: b.Type) =>
     args: { from: text, to: text },
     validatorExpects: { from: "string", to: "string" },
     returns,
-    capability: "heap",
+    capability: "js",
     throws: true,
-    ...ofWorkingDirectory,
   });
 
 /** It looks at its arguments from the last to the first that is absolute, and only one it looks at has to be a string. */
@@ -93,10 +92,9 @@ const resolve = (returns: b.Type) =>
     length: 1,
     args: { paths: b.rest(b.any.stringObjectAsString) },
     returns,
-    capability: "heap",
+    capability: "js",
     throws: true,
     uses: { paths: describedInMessage() },
-    ...ofWorkingDirectory,
   });
 
 const format = () =>

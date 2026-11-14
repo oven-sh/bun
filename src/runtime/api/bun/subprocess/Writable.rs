@@ -125,7 +125,7 @@ impl<'a> Writable<'a> {
     }
 
     pub(crate) fn init(
-        stdio: &mut Stdio,
+        mut stdio: Stdio,
         event_loop: &EventLoop,
         subprocess: &mut Subprocess<'a>,
         result: StdioResult,
@@ -156,7 +156,7 @@ impl<'a> Writable<'a> {
                         match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(err) => {
-                                if let Stdio::ReadableStream(rs) = stdio {
+                                if let Stdio::ReadableStream(rs) = &mut stdio {
                                     rs.cancel(global)?;
                                 }
                                 return Err(global.throw_value(err.to_js(global)));
@@ -174,7 +174,7 @@ impl<'a> Writable<'a> {
                             f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
                         });
 
-                        if let Stdio::ReadableStream(rs) = stdio {
+                        if let Stdio::ReadableStream(rs) = &mut stdio {
                             *promise_for_stream =
                                 Self::attach_stream(&pipe_ref, rs, subprocess, global)?;
                         }
@@ -184,16 +184,7 @@ impl<'a> Writable<'a> {
                     return Ok(Writable::Inherit);
                 }
 
-                Stdio::Blob(_) => {
-                    // See the unix arm below: Stdio has Drop, so move the
-                    // payload out via ManuallyDrop + ptr::read.
-                    let owned =
-                        core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                    let blob = match &*owned {
-                        // SAFETY: owned is ManuallyDrop; payload moved exactly once.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
+                Stdio::Blob(blob) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
@@ -202,7 +193,7 @@ impl<'a> Writable<'a> {
                     )));
                 }
                 Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
+                    return Ok(Writable::Fd(fd));
                 }
                 Stdio::Dup2(dup2) => {
                     return Ok(Writable::Fd(dup2.to.to_fd()));
@@ -213,7 +204,7 @@ impl<'a> Writable<'a> {
                 Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
-                Stdio::Ipc | Stdio::Capture(_) => {
+                Stdio::Ipc | Stdio::Capture => {
                     return Ok(Writable::Ignore);
                 }
                 // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
@@ -240,7 +231,7 @@ impl<'a> Writable<'a> {
                     bun_sys::Result::Err(err) => {
                         // The writer did not take `fd`; nothing else closes it.
                         fd.close();
-                        if let Stdio::ReadableStream(rs) = stdio {
+                        if let Stdio::ReadableStream(rs) = &mut stdio {
                             rs.cancel(global)?;
                         }
                         return Err(global.throw_value(err.to_js(global)));
@@ -264,48 +255,25 @@ impl<'a> Writable<'a> {
                     f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
                 });
 
-                if let Stdio::ReadableStream(rs) = stdio {
+                if let Stdio::ReadableStream(rs) = &mut stdio {
                     *promise_for_stream = Self::attach_stream(&pipe_ref, rs, subprocess, global)?;
                 }
 
                 Ok(Writable::Pipe(pipe_ref))
             }
 
-            Stdio::Blob(_) => {
-                // `Stdio` has a Drop impl (would `blob.detach()`), so we can't
-                // move the payload out by match — take ownership via
-                // ManuallyDrop + ptr::read to transfer without detaching.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let blob = match &*owned {
-                    // SAFETY: `owned` is ManuallyDrop and discarded after this
-                    // read; the Blob payload is moved out exactly once.
-                    Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                    _ => unreachable!(),
-                };
-                Ok(Writable::Buffer(StaticPipeWriter::create(
-                    evtloop,
-                    std::ptr::from_mut::<Subprocess<'a>>(subprocess),
-                    result,
-                    super::source_from_blob(blob),
-                )))
-            }
+            Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                evtloop,
+                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                result,
+                super::source_from_blob(blob),
+            ))),
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Stdio::Memfd(_) => {
-                // Transfer ownership: `Stdio`'s Drop would close the memfd, so
-                // take it out via ManuallyDrop (same pattern as the Blob arm)
-                // to keep the caller's `stdio[0]` drop from double-closing the
-                // fd that Writable now owns.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let Stdio::Memfd(fd) = &*owned else {
-                    unreachable!()
-                };
-                debug_assert!(*fd != Fd::INVALID);
-                Ok(Writable::Memfd(*fd))
-            }
+            Stdio::Memfd(memfd) => Ok(Writable::Memfd(memfd.into_raw())),
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-            Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+            Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
             // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
             Stdio::SocketFd => unreachable!("SocketFd at stdin"),
         }

@@ -486,15 +486,22 @@ function decodeMappings(mappings: string): Segments {
   return segments;
 }
 
+/** The scheme and the host of a URL. */
+const urlOrigin = /^[a-z][a-z\d+.-]*:\/\/[^/]*/i;
+
 /**
- * The name of a source: the `sourceRoot` of the map is prepended, unless both are absolute paths.
- * Then `.`, `dir/..` and a second `/` are removed, as source-map-js does for a path.
+ * The name of a source, as source-map-js makes it. The `sourceRoot` of the map is prepended,
+ * unless it is absolute (a path from `/`, or a URL) and the source is already in it. Then `.`,
+ * `dir/..` and a second `/` are removed from the path.
  */
 function sourceName(sourceRoot: string | null | undefined, source: string): string {
-  if (sourceRoot && !(sourceRoot.startsWith("/") && source.startsWith("/"))) {
+  const root = sourceRoot?.replace(/\/$/, "");
+  const isInRoot = root && (root.startsWith("/") || urlOrigin.test(root)) && source.startsWith(`${root}/`);
+  if (sourceRoot && !isInRoot) {
     source = `${sourceRoot}/${source}`;
   }
-  return posix.normalize(source);
+  const origin = source.match(urlOrigin)?.[0] ?? "";
+  return origin + posix.normalize(source.slice(origin.length));
 }
 
 function lineToLine(line?: number): number {

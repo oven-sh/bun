@@ -290,36 +290,34 @@ describe("mappings", () => {
     });
 
     test.each([
-      ["src", ["a.ts", "b.ts"]],
-      ["src/", ["a.ts", "b.ts"]],
-      ["src", ["/a.ts", "/b.ts"]],
-    ])("sourceRoot %j is in front of the sources %j", (sourceRoot, sources) => {
+      ["src", ["a.ts", "b.ts"], "/app/src/b.ts", "/app/b.ts"],
+      ["src/", ["a.ts", "b.ts"], "/app/src/b.ts", "/app/b.ts"],
+      ["src", ["/a.ts", "/b.ts"], "/app/src/b.ts", "/app/b.ts"],
+      // Also when the source starts with it, or is absolute and not in it.
+      ["app", ["app/a.ts", "app/b.ts"], "/app/app/b.ts", "/lib/app/b.ts"],
+      ["/app", ["/lib/a.ts", "/lib/b.ts"], "/app/lib/b.ts", "/lib/b.ts"],
+    ])("sourceRoot %j is in front of the sources %j", (sourceRoot, sources, url, other) => {
       const sourceMap = SourceMap(toUrl({ ...map, sourceRoot, sources }));
-      expect(sourceMap.generatedLocation({ line: 2, url: "/app/src/b.ts" })).toEqual({
-        line: 1,
-        column: 0,
-        verified: true,
-      });
-      expect(sourceMap.generatedLocation({ line: 2, url: "/app/b.ts" })).toEqual({
-        line: 2,
-        column: 0,
-        verified: false,
-      });
+      expect(sourceMap.generatedLocation({ line: 2, url })).toEqual({ line: 1, column: 0, verified: true });
+      expect(sourceMap.generatedLocation({ line: 2, url: other })).toEqual({ line: 2, column: 0, verified: false });
     });
 
     test.each([
-      [undefined, ["./a.ts", "./b.ts"]],
-      [undefined, ["lib/../a.ts", "lib/../b.ts"]],
-      [".", ["a.ts", "b.ts"]],
-      ["/app", ["/app/a.ts", "/app/b.ts"]],
-    ])("with sourceRoot %j, the sources %j have the names that source-map-js gives them", (sourceRoot, sources) => {
-      const sourceMap = SourceMap(toUrl({ ...map, sourceRoot, sources }));
-      expect(sourceMap.generatedLocation({ line: 2, url: "/app/b.ts" })).toEqual({
-        line: 1,
-        column: 0,
-        verified: true,
-      });
-    });
+      [undefined, ["./a.ts", "./b.ts"], "/app/b.ts"],
+      [undefined, ["lib/../a.ts", "lib/../b.ts"], "/app/b.ts"],
+      [".", ["a.ts", "b.ts"], "/app/b.ts"],
+      ["/app", ["/app/a.ts", "/app/b.ts"], "/app/b.ts"],
+      ["/app/", ["/app/a.ts", "/app/b.ts"], "/app/b.ts"],
+      [undefined, ["https://example.test/a.ts", "https://example.test/./b.ts"], "https://example.test/b.ts"],
+      ["https://example.test/lib", ["../a.ts", "../b.ts"], "https://example.test/b.ts"],
+      ["https://example.test", ["https://example.test/a.ts", "https://example.test/b.ts"], "https://example.test/b.ts"],
+    ])(
+      "with sourceRoot %j, the sources %j have the names that source-map-js gives them",
+      (sourceRoot, sources, url) => {
+        const sourceMap = SourceMap(toUrl({ ...map, sourceRoot, sources }));
+        expect(sourceMap.generatedLocation({ line: 2, url })).toEqual({ line: 1, column: 0, verified: true });
+      },
+    );
 
     test("the first token of a line answers for the code before it when the line before is another source", () => {
       // The first generated line is line 5 of a.ts. Column 4 of the second is line 0 of b.ts.
@@ -448,6 +446,7 @@ describe("mappings", () => {
 const program = readFileSync(fixture, "utf8").split(/\r?\n/);
 
 type Breakpoint = { verified: boolean; line?: number; message?: string };
+type Request = { line: number; column?: number; hitCondition?: string };
 
 const pick = ({ verified, line, message }: Breakpoint) => ({ verified, line, message });
 
@@ -474,11 +473,13 @@ async function debug(lines: number[], program = fixture, runtimeArgs: string[] =
   const events: { event: string; body: any }[] = [];
   const waiting: { event: string; promise: PromiseWithResolvers<any> }[] = [];
   const printed: { text: string; promise: PromiseWithResolvers<void> }[] = [];
+  const sources: string[] = [];
+  const loading: { file: string; promise: PromiseWithResolvers<void> }[] = [];
   const exited = Promise.withResolvers<void>();
 
   function fail(error: Error) {
     failure ??= error;
-    for (const { promise } of [...waiting, ...printed]) {
+    for (const { promise } of [...waiting, ...printed, ...loading]) {
       promise.reject(failure);
     }
     for (const { reject } of responses.values()) {
@@ -496,6 +497,15 @@ async function debug(lines: number[], program = fixture, runtimeArgs: string[] =
     }
   });
   adapter.on("Adapter.event", ({ event, body }) => {
+    if (event === "loadedSource") {
+      const path = (body as { source: { path?: string } }).source.path?.replaceAll("\\", "/") ?? "";
+      sources.push(path);
+      for (const { file, promise } of loading) {
+        if (path.endsWith(file)) {
+          promise.resolve();
+        }
+      }
+    }
     const index = waiting.findIndex(entry => entry.event === event);
     if (index === -1) {
       events.push({ event, body });
@@ -549,12 +559,24 @@ async function debug(lines: number[], program = fixture, runtimeArgs: string[] =
   const session = {
     request,
     /** The answer for each breakpoint, when they are the breakpoints of a file. */
-    async setBreakpoints(lines: number[], path = program): Promise<Breakpoint[]> {
+    async setBreakpoints(lines: (number | Request)[], path = program): Promise<Breakpoint[]> {
       const { breakpoints } = await request("setBreakpoints", {
         source: { path },
-        breakpoints: lines.map(line => ({ line })),
+        breakpoints: lines.map(line => (typeof line === "number" ? { line } : line)),
       });
       return breakpoints.map(pick);
+    },
+    /** Waits until the adapter knows the script of a file. The name ends the path of the file. */
+    async loaded(file: string): Promise<void> {
+      const promise = Promise.withResolvers<void>();
+      if (sources.some(path => path.endsWith(file))) {
+        promise.resolve();
+      } else if (failure) {
+        promise.reject(failure);
+      } else {
+        loading.push({ file, promise });
+      }
+      return promise.promise;
     },
     /** Waits until the program has printed a text. */
     async prints(text: string): Promise<void> {
@@ -625,6 +647,12 @@ describe.concurrent("a debug session", () => {
     expect(await session.setBreakpoints([method, statement])).toEqual([held(statement), refused]);
     // The breakpoint on the method is removed. The statement gets its place.
     expect(await session.setBreakpoints([statement])).toEqual([held(statement)]);
+
+    // A request that is not valid keeps its answer when another request is on its line.
+    expect(await session.setBreakpoints([])).toEqual([]);
+    expect(
+      await session.setBreakpoints([{ line: statement }, { line: statement, column: 10, hitCondition: "often" }]),
+    ).toEqual([held(statement), { verified: false, line: undefined, message: "Hit condition is not a number." }]);
   });
 
   test("a function and its first statement are one place to pause", async () => {
@@ -722,6 +750,8 @@ test("a breakpoint on each line with a call in the source positions corpus is re
   for (const [file, lines] of Object.entries(calls)) {
     if (!lines.length) continue;
     const [variant, name] = file.split("/");
+    // The output of the program and the events of the inspector come on two channels.
+    await session.loaded(`/${file}`);
     const breakpoints = await session.setBreakpoints(
       lines.map(({ line }) => line),
       join(String(dir), file),

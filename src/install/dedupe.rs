@@ -738,6 +738,26 @@ pub(crate) fn effective_version_as_yarn(
     version_under(lockfile, dep, rule)
 }
 
+/// Whether npm package `name` at `resolution` is outside `range`. Not for another name or `*`.
+pub(crate) fn version_outside_range(
+    range: &dependency::Version,
+    range_buf: &[u8],
+    name: bun_semver::String,
+    resolution: &crate::Resolution,
+    resolution_buf: &[u8],
+) -> bool {
+    let Some(npm) = range.try_npm() else {
+        return false;
+    };
+    resolution.tag == ResolutionTag::Npm
+        && npm.name.slice(range_buf) == name.slice(resolution_buf)
+        && !npm.version.is_empty()
+        && !crate::npm::is_any_version_range(range.literal.slice(range_buf))
+        && !npm
+            .version
+            .satisfies(resolution.npm().version, range_buf, resolution_buf)
+}
+
 fn version_under(
     lockfile: &Lockfile,
     dep: &Dependency,

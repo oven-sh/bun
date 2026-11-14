@@ -1839,6 +1839,7 @@ impl Diff {
     }
 
     /// A one-sided merge can leave a pin that the unchanged range rules out. Only flags clear cases.
+    /// `rows_outside_ranges` checks every row after the clean, a prerelease pin too.
     fn locked_version_is_out_of_range(
         from_lockfile: &Lockfile,
         locked: PackageID,
@@ -1850,10 +1851,7 @@ impl Diff {
         let packages = &from_lockfile.packages;
         let to_buf = to_lockfile.buffers.string_bytes.as_slice();
         let declared = to_lockfile.catalogs.resolve_range(to_buf, to_dep);
-        let (Some(resolution), Some(npm)) = (
-            packages.items_resolution().get(locked as usize),
-            declared.try_npm(),
-        ) else {
+        let Some(resolution) = packages.items_resolution().get(locked as usize) else {
             return false;
         };
         let from_buf = from_lockfile.buffers.string_bytes.as_slice();
@@ -1861,11 +1859,15 @@ impl Diff {
             // bun.lock binds rows by name, so an optional row that never resolved can point anywhere.
             && !to_dep.behavior.is_peer()
             && !to_dep.behavior.is_optional()
-            // `*` can pin the prerelease that `latest` points at, which no range "satisfies".
             && !resolution.npm().version.tag.has_pre()
-            && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
             && !to_lockfile.overrides.has_rule_for_name(to_dep.name_hash)
-            && !(npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
+            && crate::dedupe::version_outside_range(
+                declared,
+                to_buf,
+                packages.items_name()[locked as usize],
+                resolution,
+                from_buf,
+            )
             // A name in two groups gets one version, which only has to fit one of the ranges.
             && (to_deps.iter())
                 .filter(|other| {

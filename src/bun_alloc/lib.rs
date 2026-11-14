@@ -797,15 +797,15 @@ pub struct IndexType(u32);
 
 impl IndexType {
     #[inline]
-    pub const fn new(index: u32, is_overflow: bool) -> Self {
+    const fn new(index: u32, is_overflow: bool) -> Self {
         Self((index & 0x7FFF_FFFF) | ((is_overflow as u32) << 31))
     }
     #[inline]
-    pub const fn index(self) -> u32 {
+    const fn index(self) -> u32 {
         self.0 & 0x7FFF_FFFF
     }
     #[inline]
-    pub const fn is_overflow(self) -> bool {
+    const fn is_overflow(self) -> bool {
         (self.0 >> 31) != 0
     }
     #[inline]
@@ -818,8 +818,8 @@ impl IndexType {
     }
 }
 
-pub const NOT_FOUND: IndexType = IndexType::new(u32::MAX >> 1, false); // maxInt(u31)
-pub const UNASSIGNED: IndexType = IndexType::new((u32::MAX >> 1) - 1, false); // maxInt(u31) - 1
+const NOT_FOUND: IndexType = IndexType::new(u32::MAX >> 1, false); // maxInt(u31)
+const UNASSIGNED: IndexType = IndexType::new((u32::MAX >> 1) - 1, false); // maxInt(u31) - 1
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -945,7 +945,7 @@ pub(crate) fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
 }
 
 /// Size of the shared demand-zero arena backing every `bss_*!` singleton on
-/// unix, which take ≈2.4 MiB. `MAP_NORESERVE` means the unused tail costs only address space.
+/// unix, which take ≈2.3 MiB. `MAP_NORESERVE` means the unused tail costs only address space.
 #[cfg(unix)]
 const BSS_ARENA_SIZE: usize = 4 * 1024 * 1024;
 
@@ -1146,13 +1146,13 @@ impl core::hash::Hasher for IdentityU64Hasher {
         self.0
     }
 }
-type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
+pub type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
 
-pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
+type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
 #[derive(Clone, Copy)]
 pub struct Result {
-    pub hash: HashKeyType,
+    hash: HashKeyType,
     pub index: IndexType,
     pub status: ItemStatus,
 }
@@ -1168,7 +1168,7 @@ impl Result {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Required interface for the `Block` parameter of `OverflowGroup`/`OverflowList`.
-pub trait OverflowBlock {
+trait OverflowBlock {
     /// In-place initialize the `used` counter on possibly-uninitialized storage.
     /// SAFETY: `this` must point to writable, properly-aligned storage of `Self`.
     unsafe fn zero(this: *mut Self);
@@ -1267,9 +1267,9 @@ impl<ValueType, const COUNT: usize> OverflowBlock for OverflowListBlock<ValueTyp
     }
 }
 
-pub struct OverflowList<ValueType, const COUNT: usize> {
+struct OverflowList<ValueType, const COUNT: usize> {
     pub(crate) list: OverflowGroup<OverflowListBlock<ValueType, COUNT>>,
-    pub count: u32,
+    count: u32,
 }
 
 impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
@@ -1310,7 +1310,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn at_index_mut(&mut self, index: IndexType) -> &mut ValueType {
+    fn at_index_mut(&mut self, index: IndexType) -> &mut ValueType {
         let idx = index.index() as usize;
         let block_id = if idx > 0 { idx / COUNT } else { 0 };
 
@@ -1463,11 +1463,11 @@ const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,
-    pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
+    overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
-    pub backing_buf: [MaybeUninit<ValueType>; COUNT],
-    pub backing_buf_used: u16,
+    backing_buf: [MaybeUninit<ValueType>; COUNT],
+    backing_buf_used: u16,
 }
 
 impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
@@ -1492,12 +1492,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             addr_of_mut!((*slot).backing_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
-    }
-
-    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
-    /// responsibility — use `bss_map_inner!` for the canonical singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
     }
 
     // With `IndexMap = HashMap`, Drop frees it; singleton Box drop frees instance.

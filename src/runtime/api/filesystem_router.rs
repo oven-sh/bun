@@ -38,7 +38,10 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         Fs::FileSystem::get()
     }
     #[inline]
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
+    fn read_dir_info_ignore_error(
+        &mut self,
+        path: &[u8],
+    ) -> Option<&'static bun_resolver::DirInfo> {
         self.0.read_dir_info_ignore_error(path)
     }
 }
@@ -63,7 +66,7 @@ fn load_router(
     global: &JSGlobalObject,
     config: RouteConfig,
     load: Load,
-) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
+) -> JsResult<Option<(Router::Router, &'static bun_resolver::DirInfo)>> {
     let transpiler = &VirtualMachine::get().transpiler;
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
@@ -93,7 +96,7 @@ fn load_router(
     let loaded = transpiler.with_mut(|t| {
         router.load_routes(
             &mut log,
-            &root_dir_info,
+            root_dir_info,
             &mut RouterResolver(&mut t.resolver),
             &config_dir,
         )

@@ -583,7 +583,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
-    ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
+    ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
@@ -596,7 +596,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
-    ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
+    ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
@@ -621,7 +621,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
         with_linker: bool,
-    ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
+    ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
         // Process-lifetime arena singleton for the runner's transpiler;
@@ -653,7 +653,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let root_dir_info: bun_resolver::DirInfoRef =
+        let root_dir_info: &'static bun_resolver::DirInfo =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
                     if !opts.log_errors {
@@ -1899,7 +1899,7 @@ impl RunCommand {
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
     pub(crate) fn configure_path_for_run(
-        root_dir_info: bun_resolver::DirInfoRef,
+        root_dir_info: &bun_resolver::DirInfo,
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],

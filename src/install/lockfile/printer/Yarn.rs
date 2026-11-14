@@ -4,6 +4,8 @@ use bun_collections::index_sort;
 use bun_core::strings;
 use bun_semver::String as SemverString;
 
+use crate::integrity;
+use crate::lockfile_real::Lockfile;
 use crate::lockfile_real::package::Alphabetizer;
 use bun_install::Dependency;
 use bun_install::DependencyID;
@@ -11,11 +13,6 @@ use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package;
-// `lockfile.packages.slice()` returns
-// `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
-// column accessors are an extension trait (hand-expanded per Package.rs).
-use crate::integrity;
-use crate::lockfile_real::Lockfile;
 
 pub(crate) fn print(
     lockfile: &Lockfile,
@@ -32,14 +29,14 @@ pub(crate) fn print(
 }
 
 fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
-    let slice = lockfile.packages.slice();
-    let names: &[SemverString] = slice.items_name();
-    let resolved: &[Resolution] = slice.items_resolution();
-    let metas: &[package::Meta] = slice.items_meta();
+    let pkgs = &lockfile.packages;
+    let names: &[SemverString] = pkgs.items_name();
+    let resolved: &[Resolution] = pkgs.items_resolution();
+    let metas: &[package::Meta] = pkgs.items_meta();
     if names.is_empty() {
         return Ok(());
     }
-    let dependency_lists = slice.items_dependencies();
+    let dependency_lists = pkgs.items_dependencies();
     let resolutions_buffer: &[PackageID] = lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = lockfile.buffers.dependencies.as_slice();
 

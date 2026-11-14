@@ -64,7 +64,7 @@ test("describe/test", async () => {
     (fail) this test times out
       ^ this test timed out after 1ms.
     (fail) this test times out with done
-      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the parameters that the test callback function gets no value for
     (pass) addition 1 + 2 = 3
     (pass) addition 2 + 3 = 5
     (pass) addition 3 + 4 = 7
@@ -180,7 +180,7 @@ test("describe/test", async () => {
     (fail) this test times out
       ^ this test timed out after 1ms.
     (fail) this test times out with done
-      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the parameters that the test callback function gets no value for
     (fail) expect.assertions
     (fail) expect.assertions combined with timeout
       ^ this test timed out after 1ms.
@@ -276,6 +276,132 @@ test("describe/test", async () => {
     after-inside-test: afterEach2
     after-inside-test: afterEach3
     after-inside-test: afterAll3"
+    ,
+    }
+  `);
+});
+
+test.concurrent("a timeout before done() is called says which parameters to remove", async () => {
+  const log = `const log = (name, ...args) => console.log(name + ": (" + args.map(arg => typeof arg).join(", ") + ")");`;
+  using dir = tempDir("done-timeout-hint", {
+    // Each callback has more parameters than it gets values for, and never calls done().
+    "bun.test.js": `
+      import { beforeEach, describe, test } from "bun:test";
+      ${log}
+      test("test", (a, b) => log("test", a, b));
+      test.each([[1, 2]])("each row of two values", (a, b, c, d) => log("each row of two values", a, b, c, d));
+      test.each([{ a: 1 }])("each row that is an object", (row, extra) => log("each row that is an object", row, extra));
+      describe("hook", () => {
+        beforeEach((a, b) => log("hook", a, b));
+        test("test", () => {});
+      });
+    `,
+    "node.test.mjs": `
+      import { before, test } from "node:test";
+      ${log}
+      before((a, b) => log("node:test hook", a, b));
+      test("test", () => {});
+    `,
+    // The same callbacks without the parameters that get no value.
+    "removed": {
+      "bun.test.js": `
+        import { beforeEach, describe, test } from "bun:test";
+        ${log}
+        test("test", () => log("test"));
+        test.each([[1, 2]])("each row of two values", (a, b) => log("each row of two values", a, b));
+        test.each([{ a: 1 }])("each row that is an object", row => log("each row that is an object", row));
+        describe("hook", () => {
+          beforeEach(() => log("hook"));
+          test("test", () => {});
+        });
+      `,
+      "node.test.mjs": `
+        import { before, test } from "node:test";
+        ${log}
+        before(a => log("node:test hook", a));
+        test("test", () => {});
+      `,
+    },
+  });
+  const run = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout, dir), stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+  };
+  const [timedOut, nodeTimedOut, removed] = await Promise.all([
+    run("--timeout", "1", "./bun.test.js"),
+    run("--timeout", "1", "./node.test.mjs"),
+    run("./removed/bun.test.js", "./removed/node.test.mjs"),
+  ]);
+  expect(timedOut).toMatchInlineSnapshot(`
+    {
+      "exitCode": 1,
+      "stderr": 
+    "bun.test.js:
+    (fail) test
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the parameters that the test callback function gets no value for
+    (fail) each row of two values
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the parameters that the test callback function gets no value for
+    (fail) each row that is an object
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the parameters that the test callback function gets no value for
+    (fail) hook > test
+      ^ a beforeEach/afterEach hook timed out before its done callback was called. If a done callback was not intended, remove the parameters that the hook callback function gets no value for
+
+     0 pass
+     4 fail
+    Ran 4 tests across 1 file."
+    ,
+      "stdout": 
+    "bun test <version> (<revision>)
+    test: (function, undefined)
+    each row of two values: (number, number, function, undefined)
+    each row that is an object: (object, function)
+    hook: (function, undefined)"
+    ,
+    }
+  `);
+  // The rest of this line names the wrong hook for node:test: https://github.com/oven-sh/bun/issues/42361
+  const nodeHints = nodeTimedOut.stderr
+    .split("\n")
+    .filter(line => line.includes("^ "))
+    .map(line => line.slice(line.indexOf("If a done callback")));
+  expect({ stdout: nodeTimedOut.stdout, hints: nodeHints, exitCode: nodeTimedOut.exitCode }).toEqual({
+    stdout: "bun test <version> (<revision>)\nnode:test hook: (object, function)",
+    hints: [
+      "If a done callback was not intended, remove the parameters that the hook callback function gets no value for",
+    ],
+    exitCode: 1,
+  });
+  expect(removed).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": 
+    "removed/bun.test.js:
+    (pass) test
+    (pass) each row of two values
+    (pass) each row that is an object
+    (pass) hook > test
+
+    removed/node.test.mjs:
+    (pass) test
+
+     5 pass
+     0 fail
+    Ran 5 tests across 2 files."
+    ,
+      "stdout": 
+    "bun test <version> (<revision>)
+    test: ()
+    each row of two values: (number, number)
+    each row that is an object: (object)
+    hook: ()
+    node:test hook: (object)"
     ,
     }
   `);

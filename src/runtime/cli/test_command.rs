@@ -2035,7 +2035,7 @@ impl CommandLineReporter {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
+                        "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the parameters that the test callback function gets no value for<r>\n",
                         test_entry.timeout
                     );
                 }
@@ -2043,7 +2043,7 @@ impl CommandLineReporter {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the parameters that the hook callback function gets no value for<r>\n"
                     );
                 }
             }

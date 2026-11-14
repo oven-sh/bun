@@ -4830,13 +4830,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         feature: StrictModeFeature,
         r: bun_ast::Range,
         detail: &[u8],
-    ) -> Result<(), crate::Error> {
+    ) {
         if self.options.bundle
             && self.current_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
         {
-            self.mark_strict_mode_feature(feature, r, detail)?;
+            // It adds to the log, and nothing in it fails.
+            let _ = self.mark_strict_mode_feature(feature, r, detail);
         }
-        Ok(())
     }
 
     pub(crate) fn mark_strict_mode_feature(

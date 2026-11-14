@@ -1310,8 +1310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         StrictModeFeature::DeleteBareName,
                         js_lexer::range_of_identifier(p.source, e_.value.loc),
                         b"",
-                    )
-                    .expect("unreachable");
+                    );
                 }
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());

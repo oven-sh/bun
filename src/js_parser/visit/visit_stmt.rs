@@ -1414,7 +1414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StrictModeFeature::ReservedWord,
                 js_lexer::range_of_identifier(p.source, data.name.loc),
                 name,
-            )?;
+            );
         }
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
@@ -1753,7 +1753,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 len: 4,
             },
             b"",
-        )?;
+        );
         p.visit_expr(&mut data.value);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)

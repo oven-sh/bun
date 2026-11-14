@@ -272,9 +272,10 @@ enum class Method : uint8_t {
 // The predicate: attached + has size + in viewport + stable for 2 frames
 // + elementFromPoint at center returns the element (not obscured). Returns
 // the center coords as [cx, cy]; throws on timeout.
+// `holds`: a look that could click waits for the next one when an animation is pending at it, at most this many times per call. Two animations that begin one frame apart need 2.
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
-let last;
+let last, holds = 2;
 document.querySelector(sel);
 for (;;) {
   await new Promise(f => requestAnimationFrame(f));
@@ -283,12 +284,16 @@ for (;;) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      const held = [];
-      for (let e = el; e; e = e.parentElement)
-        for (const a of e.getAnimations()) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
+      const held = [], seen = [];
+      try {
+        for (let e = el; e && !seen.includes(e); e = e.assignedSlot || e.parentElement || (e.parentNode !== document && e.parentNode?.host)) {
+          seen.push(e);
+          for (const a of e.getAnimations()) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
+        }
+      } catch {}
       if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height && !last.held.some(([a, t]) => a.playState === "running" && a.currentTime === t)) {
         const hit = document.elementFromPoint(cx, cy);
-        if (hit === el || el.contains(hit)) return [cx, cy];
+        if ((hit === el || el.contains(hit)) && !(held.length && performance.now() < deadline && holds-- > 0)) return [cx, cy];
       }
       last = { l: r.left, t: r.top, w: r.width, h: r.height, held };
     } else last = undefined;

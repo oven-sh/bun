@@ -290,6 +290,37 @@ const dir = String(
           await new Response(transformed).arrayBuffer(); seen("after arrayBuffer()");
           await new Promise(resolve => new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } }).pipeTo(new WritableStream({ write() { seen("sink write"); }, close() { seen("sink close"); resolve(); } })));
         },
+        // A native sink pulls these bodies from the event loop: the server's response, and a fetch() upload.
+        bodyStreams: async seen => {
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          const direct = label => new ReadableStream({ type: "direct", async pull(controller) { seen(label + " pull"); await tick(); seen(label + " pull after await"); controller.write("x"); controller.close(); } });
+          const generator = async function* (label) { seen(label + " next"); yield "x"; await tick(); seen(label + " next after await"); };
+          const server = Bun.serve({
+            port: 0,
+            async fetch(request) {
+              if (request.method === "POST") return new Response(await request.text());
+              return new Response(new URL(request.url).pathname === "/direct" ? direct("served direct stream") : generator("served generator"));
+            },
+          });
+          await (await fetch(server.url + "direct")).text();
+          await (await fetch(server.url + "generator")).text();
+          await (await fetch(server.url, { method: "POST", body: direct("uploaded direct stream"), duplex: "half" })).text();
+          await (await fetch(server.url, { method: "POST", body: generator("uploaded generator"), duplex: "half" })).text();
+          server.stop(true);
+        },
+        // The host's server sends a body that this runner built.
+        hostServedBody: async (seen, env) => {
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          const bodies = {
+            direct: new ReadableStream({ type: "direct", async pull(controller) { seen("direct pull"); await tick(); seen("direct pull after await"); controller.write("x"); controller.close(); } }),
+            generator: new Response((async function* () { seen("generator next"); yield "x"; await tick(); seen("generator next after await"); })()).body,
+          };
+          for (const [name, body] of Object.entries(bodies)) {
+            const path = "/body/" + env.tag + "/" + name;
+            env.offerBody(path, body);
+            await (await fetch("http://127.0.0.1:" + env.httpPort + path)).text();
+          }
+        },
       };
     `,
   }),
@@ -298,6 +329,8 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 let hostHttp: Bun.Server<undefined>;
 let hostHttps: Bun.Server<undefined>;
+// path -> a body that a runner built, for the host's server to send.
+const offeredBodies = new Map<string, ReadableStream>();
 beforeAll(() => {
   hostHttps = Bun.serve({
     port: 0,
@@ -310,6 +343,7 @@ beforeAll(() => {
     fetch(request, server) {
       const { pathname } = new URL(request.url);
       if (pathname === "/ws") return server.upgrade(request) ? undefined : new Response("no", { status: 400 });
+      if (pathname.startsWith("/body/")) return new Response(offeredBodies.get(pathname));
       if (pathname === "/stream")
         return new Response(
           new ReadableStream({
@@ -364,6 +398,7 @@ test("every callback of several graphs and the host, all running at once, finds 
           httpsPort: hostHttps.port,
           ca: tlsCerts.cert,
           bun: bunExe(),
+          offerBody: (path: string, body: ReadableStream) => void offeredBodies.set(path, body),
         };
         if (name === "hostTarget") {
           const labels = [`host listener (dispatched from ${tag})`, `host abort listener (aborted from ${tag})`];

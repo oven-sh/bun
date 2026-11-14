@@ -704,20 +704,8 @@ static void directStreamOnClose(JSC::VM& vm, JSGlobalObject* globalObject, JSRea
     sinkController->end(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     // Only a sink that closed underneath the source (peer abort, write error) cancels it, not its own end()/close().
-    if (source && sinkClosed) {
-        JSObject* cancelFunction = source->cancelFunction();
-        if (!cancelFunction)
-            return;
-        std::optional<StreamAsyncContextScope> asyncContext;
-        if (stream)
-            asyncContext.emplace(globalObject, stream);
-        MarkedArgumentBuffer cancelArgs;
-        cancelArgs.append(reason);
-        JSValue cancelResult = call(globalObject, cancelFunction, getCallData(cancelFunction), source->thisValue(), cancelArgs);
-        RETURN_IF_EXCEPTION(scope, );
-        if (auto* cancelPromise = dynamicDowncast<JSPromise>(cancelResult))
-            markPromiseAsHandled(vm, cancelPromise);
-    }
+    if (source && sinkClosed)
+        RELEASE_AND_RETURN(scope, source->cancelFromSink(globalObject, stream, reason));
 }
 
 // Returns undefined or a promise.
@@ -730,8 +718,7 @@ static JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* 
     stream->m_directSource.clear();
     stream->m_bunMode = BunStreamMode::Default;
 
-    JSObject* pull = source->pullFunction();
-    if (!pull) {
+    if (!source->hasPull()) {
         sinkController->end(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         return jsUndefined();
@@ -753,14 +740,11 @@ static JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* 
     // The sink consumes the stream as a body: it stays locked after directStreamOnClose drops the pump's lock.
     stream->markConsumedAsBody();
 
-    MarkedArgumentBuffer pullArgs;
-    pullArgs.append(sinkController);
-    ASSERT(!pullArgs.hasOverflowed());
-    JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
+    auto* pullPromise = source->pull(globalObject, stream, sinkController);
     RETURN_IF_EXCEPTION(scope, {});
 
     // The owner hears the controller close, not pull() return: a pull() reaction only closes a controller that an async pull() left open.
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise))
+    if (pullPromise)
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), jsUndefined(), sinkController);
     // pull() already called close(error).
     if (JSValue failed = sinkController->m_failReason.get()) {

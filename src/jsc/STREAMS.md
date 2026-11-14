@@ -60,6 +60,16 @@ Everything Bun adds beyond the spec lives beside the spec code and is tagged, no
 Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consumers. Fully
   buffered or native-backed bodies short-circuit; only genuinely streaming JS sources pay
   for a read loop.
+- **Async context** (`JSReadableStream::m_asyncContext`, `StreamAsyncContextScope`). A
+  `ReadableStream` captures the async context when it is constructed: the slot that
+  `AsyncLocalStorage` and `Bun.ModuleGraph` read. A source callback runs in that context
+  under every consumer: `start`, `pull` and `cancel` of an underlying source, and `pull`,
+  `cancel` and the `close()` hook of a direct source, which `JSDirectStreamSource` calls.
+  Node.js runs a source callback in the context of the call that reached it. Bun's native
+  sinks reach the source from the event loop, where no context is current, so Bun restores
+  the construction context. An empty snapshot restores nothing. `ReadableStream.from` does
+  not enter the context for its iterator, and sink and transformer callbacks are not the
+  stream's to scope.
 - **The extern "C" surface** (`WebStreamsExports.cpp`). Every function the Rust runtime
   calls into the streams subsystem (creating/cancelling/draining streams, attaching sinks,
   querying tags) is declared here and only here. The native sinks

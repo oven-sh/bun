@@ -61,6 +61,30 @@ it("files in the encodings XML requires are decoded before parsing", async () =>
   expect((await import("./xml-latin1.xml")).default).toEqual({ doc: { "@lang": "français", "#text": "café" } });
 });
 
+it("a byte order mark that contradicts the declaration is an error, as in XML.parse", async () => {
+  const utf8BomDeclaringLatin1 = Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?><r>café</r>`),
+  ]);
+  using dir = tempDir("xml-bom", {
+    "doc.xml": utf8BomDeclaringLatin1,
+    "entry.mjs": `import doc from "./doc.xml"; export default doc;`,
+  });
+  const message = "Document has a UTF-8 byte-order mark but declares encoding 'ISO-8859-1'";
+  expect(() => Bun.XML.parse(utf8BomDeclaringLatin1)).toThrow(`XML Parse error: ${message}`);
+
+  let error;
+  try {
+    await import(join(String(dir), "doc.xml"));
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.message).toBe(message);
+
+  const build = await Bun.build({ entrypoints: [join(String(dir), "entry.mjs")], throw: false });
+  expect(build.logs.map(log => log.message)).toEqual([message]);
+});
+
 it("a malformed file is a build error with the parser's message and location", async () => {
   let error;
   try {

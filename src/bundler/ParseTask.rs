@@ -973,7 +973,7 @@ pub mod parse_worker {
                         bump,
                         bun_parsers::xml::Options {
                             compact: true,
-                            encoding: bun_parsers::xml::InputEncoding::File,
+                            encoding: bun_parsers::xml::InputEncoding::Bytes,
                         },
                     )?;
                     let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
@@ -1510,7 +1510,9 @@ pub mod parse_worker {
                 // has already deep-copied every additional-file body into its
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
-                let is_carried_unparsed = matches!(
+                // XML is parsed, but its parser reads the byte order mark and the encoding
+                // declaration itself.
+                let reads_bytes_on_disk = matches!(
                     loader,
                     Loader::File
                         | Loader::Wasm
@@ -1519,9 +1521,10 @@ pub mod parse_worker {
                         | Loader::Dataurl
                         | Loader::Sqlite
                         | Loader::SqliteEmbedded
+                        | Loader::Xml
                 );
                 let (path, file) = (file_path.text, contents_file.unwrap_valid());
-                break 'brk match match is_carried_unparsed {
+                break 'brk match match reads_bytes_on_disk {
                     true => fs_cache.read_bytes_into_arena(path, contents_dir, file, bump),
                     false => fs_cache.read_file_with_allocator(
                         path,

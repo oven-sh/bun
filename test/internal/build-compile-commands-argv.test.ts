@@ -67,6 +67,7 @@ describe("shellWords", () => {
   test("an element with several words gives each of them", () => {
     expect(shellWords(["-a -b", "  -c\t"], false)).toEqual(["-a", "-b", "-c"]);
     expect(shellWords(["-a -b"], true)).toEqual(["-a", "-b"]);
+    expect(shellWords(['-a\r\n-b\0"c\r\nd"'], true)).toEqual(["-a", "-b", "c\r\nd"]);
   });
 
   test("a quote that spans two elements keeps them in one word", () => {

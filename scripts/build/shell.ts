@@ -155,7 +155,7 @@ function windowsWords(text: string): string[] {
   let quoted = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (!quoted && (ch === " " || ch === "\t")) {
+    if (!quoted && (ch === " " || ch === "\t" || ch === "\r" || ch === "\n" || ch === "\0")) {
       if (inWord) words.push(word);
       word = "";
       inWord = false;

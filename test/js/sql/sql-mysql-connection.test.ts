@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isASAN, isLinux, isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import {
@@ -861,6 +861,25 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
           keys.map(([key, plain, withBigint]) => [key, ...Array(2).fill(bigint ? withBigint : plain)]),
         );
       });
+    });
+
+    // The server flushes in the middle of a row, so hardly any read ends between two packets.
+    test("a long reply is not kept in memory", async () => {
+      const { stdout, exitCode } = await runScript(`
+        const sql = new Bun.SQL(process.env.MYSQL_URL, { max: 1 });
+        await sql\`SELECT 1\`;
+        const before = process.memoryUsage.rss();
+        // 64 MB on the wire. A row object leaves out the first of two columns with one name.
+        const rows = await sql\`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 128)
+          SELECT CAST(REPEAT('x', 4001) AS BINARY) AS a, 1 AS a FROM n, n AS m\`;
+        console.log(JSON.stringify({ rows: rows.length, grew: process.memoryUsage.rss() - before }));
+        await sql.close();
+      `);
+      const { rows, grew } = JSON.parse(stdout);
+      expect(rows).toBe(128 * 128);
+      expect(grew).toBeLessThan((isASAN ? 40 : 24) * 1024 * 1024);
+      expect(exitCode).toBe(0);
     });
   });
 }

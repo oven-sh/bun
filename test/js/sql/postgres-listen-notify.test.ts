@@ -180,7 +180,7 @@ describe.concurrent("in a subprocess", () => {
     using dir = tempDir("pg-listen-subprocess", {
       "fixture.ts": `
         import { SQL } from "bun";
-        import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgCommandComplete, pgNotificationResponse, pgReadFrontendMessages, pgBackendKeyData } from ${JSON.stringify(wireFrames)};
+        import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgCommandComplete, pgNotificationResponse, pgReadFrontendMessages, pgBackendKeyData, loopbackFence } from ${JSON.stringify(wireFrames)};
         const sockets = new Set();
         const { port, server } = await listeningServer(socket => {
           sockets.add(socket);
@@ -241,6 +241,27 @@ describe.concurrent("in a subprocess", () => {
       setTimeout(() => notifyMany([["ch", "wake"]]), 20).unref();
     `);
     expect(result).toEqual(clean("subscribed\ngot wake\nunlistened\n"));
+  });
+
+  test.each([1, 2])("a listener runs the event loop while part of a message comes in (%p reads)", async reads => {
+    const result = await run(`
+      const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
+      const [first, second] = ["first", "second"].map(payload => pgNotificationResponse(1, "ch", payload));
+      let waited = false;
+      await sql.listen("ch", payload => {
+        console.log(payload);
+        if (waited) return;
+        waited = true;
+        // Bun.build() runs the event loop until an async setup() settles.
+        const setup = () => write(second.subarray(0, 7));
+        Bun.build({ entrypoints: [import.meta.path], target: "bun", plugins: [{ name: "wait", setup }] });
+      });
+      if (${reads} === 2) await write(first.subarray(0, 7));
+      await write(first.subarray(${reads} === 2 ? 7 : 0));
+      await write(second.subarray(7));
+      await sql.close();
+    `);
+    expect(result).toEqual(clean("first\nsecond\n"));
   });
 
   test("a dropped connection keeps the process alive through the backoff and reconnects", async () => {

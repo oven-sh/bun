@@ -2273,20 +2273,21 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         Ok(ret)
     }
 
-    /// Returns true if the entry was removed.
+    /// Returns true if the entry was removed. The slot the key had is not reachable again.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
 
-    /// `remove`, but the slot the key had stays reachable through `parked_index`.
+    /// `remove` that parks the slot for `parked_index`. The key stays: a later call answers true too.
     pub fn invalidate(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
         let key = Self::key_hash(denormalized_key);
-        match self.index.remove(&key) {
+        match self.index.get_mut(&key) {
             Some(index) => {
-                Self::park(&mut self.parked, &self.has_parked, key, index);
+                Self::park(&mut self.parked, &self.has_parked, key, *index);
+                *index = UNASSIGNED;
                 true
             }
             None => false,
@@ -2364,7 +2365,8 @@ mod bss_map_tests {
 
         for round in 1..=100u32 {
             assert!(map.invalidate(b"/a/"));
-            assert!(!map.invalidate(b"/a"));
+            // The key is kept: a second bust, from any thread, answers true.
+            assert!(map.invalidate(b"/a"));
             assert!(map.get(b"/a").is_none());
 
             let mut again = map.get_or_put(b"/a").unwrap();

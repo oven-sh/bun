@@ -7,6 +7,7 @@ import {
   bunExe,
   expectRssDeltaBelow,
   isASAN,
+  isDebug,
   isMacOS,
   isWindows,
   normalizeBunSnapshot,
@@ -576,6 +577,35 @@ it("reload() does not keep the directory listings it drops", async () => {
         Bun.gc(true);
         const before = process.memoryUsage.rss();
         for (let i = 0; i < 60; i++) router.reload();
+        Bun.gc(true);
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      `,
+    ],
+    { release: 5, debug: 6 },
+  );
+});
+
+// Each reload() reads the target of every symlinked route again. The target
+// was appended to the store of names on each read. A long target path makes
+// that growth show with few reloads.
+it.skipIf(isWindows)("reload() does not keep the symlink targets it reads again", async () => {
+  const targets = `${Buffer.alloc(200, "t").toString()}/${Buffer.alloc(200, "u").toString()}`;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 500; i++) files[`${targets}/page-${i}.tsx`] = "export default 1;\n";
+  using dir = tempDir("fsr-reload-symlinks", files);
+  fs.mkdirSync(`${dir}/pages`);
+  for (let i = 0; i < 500; i++) fs.symlinkSync(`${dir}/${targets}/page-${i}.tsx`, `${dir}/pages/page-${i}.tsx`);
+  const reloads = isASAN || isDebug ? 60 : 150;
+  await expectRssDeltaBelow(
+    [
+      "-e",
+      `
+        const router = new Bun.FileSystemRouter({ dir: ${JSON.stringify(`${dir}/pages`)}, style: "nextjs" });
+        for (let i = 0; i < 5; i++) router.reload();
+        if (router.routes["/page-7"] !== ${JSON.stringify(`${dir}/${targets}/page-7.tsx`)}) throw new Error(router.routes["/page-7"]);
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < ${reloads}; i++) router.reload();
         Bun.gc(true);
         console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
       `,

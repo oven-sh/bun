@@ -6665,12 +6665,9 @@ impl<'a> Resolver<'a> {
                             )
                         {
                             // this might leak a little i'm not sure
-                            symlink = lookup
-                                .entry()
-                                .set_derived_symlink(joined, |joined| {
-                                    self.fs_ref().dirname_store.append_slice(joined)
-                                })
-                                .expect("unreachable");
+                            symlink = lookup.entry().set_derived_symlink(joined, |joined| {
+                                self.fs_ref().dirname_store.append_slice(joined)
+                            })?;
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();

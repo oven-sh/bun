@@ -90,11 +90,12 @@ impl strings::Appender for FilenameStoreAppender {
 /// to `RealFS::kind`.
 pub trait EntryKindResolver {
     /// Runs with the entry's `mutex` held, so it must not ask for that entry's kind or symlink.
+    /// `previous` is the entry's cache: its descriptor and an unchanged symlink target are reused.
     fn resolve_kind(
         &self,
         dir: &[u8],
         base: &[u8],
-        existing_fd: Fd,
+        previous: EntryCache,
         store_fd: bool,
     ) -> crate::CrateResult<EntryCache>;
 }
@@ -118,6 +119,14 @@ pub struct EntryCache {
     pub(crate) kind: EntryKind,
     /// `symlink` is not the target of a symlink: `Entry::set_derived_symlink` stored it.
     pub(crate) symlink_is_derived: bool,
+}
+
+impl EntryCache {
+    /// The real path of the target, when the entry was a symlink at the last stat.
+    #[inline]
+    pub fn symlink_target(&self) -> Option<Interned> {
+        (!self.symlink.is_empty() && !self.symlink_is_derived).then_some(self.symlink)
+    }
 }
 
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
@@ -223,13 +232,11 @@ impl Entry {
         p
     }
 
-    /// Whether this entry, and the path memoized for it, stand for `name` as listed in `dir`.
-    fn is_named(&self, dir: &[u8], name: &[u8], is_symlink: bool) -> bool {
+    /// Whether this entry, and the path memoized for it, spell `name` as listed in `dir`.
+    fn is_named(&self, dir: &[u8], name: &[u8]) -> bool {
         let memo = self.abs_path().as_bytes();
         self.base() == name
-            && (memo.is_empty()
-                // The router memoizes where a name leads. A symlink can lead somewhere else now.
-                || (!is_symlink && memo.ends_with(name) && is_in_dir(memo, dir, name.len())))
+            && (memo.is_empty() || (memo.ends_with(name) && is_in_dir(memo, dir, name.len())))
     }
 
     /// Stat-on-first-use.
@@ -244,7 +251,7 @@ impl Entry {
             // Relaxed: every write happens under `mutex`, which we hold.
             if self.need_stat.load(Ordering::Relaxed) {
                 // This is technically incorrect, but we are choosing not to handle errors here
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
@@ -274,7 +281,7 @@ impl Entry {
             if self.need_stat.load(Ordering::Relaxed) {
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
@@ -486,7 +493,7 @@ impl DirEntry {
                     && let existing = unsafe { &*existing_ptr }
                     && let _guard = existing.mutex.lock_guard()
                     // The match ignores case: an entry for another spelling is replaced below.
-                    && existing.is_named(self.dir, name_slice, entry.kind == DK::SymLink)
+                    && existing.is_named(self.dir, name_slice)
                 {
                     // `dir` stays: `self` has the `dir` of the `DirEntry` that owns `map`.
 

@@ -823,8 +823,8 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
-            let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
+            // `load` stat-ed the entry: a symlink's real path is in the stat cache, a file's in the memo.
+            let real_path = || {
                 let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
@@ -901,6 +901,10 @@ impl Route {
                         .append(_abs)
                         .expect("unreachable"),
                 ))
+            };
+            let Ok(entry_abs_path) = (match entry.cache().symlink_target() {
+                Some(target) => Ok(target),
+                None => entry.abs_path_or_try_fill(real_path),
             }) else {
                 return None;
             };

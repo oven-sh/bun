@@ -1025,13 +1025,25 @@ pub mod fs {
 
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        /// With `keep_listing`, an error other than `ENOENT` leaves the parked listing and is not cached.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            keep_listing: bool,
         ) -> crate::CrateResult<&'static EntriesOption> {
+            let is_enoent = err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT);
+            if keep_listing && !is_enoent {
+                self.entries.invalidate(dir);
+                return Ok(temp_entries_option_write(EntriesOption::Err(
+                    dir_entry::Err {
+                        original_err: err,
+                        canonical_error: err,
+                    },
+                )));
+            }
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
-            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            if is_enoent {
                 self.entries.mark_not_found(get_or_put_result);
                 return Ok(temp_entries_option_write(EntriesOption::Err(
                     dir_entry::Err {
@@ -1039,6 +1051,13 @@ pub mod fs {
                         canonical_error: err,
                     },
                 )));
+            }
+            // A busted path whose slot holds an error takes that slot again.
+            if !get_or_put_result.has_checked_if_exists()
+                && let Some(parked) = self.entries.parked_index(&get_or_put_result)
+                && let Some(EntriesOption::Err(_)) = self.entries.at_index(parked)
+            {
+                get_or_put_result.index = parked;
             }
             let opt = self.entries.put(
                 &mut get_or_put_result,
@@ -1120,7 +1139,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, in_place.is_some()),
                 },
             };
 
@@ -1162,7 +1181,7 @@ pub mod fs {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
                     }
-                    return self.read_directory_error(dir, err);
+                    return self.read_directory_error(dir, err, in_place.is_some());
                 }
             };
 
@@ -1194,9 +1213,7 @@ pub mod fs {
             Ok(unsafe { &*out })
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
-        /// The next read refills the same slot: see `adopt_parked_listing`.
+        /// Evicts `file_path` from the directory-entry cache. The next read refills the same slot.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
             // BSSMap singleton and `invalidate` mutates it; callers (transpiler /
@@ -1230,12 +1247,23 @@ pub mod fs {
             &self,
             dir_: &[u8],
             base: &[u8],
-            existing_fd: Fd,
+            previous: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
+
+            let existing_fd = previous.fd;
+            // The store is append-only: a target that did not change keeps its bytes.
+            let intern_target = |target: &[u8]| -> crate::CrateResult<Interned> {
+                if !previous.symlink_is_derived && previous.symlink.as_bytes() == target {
+                    return Ok(previous.symlink);
+                }
+                Ok(Interned::from_static(
+                    FilenameStore::instance().append_slice(target)?,
+                ))
+            };
 
             let mut cache = EntryCache {
                 kind: EntryKind::File,
@@ -1339,8 +1367,7 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink = intern_target(real)?;
                 }
                 return Ok(cache);
             }
@@ -1409,8 +1436,7 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    cache.symlink = intern_target(symlink)?;
                 }
 
                 Ok(cache)
@@ -1433,10 +1459,10 @@ pub mod fs {
             &self,
             dir: &[u8],
             base: &[u8],
-            existing_fd: bun_sys::Fd,
+            previous: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            self.kind(dir, base, existing_fd, store_fd)
+            self.kind(dir, base, previous, store_fd)
         }
     }
 
@@ -1498,7 +1524,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            return self.read_directory_error(dir, err.into(), true).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1516,7 +1542,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            return self.read_directory_error(dir, err, true).ok();
                         }
                     }
                 }

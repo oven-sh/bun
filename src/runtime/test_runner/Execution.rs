@@ -40,14 +40,14 @@ use core::ptr::NonNull;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
-use bun_core::scoped_log;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_core::scoped_log;
 
-use super::bun_test::{
-    AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult, group_begin,
-};
 use super::debug::group as group_log; // bun_test.debug.group
+use super::bun_test::{
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
+    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+};
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
 use super::test_context_around::{self, AroundHook};
@@ -113,11 +113,7 @@ pub(crate) struct ConcurrentGroup {
 }
 
 impl ConcurrentGroup {
-    pub(crate) fn init(
-        sequence_start: usize,
-        sequence_end: usize,
-        next_index: usize,
-    ) -> ConcurrentGroup {
+    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
         ConcurrentGroup {
             sequence_start,
             sequence_end,
@@ -129,11 +125,7 @@ impl ConcurrentGroup {
         }
     }
 
-    pub(crate) fn try_extend(
-        &mut self,
-        next_sequence_start: usize,
-        next_sequence_end: usize,
-    ) -> bool {
+    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
         if self.sequence_end != next_sequence_start {
             return false;
         }
@@ -145,6 +137,7 @@ impl ConcurrentGroup {
     pub(crate) fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
         &execution.sequences[self.sequence_start..self.sequence_end]
     }
+
 
     /// Immutable view of [`Self::sequences`] for read-only callers (e.g. debug dumps).
     pub(crate) fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
@@ -245,10 +238,7 @@ impl ExecutionSequence {
         let context = TestContext::create(global, buntest, group_index, sequence_index);
         self.context = Some(Strong::create(context, global));
         // SAFETY: arena-owned entry
-        if let Some(fixtures) = self
-            .test_entry
-            .and_then(|test| unsafe { test.as_ref() }.fixtures.as_ref())
-        {
+        if let Some(fixtures) = self.test_entry.and_then(|test| unsafe { test.as_ref() }.fixtures.as_ref()) {
             test_context::js::fixtures_set_cached(context, global, fixtures.get());
         }
         context
@@ -308,10 +298,7 @@ impl ExecutionSequence {
             "skip"
         } else if self.attempt_failed() {
             "fail"
-        } else if self
-            .active_entry
-            .is_some_and(|entry| Some(entry) == self.test_entry || self.test_follows(entry))
-        {
+        } else if self.active_entry.is_some_and(|entry| Some(entry) == self.test_entry || self.test_follows(entry)) {
             "run"
         } else {
             "pass"
@@ -331,19 +318,13 @@ impl ExecutionSequence {
         }
         self.check_expect_assertions();
         self.expect_assertions = ExpectAssertions::NotSet;
-        self.result = if self.result.is_fail() {
-            Result::Pass
-        } else {
-            Result::FailBecauseFailsTestPassed
-        };
+        self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
     fn check_expect_assertions(&mut self) {
         let failure = match self.expect_assertions {
             ExpectAssertions::NotSet => return,
-            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => {
-                Result::FailBecauseExpectedHasAssertions
-            }
+            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Result::FailBecauseExpectedHasAssertions,
             ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
                 Result::FailBecauseExpectedAssertionCount
             }
@@ -517,35 +498,23 @@ impl Execution {
                     group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
                     ));
-                    return Ok(StepResult::Waiting {
-                        timeout: Timespec::EPOCH,
-                    });
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 };
                 let sequence_index = match data {
-                    RefDataValue::Execution {
-                        entry_data: Some(ed),
-                        ..
-                    } => ed.sequence_index,
+                    RefDataValue::Execution { entry_data: Some(ed), .. } => ed.sequence_index,
                     // get_current_and_valid_execution_sequence returned Some ⇒ data is Execution with entry_data
                     _ => unreachable!(),
                 };
 
                 debug_assert!(sequence.active_entry.is_some());
                 if sequence.waits_for_matchers() {
-                    return Ok(StepResult::Waiting {
-                        timeout: Timespec::EPOCH,
-                    });
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 let group_ptr = NonNull::from(group);
                 Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
 
-                let sequence_result = step_sequence(
-                    buntest_strong,
-                    global_this,
-                    group_ptr,
-                    sequence_index,
-                    &mut now,
-                )?;
+                let sequence_result =
+                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
@@ -586,9 +555,7 @@ impl Execution {
                 if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
                     return step_group(buntest_strong, global_this, &mut now);
                 }
-                return Ok(StepResult::Waiting {
-                    timeout: Timespec::EPOCH,
-                });
+                return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
             }
         }
     }
@@ -617,11 +584,7 @@ impl Execution {
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
 
-        let RefDataValue::Execution {
-            group_index,
-            entry_data,
-        } = data
-        else {
+        let RefDataValue::Execution { group_index, entry_data } = data else {
             group_log::log(format_args!("runOneCompleted: the data is not execution"));
             return None;
         };
@@ -635,24 +598,18 @@ impl Execution {
         // `self.groups`, so equality is exactly `group_index == self.group_index`. Comparing the
         // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
         if self.group_index >= self.groups.len() || *group_index != self.group_index {
-            group_log::log(format_args!(
-                "runOneCompleted: the data is for a different group"
-            ));
+            group_log::log(format_args!("runOneCompleted: the data is for a different group"));
             return None;
         }
         if *group_index >= self.groups.len() {
-            group_log::log(format_args!(
-                "runOneCompleted: the data did not know the group"
-            ));
+            group_log::log(format_args!("runOneCompleted: the data did not know the group"));
             return None;
         }
         // Disjoint split-borrow of `self.groups` and `self.sequences`.
         let group = &mut self.groups[*group_index];
         let seq_abs = group.sequence_start + entry_data.sequence_index;
         if seq_abs >= group.sequence_end {
-            group_log::log(format_args!(
-                "runOneCompleted: the data did not know the sequence"
-            ));
+            group_log::log(format_args!("runOneCompleted: the data did not know the sequence"));
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
@@ -672,9 +629,7 @@ impl Execution {
             ));
             return None;
         }
-        group_log::log(format_args!(
-            "runOneCompleted: the data is valid and current"
-        ));
+        group_log::log(format_args!("runOneCompleted: the data is valid and current"));
         Some((sequence, group))
     }
 
@@ -748,13 +703,10 @@ impl Execution {
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 && sequence.result != Result::Skip
-            {
+            if test_passed && sequence.remaining_repeat_count > 0 && sequence.result != Result::Skip {
                 sequence.remaining_repeat_count -= 1;
                 // SAFETY: arena-owned entry
-                sequence.remaining_retry_count = sequence
-                    .test_entry
-                    .map_or(0, |test| unsafe { test.as_ref() }.retry_count);
+                sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
                 sequence.earlier_failures.clear();
                 Execution::reset_sequence(sequence);
                 return;
@@ -1051,11 +1003,7 @@ fn step_group(
 
     loop {
         let Some(group) = this.active_group() else {
-            return Ok(ExpectDeferred::step_file_end(
-                buntest_strong,
-                global_this,
-                now,
-            ));
+            return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
         if !group.executing {
             Execution::on_group_started(global_this);
@@ -1083,13 +1031,7 @@ fn step_group(
                 .filter_map(|sequence| sequence.test_entry)
                 // SAFETY: arena-owned entry
                 .map(|entry| unsafe { entry.as_ref() }.timespec)
-                .fold(Timespec::EPOCH, |latest, timespec| {
-                    if timespec.order(&latest).is_gt() {
-                        timespec
-                    } else {
-                        latest
-                    }
-                });
+                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
             if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
                 return Ok(StepResult::Waiting { timeout });
             }
@@ -1100,11 +1042,8 @@ fn step_group(
         Execution::on_group_completed(global_this);
 
         // if there is one sequence and it failed, skip to the next group
-        let (start, end, failure_skip_to) = (
-            group.sequence_start,
-            group.sequence_end,
-            group.failure_skip_to,
-        );
+        let (start, end, failure_skip_to) =
+            (group.sequence_start, group.sequence_end, group.failure_skip_to);
         let all_failed = 'blk: {
             for sequence in this.sequences[start..end].iter() {
                 if !sequence.result.is_fail() {
@@ -1120,9 +1059,7 @@ fn step_group(
             ));
             this.group_index = failure_skip_to;
         } else {
-            group_log::log(format_args!(
-                "stepGroup: not all sequences failed, advancing to next group"
-            ));
+            group_log::log(format_args!("stepGroup: not all sequences failed, advancing to next group"));
             this.group_index += 1;
         }
     }
@@ -1145,10 +1082,7 @@ fn step_group_one(
     let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
         // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
         let runner = &unsafe { reporter.as_ref() }.jest;
-        runner
-            .vi_config
-            .max_concurrency
-            .unwrap_or(runner.max_concurrency) as usize
+        runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
     } else {
         debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
         20
@@ -1194,9 +1128,7 @@ fn report_around_timeout(
         return Ok(());
     };
     let error = around.timeout_error(global_this, phase, entry.timeout)?;
-    buntest_strong
-        .get()
-        .on_uncaught_exception(global_this, Some(error), false, data);
+    buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
     Ok(())
 }
 
@@ -1216,7 +1148,8 @@ fn step_sequence(
     now: &mut Timespec,
 ) -> JsResult<AdvanceSequenceStatus> {
     loop {
-        if let Some(r) = step_sequence_one(buntest_strong, global_this, group, sequence_index, now)?
+        if let Some(r) =
+            step_sequence_one(buntest_strong, global_this, group, sequence_index, now)?
         {
             return Ok(r);
         }
@@ -1269,10 +1202,7 @@ fn step_sequence_one(
                 buntest_strong,
                 global_this,
                 active_entry,
-                &RefDataValue::Execution {
-                    group_index: this.group_index,
-                    entry_data: Some(entry_data),
-                },
+                &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
             )?;
             Execution::advance_sequence(buntest_ptr, sequence, group);
             return Ok(None); // run again
@@ -1314,21 +1244,13 @@ fn step_sequence_one(
             group_index: this.group_index,
             entry_data: Some(entry_data),
         };
-        group_log::log(format_args!(
-            "runSequence queued callback: {}",
-            callback_data
-        ));
+        group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         if sequence.test_entry.is_some()
             && (next_item.calling.is_vitest()
                 || (Some(next_item_ptr) == sequence.first_entry && sequence.has_vitest_entry()))
         {
-            sequence.context(
-                global_this,
-                buntest_strong,
-                this.group_index,
-                sequence_index,
-            );
+            sequence.context(global_this, buntest_strong, this.group_index, sequence_index);
         }
         let context = sequence.context.as_ref().map(Strong::get);
         if let Some(context) = context {
@@ -1342,9 +1264,7 @@ fn step_sequence_one(
             }
             (Calling::Vitest { context: true }, None, Some(scope)) => {
                 args[0] = match &next_item.fixtures {
-                    Some(fixtures) => {
-                        TestFixtures::suite_hook_context(fixtures.get(), global_this)?
-                    }
+                    Some(fixtures) => TestFixtures::suite_hook_context(fixtures.get(), global_this)?,
                     None => JSValue::create_empty_object(global_this, 0),
                 };
                 args[1] = test_context::suite_task(global_this, buntest_strong.get(), scope)?;
@@ -1355,39 +1275,19 @@ fn step_sequence_one(
 
         let (fixtures, fixtures_scope) = match (context, sequence.test_entry) {
             // SAFETY: arena-owned entry
-            (Some(context), Some(test)) => (
-                test_context::js::fixtures_get_cached(context),
-                unsafe { test.as_ref() }.base.parent,
-            ),
-            _ => (
-                next_item.fixtures.as_ref().map(Strong::get),
-                next_item.base.parent,
-            ),
+            (Some(context), Some(test)) => (test_context::js::fixtures_get_cached(context), unsafe { test.as_ref() }.base.parent),
+            _ => (next_item.fixtures.as_ref().map(Strong::get), next_item.base.parent),
         };
         if let Some(fixtures) = fixtures
             && let Some(parameter) = &next_item.parameter
         {
             // An around hook's first parameter is `runTest` or `runSuite`.
-            let parameter = parameter.get_or_init(|| {
-                ContextParameter::of(cb.get(), usize::from(next_item.around.is_some()))
-            });
-            let into = context
-                .or_else(|| args.first().copied())
-                .unwrap_or(JSValue::UNDEFINED);
-            match TestFixtures::next(
-                fixtures,
-                global_this,
-                into,
-                fixtures_scope,
-                parameter,
-                next_item.timeout,
-            ) {
+            let parameter = parameter.get_or_init(|| ContextParameter::of(cb.get(), usize::from(next_item.around.is_some())));
+            let into = context.or_else(|| args.first().copied()).unwrap_or(JSValue::UNDEFINED);
+            match TestFixtures::next(fixtures, global_this, into, fixtures_scope, parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}
                 Ok(NextFixture::SetUp(set_up)) => {
-                    let set_up =
-                        buntest_strong
-                            .get()
-                            .create_vitest_entry(set_up, next_item.timeout, false);
+                    let set_up = buntest_strong.get().create_vitest_entry(set_up, next_item.timeout, false);
                     // SAFETY: just allocated.
                     unsafe {
                         (*set_up.as_ptr()).next = Some(next_item_ptr.as_ptr());
@@ -1399,12 +1299,7 @@ fn step_sequence_one(
                 }
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
-                    buntest_strong.get().on_uncaught_exception(
-                        global_this,
-                        Some(thrown),
-                        false,
-                        &callback_data,
-                    );
+                    buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
                     Execution::advance_sequence(buntest_ptr, sequence, group);
                     return Ok(None); // run again
                 }
@@ -1412,10 +1307,7 @@ fn step_sequence_one(
         }
 
         // SAFETY: arena-owned entry
-        let scope = sequence.test_entry.map_or(
-            next_item.base.parent,
-            |test| unsafe { test.as_ref() }.base.parent,
-        );
+        let scope = sequence.test_entry.map_or(next_item.base.parent, |test| unsafe { test.as_ref() }.base.parent);
         let mut callback = cb.get();
         if let Some(captured) = test_context_around::captured_async_context(context, scope) {
             callback = test_context_around::in_async_context(global_this, captured, callback)?;
@@ -1424,19 +1316,11 @@ fn step_sequence_one(
         let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {
             let suite = match (args.get(1), scope) {
                 (Some(&suite), _) => suite,
-                (None, Some(scope)) => {
-                    test_context::suite_task(global_this, buntest_strong.get(), scope)?
-                }
+                (None, Some(scope)) => test_context::suite_task(global_this, buntest_strong.get(), scope)?,
                 (None, None) => JSValue::UNDEFINED,
             };
             set_up_args = [
-                AroundHook::create(
-                    global_this,
-                    buntest_strong,
-                    callback_data,
-                    around,
-                    next_item.timeout,
-                ),
+                AroundHook::create(global_this, buntest_strong, callback_data, around, next_item.timeout),
                 callback,
                 args.first().copied().unwrap_or(JSValue::UNDEFINED),
                 suite,
@@ -1449,10 +1333,7 @@ fn step_sequence_one(
 
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
-        global_this
-            .bun_vm()
-            .is_running_vitest_entry
-            .set(next_item.calling.is_vitest());
+        global_this.bun_vm().is_running_vitest_entry.set(next_item.calling.is_vitest());
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
@@ -1507,7 +1388,9 @@ fn step_sequence_one(
                 group_log::log(format_args!(
                     "runSequence: no callback for sequence_index {} (entry_index {:x})",
                     sequence_index,
-                    sequence.active_entry.map_or(0, |p| p.as_ptr() as usize)
+                    sequence
+                        .active_entry
+                        .map_or(0, |p| p.as_ptr() as usize)
                 ));
                 // A `DescribeScope::teardown_slot` whose hook returned no function, or `BunTest::file_end`.
                 debug_assert!(sequence.test_entry.is_none());

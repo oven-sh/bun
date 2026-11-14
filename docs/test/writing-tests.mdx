@@ -470,7 +470,7 @@ test("responds", async ({ url }) => {
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `[fixture, { auto: true }]`        | Sets up the fixture for every test, even tests that don't destructure it                                 |
 | `[fixture, { scope: "file" }]`     | Sets up the fixture once, for the first test that needs it, and tears it down after the file's last test |
-| `test.override({ name: fixture })` | Replaces fixtures in the `describe` block it's called in                                                 |
+| `test.override({ name: fixture })` | Replaces fixtures in the `describe` block it's called in, or in the file when called outside one         |
 | `test.beforeAll(({ name }) => {})` | `beforeAll`, `afterAll` and `aroundAll` hooks that receive the `scope: "file"` fixtures                  |
 
 ### Test Context

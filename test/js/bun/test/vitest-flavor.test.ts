@@ -5025,6 +5025,231 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
+  for (const module of ["vitest", "bun:test"]) {
+    test(`extend() copies the top-level override() calls made before it, from "${module}"`, async () => {
+      const { log, exitCode } = await runTests({
+        "a.test.js": `
+          import { test as base, describe } from "${module}";
+          const parent = base.extend({ a: async ({}, use) => use("a"), c: "c", dependent: async ({ a }, use) => use("dependent(" + a + ")") });
+          const before = parent.extend({ b: "b" });
+          parent.override({ a: async ({ a }, use) => use(a + "+top") });
+          const first = parent.extend({ a: async ({ a }, use) => use(a + "+child") });
+          parent.scoped({ c: "c of top", added: "added" });
+          const second = parent.override("a", ({ a }) => a + "+top again").extend("needsAdded", ({ added }) => "needs(" + added + ")");
+          describe("block", () => {
+            parent.override({ c: "c of block" });
+            const inBlock = parent.extend({ e: "e" });
+            before.override({ b: "b of block" });
+            const ofBlockOnly = before.extend({ e: "e" });
+            parent("parent in block", ({ a, c }) => console.log("parent in block:", a, c));
+            inBlock("made in block", ({ a, c, e }) => console.log("made in block:", a, c, e));
+            ofBlockOnly("made in block, parent overridden only there", ({ b, e }) => console.log("made in block, parent overridden only there:", b, e));
+          });
+          first.override({ c: "c of first" });
+          const grandchild = first.extend({ g: "g" });
+          parent("parent", ({ a, c, added, dependent }) => console.log("parent:", a, c, added, dependent));
+          before("made before", ({ a, c, added, b }) => console.log("made before:", a, c, added, b));
+          first("made after one", ({ a, c, added, dependent }) => console.log("made after one:", a, c, added, dependent));
+          second("made after all", ({ a, c, needsAdded }) => console.log("made after all:", a, c, needsAdded));
+          grandchild("grandchild", ({ a, c, g }) => console.log("grandchild:", a, c, g));
+          // Vitest accepts this call. Here a test that is made while the tests run copies no override of the file.
+          parent("inside a test", () => {
+            try { parent.extend({ z: async ({ added }, use) => use(added) }); } catch (error) { console.log("inside a test:", error.message); }
+          });
+        `,
+      });
+      expect({ log, exitCode }).toEqual({
+        log: [
+          "parent in block: a+top+top again c of block",
+          "made in block: a+top+top again c of top e",
+          "made in block, parent overridden only there: b e",
+          "parent: a+top+top again c of top added dependent(a+top+top again)",
+          "made before: a c undefined b",
+          "made after one: a+top+child c of first undefined dependent(a+top+child)",
+          "made after all: a+top+top again c of top needs(added)",
+          "grandchild: a+top+child c of first g",
+          `inside a test: test.extend(): fixture "z" depends on "added", which is not a fixture`,
+        ],
+        exitCode: 0,
+      });
+    });
+  }
+
+  test("extend() after a top-level override() of a file-scoped or auto fixture sets up the overriding one", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        const fixture = (name, options) => [async ({}, use) => { console.log(name, "setup"); await use(name); console.log(name, "teardown"); }, options];
+        const parent = base.extend({ perFile: fixture("perFile", { scope: "file" }), auto: fixture("auto", { auto: true }) });
+        parent.override({ perFile: fixture("overriding perFile", { scope: "file" }), auto: fixture("overriding auto", { auto: true }) });
+        const child = parent.extend({});
+        child.beforeAll(({ perFile }) => console.log("beforeAll:", perFile));
+        child.afterAll(({ perFile }) => console.log("afterAll:", perFile));
+        child("child", ({ perFile }) => console.log("child:", perFile));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "overriding perFile setup",
+        "beforeAll: overriding perFile",
+        "overriding auto setup",
+        "child: overriding perFile",
+        "overriding auto teardown",
+        "afterAll: overriding perFile",
+        "overriding perFile teardown",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  for (const args of [[], ["--isolate"], ["--rerun-each=2"]]) {
+    test(`extend() copies a preload's override() and only the running file's ${args}`.trim(), async () => {
+      const files = {
+        "helper.js": `
+          import { test as base } from "vitest";
+          export const test = base.extend({ value: "default", other: "default" });
+        `,
+        "preload.js": `
+          import { test } from "./helper.js";
+          test.override({ other: "of the preload" });
+        `,
+        "a.test.js": `
+          import { test } from "./helper.js";
+          test.override({ value: "of a", other: async ({ other }, use) => use(other + ", then of a") });
+          test.extend({})("a", ({ value, other }) => console.log("a:", value, other));
+        `,
+        "b.test.js": `
+          import { test } from "./helper.js";
+          test.extend({})("b", ({ value, other }) => console.log("b:", value, other));
+        `,
+      };
+      const { log, exitCode } = await runTests(files, [
+        "--preload=./preload.js",
+        ...args,
+        "./a.test.js",
+        "./b.test.js",
+      ]);
+      const [a, b] = ["a: of a of the preload, then of a", "b: default of the preload"];
+      expect({ log, exitCode }).toEqual({ log: args.includes("--rerun-each=2") ? [a, a, b, b] : [a, b], exitCode: 0 });
+    });
+  }
+
+  // The child is as in Vitest. The parent is Bun's own: shared.js runs once, so its override() ends with the first run that
+  // imports it. In Vitest the parent has the override in every file.
+  const runOfA = (parent: string) => ["a parent: " + parent, "a child: overridden dependent(overridden)"];
+  const runOfB = (parent: string) => ["b parent: " + parent, "b child: overridden dependent(overridden)"];
+  for (const [args, expected] of [
+    [[], [...runOfA("overridden"), ...runOfB("default")]],
+    [["--isolate"], [...runOfA("overridden"), ...runOfB("overridden")]],
+    [["--rerun-each=2"], [...runOfA("overridden"), ...runOfA("default"), ...runOfB("default"), ...runOfB("default")]],
+  ] as const) {
+    test(`a shared module's extend() keeps the module's earlier override() in every file ${args}`.trim(), async () => {
+      const files = {
+        "shared.js": `
+          import { test as base } from "vitest";
+          export const parent = base.extend({ value: "default" });
+          parent.override({ value: "overridden" });
+          export const test = parent.extend({ dependent: async ({ value }, use) => use("dependent(" + value + ")") });
+        `,
+        "a.test.js": `
+          import { parent, test } from "./shared.js";
+          parent("a parent", ({ value }) => console.log("a parent:", value));
+          test("a", ({ value, dependent }) => console.log("a child:", value, dependent));
+        `,
+        "b.test.js": `
+          import { parent, test } from "./shared.js";
+          parent("b parent", ({ value }) => console.log("b parent:", value));
+          test("b", ({ value, dependent }) => console.log("b child:", value, dependent));
+        `,
+      };
+      const { log, exitCode } = await runTests(files, [...args, "./a.test.js", "./b.test.js"]);
+      expect({ log, exitCode }).toEqual({ log: [...expected], exitCode: 0 });
+    });
+  }
+
+  // Bun's own values. child.js runs once, so its test keeps the override of the file that was collecting then, and runs that
+  // file's fixture after the file has ended. The parent follows the rule that a file's override ends with the file.
+  // In Vitest, b's child has what b's parent has: "default", or "of a, open" with --no-isolate.
+  const carried = ["b parent: default", "b child: of a, closed"];
+  for (const [flag, expected] of [
+    ["--no-isolate", ["a child: of a, open", ...carried]],
+    ["--isolate", ["a child: of a, open", "b parent: default", "b child: default"]],
+    ["--rerun-each=2", ["a child: of a, open", "a child: of a, closed", ...carried, ...carried]],
+  ] as const) {
+    test(`a module that calls extend() once keeps what it copied from a file's override(): ${flag}`, async () => {
+      const files = {
+        "helper.js": `
+          import { test as base } from "vitest";
+          export const parent = base.extend({ db: [async ({}, use) => use("default"), { scope: "file" }] });
+        `,
+        "child.js": `
+          import { parent } from "./helper.js";
+          export const child = parent.extend({});
+        `,
+        "a.test.js": `
+          import { afterAll } from "vitest";
+          import { parent } from "./helper.js";
+          let open = true;
+          afterAll(() => { open = false; });
+          parent.override({ db: [async ({}, use) => use("of a, " + (open ? "open" : "closed")), { scope: "file" }] });
+          const { child } = await import("./child.js");
+          child("a child", ({ db }) => console.log("a child:", db));
+        `,
+        "b.test.js": `
+          import { parent } from "./helper.js";
+          import { child } from "./child.js";
+          parent("b parent", ({ db }) => console.log("b parent:", db));
+          child("b child", ({ db }) => console.log("b child:", db));
+        `,
+      };
+      const { log, exitCode } = await runTests(files, [flag, "./a.test.js", "./b.test.js"]);
+      expect({ log, exitCode }).toEqual({ log: [...expected], exitCode: 0 });
+    });
+  }
+
+  test("extend() in a preload's beforeAll() copies no override() of the file that runs then", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "preload.js": `
+          import { test as base, beforeAll } from "vitest";
+          globalThis.parent = base.extend({ value: "default" });
+          beforeAll(() => { globalThis.child = parent.extend({}); });
+        `,
+        "a.test.js": `
+          parent.override({ value: "of a" });
+          parent("a", ({ value }) => console.log("a:", value));
+        `,
+        "b.test.js": `
+          child("b child", ({ value }) => console.log("b child:", value));
+        `,
+      },
+      ["--preload=./preload.js", "./a.test.js", "./b.test.js"],
+    );
+    expect({ log, exitCode }).toEqual({ log: ["a: of a", "b child: default"], exitCode: 0 });
+  });
+
+  test("a preload's beforeAll() that runs once gets the preload's fixture, not the first file's top-level override()", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "preload.js": `
+          import { test } from "vitest";
+          globalThis.store = new Set();
+          globalThis.extended = test.extend({ db: [async ({}, use) => use({ name: "real", store }), { scope: "file" }] });
+          extended.beforeAll(({ db }) => { db.store.add("seed"); console.log("seeded:", db.name); });
+        `,
+        "a.test.js": `
+          extended.override({ db: [async ({}, use) => use({ name: "fake of a", store: new Set() }), { scope: "file" }] });
+          extended("a", ({ db }) => console.log("a:", db.name, db.store.has("seed")));
+        `,
+        "b.test.js": `
+          extended("b", ({ db }) => console.log("b:", db.name, db.store.has("seed")));
+        `,
+      },
+      ["--preload=./preload.js", "./a.test.js", "./b.test.js"],
+    );
+    expect({ log, exitCode }).toEqual({ log: ["seeded: real", "a: fake of a false", "b: real true"], exitCode: 0 });
+  });
+
   test("a callback doesn't get the fixtures of an earlier one that was garbage collected", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

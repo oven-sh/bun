@@ -879,6 +879,18 @@ test("receiveMessageOnPort returns an X25519 CryptoKey", async () => {
 //   format version, CryptoKeyTag, record length, format version, key format, extractable,
 //   usage count, usage tags, OKP, algorithm, curve, [key type], key size, key bytes.
 // Only an X25519 record has the key type.
+describe("DOMException records", () => {
+  test("a malformed stack flag is rejected instead of read past", () => {
+    const original = new DOMException("m", "n");
+    original.stack = undefined;
+    const bytes = Buffer.from(serialize(original));
+    // The record ends with the stack's flag: 1 for no stack. 2 is invalid; an empty object record follows it.
+    expect(bytes.subarray(-4).toString("hex")).toBe("01000000");
+    const malformed = Buffer.concat([bytes.subarray(0, -4), Buffer.from("02000000" + "02" + "ffffffff", "hex")]);
+    expect(() => deserialize(malformed)).toThrow(new TypeError("Unable to deserialize data."));
+  });
+});
+
 describe("X25519 CryptoKey records", () => {
   const compact = (spaced: string) => spaced.replaceAll(" ", "");
   const read = (spaced: string) => deserialize(Buffer.from(compact(spaced), "hex"));
@@ -907,8 +919,10 @@ describe("X25519 CryptoKey records", () => {
 
   test("an X25519 record includes the key type", async () => {
     const [privateKey, publicKey] = await importX25519();
-    const privateRecord = `0e000000 21 39000000 0e000000 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
-    const publicRecord = `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
+    // The version both headers carry, from a real serialize() so a CurrentVersion bump doesn't invalidate the records.
+    const v = Buffer.from(serialize(0)).subarray(0, 4).toString("hex");
+    const privateRecord = `${v} 21 39000000 ${v} 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
+    const publicRecord = `${v} 21 38000000 ${v} 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
 
     expect(written(privateKey)).toBe(compact(privateRecord));
     expect(written(publicKey)).toBe(compact(publicRecord));

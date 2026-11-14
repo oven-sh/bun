@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { inspect } from "node:util";
 
 describe("DOMException in Node.js environment", () => {
   it("exists globally", () => {
@@ -56,11 +58,279 @@ describe("DOMException in Node.js environment", () => {
     expect(DOMException.DATA_CLONE_ERR).toBe(25);
   });
 
-  // TODO: missing stack trace on DOMException
-  it.failing("inherits prototype properties from Error", () => {
+  it("inherits prototype properties from Error", () => {
     const error = new DOMException("Test error");
     expect(error.toString()).toBe("Error: Test error");
     expect(error.stack).toBeDefined();
+  });
+
+  it("has [[ErrorData]] internal slot", () => {
+    const error = new DOMException("boom", "AbortError");
+    expect(Error.isError(error)).toBe(true);
+    expect(Object.prototype.toString.call(error)).toBe("[object DOMException]");
+  });
+
+  it("captures a stack trace", () => {
+    function inner() {
+      return new DOMException("boom", "AbortError");
+    }
+    const error = inner();
+    expect(typeof error.stack).toBe("string");
+    expect(error.stack).toStartWith("AbortError: boom");
+    expect(error.stack).toContain("inner");
+    expect(Object.getOwnPropertyNames(error)).toContain("stack");
+  });
+
+  it("keeps name/message/code as prototype accessors", () => {
+    const error = new DOMException("boom", "AbortError");
+    const own = Object.getOwnPropertyNames(error);
+    expect(own).not.toContain("name");
+    expect(own).not.toContain("message");
+    expect(own).not.toContain("code");
+
+    const proto = Object.getPrototypeOf(error);
+    expect(Object.getOwnPropertyDescriptor(proto, "name").get).toBeFunction();
+    expect(Object.getOwnPropertyDescriptor(proto, "message").get).toBeFunction();
+    expect(Object.getOwnPropertyDescriptor(proto, "code").get).toBeFunction();
+  });
+
+  it("AbortSignal.abort().reason is a DOMException with a stack", () => {
+    const reason = AbortSignal.abort().reason;
+    expect(reason).toBeInstanceOf(DOMException);
+    expect(Error.isError(reason)).toBe(true);
+    expect(reason.name).toBe("AbortError");
+    expect(typeof reason.stack).toBe("string");
+    expect(reason.stack).toStartWith("AbortError");
+  });
+
+  it("AbortSignal.timeout() reason is a DOMException with a stack", async () => {
+    // AbortSignal.timeout()'s timer is not ref'd and awaiting only its abort
+    // event hangs the Windows test runner, so drive the loop with a ref'd
+    // sleep and poll the aborted flag (same shape as web/abort/abort.test.ts).
+    const signal = AbortSignal.timeout(0);
+    for (let i = 0; i < 200 && !signal.aborted; i++) await Bun.sleep(10);
+    expect(signal.aborted).toBe(true);
+    const reason = signal.reason;
+    expect(reason).toBeInstanceOf(DOMException);
+    expect(Error.isError(reason)).toBe(true);
+    expect(reason.name).toBe("TimeoutError");
+    expect(typeof reason.stack).toBe("string");
+    expect(reason.stack).toStartWith("TimeoutError: The operation timed out.");
+  });
+
+  it("gets a header-only stack when no frames are captured", async () => {
+    // Error.stackTraceLimit is process-global, so mutate it in a subprocess.
+    // `undefined` makes getStackTrace return no trace; `0` returns an empty one.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `class Sub extends DOMException {}
+         Error.stackTraceLimit = undefined;
+         console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
+         Error.stackTraceLimit = 0;
+         console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
+         console.log(JSON.stringify(new DOMException("", "AbortError").stack));
+         console.log(JSON.stringify(new DOMException("boom", "").stack));
+         console.log(JSON.stringify(new Sub("boom", "AbortError").stack));
+         const renamed = new DOMException("boom", "AbortError");
+         Object.defineProperty(renamed, "name", { value: "CustomError" });
+         console.log(JSON.stringify(renamed.stack));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n"boom"\n"AbortError: boom"\n"CustomError: boom"\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("AbortController.abort() reason is a DOMException with a stack", () => {
+    const c = new AbortController();
+    c.abort();
+    const reason = c.signal.reason;
+    expect(reason).toBeInstanceOf(DOMException);
+    expect(Error.isError(reason)).toBe(true);
+    expect(reason.name).toBe("AbortError");
+    expect(typeof reason.stack).toBe("string");
+    expect(reason.stack).toStartWith("AbortError");
+  });
+
+  it("structuredClone preserves a DOMException including its stack", () => {
+    const original = new DOMException("boom", "QuotaExceededError");
+    const clone = structuredClone(structuredClone(original));
+    expect(clone).toBeInstanceOf(DOMException);
+    expect(Error.isError(clone)).toBe(true);
+    expect(clone.stack).toContain("domexception-node.test.js");
+    expect({ name: clone.name, message: clone.message, code: clone.code, stack: clone.stack }).toEqual({
+      name: "QuotaExceededError",
+      message: "boom",
+      code: 22,
+      stack: original.stack,
+    });
+    // The clone's own capture at the structuredClone call site is discarded: reading the
+    // position properties must not materialize the clone site's line/column over the copy.
+    (void clone.line, clone.column, clone.sourceURL);
+    expect(Object.getOwnPropertyNames(clone)).toEqual(["stack"]);
+  });
+
+  it("structuredClone does not make up a stack when the original's is not a string", () => {
+    const clones = [undefined, null, 5].map(stack => {
+      const original = new DOMException("boom", "AbortError");
+      original.stack = stack;
+      const clone = structuredClone(original);
+      return { stack: clone.stack, own: Object.getOwnPropertyNames(clone) };
+    });
+    expect(clones).toEqual([
+      { stack: undefined, own: ["stack"] },
+      { stack: undefined, own: ["stack"] },
+      { stack: undefined, own: ["stack"] },
+    ]);
+  });
+
+  it("works with Error.captureStackTrace", () => {
+    function frameName() {
+      const error = new DOMException("boom", "NetworkError");
+      Error.captureStackTrace(error);
+      return error;
+    }
+    const error = frameName();
+    expect(typeof error.stack).toBe("string");
+    expect(error.stack).toStartWith("NetworkError: boom");
+    expect(error.stack).toContain("frameName");
+  });
+
+  it("stack header omits the separator when the message is empty", () => {
+    expect(new DOMException().stack.split("\n")[0]).toBe("Error");
+    expect(new DOMException("", "AbortError").stack.split("\n")[0]).toBe("AbortError");
+  });
+
+  it("own name/message properties win in the stack header, like a plain Error", () => {
+    const define = (error, name, message) => {
+      Object.defineProperty(error, "name", { value: name, configurable: true });
+      Object.defineProperty(error, "message", { value: message, configurable: true });
+      return error.stack.split("\n")[0];
+    };
+    expect(define(new DOMException("boom", "AbortError"), "CustomError", "custom message")).toBe(
+      define(new Error("boom"), "CustomError", "custom message"),
+    );
+    // Concatenation makes ropes; a number is a primitive like the strings.
+    const long = Buffer.alloc(100, "A").toString();
+    expect(define(new DOMException("boom", "AbortError"), long + "Error", long + "message")).toBe(
+      define(new Error("boom"), long + "Error", long + "message"),
+    );
+    expect(define(new DOMException("boom", "AbortError"), 42, "custom message")).toBe(
+      define(new Error("boom"), 42, "custom message"),
+    );
+  });
+
+  it("the stack header reads name and message along the prototype chain, like a plain Error", () => {
+    const header = error => error.stack.split("\n")[0];
+    class SubDOMException extends DOMException {}
+    class SubError extends Error {}
+    for (const Sub of [SubDOMException, SubError])
+      Object.defineProperty(Sub.prototype, "name", { value: "CustomError", configurable: true });
+    const undefinedName = error => (Object.defineProperty(error, "name", { value: undefined }), header(error));
+    const undefinedMessage = error => (Object.defineProperty(error, "message", { value: undefined }), header(error));
+
+    const prototype = DOMException.prototype;
+    const nameAttribute = Object.getOwnPropertyDescriptor(prototype, "name");
+    delete prototype.name;
+    let withoutNameAttribute;
+    try {
+      withoutNameAttribute = header(new DOMException("boom", "AbortError"));
+    } finally {
+      Object.defineProperty(prototype, "name", nameAttribute);
+    }
+
+    expect({
+      subclass: header(new SubDOMException("boom", "AbortError")),
+      undefinedName: undefinedName(new DOMException("boom", "AbortError")),
+      undefinedMessage: undefinedMessage(new DOMException("boom", "AbortError")),
+      withoutNameAttribute,
+    }).toEqual({
+      subclass: header(new SubError("boom")),
+      undefinedName: undefinedName(new Error("boom")),
+      // As in Node; a plain Error in Bun says "Error: undefined".
+      undefinedMessage: "AbortError",
+      withoutNameAttribute: "Error: boom",
+    });
+  });
+
+  it("own name property wins in the uncaught exception report", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const error = new DOMException("boom", "AbortError");
+         Object.defineProperty(error, "name", { value: "CustomError" });
+         throw error;`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The source line echoed above the report still says AbortError; only the report line must not.
+    expect(stderr).not.toContain("\nAbortError: boom\n");
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("\nCustomError: boom\n"),
+      exitCode: 1,
+    });
+  });
+
+  it("util.inspect shows the error name and message", () => {
+    const error = new DOMException("boom", "AbortError");
+    const inspected = inspect(error);
+    expect(inspected).toStartWith("DOMException [AbortError]: boom");
+  });
+
+  it("survives GC with intact stack traces", () => {
+    function makeError() {
+      return new DOMException("gc test", "AbortError");
+    }
+    const errors = [];
+    for (let i = 0; i < 100; i++) errors.push(makeError());
+    Bun.gc(true);
+    for (const e of errors) {
+      expect(Error.isError(e)).toBe(true);
+      expect(typeof e.stack).toBe("string");
+      expect(e.stack).toContain("makeError");
+    }
+    Bun.gc(true);
+    for (const e of errors) {
+      expect(e.name).toBe("AbortError");
+      expect(e.message).toBe("gc test");
+    }
+  });
+
+  it("keeps its stack header when the function in its stack is collected", async () => {
+    // Each `new Function` is unreachable once it returns, so a full GC collects the frame's callee.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `function make() { return new Function("return new DOMException('dead frame', 'AbortError')")(); }
+         const errors = [];
+         for (let i = 0; i < 50; i++) errors.push(make());
+         Bun.gc(true);
+         Bun.gc(true);
+         Object.defineProperty(errors[0], "name", { value: "CustomError" });
+         const headers = new Set(errors.map(e => e.stack.split("\\n")[0]));
+         console.log(JSON.stringify([...headers]), errors.every(e => e.stack.includes("\\n    at ")));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '["CustomError: dead frame","AbortError: dead frame"] true\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("has proper instance properties", () => {

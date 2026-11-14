@@ -155,6 +155,9 @@ using namespace Zig;
 enum class UseCustomHeapCellType { Yes,
     No };
 
+// Settles a marked cell's weak references after a collection; see JSVMClientData::reconcileWeakReferencesAtGCEnd.
+using ReconcileWeakReferencesAtGCEndFunction = void (*)(JSC::HeapCell*, JSC::VM&, JSC::CollectionScope);
+
 class JSHeapData {
     WTF_MAKE_NONCOPYABLE(JSHeapData);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSHeapData);
@@ -178,12 +181,16 @@ public:
             func(*space);
     }
 
+    // The Heap reconciles only its own ErrorInstance space; cell types in these subspaces need the client to.
+    Vector<std::pair<JSC::IsoSubspace*, ReconcileWeakReferencesAtGCEndFunction>>& weakReconciliationSpaces() { return m_weakReconciliationSpaces; }
+
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
     JSC::IsoHeapCellType m_heapCellTypeForJSModuleGraph;
+    JSC::IsoHeapCellType m_heapCellTypeForJSDOMException;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:
@@ -195,6 +202,7 @@ private:
     JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
+    Vector<std::pair<JSC::IsoSubspace*, ReconcileWeakReferencesAtGCEndFunction>> m_weakReconciliationSpaces;
 };
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
@@ -408,6 +416,7 @@ struct SubspaceForInit {
         Destructible,
         Custom } cellType;
     bool hasOutputConstraints;
+    ReconcileWeakReferencesAtGCEndFunction reconcileWeakReferencesAtGCEnd = nullptr;
 };
 
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&));
@@ -420,6 +429,12 @@ inline constexpr SubspaceForInit subspaceForInit {
         : std::is_base_of_v<JSC::JSDestructibleObject, T> ? SubspaceForInit::CellType::Destructible
                                                           : SubspaceForInit::CellType::Cell,
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
+    []() -> ReconcileWeakReferencesAtGCEndFunction {
+        if constexpr (requires(T* cell, JSC::VM& vm, JSC::CollectionScope scope) { cell->reconcileWeakReferencesAtGCEnd(vm, scope); }) {
+            return [](JSC::HeapCell* cell, JSC::VM& vm, JSC::CollectionScope scope) { static_cast<T*>(cell)->reconcileWeakReferencesAtGCEnd(vm, scope); };
+        } else
+            return nullptr;
+    }(),
 };
 
 // True when T::destroy is JSCell::destroy, which runs no destructor. A non-public destroy can only be an override.

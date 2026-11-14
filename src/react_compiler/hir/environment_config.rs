@@ -106,6 +106,8 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
+    /// A local that is `0` on one path and `-0` on another is no constant. Before facebook/react#37995 it was the first zero.
+    pub zeros_of_a_phi_keep_their_sign: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -164,6 +166,7 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
+            zeros_of_a_phi_keep_their_sign: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

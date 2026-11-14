@@ -941,6 +941,18 @@ fn promote_interposed_instruction(
                     // Treat property of method call as constlike so we don't promote it.
                     consts.insert(property.identifier);
                 }
+                // Not in upstream: a name for this callee takes the `this` away, so only one that writes gets a name.
+                InstructionValue::CallExpression {
+                    callee,
+                    bun_callee: crate::hir::BunCallee::Reference,
+                    ..
+                } => {
+                    if inline_temporary(callee, state, inter_state, env)
+                        .is_some_and(|temporary| temporary.effect != Effect::Write)
+                    {
+                        consts.insert(callee.identifier);
+                    }
+                }
                 InstructionValue::PropertyLoad { object, .. }
                 | InstructionValue::ComputedLoad { object, .. } => {
                     if let Some(lvalue) = &instr.lvalue {

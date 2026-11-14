@@ -2416,7 +2416,9 @@ fn compute_signature_for_instruction(
                 loc: *loc,
             })));
         }
-        InstructionValue::CallExpression { callee, args, loc } => {
+        InstructionValue::CallExpression {
+            callee, args, loc, ..
+        } => {
             let sig = get_function_call_signature(env, callee.identifier)
                 .ok()
                 .flatten();

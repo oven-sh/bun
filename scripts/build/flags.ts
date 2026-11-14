@@ -1261,6 +1261,16 @@ export const linkerFlags: Flag[] = [
     desc: "macOS cross-link: keep __BUN as the last content segment so `bun build --compile` can grow it",
   },
   {
+    // Under their own names these sections make dyld hand the executable to the Objective-C runtime, which registers
+    // the selectors of Dawn's Metal backend on every start. src/dawn_sys/MetalSoftLink.cpp does it when Metal is loaded.
+    flag: [
+      "-Wl,-rename_section,__DATA,__objc_imageinfo,__DATA,__bun_objcinfo",
+      "-Wl,-rename_section,__DATA,__objc_selrefs,__DATA,__bun_selrefs",
+    ],
+    when: c => c.darwin && linksWithLld(c),
+    desc: "macOS cross-link: keep the Objective-C runtime out of startup",
+  },
+  {
     // Identical-code folding, on top of -dead_strip: dead_strip removes
     // unreferenced functions, ICF merges duplicate ones (template/bindgen
     // instantiations, mostly). `safe` only folds functions whose address is
@@ -1367,6 +1377,7 @@ export const linkerFlags: Flag[] = [
     flag: [
       "exp",
       "exp2",
+      "exp2f",
       "expf",
       "fcntl64",
       "getrandom",
@@ -1412,9 +1423,10 @@ export const linkerFlags: Flag[] = [
       "copy_file_range",
       "memfd_create",
       "statx",
-      // no older version (2.29/2.35)
+      // no older version (2.29/2.30/2.35)
       "_dl_find_object",
       "posix_spawn_file_actions_addchdir_np",
+      "pthread_cond_clockwait",
     ].map(s => `-Wl,--wrap=${s}`),
     when: c => c.linux && c.abi === "gnu",
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",

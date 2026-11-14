@@ -1,0 +1,18 @@
+The call only saves opening a fence twice, and importing it would add an API
+set to the libraries that bun.exe loads at start.
+
+--- a/src/dawn/native/d3d12/SharedFenceD3D12.cpp
++++ b/src/dawn/native/d3d12/SharedFenceD3D12.cpp
+@@ -43,12 +43,6 @@
+     const SharedFenceDXGISharedHandleDescriptor* descriptor) {
+     DAWN_INVALID_IF(descriptor->handle == nullptr, "shared HANDLE is missing.");
+ 
+-    const auto& queueFence = ToBackend(device->GetQueue())->GetSharedFence();
+-    if (queueFence &&
+-        ::CompareObjectHandles(queueFence->GetSystemHandle().Get(), descriptor->handle)) {
+-        return queueFence;
+-    }
+-
+     SystemHandle ownedHandle = SystemHandle::Duplicate(descriptor->handle);
+ 
+     Ref<SharedFence> fence = AcquireRef(new SharedFence(device, label, std::move(ownedHandle)));

@@ -12,6 +12,7 @@
 use core::cell::{Cell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
+use std::rc::Rc;
 
 use bun_io as Async;
 use bun_uws as uws;
@@ -45,6 +46,14 @@ bun_core::declare_scope!(EventLoop, hidden);
 
 pub type Queue =
     bun_collections::LinearFifo<Task, bun_collections::linear_fifo::DynamicBuffer<Task>>;
+
+/// Like a socket or a timer, it belongs to neither loop of the VM: it is served by the one that polls.
+pub trait TaskSource {
+    /// Asked before each poll, which then does not block. It does not keep the loop alive. What makes it hold has to wake the VM.
+    fn is_ready(&self) -> bool;
+    /// Queued after each poll that leaves it ready. A macro that starts or returns puts it off, so a later one can run first.
+    fn task(self: Rc<Self>) -> Task;
+}
 
 /// For the JS thread, but for `post`, `wakeup` and the atomics. No borrow of a queue spans a task.
 pub struct EventLoop {
@@ -1373,6 +1382,9 @@ impl EventLoop {
         }
 
         vm.gc_controller.process_gc_timer();
+        if vm.has_ready_task_source() {
+            self.wakeup();
+        }
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.

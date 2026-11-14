@@ -14,21 +14,24 @@ import {
   type DictionaryOptions,
   DictionaryType,
   DoubleType,
+  type EnumerationOptions,
   EnumerationType,
   type EnumerationValues,
+  FiniteType,
   FunctionDefinition,
   type FunctionOptions,
   integers,
   type MemberOptions,
   ModuleDefinition,
   NamespaceDefinition,
+  type NamespaceField,
   type NamespaceOptions,
   NativePromiseContextType,
   PromisePtrType,
-  RecordResultType,
+  RecordType,
   RefType,
   RestType,
-  type SignatureOptions,
+  SequenceType,
   StringType,
   type Type,
   UnionType,
@@ -36,19 +39,22 @@ import {
   type ValueOptions,
 } from "./bindgen-lib-internal.ts";
 
-export type { Capability, Type } from "./bindgen-lib-internal.ts";
+export type { Capability, ClassOptions, DictionaryOptions, MemberOptions, Type } from "./bindgen-lib-internal.ts";
 export { null_ as null, undefined_ as undefined };
 
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.clamp`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
-/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
+/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. `.finite` for WebIDL's `double`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
 
-/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
+/** `b.f32.finite` is WebIDL's `float`. */
+export const f32 = { finite: new FiniteType("f32") };
+
+/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.usv` for WebIDL's `USVString`. `.local` for the JS string itself. */
 export const string = new StringType();
 
 /** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
@@ -66,6 +72,9 @@ export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
+
+/** A `Uint32Array`, shared or not, as a `JsLocal<'a, BufferSource>`. */
+export { uint32ArrayType as uint32Array } from "./bindgen-lib-internal.ts";
 
 /** Bytes that C++ passes to one of a class's `calledFromCpp`. */
 export const byteSpan = new ByteSpanType();
@@ -99,8 +108,11 @@ const undefined_ = new UnitType("undefined");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** A result only: an object with a property for each `(key, value)` the body gives. */
-export const record = (value: Type) => new RecordResultType(value);
+/** An argument only: what an iterable object yields. */
+export const sequence = (element: Type) => new SequenceType(element);
+
+/** An object with a property for each `(key, value)`. */
+export const record = (value: Type) => new RecordType(value);
 
 /** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.any` or `b.string.local`. */
 export const rest = (element: Type) => new RestType(element);
@@ -108,7 +120,8 @@ export const rest = (element: Type) => new RestType(element);
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 
 /** An array in place of a value lists several spellings of it; the first is the one given back to JS. `{ RgbArray: "[rgb]" }` names the variants. */
-export const enumeration = (values: EnumerationValues) => new EnumerationType(values);
+export const enumeration = (values: EnumerationValues, options?: EnumerationOptions) =>
+  new EnumerationType(values, options);
 
 export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
   new DictionaryType(members, options);
@@ -130,11 +143,9 @@ export const value = (options: ValueOptions) => new FunctionDefinition([options]
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: FunctionOptions[]) => new FunctionDefinition(signatures, signatures[0]);
 
-/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. An array is the overloads of one function. */
-export const namespace = (
-  functions: Record<string, SignatureOptions | readonly SignatureOptions[]>,
-  options?: NamespaceOptions,
-) => new NamespaceDefinition(functions, options);
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. An array is the overloads of one function, `{ constant: 1 }` a read-only integer. */
+export const namespace = (members: Record<string, NamespaceField>, options?: NamespaceOptions) =>
+  new NamespaceDefinition(members, options);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

@@ -1,0 +1,57 @@
+Lets a thread wait for a submit without the lock that the next submit needs.
+
+--- a/src/dawn/native/vulkan/QueueVk.cpp
++++ b/src/dawn/native/vulkan/QueueVk.cpp
+@@ -130,6 +130,18 @@
+     return mQueue;
+ }
+ 
++std::pair<VkFence, ExecutionSerial> Queue::LendFenceAfter(ExecutionSerial serial) {
++    using FenceAndSerial = std::pair<VkFence, ExecutionSerial>;
++    return mFencesInFlight.Use([&](auto fencesInFlight) -> FenceAndSerial {
++        auto it = std::ranges::upper_bound(*fencesInFlight, serial, {}, &FenceAndSerial::second);
++        if (it == fencesInFlight->end()) {
++            return {VK_NULL_HANDLE, GetLastSubmittedCommandSerial()};
++        }
++        mUnusedFences.Use([&](auto) { mLentFence = it->first; });
++        return *it;
++    });
++}
++
+ ResultOrError<ExecutionSerial> Queue::CheckAndUpdateCompletedSerials() {
+     Device* device = ToBackend(GetDevice());
+     return mFencesInFlight.Use([&](auto fencesInFlight) -> ResultOrError<ExecutionSerial> {
+@@ -406,7 +418,10 @@
+ 
+     auto result =
+         mUnusedFences.Use([&](auto unusedFences) -> ResultOrError<std::optional<VkFence>> {
+-            if (!unusedFences->empty()) {
++            if (!unusedFences->empty() && unusedFences->back() == mLentFence) {
++                std::swap(unusedFences->front(), unusedFences->back());
++            }
++            if (!unusedFences->empty() && unusedFences->back() != mLentFence) {
+                 VkFence fence = unusedFences->back();
+                 DAWN_ASSERT(fence != VK_NULL_HANDLE);
+                 DAWN_TRY(
+--- a/src/dawn/native/vulkan/QueueVk.h
++++ b/src/dawn/native/vulkan/QueueVk.h
+@@ -50,6 +50,10 @@
+ 
+     VkQueue GetVkQueue() const;
+ 
++    // The fence of the first submit after `serial` that is in flight, and its serial. It is not
++    // reset before the next call. Without such a submit, null and the last submitted serial.
++    std::pair<VkFence, ExecutionSerial> LendFenceAfter(ExecutionSerial serial);
++
+     CommandRecordingContext* GetPendingRecordingContext(SubmitMode submitMode = SubmitMode::Normal);
+     MaybeError SplitRecordingContext(CommandRecordingContext* recordingContext);
+ 
+@@ -84,6 +88,8 @@
+     MutexProtected<std::deque<std::pair<VkFence, ExecutionSerial>>> mFencesInFlight;
+     // Fences in the unused list aren't reset yet.
+     MutexProtected<std::vector<VkFence>> mUnusedFences;
++    // Guarded by the lock of mUnusedFences.
++    VkFence mLentFence = VK_NULL_HANDLE;
+ 
+     MaybeError PrepareRecordingContext();
+     ResultOrError<CommandPoolAndBuffer> BeginVkCommandBuffer();

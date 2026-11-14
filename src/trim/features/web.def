@@ -25,6 +25,9 @@ feature WebSocket "the WebSocket client"
 
 feature WebCrypto "crypto.subtle, SubtleCrypto and CryptoKey"
 
+feature WebGpu "navigator.gpu and the classes of WebGPU"
+  minimum 1500000
+
 feature StructuredClone "structuredClone and the structured clone algorithm"
 
 feature TextDecoder "TextDecoder"

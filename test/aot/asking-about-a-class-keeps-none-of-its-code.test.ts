@@ -71,29 +71,29 @@ const questions: { title: string; gap?: Gap; ask(path: string, token: string): s
   { title: "its length", ask: path => [`${path}.length`] },
   {
     title: "whether its prototype object has a name",
-    gap: { name: 94 },
+    gap: { name: 95 },
     ask: path => [`"nothing" in ${path}.prototype`],
   },
   {
     title: "how many names its prototype object has",
-    gap: { name: 94 },
+    gap: { name: 95 },
     ask: path => [`Object.getOwnPropertyNames(${path}.prototype).length`],
   },
   {
     title: "whether an object is an instance of it",
-    gap: { block: 1, name: 99 },
+    gap: { block: 1, name: 100 },
     ask: path => [`{} instanceof ${path}`],
   },
   {
     title: "whether an object made over its prototype object is an instance of it",
-    gap: { block: 3, name: 97 },
+    gap: { block: 3, name: 98 },
     ask: path => [`Object.create(${path}.prototype) instanceof ${path}`],
   },
   { title: "the numbers on it", ask: (_, token) => constantsOf(token).map(constant => constant.path) },
 ];
 const allQuestions: (typeof questions)[number] = {
   title: "all of that in one program",
-  gap: { block: 3, name: 97 },
+  gap: { block: 3, name: 98 },
   ask: (path, token) => questions.flatMap(each => each.ask(path, token)),
 };
 

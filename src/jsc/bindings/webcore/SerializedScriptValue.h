@@ -40,6 +40,7 @@
 #include "JavaScriptCore/WasmModule.h"
 
 namespace JSC {
+class JSArrayBuffer;
 class JSObject;
 class VM;
 #if ENABLE(WEBASSEMBLY)
@@ -102,6 +103,8 @@ using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 // worker_threads.markAsUncloneable() / markAsUntransferable(): create() rejects a tagged object.
 void markAsUncloneable(JSC::VM&, JSC::JSObject&);
 void markAsUntransferable(JSC::VM&, JSC::JSObject&);
+// The same mark, for a buffer with an [[ArrayBufferDetachKey]]. Null once the key has been used.
+void setHolderOfDetachKey(JSC::VM&, JSC::JSArrayBuffer&, JSC::JSObject* holder);
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue> {

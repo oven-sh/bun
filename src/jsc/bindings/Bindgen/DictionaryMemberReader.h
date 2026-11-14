@@ -5,7 +5,7 @@
 
 namespace Bun::Bindgen {
 
-// Reads the members of a dictionary, by index into its run of Tables::memberNames.
+// Reads the members of a dictionary, by index into its run of Tables::memberNames. A null object has none.
 class DictionaryMemberReader {
     WTF_FORBID_HEAP_ALLOCATION;
 

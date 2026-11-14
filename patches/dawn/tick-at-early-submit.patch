@@ -1,0 +1,16 @@
+Nothing else ticks while a script runs, so a loop of uploads kept the staging memory of all of them.
+
+--- a/src/dawn/native/DynamicUploader.cpp
++++ b/src/dawn/native/DynamicUploader.cpp
+@@ -158,9 +158,8 @@
+ 
+     // TODO(crbug.com/42240396): Consider blocking when there is too much memory in flight for
+     // freeing, which could cause OOM even if we eagerly flush when too much memory is pending.
+-    QueueBase* queue = mDevice->GetQueue();
+-    queue->ForceEventualFlushOfCommands();
+-    return queue->SubmitPendingCommands();
++    mDevice->GetQueue()->ForceEventualFlushOfCommands();
++    return mDevice->Tick();
+ }
+ 
+ void DynamicUploader::Deallocate(ExecutionSerial lastCompletedSerial, bool freeAll) {

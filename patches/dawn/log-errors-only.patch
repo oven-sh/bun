@@ -1,0 +1,14 @@
+Below Error these are notes for whoever embeds Dawn ("... artificially reduced
+from ..."), and Debug and Info would go to the program's stdout.
+
+--- a/src/utils/log.cc
++++ b/src/utils/log.cc
+@@ -102,7 +102,7 @@
+     std::string fullMessage = mStream.str();
+ 
+     // If this message has been moved, its stream is empty.
+-    if (fullMessage.empty()) {
++    if (fullMessage.empty() || mSeverity != LogSeverity::Error) {
+         return;
+     }
+ 

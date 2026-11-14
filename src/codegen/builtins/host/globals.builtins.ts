@@ -183,7 +183,7 @@ const listenerRegistration = (eventTarget: b.TableType) =>
       listener: [
         b.retained,
         // dispatchEvent hands the listener the event that it was handed. What native code dispatches on a signal, and `open` and `close` elsewhere, is an Event. The events of the classes below Event are made by
-        // MessagePort.cpp, BroadcastChannel.cpp, WebSocket.cpp, Worker.cpp, WorkerMessagingProxy.cpp and src/runtime/webview/ChromeBackend.cpp alone. Worker says so in its rows (eventsOfWorker). WHOEVER GIVES MessageChannel,
+        // MessagePort.cpp, BroadcastChannel.cpp, WebSocket.cpp, Worker.cpp, WorkerMessagingProxy.cpp, src/runtime/webview/ChromeBackend.cpp and src/runtime/webgpu alone. Worker says so in its rows (eventsOfWorker), and so does GPUAdapter.prototype.requestDevice. WHOEVER GIVES MessageChannel,
         // BroadcastChannel, WebSocket, Bun.WebView OR THE BINDINGS createNodeWorkerConstructor, createNodeWorkerThreadsBinding, createWebSocketBindingForWs ROWS SAYS THERE WHICH EVENTS THEY MAKE.
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",

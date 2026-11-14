@@ -1,5 +1,6 @@
 // What native functions do to what they are handed: those that change it, and those that change nothing. test/aot/builtins/native-contract.test.ts tells them apart.
 import * as b from "bun-builtins-table";
+import { classesOfWebGPU } from "./classes-of-webgpu.ts";
 import { bindingsChangingNothing, membersChangingNothing } from "./members-changing-nothing.ts";
 import { keptHandlerCell, responseHandlerCell, socketDataCell } from "./native-cells.ts";
 import { mayAnswerWrapperKeptIn, retainedByNativeCode } from "./native-code.ts";
@@ -167,6 +168,7 @@ const constructorsRequiringNew = [
   "Bun.SHA512",
   "Bun.SHA512_256",
   "Bun.Transpiler",
+  ...classesOfWebGPU,
 ];
 const requiresNew = {
   returns: b.never,

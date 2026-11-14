@@ -7,6 +7,9 @@ import type { UnreadReason } from "./graph.ts";
 export const machORecordSegment = "__DWARF";
 export const machORecordSection = "__bun_entries";
 
+/** Between the names of one address. Not \x01, which clang writes for the `@` in the name of a block's descriptor. */
+export const nameSeparator = "\x1f";
+
 export const MH_MAGIC_64 = 0xfeedfacf;
 export const CPU_TYPE_X86_64 = 0x01000007;
 const MH_SUBSECTIONS_VIA_SYMBOLS = 0x2000;
@@ -157,7 +160,8 @@ function readSymbols({ entries, strings }: SymbolTable, sections: Section[], res
     const description = entries.readUInt16LE(entry + 6);
     if ((description & N_ALT_ENTRY) === 0) {
       const names = namesByAddress[symbol.section - 1]!;
-      names.set(symbol.value, names.has(symbol.value) ? names.get(symbol.value) + "\x01" + symbol.name : symbol.name);
+      const others = names.get(symbol.value);
+      names.set(symbol.value, others === undefined ? symbol.name : others + nameSeparator + symbol.name);
     } else alternateEntries.push(symbol);
     if (symbol.type & N_EXT) result.externals.push(symbol.name);
     if (description & N_NO_DEAD_STRIP)
@@ -271,7 +275,8 @@ function readSectionReferences(
   const runsBeforeMain = sectionsRunBeforeMain.includes(section.name);
   if (runsBeforeMain || (section.flags & S_ATTR_NO_DEAD_STRIP && section.name !== "__bun_builtins"))
     for (const [, name] of atoms[index]!) result.retained.push(name);
-  if (section.count === 0) return;
+  // The names of selectors have a section of their own in the image, which is never cut.
+  if (section.count === 0 || section.name === "__objc_selrefs") return;
   const relocations = readFrom(section.relocations, section.count * 8);
   let contents: Buffer | undefined;
   const readContents = () => (contents ??= readFrom(section.offset, section.size));

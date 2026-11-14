@@ -1,0 +1,13 @@
+Every hash table includes this header, which names nothing from <iostream>.
+See src/banned-includes/iostream.
+
+--- a/absl/strings/internal/cord_rep_btree_navigator.h
++++ b/absl/strings/internal/cord_rep_btree_navigator.h
+@@ -18,7 +18,6 @@
+ #include <cassert>
+ #include <cstddef>
+ #include <cstdint>
+-#include <iostream>
+ 
+ #include "absl/base/config.h"
+ #include "absl/base/optimization.h"

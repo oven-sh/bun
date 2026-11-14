@@ -4,7 +4,7 @@
 # -- end of source
 # OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
 # RUN: features
-# CHECK: by AbortSignal
+# CHECK: by RequestPrototypeSignal
 # RUN(NEVER): features
 # NEVER-NOT: feature Interpreter
 # NEVER-NOT: by BunTranspiler

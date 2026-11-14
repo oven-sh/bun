@@ -4,7 +4,7 @@ use core::ptr;
 use crate as jsc;
 use crate::SysErrorJsc;
 use crate::{
-    ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
+    ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue, VM,
 };
 use bun_alloc::mimalloc;
 use bun_sys::{self, Fd, FdExt};
@@ -138,6 +138,13 @@ unsafe extern "C" {
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
     safe fn JSC__ArrayBuffer__ref(self_: &JSCArrayBuffer);
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
+    fn JSC__ArrayBuffer__setDetachKey(
+        vm: &VM,
+        array_buffer: JSValue,
+        holder: JSValue,
+    ) -> *mut JSCArrayBuffer;
+    fn JSC__ArrayBuffer__detachWithKey(self_: &JSCArrayBuffer, vm: &VM);
+    fn JSC__ArrayBuffer__unpin(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     // safe: by-value `JSValue`; false for non-buffer values.
@@ -220,19 +227,14 @@ impl ArrayBuffer {
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
     pub const MAX_SIZE: c_uint = c_uint::MAX;
+    /// JSC's `MAX_ARRAY_BUFFER_SIZE`.
+    pub const MAX_BYTE_LENGTH: u64 = 1 << 32;
 
     // 4 MB or so is pretty good for mmap()
     const MMAP_THRESHOLD: usize = 1024 * 1024 * 4;
 
     pub fn bytes_per_element(&self) -> Option<u8> {
-        match self.typed_array_type {
-            JSType::ArrayBuffer | JSType::DataView => None,
-            JSType::Uint8Array | JSType::Uint8ClampedArray | JSType::Int8Array => Some(1),
-            JSType::Uint16Array | JSType::Int16Array | JSType::Float16Array => Some(2),
-            JSType::Uint32Array | JSType::Int32Array | JSType::Float32Array => Some(4),
-            JSType::BigUint64Array | JSType::BigInt64Array | JSType::Float64Array => Some(8),
-            _ => None,
-        }
+        self.typed_array_type.bytes_per_element()
     }
 }
 
@@ -1268,6 +1270,38 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
     }
     unsafe fn ext_deref(this: *mut Self) {
         JSC__ArrayBuffer__deref(JSCArrayBuffer::opaque_ref(this))
+    }
+}
+
+/// The `[[ArrayBufferDetachKey]]` of an `ArrayBuffer`: nothing else detaches it.
+pub struct DetachKey(bun_ptr::ExternalShared<JSCArrayBuffer>);
+
+impl DetachKey {
+    /// The buffer and its views keep `holder` alive until [`detach`](Self::detach).
+    ///
+    /// SAFETY: `array_buffer` is an `ArrayBuffer` that was just made, and `holder` an object.
+    pub unsafe fn new(vm: &VM, array_buffer: JSValue, holder: JSValue) -> Self {
+        // SAFETY: forwarded. C++ takes a ref.
+        Self(unsafe {
+            bun_ptr::ExternalShared::adopt(JSC__ArrayBuffer__setDetachKey(vm, array_buffer, holder))
+        })
+    }
+
+    /// A buffer that native code has pinned, to read or write it on another thread, keeps its bytes.
+    pub fn detach(self, vm: &VM) {
+        let this = core::mem::ManuallyDrop::new(self);
+        // SAFETY: the field is moved out once, and C++ gives up the pin that `new` took.
+        unsafe {
+            let buffer = ptr::read(&raw const this.0);
+            JSC__ArrayBuffer__detachWithKey(&buffer, vm);
+        }
+    }
+}
+
+impl Drop for DetachKey {
+    fn drop(&mut self) {
+        // SAFETY: the pin that `new` took.
+        unsafe { JSC__ArrayBuffer__unpin(&self.0) }
     }
 }
 

@@ -11,6 +11,7 @@ import { candidatesForTheirClass } from "./instances";
 import { addLiveCandidates } from "./live";
 import { Realm } from "./members";
 import { Table, type CallMode } from "./table-description";
+import { openersOfWebGPU } from "./webgpu";
 
 export type WorkerRequest = { tablePath: string | null; calls: [entry: string, mode: CallMode][] };
 // The contents of `<reports.jsonl>.current`: the call in progress, why no call has started yet, or null once every call is done.
@@ -28,7 +29,7 @@ const table = new Table(tablePath === null ? aotBuiltinEntries() : JSON.parse(re
 const realm = new Realm(table);
 try {
   await addLiveCandidates(realm);
-  const failures = await addHostInstances(realm, candidatesForTheirClass, openersOfWhatTheLibraryHolds);
+  const failures = await addHostInstances(realm, candidatesForTheirClass, [...openersOfWhatTheLibraryHolds, ...openersOfWebGPU]);
   if (failures.length > 0) throw new Error(failures.join("\n"));
 } catch (error) {
   // The handlers above would swallow this and the process would exit quietly without making any of its calls.

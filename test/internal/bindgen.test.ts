@@ -99,13 +99,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   const refCounted = b.class({ rustPath: "T", refCounted: true });
   const inline = b.class({ rustPath: "T" });
   for (const type of [inline, inline.nullable, b.union({ instance: inline, ignored: b.any }), refCounted]) {
-    expect(() => b.dictionary({ type })).toThrow(
-      "an instance that Rust takes as &T cannot be in an array or a dictionary",
+    for (const element of [type, b.dictionary({ type })])
+      expect(() => b.array(element)).toThrow("nothing keeps an instance in an array alive: write b.sequence");
+    expect(() => b.dictionary({ type }, { fromJS: true })).toThrow(
+      "fromJS: only the frame of a host function keeps an instance alive",
     );
-    expect(() => b.array(type)).toThrow("an instance that Rust takes as &T cannot be in an array or a dictionary");
   }
   expect(() => b.union({ instance: inline, again: inline })).toThrow("again is never chosen");
-  expect(() => b.namespace({})).toThrow("a namespace with no functions");
+  expect(() => b.namespace({})).toThrow("a namespace with no members");
+  expect(() => b.namespace({ f: {} }, { webIDL: true })).toThrow("webIDL: a namespace of constants");
   expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
     "f: write what b.fn takes, without b.fn",
   );
@@ -114,7 +116,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.namespace({ f: { [key]: true } })).toThrow(`f: a function of a namespace has no ${key}`);
   }
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
-  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow("the converter of a range takes no context");
+  for (const element of [b.i32.enforceRange(0, 100).nullable, b.sequence(b.bool), b.record(b.bool).optional])
+    expect(() => b.array(element)).toThrow("an element of an array is converted by value");
   const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
   expect(() => b.array(stringOrBuffer)).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.dictionary({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
@@ -267,10 +270,78 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.loose.local).toThrow(".local follows b.string");
   expect(() => b.fn({ args: { value: b.f64.asDate.optional } })).toThrow("value: .asDate is a result");
   expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
-  expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
-  for (const value of [b.any, b.string.local, b.bufferSource]) {
-    expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
+  for (const collection of [b.sequence, b.record]) {
+    for (const item of [b.any, b.string.local, b.bufferSource, b.dictionary({ value: b.any })])
+      expect(() => collection(item)).toThrow("a sequence or a record is a Vec, where the GC does not see JS values");
+    expect(() => collection(b.string.utf8).idlType).toThrow("a sequence or a record cannot hold borrowed views");
+    expect(() => collection(b.bool.default(true))).toThrow("is never absent, so it has no default");
+    expect(() => collection(b.null)).toThrow("a sequence or a record of nothing but null");
+    expect(() => collection(b.u8.validateInteger().optional)).toThrow(".validateInteger() reports a name");
+    expect(() => collection(b.i32.withValue)).toThrow("b.bytes and .withValue are only for an argument");
+    expect(() => collection(b.bool).default([true])).toThrow("the default of a sequence or a record is empty");
   }
+  expect(() => b.sequence(b.bool).rustToJS()).toThrow("b.sequence is an argument; a result is b.array");
+  expect(() => b.record(b.bool).rustResultFieldType()).toThrow("b.record is not a member or an alternative of what");
+  expect(() => b.f64.finite.rustToJS()).toThrow(".finite is for what is taken");
+  expect(() => b.f64.loose.finite).toThrow(".finite follows b.f64");
+  expect(() => b.string.loose.usv).toThrow(".usv follows b.string");
+  expect(() => b.string.owned.usv).toThrow("write b.string.usv.owned");
+  expect(() => b.u8.allowBigInt.clamp).toThrow(".clamp refuses a BigInt");
+  expect(() => b.u8.enforceRange().clamp).toThrow(".clamp is another way");
+  expect(() => refCounted.local).toThrow(".local is not for a refCounted class");
+  expect(() => inline.local.rustToJS()).toThrow(".local is for what is taken");
+  const webIDL = { webIDL: true } as const;
+  const labeled = b.dictionary({ label: b.string }, webIDL);
+  expect(() => b.dictionary({})).toThrow("a dictionary needs at least one member");
+  expect(() => b.dictionary({ x: b.f64 }, { extends: labeled })).toThrow("extends: both dictionaries are webIDL");
+  expect(() => b.dictionary({}, { ...webIDL, extends: point })).toThrow("extends: both dictionaries are webIDL");
+  expect(() => b.dictionary({ base: b.f64 }, { ...webIDL, extends: labeled })).toThrow("two fields are both base");
+  expect(() => b.dictionary({ label: b.f64 }, { ...webIDL, extends: labeled })).toThrow("two members are both label");
+  for (const key of ["allowArray", "nonObjectAsEmpty"])
+    expect(() => b.dictionary({}, { ...webIDL, [key]: true })).toThrow(`${key}: webIDL says what the dictionary takes`);
+  expect(() => b.dictionary({}, { ...webIDL, extends: labeled }).default({ other: 1 })).toThrow(
+    "unexpected key: other",
+  );
+  expect(() => b.dictionary({}, { ...webIDL, extends: labeled }).default({})).toThrow("missing key: label");
+  expect(() => b.union({ labeled, text: b.string })).toThrow("labeled: a webIDL dictionary takes undefined and null");
+  expect(() => b.union({ one: b.sequence(b.bool), other: b.sequence(b.f64) })).toThrow("other is never chosen");
+  expect(() => b.union({ size: b.u8.enforceRange() })).toThrow("size: a range is not an alternative");
+  expect(() => b.union({ text: b.string, flag: b.bool }).default({})).toThrow("or an object, which needs a dictionary");
+  for (const key of ["configurable", "enumerable", "writable"])
+    expect(() => b.class({ rustPath: "T", ...webIDL, [key]: true })).toThrow(`${key}: webIDL says what the properties`);
+  expect(() =>
+    b.class({ rustPath: "T", ...webIDL, proto: { f: { args: { a: b.bool }, requiredArguments: 1 } } }),
+  ).toThrow("requiredArguments: webIDL counts them");
+  expect(() =>
+    b.class({
+      rustPath: "T",
+      ...webIDL,
+      proto: {
+        f: [
+          { rustName: "a", args: { x: b.any, y: b.any.variadic } },
+          { rustName: "b", args: { x: b.any, y: b.any } },
+        ],
+      },
+    }),
+  ).toThrow("overload 2 is never chosen");
+  expect(() => b.class({ rustPath: "T", extends: "Node" as any })).toThrow("extends: Node is none of EventTarget");
+  for (const key of ["refCounted", "final", "forBind", "estimatedSize"])
+    expect(() => b.class({ rustPath: "T", extends: "Event", [key]: true })).toThrow(
+      `${key} is not for a class that extends Event`,
+    );
+  expect(() => b.class({ rustPath: "T", extends: "Event", proto: { onx: { eventHandler: "x" } } })).toThrow(
+    "onx: an eventHandler is a property of the prototype of a class that extends EventTarget",
+  );
+  for (const alias of ["missing", "size", "@@dispose"])
+    expect(() => b.class({ rustPath: "T", proto: { size: { getter: b.u8 }, "@@dispose": {}, x: { alias } } })).toThrow(
+      `x: ${alias} is not a native function of proto that a string names`,
+    );
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u8, rejects: true } } })).toThrow(
+    "x: rejects: the result is a promise",
+  );
+  expect(() =>
+    b.class({ rustPath: "T", proto: { x: { getter: b.any, capability: "js", rejects: true, setter: true } } }),
+  ).toThrow("x: rejects is for a read-only property of the prototype");
   expect(() => b.class({ rustPath: "T", proto: { when: { getter: b.f64.asDate, setter: true } } })).toThrow(
     "when: .asDate is a result",
   );
@@ -355,9 +426,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "cache: a class with extends adds no internal field",
   );
   for (const construct of [{}, "illegal"] as const)
-    expect(() => b.class({ extends: base, construct })).toThrow(
-      'extends: construct is "illegal", and the base has a constructor too',
-    );
+    expect(() => b.class({ extends: base, construct })).toThrow("extends: the base has a constructor too");
+  expect(() =>
+    b.class({
+      extends: b.class({ rustPath: "T", final: false, construct: "illegal" }),
+      construct: { passStructure: true, capability: "heap" },
+    }),
+  ).toThrow("passStructure is not for a class that has the struct of its base");
   expect(() => b.class({ extends: base, proto: { x: { mutates: true } } })).toThrow(
     "a class that is or has a subclass has no mutates",
   );
@@ -545,8 +620,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
 
 it("custom enforceRange boundaries", () => {
   expect(bindgen.requiredAndOptionalArg(false, 0, 5)).toBe(5);
-  expect(() => bindgen.requiredAndOptionalArg(false, 0, -1)).toThrow("Value -1 is outside the range [0, 100]");
-  expect(() => bindgen.requiredAndOptionalArg(false, 0, 101)).toThrow("Value 101 is outside the range [0, 100]");
+  expect(() => bindgen.requiredAndOptionalArg(false, 0, -1)).toThrow("c must be in the range [0, 100] (received -1)");
+  expect(() => bindgen.requiredAndOptionalArg(false, 0, 101)).toThrow("c must be in the range [0, 100] (received 101)");
   expect(bindgen.requiredAndOptionalArg(false, 0, 100)).toBe(100);
   expect(bindgen.requiredAndOptionalArg(false, 0, 0)).toBe(0);
 });
@@ -3158,6 +3233,591 @@ describe("classes", () => {
       // The cell, then size_of::<TestRefCounted>().
       expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
     });
+  });
+});
+
+describe("WebIDL", () => {
+  const any = bindgen as any;
+  const typeError = (message: string) => expect.objectContaining({ name: "TypeError", message });
+  const throwing = (message: string) => () => {
+    throw new Error(message);
+  };
+
+  it(".finite", () => {
+    expect([any.finiteDouble("1.5"), any.finiteDouble(null), any.finiteDouble(-0)]).toEqual([1.5, 0, -0]);
+    expect(any.finiteDouble(Number.MAX_VALUE)).toBe(Number.MAX_VALUE);
+    for (const value of [NaN, Infinity, -Infinity, undefined, "x", {}])
+      expect(() => any.finiteDouble(value)).toThrow(typeError("value must be a finite number"));
+    expect(() => any.finiteDouble({ valueOf: throwing("valueOf") })).toThrow("valueOf");
+    expect(() => any.finiteDouble(1n)).toThrow(TypeError);
+
+    expect([any.finiteFloat(), any.finiteFloat(0.1), any.finiteFloat(-1e-60)]).toEqual([0.5, Math.fround(0.1), -0]);
+    // Half way between the largest float and 2^128 is the first that rounds up.
+    const largest = (2 - 2 ** -23) * 2 ** 127;
+    const halfWay = (2 - 2 ** -24) * 2 ** 127;
+    expect(any.finiteFloat(halfWay * (1 - 2 ** -53))).toBe(largest);
+    for (const value of [halfWay, -halfWay, NaN, Infinity])
+      expect(() => any.finiteFloat(value)).toThrow(
+        typeError("value must be a finite number in the range of a 32-bit float"),
+      );
+  });
+
+  it(".clamp", () => {
+    const values = [-1, 0.5, 1.5, 2.5, 65535, 65536, Infinity, -Infinity, NaN, "7", undefined];
+    expect(values.map(value => any.clamped(value))).toEqual([0, 0, 2, 2, 65535, 65535, 65535, 0, 0, 7, 0]);
+  });
+
+  it(".enforceRange()", () => {
+    const values = [0, -0.9, 1.9, "12", null, 2 ** 31, Number.MAX_SAFE_INTEGER];
+    expect(values.map(value => any.enforcedSize(value))).toEqual([0, 0, 1, 12, 0, 2 ** 31, Number.MAX_SAFE_INTEGER]);
+    for (const value of [-1, 2 ** 53, NaN, Infinity, -Infinity, undefined])
+      expect(() => any.enforcedSize(value)).toThrow(
+        typeError(`value must be in the range [0, 9007199254740991] (received ${Number(value)})`),
+      );
+    expect(() => any.enforcedSize({ valueOf: throwing("valueOf") })).toThrow("valueOf");
+  });
+
+  it(".usv", () => {
+    expect([any.usvEcho(), any.usvEcho(null), any.usvEcho("a\ud800b\udc00"), any.usvEcho("\u{1F600}")]).toEqual([
+      "",
+      "null",
+      "a\ufffdb\ufffd",
+      "\u{1F600}",
+    ]);
+    expect(() => any.usvEcho(Symbol())).toThrow(TypeError);
+  });
+
+  it("b.uint32Array, element_size and create_frozen_array", () => {
+    expect(any.uint32ArraySizes(new Uint32Array(3))).toEqual([12, 4]);
+    expect(any.uint32ArraySizes(new Uint32Array(new SharedArrayBuffer(16), 4, 2))).toEqual([8, 4]);
+    expect(any.uint32ArraySizes(new (class extends Uint32Array {})(1))).toEqual([4, 4]);
+    for (const value of [new Int32Array(1), new ArrayBuffer(4), [1], undefined, Object.create(Uint32Array.prototype)])
+      expect(() => any.uint32ArraySizes(value)).toThrow(typeError("array must be a Uint32Array"));
+    const buffers = [new ArrayBuffer(8), new SharedArrayBuffer(8), new DataView(new ArrayBuffer(8)), Buffer.alloc(8)];
+    expect([...buffers, new Float16Array(1), new Float32Array(1), new BigInt64Array(1)].map(any.elementSize)).toEqual([
+      1, 1, 1, 1, 2, 4, 8,
+    ]);
+    for (const length of [0, 3, 20]) {
+      const frozen = any.frozenRange(length);
+      expect(frozen).toEqual(Array.from({ length }, (_, i) => i));
+      expect(Object.isFrozen(frozen)).toBe(true);
+    }
+  });
+
+  it("an enumeration", () => {
+    expect([any.rgbOf("red"), any.rgbOf({ toString: () => "dark-green" }), any.rgbOf(["red"])]).toEqual([
+      0xff0000, 0x006400, 0xff0000,
+    ]);
+    for (const value of ["", "Red", "red ", undefined, null, 1, {}])
+      expect(() => any.rgbOf(value)).toThrow(typeError(`color must be a valid TestWebIDLColor (received "${value}")`));
+    const long = Buffer.alloc(1000, "x").toString();
+    expect(() => any.rgbOf(long)).toThrow(
+      typeError(`color must be a valid TestWebIDLColor (received "${long.slice(0, 128)}")`),
+    );
+    expect(() => any.rgbOf(Symbol())).toThrow(TypeError);
+    expect(() => any.rgbOf({ toString: throwing("toString") })).toThrow("toString");
+  });
+
+  describe("b.sequence", () => {
+    it("takes any iterable object", () => {
+      function* generate() {
+        yield* [1, null, "3"];
+      }
+      const iterables = [
+        [1, null, "3"],
+        new Set([1, null, "3"]),
+        generate(),
+        new Proxy([1, undefined, 3], {}),
+        [1, , 3],
+        { [Symbol.iterator]: generate },
+        Object.assign(() => {}, { [Symbol.iterator]: generate }),
+        Object.assign([9, 9], { [Symbol.iterator]: generate }),
+        vm.runInNewContext("[1, null, 3]"),
+      ];
+      for (const iterable of iterables) expect(any.sequenceEcho(iterable)).toEqual([1, null, 3]);
+      expect(any.sequenceEcho(new Uint8Array([4, 5]))).toEqual([4, 5]);
+      expect(any.sequenceEcho(new String("12"))).toEqual([1, 2]);
+      expect([any.sequenceEcho(), any.sequenceEcho([])]).toEqual([[], []]);
+      const long = Array.from({ length: 5000 }, (_, i) => i % 256);
+      expect(any.sequenceEcho(long)).toEqual(long);
+      expect(any.sequenceEcho(long.values())).toEqual(long);
+    });
+
+    it("refuses anything else", () => {
+      for (const value of [null, 1, "12", {}, { length: 1, 0: 1 }, { [Symbol.iterator]: null }])
+        expect(() => any.sequenceEcho(value)).toThrow(typeError("numbers must be an iterable object"));
+      expect(() => any.sequenceEcho({ [Symbol.iterator]: 1 })).toThrow(TypeError);
+      expect(() => any.sequenceEcho({ [Symbol.iterator]: throwing("iterator") })).toThrow("iterator");
+      expect(() => any.sequenceEcho({ [Symbol.iterator]: () => ({ next: throwing("next") }) })).toThrow("next");
+    });
+
+    it("names the element that it refuses, and stops there", () => {
+      expect(() => any.sequenceEcho([1, 256, { valueOf: throwing("not read") }])).toThrow(
+        typeError("element of numbers must be in the range [0, 255] (received 256)"),
+      );
+      expect(any.nestedSequenceLengths([["red"], [], new Set(["red", "dark-green"])])).toEqual([1, 0, 2]);
+      expect(() => any.nestedSequenceLengths([["red"], 1])).toThrow("element of lists must be an iterable object");
+      expect(() => any.nestedSequenceLengths([["blue"]])).toThrow(
+        'element of element of lists must be a valid TestWebIDLColor (received "blue")',
+      );
+      // No room is made for what the length promises.
+      expect(() => any.nestedSequenceLengths(new Array(2 ** 32 - 1))).toThrow("must be an iterable object");
+    });
+
+    it("sees what converting an element does to the array", () => {
+      const grows: unknown[] = [{ valueOf: () => (grows.push(2, 3), 1) }];
+      expect(any.sequenceEcho(grows)).toEqual([1, 2, 3]);
+      const shrinks: unknown[] = [{ valueOf: () => ((shrinks.length = 1), 1) }, 2, 3];
+      expect(any.sequenceEcho(shrinks)).toEqual([1]);
+    });
+
+    it("runs Array.prototype[Symbol.iterator] once it is replaced", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { bindgen } = require("bun:internal-for-testing");
+           const before = JSON.stringify(bindgen.sequenceEcho([1, 2]));
+           Array.prototype[Symbol.iterator] = function* () { yield 7; };
+           console.log(before, JSON.stringify(bindgen.sequenceEcho([1, 2])), bindgen.describeListOrOrigin([1, 2]));
+           delete Array.prototype[Symbol.iterator];
+           console.log(bindgen.describeListOrOrigin(Object.assign([1, 2], { x: 3 })));`,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("[1,2] [7] list [7]\norigin 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("is chosen in a union for an object that has @@iterator, which is read once", () => {
+      let reads = 0;
+      const iterable = {
+        x: 1,
+        get [Symbol.iterator]() {
+          reads++;
+          return () => [5, 6].values();
+        },
+      };
+      expect(any.describeListOrOrigin(iterable)).toBe("list [5, 6]");
+      expect(reads).toBe(1);
+      expect([[], { x: 2 }, {}, undefined, null, () => {}].map(value => any.describeListOrOrigin(value))).toEqual([
+        "list []",
+        "origin 2",
+        "origin 7",
+        "origin 7",
+        "origin 7",
+        "origin 7",
+      ]);
+      for (const value of [1, "12", true])
+        expect(() => any.describeListOrOrigin(value)).toThrow(typeError("TestOrigin must be an object"));
+      expect(() => any.describeListOrOrigin([-1])).toThrow("element of value must be in the range [0, 4294967295]");
+      expect(() => any.describeListOrOrigin({ [Symbol.iterator]: 1 })).toThrow(TypeError);
+      expect([[1.5], "12", {}, undefined].map(value => any.describeListOrText(value))).toEqual([
+        "list [1.5]",
+        "text 12",
+        "text [object Object]",
+        "text undefined",
+      ]);
+    });
+  });
+
+  describe("b.record", () => {
+    it("takes the own enumerable properties, in order", () => {
+      const object = Object.create({ inherited: 1 }, { hidden: { value: 2 }, [Symbol("hidden")]: { value: 3 } });
+      Object.assign(object, { b: "4", a: undefined, 10: 5, 2: 6, "\u00e9\ud800": 7 });
+      expect(any.recordEcho(object)).toEqual([
+        "2=Some(6.0)",
+        "10=Some(5.0)",
+        "b=Some(4.0)",
+        "a=None",
+        "\u00e9\ufffd=Some(7.0)",
+      ]);
+      expect([any.recordEcho(), any.recordEcho({}), any.recordEcho([8]), any.recordEcho({ "": 9 })]).toEqual([
+        [],
+        [],
+        ["0=Some(8.0)"],
+        ["=Some(9.0)"],
+      ]);
+    });
+
+    it("refuses what is not an object, a symbol for a key, and a value of another type", () => {
+      for (const value of [null, 1, "a"])
+        expect(() => any.recordEcho(value)).toThrow(typeError("pairs must be an object"));
+      expect(() => any.recordEcho({ [Symbol("key")]: 1 })).toThrow(TypeError);
+      expect(() => any.recordEcho({ a: NaN })).toThrow(typeError("element of pairs must be a finite number"));
+    });
+
+    it("asks a proxy what the specification says, and sees what a getter deletes", () => {
+      const traps: string[] = [];
+      const logging = new Proxy(
+        {},
+        {
+          get: (_, trap: string) => (target: any, key: any) => (
+            traps.push(`${trap} ${key}`),
+            Reflect[trap](target, key)
+          ),
+        },
+      );
+      expect(any.recordEcho(new Proxy({ a: 1, b: 2 }, logging))).toEqual(["a=Some(1.0)", "b=Some(2.0)"]);
+      expect(traps).toEqual([
+        "ownKeys undefined",
+        "getOwnPropertyDescriptor a",
+        "get a",
+        "getOwnPropertyDescriptor b",
+        "get b",
+      ]);
+      const object: any = {
+        get a() {
+          delete object.b;
+          object.d = 4;
+          return 1;
+        },
+        b: 2,
+        c: 3,
+      };
+      expect(any.recordEcho(object)).toEqual(["a=Some(1.0)", "c=Some(3.0)"]);
+    });
+  });
+
+  describe("a dictionary", () => {
+    it("reads undefined and null as {}, and any object", () => {
+      for (const value of [undefined, null, {}, [], () => {}]) {
+        expect(any.labelOf(value)).toBe("");
+        expect(() => any.describeExtent(value)).toThrow(typeError("TestExtent.width is required"));
+      }
+      expect(any.describeExtent(Object.assign([], { width: 2 }))).toBe(": 2x1");
+      for (const value of [1, "a", true, Symbol()]) {
+        expect(() => any.labelOf(value)).toThrow(typeError("TestJustLabeled must be an object"));
+        expect(() => any.describeExtent({ width: 1, empty: value })).toThrow(typeError("TestEmpty must be an object"));
+      }
+      expect([undefined, null, {}].map(empty => any.describeExtent({ width: 1, empty }))).toEqual([
+        ": 1x1",
+        ": 1x1 empty",
+        ": 1x1 empty",
+      ]);
+    });
+
+    it("reads the members of its base, then its own by name", () => {
+      const reads: string[] = [];
+      const extent = new Proxy(
+        { width: 2, label: "a" },
+        { get: (target, key: string) => (reads.push(key), target[key]) },
+      );
+      expect(any.describeExtent(extent)).toBe("a: 2x1");
+      expect(reads).toEqual(["label", "empty", "height", "width"]);
+      expect(any.labelOf({ label: 1 })).toBe("1");
+    });
+
+    it("is the default of an argument or of a union", () => {
+      expect(any.describeExtentOrDefault()).toBe("base: 3x1");
+      expect([undefined, true, { a: false }].map(value => any.describePointOrFlag(value))).toEqual([
+        "true 9 inner",
+        "flag true",
+        "false 7 inner",
+      ]);
+    });
+  });
+
+  describe("instances in a dictionary, a sequence and a record", () => {
+    const { makeShape, makeSquare, TestRefCounted } = any;
+
+    it("are checked", () => {
+      const shape = makeShape(3);
+      const sides = (scene: object) => any.sidesAfterCallback({ shape, ...scene }, () => {});
+      expect(sides({ shapes: [makeSquare(1), null], others: "red" })).toEqual([3, 4]);
+      expect(() => sides({ shape: undefined })).toThrow(typeError("TestShapeEntry.shape is required"));
+      expect(() => sides({ shape: {} })).toThrow(typeError("TestShapeEntry.shape must be an instance of TestShape"));
+      expect(() => sides({ shapes: [shape, 1] })).toThrow(
+        "element of TestScene.shapes must be an instance of TestShape",
+      );
+      expect(() => sides({ byName: { a: null } })).toThrow("element of TestScene.byName must be an instance of");
+      expect(() => sides({ either: [{}] })).toThrow("TestShapeEntry.shape is required");
+      expect(() => sides({ others: {} })).toThrow(
+        'TestScene.others must be a valid TestWebIDLColor (received "[object Object]")',
+      );
+      expect(() => sides({ refCounted: shape })).toThrow("TestScene.refCounted must be an instance of TestRefCounted");
+      const kept = makeSquare(2);
+      expect(any.keptShape({ shape, kept })).toBe(kept);
+      expect(any.keptShape({ shape })).toBeNull();
+    });
+
+    it("are alive until the call returns, though nothing else holds them", () => {
+      const count = 200;
+      let sides = 0;
+      const next = () => makeShape(sides++);
+      function* times<T>(make: (index: number) => T) {
+        for (let i = 0; i < count; i++) yield make(i);
+      }
+      const made = (members: Record<string, () => unknown>) =>
+        Object.defineProperties(
+          {},
+          Object.fromEntries(Object.entries(members).map(([key, get]) => [key, { get, enumerable: true }])),
+        );
+      const scene = made({
+        shape: next,
+        byName: () => made(Object.fromEntries(times(i => [`key${i}`, next]))),
+        either: () => times(i => (i % 2 ? next() : made({ shape: next }))),
+        entries: () => times(() => made({ shape: next })),
+        others: () => times(next),
+        refCounted: () => new TestRefCounted(1 + 5 * count),
+        shapes: () => times(next),
+      });
+      Bun.gc(true);
+      const before = any.droppedShapes();
+      let droppedDuringCall = -1;
+      const result = any.sidesAfterCallback(scene, () => {
+        Bun.gc(true);
+        droppedDuringCall = any.droppedShapes() - before;
+      });
+      expect(droppedDuringCall).toBe(0);
+      expect(result.toSorted((a, b) => a - b)).toEqual(Array.from({ length: 2 + 5 * count }, (_, i) => i));
+      Bun.gc(true);
+      expect(any.droppedShapes() - before).toBeGreaterThan(4 * count);
+    });
+  });
+
+  describe("an interface", () => {
+    const { TestInterface, TestDerivedInterface } = any;
+    const missing = (message: string) => expect.objectContaining({ code: "ERR_MISSING_ARGS", message });
+
+    it("has configurable properties", () => {
+      for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(TestInterface.prototype)))
+        expect({ key, configurable: descriptor.configurable, enumerable: descriptor.enumerable }).toEqual({
+          key,
+          configurable: true,
+          enumerable: key !== "constructor",
+        });
+    });
+
+    it("requires the arguments that are not optional", () => {
+      const object = new TestDerivedInterface("a");
+      expect(object.nullableThenOptional.length).toBe(1);
+      expect(() => object.nullableThenOptional()).toThrow(missing('The "shape" argument must be specified'));
+      expect([undefined, null, any.makeShape(1)].map(shape => object.nullableThenOptional(shape))).toEqual([
+        false,
+        false,
+        true,
+      ]);
+      expect(TestDerivedInterface.length).toBe(1);
+      expect(() => new TestDerivedInterface()).toThrow(missing('The "message" argument must be specified'));
+    });
+
+    it("chooses an overload by the number of arguments, then by their kinds", () => {
+      const object = new TestDerivedInterface("a");
+      expect(object.byCount.length).toBe(2);
+      for (const args of [[], [1]])
+        expect(() => object.byCount(...args)).toThrow(missing('The "a" and "b" arguments must be specified'));
+      expect(object.byCount(1, 2)).toBe("two or three: 1 2 None");
+      expect(object.byCount(1, 2, undefined)).toBe("two or three: 1 2 None");
+      expect(object.byCount(1, 2, 3)).toBe("two or three: 1 2 Some(3)");
+      expect(() => object.byCount(1, 2, 3, undefined)).toThrow(
+        missing('The "a", "b", "c", "d", and "e" arguments must be specified'),
+      );
+      expect(object.byCount(1, 2, 3, 4, 5)).toBe("five numbers: 1 2 3 4 5");
+      expect(object.byCount(1, 2, 3, 4, "5", 6)).toBe("five with text: 1 2 3 4 5");
+      expect(() => object.byCount(1, 2, 3, 4, undefined)).toThrow("e must be a number");
+    });
+
+    it("a subclass has a constructor of its own", () => {
+      expect(() => new TestInterface("a")).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+      const object = new TestDerivedInterface(1);
+      expect(Object.getPrototypeOf(object)).toBe(TestDerivedInterface.prototype);
+      expect(object).toBeInstanceOf(TestInterface);
+      expect(object.message).toBe("1");
+      class Further extends TestDerivedInterface {}
+      expect(Object.getPrototypeOf(new Further("a"))).toBe(Further.prototype);
+      expect(new Further("b").message).toBe("b");
+    });
+
+    it("an alias is the same function", () => {
+      const { prototype } = TestInterface;
+      expect(prototype.sameAsNullableThenOptional).toBe(prototype.nullableThenOptional);
+      expect(prototype.keys).toBe(prototype.values);
+      expect(Object.getOwnPropertyDescriptor(prototype, Symbol.iterator)).toEqual({
+        value: prototype.values,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    });
+
+    it("setlike", () => {
+      const set = new TestDerivedInterface("a");
+      expect(set.size).toBe(3);
+      expect(["one", 3, { toString: () => "two" }, "on", "", undefined].map(value => set.has(value))).toEqual([
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+      ]);
+      expect([[...set], [...set.keys()], [...set.entries()]]).toEqual([
+        ["one", "two", "3"],
+        ["one", "two", "3"],
+        [
+          ["one", "one"],
+          ["two", "two"],
+          ["3", "3"],
+        ],
+      ]);
+      expect(Object.getPrototypeOf(set.values())).toBe(Object.getPrototypeOf(new Set().values()));
+      expect(new Set(["one", "four"]).intersection(set)).toEqual(new Set(["one"]));
+      const calls: unknown[][] = [];
+      const thisArg = {};
+      set.forEach(function (this: unknown, ...args: unknown[]) {
+        calls.push([this === thisArg, args[0], args[1], args[2] === set, args.length]);
+      }, thisArg);
+      expect(calls).toEqual([
+        [true, "one", "one", true, 3],
+        [true, "two", "two", true, 3],
+        [true, "3", "3", true, 3],
+      ]);
+      expect(() => set.forEach({})).toThrow(typeError("callback must be a function"));
+      expect(() => set.forEach(throwing("callback"))).toThrow("callback");
+      for (const method of ["has", "values", "entries", "forEach"])
+        expect(() => TestInterface.prototype[method].call(new Set(), () => {})).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+        );
+    });
+
+    it("a getter that rejects", async () => {
+      const object = new TestDerivedInterface("a");
+      expect(object.ready).toBe(object.ready);
+      expect(await object.ready).toBe("a");
+      const { get } = Object.getOwnPropertyDescriptor(TestInterface.prototype, "ready")!;
+      const rejected = [new TestDerivedInterface("").ready, TestInterface.prototype.ready, get!.call(undefined)];
+      expect((await Promise.allSettled(rejected)).map((result: any) => result.reason.message)).toEqual([
+        "there is no message",
+        "The TestInterface.ready getter can only be used on instances of TestInterface",
+        "The TestInterface.ready getter can only be used on instances of TestInterface",
+      ]);
+    });
+  });
+
+  describe("extends a class of WebCore", () => {
+    const { TestTarget, TestEvent, TestException, makeShape } = any;
+
+    it("the prototype and the constructor inherit from the base's", () => {
+      for (const [Class, Base] of [
+        [TestTarget, EventTarget],
+        [TestEvent, Event],
+        [TestException, DOMException],
+      ]) {
+        expect(Object.getPrototypeOf(Class)).toBe(Base);
+        expect(Object.getPrototypeOf(Class.prototype)).toBe(Base.prototype);
+      }
+    });
+
+    it("EventTarget", () => {
+      const target = new TestTarget(4);
+      target.note = { text: "note" };
+      const seen: unknown[][] = [];
+      target.addEventListener("ping", function (this: unknown, event: any) {
+        seen.push([this === target, event.target === target, event.currentTarget === target, event.detail]);
+      });
+      Bun.gc(true);
+      expect(target.ping("a")).toBe(true);
+      expect(target.dispatchEvent(new Event("ping"))).toBe(true);
+      expect(seen).toEqual([
+        [true, true, true, "a"],
+        [true, true, true, undefined],
+      ]);
+      expect([target.id, target.note, String(target)]).toEqual([4, { text: "note" }, "[object TestTarget]"]);
+      const { get } = Object.getOwnPropertyDescriptor(TestTarget.prototype, "id")!;
+      expect(() => get!.call(new EventTarget())).toThrow(TypeError);
+      class Derived extends TestTarget {}
+      expect(new Derived(5).id).toBe(5);
+    });
+
+    it("eventHandler", () => {
+      const target = new TestTarget(1);
+      expect(target.onping).toBeNull();
+      const order: string[] = [];
+      target.onping = () => void order.push("replaced");
+      target.addEventListener("ping", () => order.push("listener"));
+      target.onping = (event: Event) => (order.push("handler"), event.preventDefault());
+      Bun.gc(true);
+      expect(target.ping(0)).toBe(false);
+      expect(order).toEqual(["handler", "listener"]);
+      target.onping = 1;
+      expect(target.onping).toBeNull();
+      expect(target.ping(0)).toBe(true);
+      const { get, set } = Object.getOwnPropertyDescriptor(TestTarget.prototype, "onping")!;
+      expect(() => get!.call(new EventTarget())).toThrow(TypeError);
+      expect(() => set!.call(new EventTarget(), () => {})).toThrow(TypeError);
+    });
+
+    it("Event", () => {
+      const shape = makeShape(3);
+      const event = new TestEvent("", { shape, cancelable: 1 });
+      expect([event.type, event.cancelable, event.isTrusted, event.isNative, event.detail === shape]).toEqual([
+        "",
+        true,
+        false,
+        false,
+        true,
+      ]);
+      expect(Object.hasOwn(event, "isTrusted")).toBe(true);
+      const target = new EventTarget();
+      let received: unknown;
+      target.addEventListener("", event => ((received = event), event.preventDefault()));
+      expect(target.dispatchEvent(event)).toBe(false);
+      expect(received).toBe(event);
+
+      const native = new TestTarget(1);
+      native.onping = (event: any) => void (received = event);
+      native.ping(shape);
+      expect(received).toBeInstanceOf(TestEvent);
+      expect(received).toMatchObject({ type: "ping", isTrusted: true, isNative: true, detail: shape });
+      expect(() => new TestEvent("a")).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+      expect(() => new TestEvent("a", {})).toThrow(typeError("TestEventInit.shape is required"));
+    });
+
+    it("DOMException", () => {
+      expect(TestException.length).toBe(2);
+      for (const [exception, message, reason] of [
+        [new TestException(undefined, 1), "", 1],
+        [new TestException(5, 2), "5", 2],
+        [any.makeException(3), "made by native code", 3],
+      ]) {
+        expect(exception).toBeInstanceOf(Error);
+        expect([exception.name, exception.code, exception.message, exception.reason]).toEqual([
+          "TestException",
+          0,
+          message,
+          reason,
+        ]);
+      }
+      expect(any.makeException(3).stack).toContain(import.meta.file);
+    });
+
+    it("the struct is dropped when the object is collected, listeners or not", () => {
+      const shape = makeShape(1);
+      const before = any.droppedWebCoreSubclasses();
+      (function () {
+        for (let i = 0; i < 100; i++) {
+          const target = new TestTarget(i);
+          target.onping = () => target;
+          target.addEventListener("pong", () => target);
+          target.dispatchEvent(new TestEvent("pong", { shape }));
+          new TestException("", i);
+        }
+      })();
+      Bun.gc(true);
+      expect(any.droppedWebCoreSubclasses() - before).toBeGreaterThan(250);
+    });
+  });
+
+  it("a namespace of constants", () => {
+    expect(Object.getOwnPropertyDescriptors(any.TestFlags)).toEqual({
+      READ: { value: 1, writable: false, enumerable: true, configurable: false },
+      WRITE: { value: 2, writable: false, enumerable: true, configurable: false },
+      [Symbol.toStringTag]: { value: "TestFlags", writable: false, enumerable: false, configurable: true },
+    });
+    expect(Object.getPrototypeOf(any.TestFlags)).toBe(Object.prototype);
   });
 });
 

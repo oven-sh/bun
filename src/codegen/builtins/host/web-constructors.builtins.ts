@@ -688,6 +688,15 @@ export default b.declarations(
       target: targetOfEvent,
       currentTarget: targetOfEvent,
       srcElement: targetOfEvent,
+      // A new list of targets, of which it makes none.
+      composedPath: {
+        returns: b.instance("Array").exactly.holding({ element: b.anyMadeOf() }).fresh,
+        capability: "heap",
+        throws: true,
+        uses: { this: [b.exposedFrom(targetsOfEventsCell)] },
+        reads: ["ExternalState"],
+        implementation: b.hostCall,
+      },
       cancelBubble: flagOfEvent,
       returnValue: flagOfEvent,
       ...Object.fromEntries(
@@ -952,6 +961,12 @@ export default b.declarations(
     userAgent: describesMachine(b.string),
     platform: describesMachine(b.string),
     hardwareConcurrency: describesMachine(b.f64),
+    // An executable that lacks the feature answers an ordinary object below GPU.prototype.
+    gpu: b.property(b.instance("GPU"), {
+      mutability: "ConstantUnlessWritten",
+      resultIsDeclaredOnly: true,
+      createdOnFirstRead: { capability: "heap", throws: true },
+    }),
     "@@toStringTag": b.property(b.string),
   }),
   b.inherits("navigator", "Object.prototype"),

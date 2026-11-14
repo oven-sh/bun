@@ -64,6 +64,10 @@ template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSour
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 
+template<> struct IDLHumanReadableName<Bindgen::IDLRawUint32Array> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("Uint32Array");
+};
+
 template<> struct IDLHumanReadableName<Bindgen::IDLRawCallable> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("function");
 };
@@ -86,12 +90,29 @@ template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWr
 
 namespace Bindgen {
 
-// Specialized by generated code. `result` was just default-constructed. False if it threw.
+// In the frame of a host function: the instances found inside its arguments, which JavaScript can take out of them again.
+class Roots {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(Roots);
+
+public:
+    Roots() = default;
+
+    // False if it threw.
+    NEVER_INLINE bool add(JSC::JSGlobalObject&, JSC::JSValue);
+
+private:
+    JSC::MarkedArgumentBuffer m_values;
+};
+
+// Generated code specializes one of the two. `result` was just default-constructed. False if it threw.
 template<typename T>
 bool convertDictionaryInto(JSC::JSGlobalObject&, JSC::JSValue, T& result);
+template<typename T>
+bool convertDictionaryInto(JSC::JSGlobalObject&, JSC::JSValue, T& result, Roots&);
 
-template<typename T, IDLConversionContext Ctx>
-bool convertDictionaryInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result, Ctx& ctx)
+template<typename T, IDLConversionContext Ctx, std::same_as<Roots>... OptionalRoots>
+bool convertDictionaryInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result, Ctx& ctx, OptionalRoots&... roots)
 {
     // The dictionary names itself. `expected` names the argument.
     using Context = std::remove_const_t<Ctx>;
@@ -102,7 +123,13 @@ bool convertDictionaryInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value
             return false;
         }
     }
-    return convertDictionaryInto(globalObject, value, result);
+    return convertDictionaryInto(globalObject, value, result, roots...);
+}
+
+template<IDLConversionContext Ctx>
+NEVER_INLINE void throwNotEnumerationValue(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx, WTF::ASCIILiteral enumeration, WTF::StringView received)
+{
+    ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("a valid "_s, enumeration, " (received \""_s, received.left(128), "\")"_s));
 }
 
 template<IDLConversionContext Ctx>
@@ -391,6 +418,48 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::
             ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
         else
             Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawUint32Array> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawUint32Array> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isCell() || value.asCell()->type() != JSC::Uint32ArrayType)
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a Uint32Array"_s);
+    }
+};
+
+template<typename T>
+struct WebCore::Converter<Bun::Bindgen::IDLLooseEnumeration<T>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseEnumeration<T>> {
+    template<Bun::IDLConversionContext Ctx>
+    static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, T& result)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto string = value.toWTFString(&globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (auto parsed = WebCore::parseEnumerationFromString<T>(string)) [[likely]] {
+            result = *parsed;
+            return true;
+        }
+        Bun::Bindgen::throwNotEnumerationValue(globalObject, scope, ctx, Bun::idlHumanReadableName<Bun::Bindgen::IDLLooseEnumeration<T>>(), string);
+        return false;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static T convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        T result {};
+        convertInto(globalObject, value, ctx, result);
+        return result;
     }
 };
 

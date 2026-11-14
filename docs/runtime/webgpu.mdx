@@ -1,0 +1,207 @@
+---
+title: WebGPU
+description: Run compute shaders and render to textures with navigator.gpu
+---
+
+Bun implements [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) with [Dawn](https://dawn.googlesource.com/dawn), the implementation that Chrome uses. `navigator.gpu` is available on the main thread and in [workers](/runtime/workers).
+
+Bun has no windows and no canvas. You can run compute shaders, and you can render to a texture and read the pixels back.
+
+## Run a compute shader
+
+This program doubles each number of an array on the GPU.
+
+```ts compute.ts icon="/icons/typescript.svg"
+const adapter = await navigator.gpu.requestAdapter();
+if (!adapter) throw new Error("This machine has no driver for WebGPU");
+const device = await adapter.requestDevice();
+
+const input = new Float32Array([1, 2, 3, 4]);
+
+const storage = device.createBuffer({
+  size: input.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+});
+const readback = device.createBuffer({
+  size: input.byteLength,
+  usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+});
+device.queue.writeBuffer(storage, 0, input);
+
+const pipeline = await device.createComputePipelineAsync({
+  layout: "auto",
+  compute: {
+    module: device.createShaderModule({
+      code: `
+        @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+
+        @compute @workgroup_size(64)
+        fn main(@builtin(global_invocation_id) id: vec3u) {
+          if (id.x < arrayLength(&data)) {
+            data[id.x] *= 2;
+          }
+        }
+      `,
+    }),
+  },
+});
+
+const encoder = device.createCommandEncoder();
+const pass = encoder.beginComputePass();
+pass.setPipeline(pipeline);
+pass.setBindGroup(
+  0,
+  device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: storage } }],
+  }),
+);
+pass.dispatchWorkgroups(Math.ceil(input.length / 64));
+pass.end();
+encoder.copyBufferToBuffer(storage, readback);
+device.queue.submit([encoder.finish()]);
+
+await readback.mapAsync(GPUMapMode.READ);
+console.log(new Float32Array(readback.getMappedRange())); // Float32Array(4) [ 2, 4, 6, 8 ]
+readback.unmap();
+```
+
+`unmap()` detaches the `ArrayBuffer` that `getMappedRange()` returned. Copy the data with `.slice()` to keep it.
+
+## Render to a texture
+
+This program draws a triangle and saves it as a PNG with [`Bun.Image`](/runtime/image), which reads the pixels as a BMP.
+
+```ts render.ts icon="/icons/typescript.svg"
+const device = await (await navigator.gpu.requestAdapter())!.requestDevice();
+const size = 256;
+
+const texture = device.createTexture({
+  size: [size, size],
+  format: "bgra8unorm",
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+});
+const readback = device.createBuffer({
+  size: size * size * 4,
+  usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+});
+
+const module = device.createShaderModule({
+  code: `
+    @vertex fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+      let corners = array(vec2f(0, 0.8), vec2f(-0.8, -0.8), vec2f(0.8, -0.8));
+      return vec4f(corners[index], 0, 1);
+    }
+
+    @fragment fn fragment() -> @location(0) vec4f {
+      return vec4f(1, 0.5, 0.7, 1);
+    }
+  `,
+});
+const pipeline = device.createRenderPipeline({
+  layout: "auto",
+  vertex: { module },
+  fragment: { module, targets: [{ format: texture.format }] },
+});
+
+const encoder = device.createCommandEncoder();
+const pass = encoder.beginRenderPass({
+  colorAttachments: [{ view: texture.createView(), clearValue: [0, 0, 0, 1], loadOp: "clear", storeOp: "store" }],
+});
+pass.setPipeline(pipeline);
+pass.draw(3);
+pass.end();
+// bytesPerRow has to be a multiple of 256.
+encoder.copyTextureToBuffer({ texture }, { buffer: readback, bytesPerRow: size * 4 }, [size, size]);
+device.queue.submit([encoder.finish()]);
+
+await readback.mapAsync(GPUMapMode.READ);
+
+const header = Buffer.alloc(54);
+header.write("BM");
+header.writeUInt32LE(header.length + readback.size, 2);
+header.writeUInt32LE(header.length, 10); // where the pixels start
+header.writeUInt32LE(40, 14);
+header.writeInt32LE(size, 18);
+header.writeInt32LE(-size, 22); // negative: the first row is the top one
+header.writeUInt16LE(1, 26);
+header.writeUInt16LE(32, 28); // bits per pixel
+const bmp = Buffer.concat([header, new Uint8Array(readback.getMappedRange())]);
+readback.unmap();
+
+await new Bun.Image(bmp).png().write("triangle.png");
+```
+
+## Drivers
+
+Bun loads the graphics libraries of the system on the first call to `requestAdapter()`. A program that does not call it loads none of them.
+
+| Platform                | Graphics API | What the machine needs                             |
+| ----------------------- | ------------ | -------------------------------------------------- |
+| macOS                   | Metal        | nothing                                            |
+| Windows                 | Direct3D 12  | nothing                                            |
+| Linux, FreeBSD, Android | Vulkan       | the Vulkan loader and a driver that has Vulkan 1.1 |
+
+`requestAdapter()` resolves to `null` when Bun finds no driver.
+
+When the machine has no GPU, Bun uses a driver that runs on the CPU if the system has one. `adapter.info.isFallbackAdapter` is `true` for such an adapter. Pass `forceFallbackAdapter: true` to ask for it on a machine that has a GPU. Windows includes such a driver, WARP. On Linux, install Mesa's:
+
+<CodeGroup>
+
+```sh Debian/Ubuntu
+apt install libvulkan1 mesa-vulkan-drivers
+```
+
+```sh Alpine
+apk add vulkan-loader mesa-vulkan-swrast
+```
+
+</CodeGroup>
+
+A driver that runs on the CPU generates machine code. An executable from [`bun compile`](/compiler/aot) is not allowed to on Linux 6.7 and later, so it finds no such adapter. Build with `--no-aot` to use one.
+
+The features in `adapter.features` depend on the driver. On Windows, Bun compiles shaders with the `d3dcompiler_47.dll` of the system, which stops at Shader Model 5.1. The features that need Shader Model 6, such as `shader-f16` and `subgroups`, are not available there.
+
+## Errors
+
+Most calls do not throw when their arguments are invalid. The device reports the error later. Capture it with an error scope:
+
+```ts
+device.pushErrorScope("validation");
+device.createBuffer({ size: 4, usage: 0 });
+const error = await device.popErrorScope();
+console.log(error?.message); // Buffer usages must not be 0. ...
+```
+
+An error that no scope captures fires an `uncapturederror` event on the device. Bun prints the error with `console.warn()` unless a listener calls `event.preventDefault()`.
+
+```ts
+device.addEventListener("uncapturederror", event => {
+  event.preventDefault();
+  throw new Error(event.error.message);
+});
+```
+
+## Lifetime
+
+A pending `mapAsync()`, `onSubmittedWorkDone()` or other promise of WebGPU keeps the process alive. An idle device does not, and neither does `device.lost`.
+
+The garbage collector frees buffers, textures and devices that nothing refers to. Call `destroy()` to free one sooner. With Vulkan and Direct3D 12, a device keeps the memory of buffers and textures of up to 4 MB for its next ones.
+
+## Differences from browsers
+
+- `GPUCanvasContext`, `device.importExternalTexture()` and `queue.copyExternalImageToTexture()` do not exist. Upload pixels with `queue.writeTexture()`.
+- `adapter.limits` and `adapter.info` have the values of the driver, and timestamp queries have its full resolution. Browsers round or hide them for privacy.
+- The driver runs in the same process as your code. `requestAdapter()`, `requestDevice()`, `createShaderModule()`, `createComputePipeline()`, `createRenderPipeline()` and `device.destroy()` block the thread while they work. So does the garbage collector when it destroys a device that the GPU still works for. `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile on another thread.
+- A browser isolates the shader compiler and the driver in a sandboxed process. Bun does not, so compile only shaders that you trust.
+- `structuredClone()` refuses `GPUCompilationInfo` and `GPUCompilationMessage`, and clones a `GPUPipelineError` as a plain `DOMException`.
+
+## TypeScript
+
+`@types/bun` declares the classes and dictionaries of WebGPU as globals. The enumerations are in `Bun.WebGPU`:
+
+```ts
+const format: Bun.WebGPU.GPUTextureFormat = "rgba8unorm";
+```
+
+When your project loads `lib.dom.d.ts` from TypeScript 6.0 or newer, or [`@webgpu/types`](https://www.npmjs.com/package/@webgpu/types), those declarations apply instead.

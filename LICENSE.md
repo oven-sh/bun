@@ -44,6 +44,11 @@ Bun statically links these libraries:
 | [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
+| [`dawn`](https://github.com/google/dawn) | BSD 3-Clause |
+| [`abseil`](https://github.com/abseil/abseil-cpp) | Apache 2.0 |
+| [`SPIRV-Headers`](https://github.com/KhronosGroup/SPIRV-Headers) | MIT |
+| [`Vulkan-Headers`](https://github.com/KhronosGroup/Vulkan-Headers) | dual-licensed under Apache 2.0 or the MIT License |
+| [`Vulkan-Utility-Libraries`](https://github.com/KhronosGroup/Vulkan-Utility-Libraries) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |

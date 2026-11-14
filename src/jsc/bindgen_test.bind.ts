@@ -712,3 +712,161 @@ export const describeDefaults = b.fn({
   returns: b.string.utf8,
   capability: "heap",
 });
+
+export const finiteDouble = b.fn({ args: { value: b.f64.finite }, returns: b.f64 });
+export const finiteFloat = b.fn({ args: { value: b.f32.finite.default(0.5) }, returns: b.f64 });
+export const clamped = b.fn({ args: { value: b.u16.clamp }, returns: b.u16 });
+export const enforcedSize = b.fn({ args: { value: b.u64.enforceRange() }, returns: b.u64 });
+export const usvEcho = b.fn({ args: { text: b.string.usv.default("") }, returns: b.string });
+/** `[byte length, element size]` */
+export const uint32ArraySizes = b.fn({ args: { array: b.uint32Array }, returns: b.array(b.usize), capability: "heap" });
+export const elementSize = b.fn({ args: { buffer: b.bufferSource.allowShared }, returns: b.usize });
+export const frozenRange = b.fn({ args: { length: b.u32 }, returns: b.jsArray, capability: "heap", throws: true });
+
+export const TestWebIDLColor = b.enumeration(["red", "dark-green"], {
+  webIDL: true,
+  rustInto: "crate::bindgen_test::Rgb",
+});
+export const rgbOf = b.fn({ args: { color: TestWebIDLColor }, returns: b.u32 });
+
+export const sequenceEcho = b.fn({
+  args: { numbers: b.sequence(b.u8.enforceRange().nullable).default([]) },
+  returns: b.array(b.u8.nullable),
+});
+export const nestedSequenceLengths = b.fn({
+  args: { lists: b.sequence(b.sequence(TestWebIDLColor)) },
+  returns: b.array(b.usize),
+});
+/** `key=value` for each pair. */
+export const recordEcho = b.fn({
+  args: { pairs: b.record(b.f64.finite.optional).default({}) },
+  returns: b.array(b.string.utf8),
+});
+
+export const TestEmpty = b.dictionary({}, { webIDL: true });
+export const TestLabeled = b.dictionary({ label: b.string.usv.default("") }, { webIDL: true });
+export const TestJustLabeled = b.dictionary({}, { webIDL: true, extends: TestLabeled });
+export const TestExtent = b.dictionary(
+  { width: b.u32.enforceRange(), height: b.u32.enforceRange().default(1), empty: TestEmpty.optional },
+  { webIDL: true, extends: TestLabeled },
+);
+export const TestOrigin = b.dictionary({ x: b.u32.enforceRange().default(7) }, { webIDL: true });
+export const TestListOrOrigin = b.union({ list: b.sequence(b.u32.enforceRange()), origin: TestOrigin });
+export const TestListOrText = b.union({ list: b.sequence(b.f64.finite), text: b.string.loose });
+export const TestPointOrFlag = b.union({ flag: b.bool, point: TestInner });
+export const labelOf = b.fn({ args: { options: TestJustLabeled.default({}) }, returns: b.string });
+export const describeExtent = b.fn({ args: { extent: TestExtent }, returns: b.string.utf8 });
+export const describeExtentOrDefault = b.fn({
+  args: { extent: TestExtent.default({ label: "base", width: 3 }) },
+  returns: b.string.utf8,
+  rustPath: "crate::bindgen_test::describe_extent",
+});
+export const describeListOrOrigin = b.fn({ args: { value: TestListOrOrigin.default({}) }, returns: b.string.utf8 });
+export const describeListOrText = b.fn({ args: { value: TestListOrText }, returns: b.string.utf8 });
+export const describePointOrFlag = b.fn({ args: { value: TestPointOrFlag.default({ b: 9 }) }, returns: b.string.utf8 });
+
+/** Instances inside containers, each way they nest. */
+export const TestShapeEntry = b.dictionary({ shape: TestShape }, { webIDL: true });
+export const TestShapeOrEntry = b.union({ shape: TestShape, entry: TestShapeEntry });
+export const TestShapesOrColor = b.union({ shapes: b.sequence(TestShape), color: TestWebIDLColor });
+export const TestScene = b.dictionary(
+  {
+    byName: b.record(TestShape).default({}),
+    entries: b.sequence(TestShapeEntry.nullable).default([]),
+    either: b.sequence(TestShapeOrEntry).default([]),
+    kept: TestShape.local.optional,
+    others: TestShapesOrColor.optional,
+    refCounted: TestRefCounted.optional,
+    shapes: b.sequence(TestShape.nullable).default([]),
+  },
+  { webIDL: true, extends: TestShapeEntry },
+);
+/** The sides of every shape in the scene, read after `callback` ran. */
+export const sidesAfterCallback = b.fn({
+  args: { scene: TestScene, callback: b.callable },
+  returns: b.array(b.u32),
+  capability: "js",
+  throws: true,
+});
+export const keptShape = b.fn({ args: { scene: TestScene }, returns: TestShape.nullable, capability: "heap" });
+
+/** `webIDL`, `setlike`, `alias`, a getter that `rejects` and a setter that takes instances. */
+export const TestInterface = b.class({
+  rustPath: "crate::bindgen_test::TestInterface",
+  webIDL: true,
+  setlike: true,
+  final: false,
+  construct: "illegal",
+  proto: {
+    nullableThenOptional: {
+      args: { shape: TestShape.nullable, times: b.u32.enforceRange().optional },
+      returns: b.bool,
+    },
+    sameAsNullableThenOptional: { alias: "nullableThenOptional" },
+    byCount: [
+      {
+        rustName: "two_or_three",
+        args: { a: b.u32.wrap, b: b.u32.wrap, c: b.u32.wrap.optional },
+        returns: b.string.utf8,
+      },
+      {
+        rustName: "five_numbers",
+        args: { a: b.u32.wrap, b: b.u32.wrap, c: b.u32.wrap, d: b.u32.wrap, e: b.f64 },
+        returns: b.string.utf8,
+      },
+      {
+        rustName: "five_with_text",
+        args: { a: b.u32.wrap, b: b.u32.wrap, c: b.u32.wrap, d: b.u32.wrap, e: b.string },
+        returns: b.string.utf8,
+      },
+    ],
+    /** Rejects if `message` is empty. */
+    ready: { getter: b.any.returning("Promise"), cache: true, capability: "js", throws: true, rejects: true },
+    message: { getter: b.string },
+  },
+});
+/** `extends` with a constructor of its own. */
+export const TestDerivedInterface = b.class({
+  extends: TestInterface,
+  webIDL: true,
+  construct: { args: { message: b.string.loose.owned } },
+});
+
+export const TestTarget = b.class({
+  rustPath: "crate::bindgen_test::TestTarget",
+  extends: "EventTarget",
+  webIDL: true,
+  construct: { args: { id: b.u32 } },
+  internalFields: ["note"],
+  proto: {
+    id: { getter: b.u32 },
+    note: { internalField: "note", setter: true },
+    onping: { eventHandler: "ping" },
+    /** Dispatches a `TestEvent`. False if a listener canceled it. */
+    ping: { args: { detail: b.any }, returns: b.bool, passThis: true, capability: "js", throws: true },
+  },
+});
+export const TestEventInit = b.dictionary(
+  { cancelable: b.bool.loose.default(false), shape: TestShape.local },
+  { webIDL: true },
+);
+export const TestEvent = b.class({
+  rustPath: "crate::bindgen_test::TestEvent",
+  extends: "Event",
+  webIDL: true,
+  construct: { args: { type: b.string.loose.owned, init: TestEventInit }, passStructure: true, capability: "heap" },
+  internalFields: ["detail"],
+  proto: { detail: { internalField: "detail" }, isNative: { getter: b.bool } },
+});
+export const TestException = b.class({
+  rustPath: "crate::bindgen_test::TestException",
+  extends: "DOMException",
+  webIDL: true,
+  construct: { args: { message: b.string.loose.owned.default(""), reason: b.u32 } },
+  proto: { reason: { getter: b.u32 } },
+});
+export const makeException = b.fn({ args: { reason: b.u32 }, returns: TestException, capability: "heap" });
+/** How many of `TestTarget`, `TestEvent` and `TestException` were dropped. */
+export const droppedWebCoreSubclasses = b.fn({ returns: b.usize });
+
+export const TestFlags = b.namespace({ READ: { constant: 1 }, WRITE: { constant: 2 } }, { webIDL: true });

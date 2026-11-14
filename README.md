@@ -196,6 +196,7 @@ bun upgrade --canary
   - [Child processes (spawn)](https://bun.com/docs/runtime/child-process)
   - [Cron (`Bun.cron`)](https://bun.com/docs/runtime/cron)
   - [WebView](https://bun.com/docs/runtime/webview)
+  - [WebGPU](https://bun.com/docs/runtime/webgpu)
   - [Transpiler (`Bun.Transpiler`)](https://bun.com/docs/runtime/transpiler)
   - [Hashing](https://bun.com/docs/runtime/hashing)
   - [Colors (`Bun.color`)](https://bun.com/docs/runtime/color)

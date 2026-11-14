@@ -19,6 +19,7 @@ import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
+import { dawnJson } from "./deps/dawn.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
@@ -108,6 +109,7 @@ function systemLibs(cfg: Config): string[] {
       "ntdll.lib",
       "userenv.lib",
       "dbghelp.lib",
+      "dxguid.lib", // GUIDs for Dawn's D3D12 backend: data, no DLL behind it
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
@@ -159,7 +161,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 1: codegen + rust ───
   // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
-  const codegen = emitCodegen(n, cfg, sources, webkitEngineSources(cfg));
+  const codegen = emitCodegen(n, cfg, sources, { engine: webkitEngineSources(cfg), dawnJson: dawnJson(cfg) });
   const depsByName = new Map<DepName, ResolvedDep>();
 
   // Each Rust crate produces an rlib the link takes beside the C/C++

@@ -39,13 +39,13 @@ inline T* boundThisAs(JSC::JSValue value)
     return function ? dynamicDowncast<T>(function->boundThis()) : nullptr;
 }
 
-JSC::GCClient::IsoSubspace* createSubspaceForClass(JSC::VM&, unsigned classIndex, size_t cellSize);
+JSC::GCClient::IsoSubspace* createSubspaceForClass(JSC::VM&, unsigned classIndex, size_t cellSize, bool hasOutputConstraints);
 
-inline JSC::GCClient::IsoSubspace* subspaceForClass(JSC::VM& vm, unsigned classIndex, size_t cellSize)
+inline JSC::GCClient::IsoSubspace* subspaceForClass(JSC::VM& vm, unsigned classIndex, size_t cellSize, bool hasOutputConstraints = false)
 {
     if (auto* space = downcast<WebCore::JSVMClientData>(vm.clientData)->clientSubspaces().m_clientSubspaceForBindgenClass[classIndex]) [[likely]]
         return space;
-    return createSubspaceForClass(vm, classIndex, cellSize);
+    return createSubspaceForClass(vm, classIndex, cellSize, hasOutputConstraints);
 }
 
 // Reports a field that holds a cell to a heap snapshot, as a property of that name.

@@ -16,6 +16,8 @@ static ALWAYS_INLINE bool canSkipPrototypeChain(JSGlobalObject* globalObject, JS
 
 JSValue DictionaryMemberReader::get(unsigned index)
 {
+    if (!m_object) [[unlikely]]
+        return jsUndefined();
     // Asked per member: converting one can run JavaScript.
     if (m_object->type() == FinalObjectType && canSkipPrototypeChain(m_globalObject, m_object)) [[likely]] {
         unsigned attributes = 0;

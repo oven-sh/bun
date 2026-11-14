@@ -5,6 +5,7 @@ import { candidatesForTheirClass } from "../differential/instances";
 import { addLiveCandidates } from "../differential/live";
 import { Realm } from "../differential/members";
 import { Table } from "../differential/table-description";
+import { openersOfWebGPU } from "../differential/webgpu";
 import { addHostInstances } from "./host-instances";
 
 process.on("unhandledRejection", () => {});
@@ -12,5 +13,5 @@ process.on("uncaughtException", () => {});
 
 const realm = new Realm(new Table(aotBuiltinEntries()));
 await addLiveCandidates(realm);
-console.log(JSON.stringify(await addHostInstances(realm, candidatesForTheirClass, openersOfWhatTheLibraryHolds)));
+console.log(JSON.stringify(await addHostInstances(realm, candidatesForTheirClass, [...openersOfWhatTheLibraryHolds, ...openersOfWebGPU])));
 process.exit(0);

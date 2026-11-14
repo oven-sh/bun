@@ -20,6 +20,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync,
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
+import { envOfDriver } from "../../js/web/webgpu/driver";
 import { afterAll } from "../harness/default-timeout";
 import { beforeAll, describe, test } from "../supported";
 import { checkCall } from "./differential/check-call";
@@ -48,7 +49,10 @@ const secondsPerAttempt = 600;
 // They are seconds in which its process ran or had nothing to run: on a machine with more to do than it has processors a call waits for its turn, and that is not the call's time.
 const secondsPerCall = Number(process.env.AOT_BUILTINS_SECONDS_A_CALL) || 45;
 const secondsAsleepPerCall = 10;
-const workerEnv = { ...bunEnv, ...settingsOfEngine };
+const workerEnv = { ...bunEnv, ...settingsOfEngine, ...envOfDriver };
+// An executable refuses a driver that runs on the CPU.
+const hasAdapter = envOfDriver !== undefined && way !== "executable";
+const needsAdapter = /^GPU(?!\w*Error)\w+\.prototype\./;
 // Each process warms up anew, which costs as much as a tenth of all the calls.
 const maxWorkers = 3;
 const maxAttemptsPerWorker = 400;
@@ -448,7 +452,7 @@ function defineStartTest(): void {
 
 function defineTests(): void {
   const checkedCalls = dump.entries
-    .filter(entry => filter.test(entry.path))
+    .filter(entry => filter.test(entry.path) && (hasAdapter || !needsAdapter.test(entry.path)))
     .flatMap((entry): CheckedCall[] => {
       const overloads = entry.overloads.filter(isChecked);
       return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({

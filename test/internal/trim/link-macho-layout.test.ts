@@ -151,6 +151,19 @@ describeEachMachine("Mach-O $name", machine => {
       expectCleanRuns({ programResult, trimmedResult });
     });
 
+    test("is removable beside the name of an Objective-C selector", async () => {
+      using dir = tempDir("trim-macho-strings", {
+        ...strings,
+        "selector.c": "SEL selector(void) { return @selector(name); }",
+      });
+      const { stringAt, isRemovableAt, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: [...objects, "selector"],
+        compileFlags: { selector: ["-x", "objective-c"] },
+      });
+      expect(isRemovableAt(stringAt(onlyFeature))).toBe(true);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
     test("is never removable once one reference matches no string in the map", async () => {
       const lea = (name: string, to: string) =>
         `${name}:${perMachine(`adrp x0, ${to}@PAGE\nadd x0, x0, ${to}@PAGEOFF`, `leaq ${to}(%rip), %rax`)}ret\n`;

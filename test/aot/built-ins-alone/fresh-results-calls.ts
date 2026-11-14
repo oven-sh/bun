@@ -401,6 +401,7 @@ export const calls: Record<string, string[]> = {
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
+  GPUPipelineError: ['new GPUPipelineError("m", { reason: "internal" })'],
   HTMLRewriter: ["new HTMLRewriter()"],
   Iterator: ["new (class extends Iterator {})()"],
   URL: ['new URL("https://user:secret@example.com:8080/a/b?first=1#part")', 'new URL("/a", "https://example.com")'],

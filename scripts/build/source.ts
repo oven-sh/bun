@@ -17,7 +17,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -42,7 +42,12 @@ import { toolIdentityFile } from "./tools.ts";
  * disk content, so hand-edits to vendor/<dep>/*.c are preserved (identity
  * still matches, no wipe).
  */
-function invalidateStaleSource(srcDir: string, refStamp: string, commit: string, patchPaths: string[]): void {
+function invalidateStaleSource(
+  srcDir: string,
+  refStamp: string,
+  source: Extract<Source, { kind: "github-archive" }>,
+  patchPaths: string[],
+): void {
   if (!existsSync(srcDir)) return;
 
   const patchContents = patchPaths.map(p => {
@@ -54,7 +59,7 @@ function invalidateStaleSource(srcDir: string, refStamp: string, commit: string,
       return "<missing>";
     }
   });
-  const expected = computeSourceIdentity(commit, patchContents);
+  const expected = computeSourceIdentity(source.commit, patchContents, source.exclude ?? []);
 
   let current = "";
   try {
@@ -89,6 +94,8 @@ export type Source =
        * will silently change what we fetch.
        */
       commit: string;
+      /** Directories left in the tarball (`tar --exclude`, which matches them at any depth). */
+      exclude?: string[];
     }
   | {
       /**
@@ -468,10 +475,13 @@ export interface Provides {
  */
 export type DepName =
   | "WebKit"
+  | "abseil"
   | "boringssl"
   | "brotli"
   | "cares"
+  | "dawn"
   | "highway"
+  | "jinja"
   | "libdeflate"
   | "libjpeg-turbo"
   | "libuv"
@@ -480,12 +490,16 @@ export type DepName =
   | "lshpack"
   | "lsqpack"
   | "lsquic"
+  | "markupsafe"
   | "mimalloc"
   | "nodejs"
   | "picohttpparser"
   | "rust-argon2"
+  | "spirv-headers"
   | "sqlite"
   | "tinycc"
+  | "vulkan-headers"
+  | "vulkan-utility-libraries"
   | "zlib"
   | "zstd";
 
@@ -617,7 +631,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // files. If any of those change, the ninja command string changes, and ninja
   // re-runs fetch. The fetch script is also an implicit input.
   n.rule("dep_fetch", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $repo $commit $dest $cache $patches`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $repo $commit $dest $cache $exclude $patches`,
     description: "fetch $name",
     restat: true,
     pool: "dep",
@@ -842,13 +856,19 @@ export function resolveDep(
   // time from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
-    assert(
-      source.kind !== "github-archive" || (buildSpec.groups === undefined && buildSpec.steps === undefined),
-      `${dep.name}: groups/steps of a fetched dep are not declared as outputs of its fetch yet`,
-    );
     for (const s of buildSpec.sources) {
       directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
     }
+    // Groups and steps also name generated files and files of this repository, which the fetch does not write.
+    const named = [
+      ...(buildSpec.groups ?? []).flatMap(g => [
+        ...g.sources.map(s => (typeof s === "string" ? s : s.path)),
+        ...(g.pch === undefined ? [] : [g.pch]),
+        ...(g.chainedPch ?? []).map(p => p.header),
+      ]),
+      ...(buildSpec.steps ?? []).flatMap(step => (step.kind === "exe" ? [] : step.inputs)),
+    ].map(path => resolve(srcDir, path));
+    directSources.push(...new Set(named.filter(path => path.startsWith(srcDir + sep))));
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
     }
@@ -992,7 +1012,7 @@ function emitFetch(
   //
   // Only deletes when identity is demonstrably wrong — normal no-op
   // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(srcDir, refStamp, source.commit, patchPaths);
+  invalidateStaleSource(srcDir, refStamp, source, patchPaths);
 
   n.build({
     outputs: [refStamp],
@@ -1011,6 +1031,7 @@ function emitFetch(
       commit: source.commit,
       dest: srcDir,
       cache: resolve(cfg.cacheDir, "tarballs"),
+      exclude: (source.exclude ?? []).map(directory => `--exclude=${directory}`).join(" "),
       // Pass patches space-separated. Shell-safe because patch paths are
       // under our control (no spaces in repo paths per convention).
       patches: patchPaths.join(" "),
@@ -1502,7 +1523,7 @@ function emitDirect(
       const abs = resolve(srcDir, src.path);
       const extra = src.cflags ?? [];
       const opts = { orderOnlyInputs: [groupReady], implicitInputs: src.implicitInputs ?? [] };
-      if (abs.endsWith(".c")) {
+      if (abs.endsWith(".c") || abs.endsWith(".S")) {
         const asCxx = src.lang === "cxx";
         return cc(n, cfg, abs, {
           ...opts,

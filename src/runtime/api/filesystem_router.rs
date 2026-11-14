@@ -130,10 +130,10 @@ impl FileSystemRouter {
         };
 
         if let Some(dir_ref) = root_dir_info {
-            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
+            // Snapshot the cached `DirEntry`'s entries under `entries_mutex`
             // (other threads rewrite the map in place under that lock), then drop
             // the guard: `bust_dir_cache` / the recursion below re-acquire it.
-            let entry_ptrs: Vec<*mut Fs::Entry> = {
+            let entries: Vec<&Fs::Entry> = {
                 let _entries_lock = Fs::FileSystem::get().fs.entries_mutex.lock_guard();
                 match dir_ref.get_entries_const() {
                     Some(entries) => entries.data.values().copied().collect(),
@@ -141,13 +141,7 @@ impl FileSystemRouter {
                 }
             };
             {
-                'outer: for entry_ptr in entry_ptrs {
-                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; the store outlives this loop. Wrap once so the
-                    // shared-only reads below are safe `Deref`s.
-                    let entry = BackRef::from(
-                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
-                    );
+                'outer: for entry in entries {
                     if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }

@@ -199,6 +199,47 @@ describe("ReadStream.prototype.setRawMode", () => {
     expect(result).toEqual({ report: ["one", "two"], exitCode: 0 });
   });
 
+  // SCRATCH, not for merge. It always fails on Windows, so that CI prints what Node does there for the two children
+  // above.
+  test.skipIf(!isWindows)(
+    "SCRATCH what Node reports for the two turns",
+    async () => {
+      const node = Bun.which("node");
+      const seen: Record<string, unknown> = {
+        node: node
+          ? Bun.spawnSync({ cmd: [node, "-p", "process.version"], env: bunEnv })
+              .stdout.toString()
+              .trim()
+          : null,
+      };
+      const turns = {
+        "three setRawMode calls in one turn": `process.stdin.setRawMode(false);
+        process.stdin.setRawMode(true);
+        process.stdin.setRawMode(false);
+        ready();`,
+        "pause() and setRawMode(false) in one turn": `process.stdin.pause();
+        process.stdin.setRawMode(false);
+        setImmediate(() => {
+          process.stdin.resume();
+          ready();
+        });`,
+      };
+      for (const [name, turn] of Object.entries(turns)) {
+        if (!node) break;
+        seen[name] = await Promise.race([
+          reportOf([node, "-e", cookedLinesAfter(turn)], async ({ until, type }) => {
+            await until("READY");
+            type("one\r");
+            type("two\r");
+          }).catch(e => String(e)),
+          Bun.sleep(3000).then(() => "no report in 3 s"),
+        ]);
+      }
+      expect(seen).toBe("SCRATCH: the received value is what Node prints");
+    },
+    15_000,
+  );
+
   // The same mark kept setRawMode(true) from ending a line read that was in progress. The console went on editing
   // a line: it echoed the keys and held them back until Enter, and libuv then dropped the line.
   test.each([

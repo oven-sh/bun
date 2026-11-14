@@ -7464,7 +7464,8 @@ it("async fs.write copies only the bytes it writes out of a WebAssembly.Memory o
 });
 
 // A sync call reads the path after the option getters ran. It reads the bytes captured at call time
-// when a getter shrinks the buffer.
+// when a getter shrinks the buffer. The `encoding` getter is the exception: it runs before the path
+// is captured. Node runs every getter before it reads the path, and throws on each of these calls.
 it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
   using dir = tempDir("fs-resizable-path", {});
   // The unfixed build segfaults on the main thread, so this runs in a child process.
@@ -7497,12 +7498,27 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
         {
           const ab = resizablePath(written);
           const text = fs.readFileSync(new DataView(ab), {
-            get encoding() {
+            encoding: "utf8",
+            get flag() {
               ab.resize(0);
-              return "utf8";
+              return "r";
             },
           });
           console.log("readFileSync:", text);
+        }
+        {
+          const ab = resizablePath(written);
+          try {
+            fs.readFileSync(new DataView(ab), {
+              get encoding() {
+                ab.resize(0);
+                return "utf8";
+              },
+            });
+            console.log("readFileSync, encoding getter: returned");
+          } catch (e) {
+            console.log("readFileSync, encoding getter:", e.code);
+          }
         }
         {
           const made = path.join(dir, "made");
@@ -7523,7 +7539,9 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("writeFileSync: sync-write\nreadFileSync: sync-write\nmkdirSync: true\n");
+  expect(stdout).toBe(
+    "writeFileSync: sync-write\nreadFileSync: sync-write\nreadFileSync, encoding getter: ERR_INVALID_ARG_TYPE\nmkdirSync: true\n",
+  );
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

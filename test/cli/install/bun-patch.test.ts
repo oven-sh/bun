@@ -1213,11 +1213,19 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
       rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
       const before = tree(join(dir, "node_modules"));
 
-      // bun.lock has the URL of the tarball.
+      // bun.lock writes the canonical registry tarball URL as "". Replace the
+      // placeholder with an explicit URL on a registry that has no tarball.
       using emptyRegistry = Bun.serve({ port: 0, fetch: () => new Response("{}", { status: 404 }) });
       const lockfile = await Bun.file(join(dir, "bun.lock")).text();
-      expect(lockfile).toContain(`"${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz"`);
-      await Bun.write(join(dir, "bun.lock"), lockfile.replace(registry.registryUrl(), emptyRegistry.url.href));
+      const canonicalEntry = `"no-deps": ["no-deps@1.0.0", ""`;
+      expect(lockfile).toContain(canonicalEntry);
+      await Bun.write(
+        join(dir, "bun.lock"),
+        lockfile.replace(
+          canonicalEntry,
+          `"no-deps": ["no-deps@1.0.0", "${emptyRegistry.url.href}no-deps/-/no-deps-1.0.0.tgz"`,
+        ),
+      );
 
       await expectRefused(
         dir,

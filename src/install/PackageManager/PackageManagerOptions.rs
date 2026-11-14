@@ -287,16 +287,22 @@ impl Options {
     /// `pm.lockfile` can disjointly borrow `pm.options` instead of needing the
     /// whole `&PackageManager`.
     pub fn scope_for_package_name(&self, name: &[u8]) -> &Npm::registry::Scope {
+        self.named_scope_for_package_name(name)
+            .unwrap_or(&self.scope)
+    }
+
+    /// The `@scope:registry=` entry for a scoped package name, if any.
+    pub fn named_scope_for_package_name(&self, name: &[u8]) -> Option<&Npm::registry::Scope> {
         if name.is_empty() || name[0] != b'@' {
-            return &self.scope;
+            return None;
         }
         let scope_name = Npm::registry::Scope::get_name(name);
         // Compare the stored scope name, not just its hash: a different scope
         // whose hash collides must not inherit this scope's registry or token.
         // Fall back to the default registry on a mismatch.
         match self.registries.get(&Npm::registry::Scope::hash(scope_name)) {
-            Some(scope) if *scope.name == *scope_name => scope,
-            _ => &self.scope,
+            Some(scope) if *scope.name == *scope_name => Some(scope),
+            _ => None,
         }
     }
 

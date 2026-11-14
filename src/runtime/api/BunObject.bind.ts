@@ -29,10 +29,10 @@ export const braces = b.fn({
   throws: true,
 });
 
-/** `windowBits` is converted and not used. */
+/** `gzipSync` and `deflateSync` take different ranges of `windowBits`, so `deflate_window_bits` checks them. */
 export const ZlibCompressionOptions = b.dictionary(
   {
-    windowBits: b.f64.loose.allowBigInt.optional,
+    windowBits: b.i32.validateInteger().optional,
     library: b.string.utf8.nullable,
     level: b.f64.loose.allowBigInt.optional,
     memLevel: b.i32.validateInteger(1, 9).default(8),

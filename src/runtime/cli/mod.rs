@@ -647,9 +647,7 @@ pub(crate) mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    /// True when the file name of argv[0] is `name`, ignoring ASCII case (#36826).
-    /// Windows also drops a trailing `.exe`. The whole file name must match:
-    /// a compiled executable named `MyNode` run with `BUN_BE_BUN=1` is plain bun.
+    /// The file name of argv[0] is `name`, ignoring ASCII case and a trailing `.exe` on Windows.
     fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
         let mut file_name = strings::basename(argv0);
         if cfg!(windows) && strings::ends_with_case_insensitive_ascii(file_name, b".exe") {

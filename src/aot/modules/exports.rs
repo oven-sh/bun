@@ -1582,6 +1582,18 @@ impl ExportTables {
         Some(statements[at.ok()?].1)
     }
 
+    pub(super) fn find_statement_or_result(
+        &self,
+        module: FileId,
+        name: Atom,
+    ) -> Option<Resolution> {
+        let statement = self.find_statement_ahead_of_stars(module, name);
+        statement.or_else(|| {
+            let node = *self.index.get(&(module, name))?;
+            Some(self.results[node as usize].1.resolution)
+        })
+    }
+
     fn keep_names_that_mocks_may_settle(&mut self, scans: &Scans) {
         if !self.tables.iter().any(|table| table.may_be_mocked) {
             return;

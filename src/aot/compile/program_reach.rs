@@ -9,8 +9,8 @@ use std::sync::OnceLock;
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
-    PrivateNameId, SymbolId,
+    Binding, BindingInitializer, Bound, ClassOwner, Decl, FnOwner, FunctionFlags, Parent,
+    PatParent, PrivateNameId, SymbolId,
 };
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
@@ -218,6 +218,7 @@ struct FileUnits {
     interests: Vec<Vec<Interest>>,
     star_targets: Vec<FileId>,
     statements_with_elements: Vec<(u32, ModuleRef)>,
+    class_expressions_in_parts: Vec<(u32, ClassId)>,
     loaded_by_calls: Vec<FileId>,
     is_region_reached: Vec<AtomicBool>,
     modules: Vec<ModuleUnits>,
@@ -930,6 +931,24 @@ impl<'a, 's> FileScan<'a, 's> {
         self.collect_function_units(has_decorators);
         self.link_pieces();
         self.place_units();
+        self.list_class_expressions_in_parts();
+    }
+
+    fn list_class_expressions_in_parts(&mut self) {
+        for class in (0..self.hir.classes.len() as u32).map(ClassId) {
+            let ClassOwner::Expr(written) = self.bound.class_owner[class.idx()] else {
+                continue;
+            };
+            let Some(unit) = self.region_of(written).checked_sub(1) else {
+                continue;
+            };
+            match self.units.units[unit as usize].part {
+                Part::Declarator(_) | Part::Class(_) | Part::Statement(_) => {
+                    self.units.class_expressions_in_parts.push((unit, class));
+                }
+                Part::Bodies | Part::InnerModule(_) => {}
+            }
+        }
     }
 
     fn region_of(&self, expression: ExprId) -> u32 {
@@ -4463,6 +4482,11 @@ pub(crate) fn find_left_out_code_seeding_last(
                 Part::Statement(statement) => {
                     declarations.leave_out_statement(file, input.files.hir(file), statement);
                 }
+            }
+        }
+        for &(unit, class) in &units.class_expressions_in_parts {
+            if !is_marked(&units.is_region_reached[unit as usize + 1]) {
+                left_out.declarations.leave_out_class(file, class);
             }
         }
     }

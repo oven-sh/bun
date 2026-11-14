@@ -1259,6 +1259,28 @@ const REQUIRE_OF_ESBUILD: &str = r#"var __require = /* @__PURE__ */ ((x) => type
 "#;
 
 #[test]
+fn a_helper_that_a_test_may_replace_is_not_certain() {
+    let source = "var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value);
+export {};";
+    let found = find_in("/a.mjs", source);
+    let [first, second] = [0, 1].map(|at| found.bindings().nth(at).map(|(symbol, _)| symbol));
+    let seen = |replaced: Option<bun_sema::bind::SymbolId>| -> Vec<(bool, bool)> {
+        let mut found = find_in("/a.mjs", source);
+        found.leave_replaceable_variables(&|symbol| Some(symbol) == replaced);
+        let holds = found.bindings().map(|(_, values)| {
+            values.holds_from_the_start && values.certainty != Certainty::MayHoldOtherValues
+        });
+        let relies = found.functions().map(|(_, known)| known.relies_on_facts);
+        holds.zip(relies).collect()
+    };
+    assert_eq!(seen(None), [(true, true), (true, true)]);
+    assert_eq!(seen(first), [(false, true), (true, false)]);
+    assert_eq!(seen(second), [(true, true), (false, true)]);
+}
+
+#[test]
 fn the_require_of_an_es_module_is_the_require_of_the_published_text() {
     assert_eq!(
         shapes_in("/a.mjs", &format!("{REQUIRE_OF_ESBUILD}export {{}};")),

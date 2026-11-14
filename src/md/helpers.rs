@@ -1,3 +1,5 @@
+use core::cmp::Ordering;
+
 use super::entity as entity_mod;
 use super::types::{OFF, TextType};
 
@@ -111,15 +113,17 @@ pub(crate) fn is_ascii_punctuation(c: u8) -> bool {
 /// Extended Unicode punctuation check (non-ASCII).
 /// Unicode general "P" and "S" categories, matching md4c's punct map.
 fn is_unicode_punctuation_extended(codepoint: u32) -> bool {
-    for range in UNICODE_PUNCTUATION_RANGES {
-        if codepoint >= range[0] && codepoint <= range[1] {
-            return true;
-        }
-        if codepoint < range[0] {
-            return false;
-        }
-    }
-    false
+    UNICODE_PUNCTUATION_RANGES
+        .binary_search_by(|range| {
+            if codepoint < range[0] {
+                Ordering::Greater
+            } else if codepoint > range[1] {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        })
+        .is_ok()
 }
 
 pub(crate) struct LineIndentation {
@@ -438,71 +442,111 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
     None
 }
 
-/// Generate a GitHub-compatible slug from text content.
-/// Modifies text_buf in-place. Uses slug_counts for -N deduplication.
-pub(crate) fn generate_slug<'a>(
-    text_buf: &'a mut Vec<u8>,
+/// Whether a code point outside ASCII stays in a slug: a letter, a digit or a combining mark.
+fn is_slug_char(codepoint: u32) -> bool {
+    bun_core::identifier::is_identifier_part(codepoint as i32)
+        && !is_unicode_punctuation_extended(codepoint)
+        // An identifier takes the joiners, the variation selectors and the emoji U+2139 too.
+        && !matches!(codepoint, 0x200C | 0x200D | 0x2139 | 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
+}
+
+/// Appends the slug of `text` to `slug`, the slug of the heading text before it.
+fn push_slug(slug: &mut Vec<u8>, text: &[u8]) {
+    slug.reserve(text.len());
+    let mut idx: usize = 0;
+    while idx < text.len() {
+        let c = text[idx];
+        idx += 1;
+        if c >= b'A' && c <= b'Z' {
+            slug.push(c + 32);
+        } else if (c >= b'a' && c <= b'z') || (c >= b'0' && c <= b'9') {
+            slug.push(c);
+        } else if c == b'-' || c == b' ' {
+            // A run of spaces and hyphens is one hyphen, and no hyphen starts a slug.
+            if !matches!(slug.last(), None | Some(b'-')) {
+                slug.push(b'-');
+            }
+        } else if c >= 0x80 {
+            let decoded = decode_utf8(text, idx - 1);
+            if is_slug_char(decoded.codepoint)
+                && let Some(letter) = char::from_u32(decoded.codepoint)
+            {
+                idx += usize::from(decoded.len) - 1;
+                for lower in letter.to_lowercase() {
+                    slug.extend_from_slice(lower.encode_utf8(&mut [0; 4]).as_bytes());
+                }
+            }
+            // Else the sequence of `c` can be invalid: its bytes are read, and dropped, one by one.
+        }
+        // else: skip ASCII punctuation and control characters
+    }
+}
+
+/// Whether `slug` is `base-N`, the id that the N-th repeat of the slug `base` got.
+fn is_repeat_id(slug: &[u8], slug_counts: &bun_collections::StringHashMap<u32>) -> bool {
+    let digits = slug
+        .iter()
+        .rev()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    let (base, n) = slug.split_at(slug.len() - digits);
+    let [base @ .., b'-'] = base else {
+        return false;
+    };
+    // N has no leading zero, and a count has 10 digits at most.
+    if !matches!(n, [b'1'..=b'9', rest @ ..] if rest.len() < 10) {
+        return false;
+    }
+    let n = n
+        .iter()
+        .fold(0u64, |n, digit| n * 10 + u64::from(digit - b'0'));
+    slug_counts
+        .get(base)
+        .is_some_and(|&repeats| u64::from(repeats) >= n)
+}
+
+/// Makes the slug in `slug` an id that no other heading has, and returns the id.
+fn unique_heading_id<'a>(
+    slug: &'a mut Vec<u8>,
     slug_counts: &mut bun_collections::StringHashMap<u32>,
 ) -> &'a [u8] {
-    let text_len = text_buf.len();
-    let mut out_len: usize = 0;
-    let mut prev_hyphen: bool = true; // true to trim leading hyphens
+    let slug_len = slug.len();
 
-    // reshaped for borrowck — index instead of `for &c in text_items`
-    for idx in 0..text_len {
-        let c = text_buf[idx];
-        if c >= b'A' && c <= b'Z' {
-            text_buf[out_len] = c + 32;
-            out_len += 1;
-            prev_hyphen = false;
-        } else if (c >= b'a' && c <= b'z') || (c >= b'0' && c <= b'9') {
-            text_buf[out_len] = c;
-            out_len += 1;
-            prev_hyphen = false;
-        } else if c == b'-' || c == b' ' {
-            if !prev_hyphen {
-                text_buf[out_len] = b'-';
-                out_len += 1;
-                prev_hyphen = true;
-            }
+    let repeat_id = is_repeat_id(slug, slug_counts);
+    let gop = bun_core::handle_oom(slug_counts.get_or_put(slug.as_slice()));
+    if !gop.found_existing && !repeat_id {
+        return slug.as_slice();
+    }
+    *gop.value_ptr += 1;
+    let mut count = *gop.value_ptr;
+
+    loop {
+        slug.truncate(slug_len);
+        slug.push(b'-');
+        let mut dec_buf = bun_core::fmt::ItoaBuf::new();
+        slug.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
+        if !slug_counts.contains_key(slug.as_slice()) {
+            return slug.as_slice();
         }
-        // else: skip non-alphanumeric characters
+        // `slug-N` is the slug of another heading. Try the next N.
+        let Some(repeats) = slug_counts.get_mut(&slug[..slug_len]) else {
+            return slug.as_slice();
+        };
+        *repeats += 1;
+        count = *repeats;
     }
-
-    // Trim trailing hyphens
-    while out_len > 0 && text_buf[out_len - 1] == b'-' {
-        out_len -= 1;
-    }
-
-    // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
-    // once (the map owns its keys, value starts at 0 on miss).
-    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
-        return &text_buf[..out_len];
-    };
-    if !gop.found_existing {
-        // First occurrence — value initialised to 0 by `get_or_put`.
-        return &text_buf[..out_len];
-    }
-
-    // Already seen — append -N suffix
-    let count = *gop.value_ptr + 1;
-    *gop.value_ptr = count;
-    text_buf.truncate(out_len);
-    text_buf.push(b'-');
-
-    let mut dec_buf = bun_core::fmt::ItoaBuf::new();
-    text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
-    text_buf.as_slice()
 }
 
 /// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
-/// Tracks whether we're inside a heading, accumulates text for slug generation,
+/// Tracks whether we're inside a heading, builds the slug of its text as the text arrives,
 /// and deduplicates slugs via a count map.
 #[derive(Default)]
 pub struct HeadingIdTracker {
     pub(crate) enabled: bool,
     pub(crate) in_heading: bool,
-    pub(crate) text_buf: Vec<u8>,
+    /// The slug of the heading text so far: its letters, digits and marks in lowercase, and hyphens.
+    pub(crate) slug: Vec<u8>,
+    /// Each slug with the number of its repeats. The ids that went out: the keys, and `slug-1` to `slug-N`.
     pub(crate) slug_counts: bun_collections::StringHashMap<u32>,
 }
 
@@ -514,7 +558,7 @@ impl HeadingIdTracker {
         }
     }
 
-    // deinit → Drop: text_buf (Vec) and slug_counts (owns its Box<[u8]> keys) free automatically.
+    // deinit → Drop: slug (Vec) and slug_counts (owns its Box<[u8]> keys) free automatically.
 
     /// Call on entering a heading block.
     pub fn enter_heading(&mut self) {
@@ -523,24 +567,24 @@ impl HeadingIdTracker {
         }
     }
 
-    /// Call from text callback to accumulate text for slug.
+    /// Call from text callback to add its text to the slug.
     /// No-op if not inside a heading or disabled.
     pub fn track_text(&mut self, text_type: TextType, content: &[u8]) {
         if !self.in_heading {
             return;
         }
         match text_type {
-            TextType::NullChar => self.text_buf.extend_from_slice(b"\xEF\xBF\xBD"),
-            TextType::Br | TextType::Softbr => self.text_buf.extend_from_slice(b" "),
+            TextType::NullChar => {} // U+FFFD is no letter
+            TextType::Br | TextType::Softbr => push_slug(&mut self.slug, b" "),
             TextType::Html => {} // skip HTML tags in slug
             TextType::Entity => {
                 let mut buf: [u8; 8] = [0; 8];
                 match decode_entity_to_utf8(content, &mut buf) {
-                    Some(decoded) => self.text_buf.extend_from_slice(decoded),
-                    None => self.text_buf.extend_from_slice(content),
+                    Some(decoded) => push_slug(&mut self.slug, decoded),
+                    None => push_slug(&mut self.slug, content),
                 }
             }
-            _ => self.text_buf.extend_from_slice(content),
+            _ => push_slug(&mut self.slug, content),
         }
     }
 
@@ -550,11 +594,15 @@ impl HeadingIdTracker {
             return None;
         }
         self.in_heading = false;
-        Some(generate_slug(&mut self.text_buf, &mut self.slug_counts))
+        // No hyphen ends a slug.
+        if self.slug.last() == Some(&b'-') {
+            self.slug.pop();
+        }
+        Some(unique_heading_id(&mut self.slug, &mut self.slug_counts))
     }
 
-    /// Call after using the slug to reset text buffer.
+    /// Call after using the slug to reset it.
     pub fn clear_after_heading(&mut self) {
-        self.text_buf.clear();
+        self.slug.clear();
     }
 }

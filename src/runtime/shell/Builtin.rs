@@ -263,8 +263,7 @@ pub(crate) enum BuiltinInput {
     Ignore,
 }
 
-/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount;
-/// `Drop` runs `Blob::deinit`.
+/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount.
 pub(crate) struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }

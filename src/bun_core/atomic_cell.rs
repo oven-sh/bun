@@ -93,38 +93,6 @@ impl<T: Atom> AtomicCell<T> {
         // SAFETY: as above.
         unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Release) }
     }
-
-    /// AcqRel compare-and-swap. `Ok(prev)` on success, `Err(actual)` on
-    /// failure.
-    #[inline]
-    pub fn compare_exchange(&self, current: T, new: T) -> Result<T, T> {
-        // SAFETY: as above.
-        unsafe {
-            T::_atomic_cas(
-                self.inner.get(),
-                current,
-                new,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-        }
-    }
-
-    /// AcqRel RMW loop. For `MAX_FD = max(MAX_FD, fd)`-shaped updates.
-    /// Returns `Ok(previous)` if `f` produced a new value (and it was
-    /// installed), `Err(current)` if `f` returned `None`.
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
-        let mut prev = self.load();
-        while let Some(next) = f(prev) {
-            match self.compare_exchange(prev, next) {
-                Ok(x) => return Ok(x),
-                Err(actual) => prev = actual,
-            }
-        }
-        Err(prev)
-    }
 }
 
 impl<T: Copy + Default> Default for AtomicCell<T> {
@@ -176,14 +144,6 @@ pub unsafe trait Atom: Copy {
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self;
     #[doc(hidden)]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering);
-    #[doc(hidden)]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        current: Self,
-        new: Self,
-        success: Ordering,
-        failure: Ordering,
-    ) -> Result<Self, Self>;
 }
 
 /// Bit-reinterpret `a` as `B` without a size check (caller asserts the sizes
@@ -240,22 +200,11 @@ macro_rules! unsafe_impl_atom {
                 // SAFETY: as above.
                 unsafe { $crate::atomic_cell::_dispatch_store::<$T>(p, v, ord) }
             }
-            #[inline]
-            unsafe fn _atomic_cas(
-                p: *mut Self,
-                cur: Self,
-                new: Self,
-                s: ::core::sync::atomic::Ordering,
-                f: ::core::sync::atomic::Ordering,
-            ) -> ::core::result::Result<Self, Self> {
-                // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_cas::<$T>(p, cur, new, s, f) }
-            }
         }
     )+};
 }
 
-// The three dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
+// The two dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
 // reach them from other crates; they are not part of the stable surface.
 
 macro_rules! size_dispatch {
@@ -318,32 +267,6 @@ pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
         ord,
     ))
 }
-#[doc(hidden)]
-#[inline(always)]
-pub unsafe fn _dispatch_cas<T: Copy>(
-    p: *mut T,
-    cur: T,
-    new: T,
-    s: Ordering,
-    f: Ordering,
-) -> Result<T, T> {
-    size_dispatch!(T, p, |a: A, I| {
-        match a.compare_exchange(
-            // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`;
-            // `T: Atom` guarantees no padding bytes.
-            unsafe { xmute::<T, I>(cur) },
-            // SAFETY: as above.
-            unsafe { xmute::<T, I>(new) },
-            s,
-            f,
-        ) {
-            // SAFETY: `x` was stored from a valid `T`; `Atom` round-trip holds.
-            Ok(x) => Ok(unsafe { xmute::<I, T>(x) }),
-            // SAFETY: as above.
-            Err(x) => Err(unsafe { xmute::<I, T>(x) }),
-        }
-    })
-}
 
 // ── Built-in Atom impls ────────────────────────────────────────────────────
 
@@ -369,18 +292,6 @@ unsafe impl<U> Atom for *mut U {
         // identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(v, ord) }
     }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
-        // identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
-    }
 }
 
 #[inline(always)]
@@ -403,28 +314,6 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
         // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
-        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
-        unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(
-                nn_to_raw(cur),
-                nn_to_raw(new),
-                s,
-                f,
-            ) {
-                Ok(x) => Ok(NonNull::new(x)),
-                Err(x) => Err(NonNull::new(x)),
-            }
-        }
     }
 }
 
@@ -539,9 +428,6 @@ mod tests {
         assert_eq!(c.load(), 42);
         c.store(-7);
         assert_eq!(c.load(), -7);
-        assert_eq!(c.compare_exchange(0, 1), Err(-7));
-        assert_eq!(c.compare_exchange(-7, 1), Ok(-7));
-        assert_eq!(c.load(), 1);
     }
 
     #[test]
@@ -559,15 +445,5 @@ mod tests {
         assert!(c.load().is_none());
         c.store(NonNull::new(&mut x));
         assert_eq!(unsafe { *c.load().unwrap().as_ptr() }, 5);
-    }
-
-    #[test]
-    fn atomic_cell_fetch_update() {
-        let c = AtomicCell::new(3_i32);
-        let _ = c.fetch_update(|cur| (10 > cur).then_some(10));
-        assert_eq!(c.load(), 10);
-        let r = c.fetch_update(|cur| (5 > cur).then_some(5));
-        assert_eq!(r, Err(10));
-        assert_eq!(c.load(), 10);
     }
 }

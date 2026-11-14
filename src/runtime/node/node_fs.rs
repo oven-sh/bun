@@ -8755,8 +8755,7 @@ impl NodeFS {
                     sys::Error::from_code(E::ENOENT, sys::Tag::lstat).with_path(args.path.slice())
                 );
             }
-            return Err(sys::Error::from_code(map_rm_errno_narrow(e1), sys::Tag::rm)
-                .with_path(args.path.slice()));
+            return Err(sys::Error::from_code(e1, sys::Tag::rm).with_path(args.path.slice()));
         }
         Ok(())
     }
@@ -10498,11 +10497,7 @@ impl ReaddirEntry for Buffer {
     }
 }
 
-// There are three distinct error→errno tables: rmdir-recursive,
-// rm-recursive, and rm non-recursive unlink/rmdir. An earlier draft
-// collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
-// (Node returns EACCES there) and widened the narrow table. Split back out
-// per call site.
+// `rmdir` recursive (zig_delete_tree).
 fn map_anyerror_to_errno(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
@@ -10544,19 +10539,6 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
-        _ => E::EFAULT,
-    }
-}
-
-// `rm` non-recursive unlink/rmdir fallback — narrower table; anything not
-// listed here falls through to EFAULT.
-//
-// `bun_sys::unlink`/`libc::rmdir` yield a raw errno. Notably raw EPERM —
-// like EISDIR/ENOTDIR/ENOTEMPTY — intentionally falls through to EFAULT here.
-fn map_rm_errno_narrow(e: E) -> E {
-    match e {
-        E::EACCES => E::EACCES,
-        E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }
 }

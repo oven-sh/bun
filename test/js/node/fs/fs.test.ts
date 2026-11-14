@@ -13,10 +13,12 @@ import {
   isLinux,
   isMacOS,
   isPosix,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
+  unprivilegedSpawnOptions,
 } from "harness";
 import fs, {
   closeSync,
@@ -69,6 +71,7 @@ import { join } from "node:path";
 
 import { spawnSync } from "bun";
 import { mkfifo } from "mkfifo";
+import { execFileSync } from "node:child_process";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 
@@ -3894,6 +3897,80 @@ describe("rm", () => {
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
   });
+
+  // Non-recursive rm reports the errno unlink(2) returned (#48811).
+  const rmErrnoFixture = /* js */ `
+    const { rm, rmSync } = require("node:fs");
+    const { rm: rmP } = require("node:fs/promises");
+    const target = process.argv[2];
+    const out = {};
+    const code = e => (e ? e.code : null);
+    try { rmSync(target, { force: true }); out.rmSync = null; } catch (e) { out.rmSync = code(e); }
+    rmP(target, { force: true }).then(() => null, code).then(async promise => {
+      out.promise = promise;
+      out.callback = await new Promise(resolve => rm(target, { force: true }, e => resolve(code(e))));
+      console.log(JSON.stringify(out));
+    });
+  `;
+
+  // Windows reports ENOENT for a path below a file, so `force` makes it succeed there.
+  it.skipIf(isWindows)("non-recursive rm reports ENOTDIR when a path component is a file", async () => {
+    using dir = tempDir("rm-enotdir", { "file.txt": "x", "fixture.js": rmErrnoFixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js", join(String(dir), "file.txt", "x")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ rmSync: "ENOTDIR", promise: "ENOTDIR", callback: "ENOTDIR" });
+    expect(exitCode).toBe(0);
+  });
+
+  // unlink(2) refuses with EPERM: on macOS a file with the user immutable flag
+  // (chflags uchg), on Linux a file owned by another user in a sticky
+  // directory. Only root can set up the owner mismatch, so on Linux the
+  // fixture runs as `nobody` in a directory root owns.
+  it.skipIf(!(isMacOS || (isLinux && isRoot)))(
+    "non-recursive rm reports EPERM when unlink is not permitted",
+    async () => {
+      using dir = tempDir("rm-eperm", { "sticky/protected": "x", "fixture.js": rmErrnoFixture });
+      const sticky = join(String(dir), "sticky");
+      const file = join(sticky, "protected");
+      let spawnOptions: { uid?: number; gid?: number } = {};
+      let restore = () => {};
+      try {
+        if (isMacOS) {
+          execFileSync("chflags", ["uchg", file]);
+          restore = () => execFileSync("chflags", ["nouchg", file]);
+        } else {
+          const unprivileged = unprivilegedSpawnOptions(String(dir));
+          restore = () => unprivileged[Symbol.dispose]();
+          fs.chownSync(sticky, 0, 0);
+          fs.chmodSync(sticky, 0o1777);
+          fs.chownSync(file, 0, 0);
+          spawnOptions = unprivileged;
+        }
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.js", file],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          ...spawnOptions,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({ rmSync: "EPERM", promise: "EPERM", callback: "EPERM" });
+        expect(fs.existsSync(file)).toBe(true);
+        expect(exitCode).toBe(0);
+      } finally {
+        restore();
+      }
+    },
+  );
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/

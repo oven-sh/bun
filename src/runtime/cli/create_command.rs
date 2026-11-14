@@ -2053,7 +2053,7 @@ impl GitHandler {
                         .map(|s| Box::<[u8]>::from(*s))
                         .collect(),
                     cwd: Box::from(destination),
-                    envp: Some(env.as_ptr()),
+                    envp: Some(env.as_list()),
                     stdin: Inherit,
                     stdout: output,
                     stderr: output,

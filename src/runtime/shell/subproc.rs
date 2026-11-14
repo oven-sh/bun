@@ -13,6 +13,7 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
+use bun_core::{CStrList, CStrRef};
 use bun_io::LoopRef;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -521,24 +522,6 @@ impl ShellSubprocess {
         out_subproc: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
-        // Owns the `K=V\0` storage when inheriting the parent env. The struct
-        // keeps the buffers alive until after `spawn_process` returns (the raw
-        // pointers pushed into `env_array` borrow `inherited_env_storage.storage`).
-        let inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> =
-            if !spawn_args.override_env && spawn_args.env_array.is_empty() {
-                let envmap = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
-                // Note: `as_slice()` *includes* the trailing null; strip it —
-                // the common tail below re-appends one null terminator.
-                let entries = envmap.as_slice();
-                spawn_args
-                    .env_array
-                    .extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
-                Some(envmap)
-            } else {
-                None
-            };
-        let _ = &inherited_env_storage;
-
         #[cfg(unix)]
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
             !iowriter.is_socket()
@@ -570,25 +553,13 @@ impl ShellSubprocess {
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
         // completion.
         let interp = cmd_parent.interp;
-        // argv is built by the caller (Cmd::transition_to_exec) from
-        // `Cmd.args`, NUL-terminated and null-sentinel-terminated, so this
-        // function never needs to borrow the `Cmd` arena slot.
-        debug_assert!(matches!(spawn_args.argv.last(), Some(p) if p.is_null()));
-
-        spawn_args.env_array.push(core::ptr::null());
+        let argv = CStrList::terminate(&mut spawn_args.argv);
+        let envp = CStrList::terminate(&mut spawn_args.env_array);
 
         let foreground = !interp.in_background(cmd_parent.id);
         let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         crate::node::fs::note_process_start();
-        // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
-        // C-string arrays with argv[0] non-null; valid for this call.
-        let mut spawn_result = match unsafe {
-            bun_process::spawn_process(
-                &spawn_options,
-                spawn_args.argv.as_ptr(),
-                spawn_args.env_array.as_ptr(),
-            )
-        } {
+        let mut spawn_result = match bun_process::spawn_process(&spawn_options, argv, Some(envp)) {
             Err(err) => {
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
@@ -1176,15 +1147,13 @@ pub(crate) struct SpawnArgs<'a> {
     /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
     /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
     pub(crate) arena: &'a Arena,
-    /// `[*:null]?[*:0]const u8` argv view for `spawn_process`. Built by the
+    /// The argv for `spawn_process`, without its terminator. Built by the
     /// caller from `Cmd.args` (each `Vec<u8>` NUL-terminated) so this struct
     /// never needs to borrow the `Cmd` arena slot — passing the whole `Cmd`
     /// would alias the `out_subproc` write into `cmd.exec.subproc.child`.
-    /// Must include the trailing null sentinel.
-    pub(crate) argv: Vec<*const c_char>,
+    pub(crate) argv: Vec<Option<CStrRef<'a>>>,
 
-    pub(crate) override_env: bool,
-    pub(crate) env_array: Vec<*const c_char>,
+    pub(crate) env_array: Vec<Option<CStrRef<'a>>>,
     pub(crate) cwd: &'a [u8],
     pub(crate) stdio: [Stdio; 3],
     /// `> ${arraybuffer}` redirect targets; the matching `stdio` slot is `Pipe`.
@@ -1205,7 +1174,6 @@ impl<'a> SpawnArgs<'a> {
             arena,
             argv: Vec::new(),
 
-            override_env: false,
             env_array: Vec::new(),
             cwd: b"",
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
@@ -1245,7 +1213,6 @@ impl<'a> SpawnArgs<'a> {
         &mut self,
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
-        self.override_env = true;
         // Note: `bun_collections::array_hash_map::Iter` doesn't impl
         // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
@@ -1278,7 +1245,7 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            self.env_array.push(line.as_ptr().cast::<c_char>());
+            (self.env_array).push(Some(CStrRef::from_bytes_with_nul(line)));
         }
     }
 }

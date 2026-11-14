@@ -4,7 +4,6 @@
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
-use ::core::ffi::c_char;
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
@@ -451,8 +450,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+            argv0: Some(shell_bin.into()),
+            envp: Some(envp.as_list()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
             stdout: sync::SyncStdio::Inherit,
@@ -2208,8 +2207,8 @@ impl RunCommand {
         bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(executable_z.as_ptr().cast::<c_char>()),
-            envp: Some(envp.as_ptr().cast::<*const c_char>()),
+            argv0: Some(executable_z.into()),
+            envp: Some(envp.as_list()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
             stdout: sync::SyncStdio::Inherit,

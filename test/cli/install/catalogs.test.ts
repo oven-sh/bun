@@ -606,6 +606,71 @@ describe.concurrent("update", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The peer has no no-deps of its own, so it moves with the catalog entry, like web's dependency. api names the old
+  // range itself and keeps no-deps@1.1.0.
+  describe.each(["hoisted", "isolated"] as const)(
+    "--latest moves a catalog entry that a peer and a dependency use, next to another workspace's own range (linker=%s)",
+    linker => {
+      test.each([
+        { peer: "the root", peerIn: "", cwd: "the root", from: "" },
+        { peer: "the root", peerIn: "", cwd: "a workspace", from: "packages/web" },
+        { peer: "a workspace that sorts first", peerIn: "packages/aaa", cwd: "the root", from: "" },
+        { peer: "a workspace that sorts first", peerIn: "packages/aaa", cwd: "a workspace", from: "packages/web" },
+      ])("peer in $peer, run from $cwd", async ({ peerIn, from }) => {
+        const peerDependencies = { "no-deps": "catalog:" };
+        // Every package.json of the project, with the catalog entry at `range`.
+        const project = (range: string): Record<string, object> => ({
+          "package.json": {
+            name: "catalog-update-required-peer",
+            workspaces: { packages: ["packages/*"], catalog: { "no-deps": range } },
+            ...(peerIn ? {} : { peerDependencies }),
+          },
+          ...(peerIn ? { [`${peerIn}/package.json`]: { name: "aaa", peerDependencies } } : {}),
+          "packages/web/package.json": { name: "web", dependencies: { "no-deps": "catalog:" } },
+          "packages/api/package.json": { name: "api", dependencies: { "no-deps": "^1.0.0" } },
+        });
+        const files = Object.entries(project("^1.0.0")).map(([path, json]) => [path, JSON.stringify(json)]);
+        using tmp = tempDir("catalog-update-required-peer-", Object.fromEntries(files));
+        const packageDir = String(tmp);
+        await registry.writeBunfig(packageDir, { linker });
+        await runBunInstall(installEnv(packageDir), packageDir);
+
+        const written = async () =>
+          Object.fromEntries(
+            await Promise.all(
+              Object.keys(project("")).map(async path => [path, await file(join(packageDir, path)).json()] as const),
+            ),
+          );
+        // The no-deps that a folder loads is its own copy if it has one, and the root's otherwise.
+        const loaded = async (folder: string) => {
+          const own = join(packageDir, folder, "node_modules", "no-deps", "package.json");
+          const path = (await exists(own)) ? own : join(packageDir, "node_modules", "no-deps", "package.json");
+          return (await file(path).json()).version;
+        };
+        const lockText = () => file(join(packageDir, "bun.lock")).text();
+
+        const first = await runUpdate(join(packageDir, from), "--latest");
+        expect(first.err).not.toContain("error:");
+        // Only the catalog entry moves. Each `catalog:` reference and api's own range stay as written.
+        expect(await written()).toEqual(project("^2.0.0"));
+        expect({
+          peer: await loaded(peerIn),
+          web: await loaded("packages/web"),
+          api: await loaded("packages/api"),
+        }).toEqual({ peer: "2.0.0", web: "2.0.0", api: "1.1.0" });
+        expect(first.exitCode).toBe(0);
+        await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+
+        const lockfile = await lockText();
+        const second = await runUpdate(join(packageDir, from), "--latest");
+        expect(second.err).not.toContain("error:");
+        expect(await written()).toEqual(project("^2.0.0"));
+        expect(await lockText()).toBe(lockfile);
+        expect(second.exitCode).toBe(0);
+      });
+    },
+  );
+
   test("--latest run from inside a workspace package updates the root catalog", async () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-in-workspace");

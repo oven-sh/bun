@@ -1646,6 +1646,7 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
+        pub(crate) prev_identifier_end: i32,
         pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
@@ -2082,7 +2083,8 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_space_before_identifier(&mut self) {
             if self.writer.written() > 0
                 && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
-                    || self.writer.written() == self.prev_reg_exp_end)
+                    || self.writer.written() == self.prev_reg_exp_end
+                    || self.writer.written() == self.prev_identifier_end)
             {
                 self.print(b" ");
             }
@@ -4660,7 +4662,7 @@ pub(crate) mod __gated_printer {
             let key: &[u8] = key.get();
             if lexer::is_identifier(key) {
                 self.print(b".");
-                self.print(key);
+                self.print_identifier(key);
             } else {
                 self.print(b"[");
                 self.print_string_literal_utf8(key, false);
@@ -6827,6 +6829,9 @@ pub(crate) mod __gated_printer {
                 self.print_identifier_ascii_only(identifier);
             } else {
                 self.print(identifier);
+                if identifier.last().is_some_and(|&b| b >= 0x80) {
+                    self.prev_identifier_end = self.writer.written();
+                }
             }
         }
 
@@ -6866,6 +6871,8 @@ pub(crate) mod __gated_printer {
 
             if is_ascii {
                 self.print(&identifier[ascii_start..]);
+            } else {
+                self.prev_identifier_end = self.writer.written();
             }
         }
 
@@ -7015,6 +7022,7 @@ pub(crate) mod __gated_printer {
                 prev_op_end: -1,
                 prev_num_end: -1,
                 prev_reg_exp_end: -1,
+                prev_identifier_end: -1,
                 call_target: None,
                 writer,
                 renamer,

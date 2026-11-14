@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
+import { builtinModules } from "node:module";
 import net from "node:net";
 import { join } from "node:path";
 import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery } from "../../js/sql/wire-frames";
@@ -1632,10 +1633,36 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["function", "function", "object", 1])));
   });
 
+  test("keeps what abort-controller adds to AbortController when it loads", async () => {
+    const file = `
+      test("reads the exports", () => {
+        // For require() the module is the global AbortController itself, and its three exports are members of that class.
+        const { AbortController: Controller, AbortSignal: Signal, default: byDefault } = require("abort-controller");
+        console.log(JSON.stringify([Controller === AbortController, Signal === AbortSignal, byDefault === AbortController]));
+      });
+    `;
+    const lines = (await passes({ "a.test.js": file, "b.test.js": file }, 2))
+      .split("\n")
+      .filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, true])));
+  });
+
   // If this fails, load the module before the snapshot in src/js/internal/test/globals.ts.
   test("no other builtin module patches a global class when it loads", async () => {
+    // `builtinModules` leaves out two modules that need the "node:" prefix, and the packages in whose place Bun loads a builtin.
+    const unlisted = [
+      "node:test",
+      "node:quic",
+      "abort-controller",
+      "isomorphic-fetch",
+      "node-fetch",
+      "@vercel/fetch",
+      "utf-8-validate",
+    ];
+    const ids = builtinModules.filter(id => !/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)).concat(unlisted);
     const files = {
-      "a.test.js": `test("loads every builtin module", () => {
+      // A test for each module: a debug build needs more than the 5 seconds of one test to load them all.
+      "a.test.js": `
         const objects = Object.getOwnPropertyNames(globalThis)
           .map(name => Object.getOwnPropertyDescriptor(globalThis, name).value)
           .filter(value => typeof value === "function")
@@ -1650,20 +1677,21 @@ describe.concurrent("bun test --isolate=modules", () => {
           );
         const before = objects.map(functionsOf);
         const patched = [];
-        for (const id of require("node:module").builtinModules) {
-          if (/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)) continue;
-          require(id);
-          objects.forEach((object, i) => {
-            for (const [key, functions] of functionsOf(object)) {
-              if (functions.some((fn, j) => fn !== before[i].get(key)?.[j]) || !before[i].has(key)) patched.push(id + ": " + String(key));
-              before[i].set(key, functions);
-            }
+        for (const id of ${JSON.stringify(ids)}) {
+          test("loads " + id, () => {
+            require(id);
+            objects.forEach((object, i) => {
+              for (const [key, functions] of functionsOf(object)) {
+                if (functions.some((fn, j) => fn !== before[i].get(key)?.[j]) || !before[i].has(key)) patched.push(id + ": " + String(key));
+                before[i].set(key, functions);
+              }
+            });
           });
         }
-        console.log(JSON.stringify(patched));
-      });`,
+        afterAll(() => console.log(JSON.stringify(patched)));
+      `,
     };
-    expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
+    expect((await passes(files, ids.length)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
   });
 
   test("Module._cache is the running file's require.cache", async () => {

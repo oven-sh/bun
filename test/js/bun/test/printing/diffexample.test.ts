@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
@@ -922,6 +922,307 @@ test("prints a Response once", () => {
 +   },
   }
 `);
+});
+
+// The tests below that pin a whole message keep every unchanged line next to a changed one.
+// With AGENT=1 in the environment, the diff leaves out the other unchanged lines.
+function failureMessage(fail: () => void): string {
+  try {
+    fail();
+  } catch (e) {
+    return cleanAnsiEscapes((e as Error).message);
+  }
+  throw new Error("the matcher did not fail");
+}
+
+test("prints the entries of a Headers, then its own properties", () => {
+  class Subclass extends Headers {}
+  const tagged = (a: string, tag: string) => Object.assign(new Subclass({ a }), { tag });
+
+  expect(failureMessage(() => expect(tagged("1", "x")).toEqual(tagged("2", "y"))))
+    .toBe(`expect(received).toEqual(expected)
+
+  Subclass {
+-   "a" => "2",
+-   "tag": "y",
++   "a" => "1",
++   "tag": "x",
+  }
+
+- Expected  - 2
++ Received  + 2
+`);
+  expect(failureMessage(() => expect(tagged("1", "x")).toEqual(tagged("1", "y")))).toEndWith(`
+    "a" => "1",
+-   "tag": "y",
++   "tag": "x",
+  }
+
+- Expected  - 1
++ Received  + 1
+`);
+  expect(failureMessage(() => expect(new Headers({ a: "1" })).toMatchObject(new Headers({ a: "1", b: "2" }))))
+    .toEndWith(`
+    "a" => "1",
+-   "b" => "2",
+  }
+
+- Expected  - 1
++ Received  + 0
+`);
+  // A Headers with no entries prints its class name the same way as one with entries.
+  expect(failureMessage(() => expect(Object.assign(new Subclass(), { tag: "x" })).toEqual(tagged("1", "y"))))
+    .toBe(`expect(received).toEqual(expected)
+
+  Subclass {
+-   "a" => "1",
+-   "tag": "y",
++   "tag": "x",
+  }
+
+- Expected  - 2
++ Received  + 1
+`);
+
+  // deepEquals compares the entries apart from the own properties. A header is not an own property with the same name.
+  const assigned: Headers = Object.assign(new Headers(), { "x-api-key": "k" });
+  expect(failureMessage(() => expect(assigned).toEqual(new Headers({ "x-api-key": "k" }))))
+    .toBe(`expect(received).toEqual(expected)
+
+  Headers {
+-   "x-api-key" => "k",
++   "x-api-key": "k",
+  }
+
+- Expected  - 1
++ Received  + 1
+`);
+  const twice: Headers = Object.assign(new Headers({ a: "1" }), { a: "2" });
+  expect(failureMessage(() => expect(twice).toEqual(new Headers({ a: "2" })))).toBe(`expect(received).toEqual(expected)
+
+  Headers {
+-   "a" => "2",
++   "a" => "1",
++   "a": "2",
+  }
+
+- Expected  - 1
++ Received  + 2
+`);
+
+  // The entries print sorted by name, so the order in which the headers were set does not show.
+  // Every name prints, also "constructor", which the printer leaves out of the own properties.
+  const names = ["x-a", "constructor", "10", "9", "__proto__"];
+  const withNames = (order: string[], value: string) =>
+    new Headers(order.map(name => [name, value] satisfies [string, string]));
+  expect(failureMessage(() => expect(withNames(names, "1")).toEqual(withNames(names.toReversed(), "2"))))
+    .toBe(`expect(received).toEqual(expected)
+
+  Headers {
+-   "10" => "2",
+-   "9" => "2",
+-   "__proto__" => "2",
+-   "constructor" => "2",
+-   "x-a" => "2",
++   "10" => "1",
++   "9" => "1",
++   "__proto__" => "1",
++   "constructor" => "1",
++   "x-a" => "1",
+  }
+
+- Expected  - 5
++ Received  + 5
+`);
+  expect(
+    failureMessage(() =>
+      expect({ h: withNames(names, "1"), x: 1 }).toEqual({ h: withNames(names.toReversed(), "1"), x: 2 }),
+    ),
+  ).toEndWith(`
+    },
+-   "x": 2,
++   "x": 1,
+  }
+
+- Expected  - 1
++ Received  + 1
+`);
+
+  const cookies = new Headers({ "X-Up": "v" });
+  cookies.append("set-cookie", "a=1");
+  cookies.append("set-cookie", "b=2");
+  expect(failureMessage(() => expect<unknown>([cookies, new Headers()]).toEqual([])))
+    .toBe(`expect(received).toEqual(expected)
+
+- []
++ [
++   Headers {
++     "set-cookie" => [
++       "a=1",
++       "b=2",
++     ],
++     "x-up" => "v",
++   },
++   Headers {},
++ ]
+
+- Expected  - 1
++ Received  + 10
+`);
+});
+
+test("prints the headers of a Request and of a Response", () => {
+  const request = (a: string) => new Request("http://example.com/", { headers: { a } });
+  expect(failureMessage(() => expect<unknown>(request("1")).toEqual(1))).toBe(`expect(received).toEqual(expected)
+
+- 1
++ Request (0 KB) {
++   method: "GET",
++   url: "http://example.com/",
++   headers: Headers {
++     "a" => "1",
++   }
++ }
+
+- Expected  - 1
++ Received  + 7
+`);
+  expect(failureMessage(() => expect<unknown>(Response.json(1)).toEqual(1))).toBe(`expect(received).toEqual(expected)
+
+- 1
++ Response (1 bytes) {
++   ok: true,
++   url: "",
++   status: 200,
++   statusText: "",
++   headers: Headers {
++     "content-type" => "application/json;charset=utf-8",
++   },
++   redirected: false,
++   bodyUsed: false,
++   Blob (1 bytes)
++ }
+
+- Expected  - 1
++ Received  + 12
+`);
+
+  // toEqual does not compare the headers of two Requests. expect.objectContaining reads them and compares the entries.
+  const sameHeaders = expect.objectContaining({ headers: new Headers({ a: "2" }) });
+  expect(failureMessage(() => expect(request("1")).toEqual(sameHeaders))).toEndWith(`
+-   "headers": Headers {
+-     "a" => "2",
+-   },
++ Request (0 KB) {
++   method: "GET",
++   url: "http://example.com/",
++   headers: Headers {
++     "a" => "1",
++   }
+  }
+
+- Expected  - 5
++ Received  + 6
+`);
+});
+
+test("prints the href of a URL, then its own properties", () => {
+  // https://github.com/oven-sh/bun/issues/7253
+  expect(failureMessage(() => expect(new URL("https://www.google.com")).toStrictEqual(new URL("https://github.com"))))
+    .toBe(`expect(received).toStrictEqual(expected)
+
+  URL {
+-   "href": "https://github.com/",
++   "href": "https://www.google.com/",
+  }
+
+- Expected  - 1
++ Received  + 1
+`);
+
+  class Subclass extends URL {
+    extra = 1;
+  }
+  expect(failureMessage(() => expect<unknown>(new Subclass("http://example.com/a")).toEqual("http://example.com/a")))
+    .toBe(`expect(received).toEqual(expected)
+
+- "http://example.com/a"
++ Subclass {
++   "href": "http://example.com/a",
++   "extra": 1,
++ }
+
+- Expected  - 1
++ Received  + 4
+`);
+});
+
+test("prints a URL and a Headers in the arguments of a mock call", () => {
+  const fetched = mock();
+  fetched(new URL("http://example.com/a"), new Headers({ a: "1" }));
+  expect(
+    failureMessage(() =>
+      expect(fetched).toHaveBeenCalledWith(new URL("http://example.com/b"), new Headers({ a: "2" })),
+    ),
+  ).toContain(`
+    URL {
+-     "href": "http://example.com/b",
++     "href": "http://example.com/a",
+    },
+    Headers {
+-     "a" => "2",
++     "a" => "1",
+    },
+`);
+});
+
+test("keeps `Headers {}` and `URL {}` in a snapshot of a value", () => {
+  expect(new Request("http://example.com/", { headers: { a: "1" } })).toMatchInlineSnapshot(`Request (0 KB) {
+  method: "GET",
+  url: "http://example.com/",
+  headers: Headers {}
+}`);
+  // The Blob makes this differ from what Jest prints, which an inline snapshot also accepts.
+  expect([new Blob(["a"]), new Headers({ a: "1" }), new URL("http://example.com/")]).toMatchInlineSnapshot(`
+    [
+      Blob (1 bytes),
+      Headers {},
+      URL {},
+    ]
+  `);
+});
+
+test("reads the entries of a Headers and the href of a URL without a call of toJSON", () => {
+  const headersToJSON = Headers.prototype.toJSON;
+  const urlToJSON = URL.prototype.toJSON;
+  const toJSON = mock(() => {
+    throw new Error("from toJSON");
+  });
+  Headers.prototype.toJSON = toJSON;
+  URL.prototype.toJSON = toJSON;
+  try {
+    const values = [new Headers({ a: "1" }), new Headers(), new URL("http://example.com/a")];
+    expect(failureMessage(() => expect<unknown>(values).toEqual([]))).toBe(`expect(received).toEqual(expected)
+
+- []
++ [
++   Headers {
++     "a" => "1",
++   },
++   Headers {},
++   URL {
++     "href": "http://example.com/a",
++   },
++ ]
+
+- Expected  - 1
++ Received  + 9
+`);
+    expect(toJSON).not.toHaveBeenCalled();
+  } finally {
+    Headers.prototype.toJSON = headersToJSON;
+    URL.prototype.toJSON = urlToJSON;
+  }
 });
 
 test("prints a React 19 element as JSX, without the fiber in its _owner", () => {

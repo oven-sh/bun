@@ -24,6 +24,8 @@ const {
   DiffieHellman,
   DiffieHellmanGroup,
   diffieHellman,
+  encapsulate,
+  decapsulate,
   checkPrime,
   checkPrimeSync,
   generatePrime,
@@ -636,6 +638,8 @@ crypto_exports.createDiffieHellman = createDiffieHellman;
 crypto_exports.DiffieHellman = DiffieHellman;
 
 crypto_exports.diffieHellman = diffieHellman;
+crypto_exports.encapsulate = encapsulate;
+crypto_exports.decapsulate = decapsulate;
 
 ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;

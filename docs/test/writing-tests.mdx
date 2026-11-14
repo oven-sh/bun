@@ -483,7 +483,7 @@ The test context is the object you destructure fixtures from. Each test has one,
 | `expect`                                 | An `expect` whose assertion counts and snapshots belong to this test, even in [concurrent](/test#concurrent-test-execution) tests |
 | `skip(note?)`, `skip(condition, note?)`  | Stops the test and reports it as skipped                                                                                          |
 | `onTestFinished(fn)`, `onTestFailed(fn)` | Runs `fn` after the test's `afterEach` hooks and fixture teardown. `onTestFailed` only runs it if the test failed                 |
-| `signal`                                 | An `AbortSignal` that's aborted when the test times out                                                                           |
+| `signal`                                 | An `AbortSignal` that's aborted when the test times out. It stays aborted if the test is [retried](#retries-and-repeats)          |
 | `annotate(message, type?, attachment?)`  | Adds an entry to `task.annotations`                                                                                               |
 
 As in Vitest, the context isn't a `done` callback. Calling it throws an error.

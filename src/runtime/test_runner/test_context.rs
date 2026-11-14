@@ -234,8 +234,14 @@ impl TestContext {
         errors.push(global, error)
     }
 
+    /// Makes the signal if nothing has read it yet, so that a first read after the timeout finds it aborted.
     pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) {
-        if let Some(signal) = js::signal_get_cached(this_value).and_then(AbortSignal::from_js) {
+        let signal = js::signal_get_cached(this_value).unwrap_or_else(|| {
+            let signal = AbortSignal::create(global);
+            js::signal_set_cached(this_value, global, signal);
+            signal
+        });
+        if let Some(signal) = AbortSignal::from_js(signal) {
             // SAFETY: the wrapper in the cached slot keeps the signal alive.
             unsafe { &*signal }.signal(global, CommonAbortReason::Timeout);
         }
@@ -294,17 +300,8 @@ impl TestContext {
         Ok(annotations)
     }
 
-    pub(crate) fn get_signal(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let (this_value, global) = (this_value.to_js(), cx.global());
-        let signal = AbortSignal::create(global);
-        if let Some((_buntest, sequence)) = self.running(this_value)
-            // SAFETY: as in `running`.
-            && unsafe { sequence.as_ref() }.result.is_timeout()
-        {
-            js::signal_set_cached(this_value, global, signal);
-            Self::abort_signal(this_value, global);
-        }
-        Ok(signal)
+    pub(crate) fn get_signal(&self, cx: &mut JsScope<'_>) -> JSValue {
+        AbortSignal::create(cx.global())
     }
 
     pub(crate) fn get_expect(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

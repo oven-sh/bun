@@ -540,6 +540,210 @@ describe.concurrent("test context", () => {
     });
   });
 
+  test("signal is aborted after a timeout, whenever it is first read", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeEach, afterEach, afterAll, aroundEach, TestRunner } from "vitest";
+        const never = new Promise(() => {});
+        const returnLate = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+        const calls = {};
+        const firstCall = name => (calls[name] = (calls[name] ?? 0) + 1) === 1;
+        test("retry", { retry: 1, timeout: 20 }, async ctx => {
+          if (firstCall("retry")) await never;
+          console.log("retry:", ctx.signal.aborted);
+        });
+        test("retry after a throw", { retry: 1 }, ctx => {
+          if (firstCall("throw")) throw new Error("not a timeout");
+          console.log("retry after a throw:", ctx.signal.aborted);
+        });
+        test("retry, read before the timeout", { retry: 1, timeout: 20 }, async ({ signal }) => {
+          console.log("read before the timeout:", signal.aborted);
+          if (firstCall("read before")) await never;
+        });
+        test.fails("fails with repeats", { repeats: 1, timeout: 20 }, async ctx => {
+          if (firstCall("fails")) await never;
+          console.log("fails with repeats:", ctx.signal.aborted);
+          throw new Error("expected");
+        });
+        describe("a hook times out, and the hook of the next attempt reads", () => {
+          beforeEach(async ctx => {
+            if (firstCall("hook")) await never;
+            console.log("the hook of the next attempt:", ctx.signal.aborted);
+          }, 20);
+          test("test", { retry: 1 }, () => {});
+        });
+        test("getCurrentTest() in the next attempt", { retry: 1, timeout: 20 }, async () => {
+          if (firstCall("current")) await never;
+          console.log("getCurrentTest() in the next attempt:", TestRunner.getCurrentTest().context.signal.aborted);
+        });
+        describe("aroundEach times out before runTest()", () => {
+          aroundEach(async (runTest, ctx) => {
+            await runTest().catch(() => {});
+            console.log("aroundEach times out before runTest():", ctx.signal.aborted);
+          });
+          aroundEach(() => never, 20);
+          test("test", () => {});
+        });
+        describe("aroundEach times out after runTest()", () => {
+          aroundEach(async (runTest, ctx) => {
+            await runTest().catch(() => {});
+            console.log("aroundEach times out after runTest():", ctx.signal.aborted);
+          });
+          aroundEach(async runTest => { await runTest(); await never; }, 20);
+          test("test", () => {});
+        });
+        describe("skip() after the timeout", () => {
+          beforeEach(() => never, 20);
+          afterEach(ctx => {
+            try { ctx.skip(); } catch {}
+            console.log("skip() after the timeout:", ctx.signal.aborted);
+          });
+          test("test", () => {});
+        });
+        describe("a context that outlives its test", () => {
+          const kept = [];
+          afterAll(() => console.log("in afterAll:", kept[1].signal.aborted));
+          for (const i of [0, 1]) test("times out " + i, { timeout: 20 }, async ctx => { kept[i] = ctx; await never; });
+          test("the next test", () => console.log("in the next test:", kept[0].signal.aborted));
+        });
+        describe("a hook times out", () => {
+          beforeEach(() => never, 20);
+          afterEach(ctx => console.log("a hook times out:", ctx.signal.aborted));
+          test("test", () => {});
+        });
+        describe("a callback returns after its timeout", () => {
+          afterEach(ctx => console.log("returns late, in afterEach:", ctx.signal.aborted));
+          test("first read afterwards", { timeout: 20 }, () => void returnLate());
+          test("first read inside", { timeout: 20 }, ctx => {
+            returnLate();
+            console.log("returns late, inside:", ctx.signal.aborted);
+          });
+        });
+      `,
+    });
+    // Load can time out a later attempt too, which changes a test's result and none of these lines.
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "retry: true",
+        "retry after a throw: false",
+        "read before the timeout: false",
+        "read before the timeout: true",
+        "fails with repeats: true",
+        "the hook of the next attempt: true",
+        "getCurrentTest() in the next attempt: true",
+        "aroundEach times out before runTest(): true",
+        "aroundEach times out after runTest(): true",
+        "skip() after the timeout: true",
+        "in the next test: true",
+        "in afterAll: true",
+        "a hook times out: true",
+        "returns late, in afterEach: true",
+        "returns late, inside: false",
+        "returns late, in afterEach: true",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // The next file and "bun:test" tests, whose context is made when something first asks for it.
+  // Vitest prints the same "in the next file" line with --no-isolate --no-file-parallelism.
+  test("signal is aborted after a timeout, whenever its context is made", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "vitest";
+        test("times out", { timeout: 20 }, async ctx => {
+          globalThis.kept = ctx;
+          await new Promise(() => {});
+        });
+      `,
+      "b.test.js": `
+        import { test, describe, afterEach, aroundEach } from "bun:test";
+        import { TestRunner } from "vitest";
+        const never = new Promise(() => {});
+        const returnLate = () => Bun.sleepSync(40);
+        const calls = {};
+        const firstCall = name => (calls[name] = (calls[name] ?? 0) + 1) === 1;
+        test("the next file", () => console.log("in the next file:", globalThis.kept.signal.aborted));
+        test.for([1])("test.for %i", async (row, ctx) => {
+          if (firstCall("for")) await never;
+          console.log("test.for:", ctx.signal.aborted);
+        }, { retry: 1, timeout: 20 });
+        test.extend({ x: 1 })("test.extend", async ({ x, task }) => {
+          if (firstCall("extend")) await never;
+          console.log("test.extend:", task.context.signal.aborted);
+        }, { retry: 1, timeout: 20 });
+        describe("aroundEach", () => {
+          aroundEach(async (runTest, ctx) => {
+            if (calls.around) console.log("aroundEach of the next attempt:", ctx.signal.aborted);
+            await runTest();
+          });
+          test("test", async () => { if (firstCall("around")) await never; }, { retry: 1, timeout: 20 });
+        });
+        describe("a context made after the timeout", () => {
+          afterEach(() => {
+            const { signal } = TestRunner.getCurrentTest().context;
+            console.log("made after the timeout:", signal.aborted, signal.reason.name);
+          });
+          test("test", () => never, 20);
+        });
+        describe("a context made in a callback that returns after its timeout", () => {
+          let context;
+          afterEach(() => console.log("made in a callback that returns late:", context.signal.aborted));
+          test("test", () => { context = TestRunner.getCurrentTest().context; returnLate(); }, 20);
+        });
+        describe("a signal read in a callback that returns after its timeout", () => {
+          let signal;
+          afterEach(() => console.log("read in a callback that returns late:", signal.aborted));
+          test("test", () => {
+            signal = TestRunner.getCurrentTest().context.signal;
+            signal.addEventListener("abort", () => console.log("abort event:", signal.reason.name));
+            returnLate();
+          }, 20);
+        });
+        test("a context made in a callback that returns late, read in the next attempt", () => {
+          const { context } = TestRunner.getCurrentTest();
+          if (firstCall("returns late")) return returnLate();
+          console.log("made in a callback that returns late, the next attempt:", context.signal.aborted);
+        }, { retry: 1, timeout: 20 });
+        describe("a context made after the timeout, read after its test", () => {
+          let kept;
+          afterEach(() => { kept ??= TestRunner.getCurrentTest().context; });
+          test("times out", () => never, 20);
+          test("the next test", () => console.log("made after the timeout, the next test:", kept.signal.aborted));
+        });
+        describe("a context made after the timeout, then skip()", () => {
+          afterEach(() => {
+            const { context } = TestRunner.getCurrentTest();
+            try { context.skip(); } catch {}
+            console.log("made after the timeout, then skip():", context.signal.aborted);
+          });
+          test("test", () => never, 20);
+        });
+        describe("a context made after a failure that is not a timeout", () => {
+          afterEach(() => console.log("made after a throw:", TestRunner.getCurrentTest().context.signal.aborted));
+          test("test", () => { throw new Error("not a timeout"); });
+        });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "in the next file: true",
+        "test.for: true",
+        "test.extend: true",
+        "aroundEach of the next attempt: true",
+        "made after the timeout: true TimeoutError",
+        "made in a callback that returns late: true",
+        "abort event: TimeoutError",
+        "read in a callback that returns late: true",
+        "made in a callback that returns late, the next attempt: true",
+        "made after the timeout, the next test: true",
+        "made after the timeout, then skip(): true",
+        "made after a throw: false",
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("annotate() records into task.annotations", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

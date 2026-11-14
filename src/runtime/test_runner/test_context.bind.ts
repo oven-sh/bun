@@ -15,7 +15,7 @@ export const TestContext = b.class({
   proto: {
     task: member,
     expect: member,
-    signal: member,
+    signal: { getter: b.any, cache: true, capability: "js" },
     skip: member,
     onTestFinished: member,
     onTestFailed: member,

@@ -4080,6 +4080,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
+                options.mode,
             )
             .expect("unreachable");
             // Defer promise creation until we're just about to schedule the task.
@@ -6216,6 +6217,12 @@ pub(crate) trait FileOpener: Sized {
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
 
+    /// The permissions of a file that gets created.
+    #[cfg(not(windows))]
+    fn open_mode(&self) -> bun_sys::Mode {
+        crate::node::fs::DEFAULT_PERMISSION
+    }
+
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn set_errno(&mut self, e: crate::Error);
@@ -6348,7 +6355,7 @@ pub(crate) trait FileOpener: Sized {
                 match bun_sys::open(
                     path,
                     Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    crate::node::fs::DEFAULT_PERMISSION,
+                    self.open_mode(),
                 ) {
                     bun_sys::Result::Ok(fd) => {
                         self.set_opened_fd(fd);

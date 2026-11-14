@@ -88,6 +88,8 @@ impl Options {
 pub(crate) struct Linked {
     /// The packages that this install links, given `--production`, `--omit` and `--filter`.
     packages: Option<DynamicBitSet>,
+    /// See `foreign_packages`.
+    foreign: Option<Option<DynamicBitSet>>,
 }
 
 impl Linked {
@@ -112,28 +114,156 @@ impl Linked {
             return false;
         }
         let linked = self.packages.get_or_insert_with(|| {
-            let pruned = &manager.summary.pruned_workspaces;
-            if workspace_filters.is_empty() && install_root_dependencies && pruned.is_empty() {
-                return packages(lockfile, resolutions, options);
+            match linked_importers(
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+                resolutions,
+            ) {
+                None => packages(lockfile, resolutions, options),
+                Some(roots) => packages_from(lockfile, resolutions, &roots, false, options),
             }
-            // `--filter` or a pruned checkout links only some importers.
-            let mut roots: Vec<PackageID> = Vec::new();
-            if install_root_dependencies {
-                roots.push(0);
-            }
-            for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
-                let workspace = resolutions[row];
-                if deps[row].behavior.is_workspace()
-                    && (workspace as usize) < dep_slices.len()
-                    && !pruned.contains(&deps[row].name_hash)
-                    && WorkspaceFilter::is_selected(workspace_filters, workspace)
-                {
-                    roots.push(workspace);
-                }
-            }
-            packages_from(lockfile, resolutions, &roots, false, options)
         });
         !linked.is_set(resolutions[dep_id as usize] as usize)
+    }
+
+    /// `behavior` is an optional peer, and `pkg_id` is one of the `foreign_packages`.
+    pub(crate) fn is_foreign_peer(
+        &mut self,
+        behavior: Behavior,
+        pkg_id: PackageID,
+        workspace_filters: &[WorkspaceFilter],
+        install_root_dependencies: bool,
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        resolutions: &[PackageID],
+    ) -> bool {
+        behavior.is_optional_peer()
+            && self
+                .foreign
+                .get_or_insert_with(|| {
+                    foreign_packages(
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                        resolutions,
+                    )
+                })
+                .as_ref()
+                .is_some_and(|foreign| foreign.is_set_allow_out_of_bound(pkg_id as usize, false))
+    }
+}
+
+/// The importers that `--filter` or a pruned checkout leaves to link. `None` if it's all of them.
+fn linked_importers(
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> Option<Vec<PackageID>> {
+    let pruned = &manager.summary.pruned_workspaces;
+    if workspace_filters.is_empty() && install_root_dependencies && pruned.is_empty() {
+        return None;
+    }
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let dep_slices = lockfile.packages.items_dependencies();
+    let mut roots: Vec<PackageID> = Vec::new();
+    if install_root_dependencies {
+        roots.push(0);
+    }
+    for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
+        let workspace = resolutions[row];
+        if deps[row].behavior.is_workspace()
+            && (workspace as usize) < dep_slices.len()
+            && !pruned.contains(&deps[row].name_hash)
+            && WorkspaceFilter::is_selected(workspace_filters, workspace)
+        {
+            roots.push(workspace);
+        }
+    }
+    Some(roots)
+}
+
+/// Returns the packages that an optional peer does not install under `--filter`: the importers left
+/// out depend on them, and the selected importers use no version of them. Every dependency group
+/// counts, but not the inside of a tarball, and an optional peer only if it installs its package.
+/// The root is above every workspace, so its own dependencies are provided to them, as in pnpm,
+/// except for a workspace that is left out.
+/// `None` without `--filter`, also in a pruned checkout, which does install them.
+fn foreign_packages(
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> Option<DynamicBitSet> {
+    if workspace_filters.is_empty() {
+        return None;
+    }
+    let mut selected = linked_importers(
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+    )?;
+    let tags = lockfile.packages.items_resolution();
+    let left_out: Vec<PackageID> = (0..tags.len() as PackageID)
+        .filter(|&id| {
+            matches!(
+                tags[id as usize].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            ) && !selected.contains(&id)
+        })
+        .collect();
+    let options = Options {
+        optional_peer: false,
+        bundled: false,
+        ..Options::all(0)
+    };
+    let mut foreign = packages_from(lockfile, resolutions, &left_out, false, options);
+    let names = lockfile.packages.items_name_hash();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let dep_slices = lockfile.packages.items_dependencies();
+    for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
+        let target = resolutions[row] as usize;
+        // An alias provides nothing under the package's own name. See `peer_provider`.
+        if !deps[row].behavior.is_optional_peer()
+            && names.get(target) == Some(&deps[row].name_hash)
+            && tags[target].tag != ResolutionTag::Workspace
+        {
+            foreign.unset(target);
+        }
+    }
+    loop {
+        let own = packages_from(lockfile, resolutions, &selected, false, options);
+        let mut ids = own.iterator::<true, true>();
+        while let Some(id) = ids.next() {
+            for &version in lockfile.packages_named(names[id]) {
+                foreign.unset(version as usize);
+            }
+        }
+        // What an optional peer does install brings its own dependencies.
+        let walked = selected.len();
+        let mut ids = own.iterator::<true, true>();
+        while let Some(id) = ids.next() {
+            for row in dep_slices[id].begin() as usize..dep_slices[id].end() as usize {
+                let target = resolutions[row];
+                if deps[row].behavior.is_optional_peer()
+                    && !own.is_set_allow_out_of_bound(target as usize, true)
+                    && !foreign.is_set(target as usize)
+                    && !selected.contains(&target)
+                {
+                    selected.push(target);
+                }
+            }
+        }
+        if selected.len() == walked {
+            return Some(foreign);
+        }
     }
 }
 

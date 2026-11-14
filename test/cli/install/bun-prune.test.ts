@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -2550,6 +2551,78 @@ test.concurrent(
     expect(() => lstatSync(join(nm, "a-dep"))).toThrow();
     expect(await file(join(nm, "peer-deps-fixed", "package.json")).json()).toMatchObject({ version: "1.0.0" });
     await expectProductionInstallIsNoop(dir);
+  },
+);
+
+// A --filter install leaves out the optional peers that only other workspaces provide. They still count for the peer
+// hash, so leaving them out does not rename an entry.
+test.concurrent.each([
+  { flags: [], filtered: NOTHING(3, 3), full: NOTHING(7, 5) },
+  { flags: ["--filter", "app"], filtered: NOTHING(3, 2), full: NOTHING(5, 2) },
+])(
+  "isolated: prune $flags keeps what `bun install --filter` installed without an optional peer",
+  async ({ flags, ...nothing }) => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const packages = {
+      app: { dependencies: { "one-dep": "1.0.0" } },
+      lender: { dependencies: { "no-deps": "1.0.0" } },
+      lender2: { dependencies: { "no-deps": "2.0.0" } },
+    };
+    await writeWorkspaces(dir, packageJson, { packages });
+    const optionalPeer = (range: string) => ({ peerDependencies: { "no-deps": range }, optionalPeers: ["no-deps"] });
+    // Here one-dep depends on optional-peer-deps, which takes the no-deps of one-dep although it asks for another one.
+    await write(
+      join(dir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: {
+          "": { name: "root" },
+          ...Object.fromEntries(
+            Object.entries(packages).map(([name, pkg]) => [`packages/${name}`, { name, version: "1.0.0", ...pkg }]),
+          ),
+        },
+        packages: {
+          ...Object.fromEntries(Object.keys(packages).map(name => [name, [`${name}@workspace:packages/${name}`]])),
+          "no-deps": ["no-deps@1.0.0", "", {}, ""],
+          "lender2/no-deps": ["no-deps@2.0.0", "", {}, ""],
+          "one-dep": [
+            "one-dep@1.0.0",
+            "",
+            { dependencies: { "optional-peer-deps": "1.0.0" }, ...optionalPeer("^1.0.0") },
+            "",
+          ],
+          "optional-peer-deps": ["optional-peer-deps@1.0.0", "", optionalPeer("^2.0.0"), ""],
+        },
+      }),
+    );
+    const filtered = ["--frozen-lockfile", "--filter", "app", "--linker", "isolated"];
+    // Whether the optional-peer-deps that the one-dep of `app` loads has its peer next to it
+    const peer = () => {
+      const oneDep = realpathSync(join(dir, "packages", "app", "node_modules", "one-dep"));
+      return readdirSync(join(realpathSync(join(oneDep, "..", "optional-peer-deps")), "..")).includes("no-deps");
+    };
+
+    await install(dir, ...filtered);
+    const withoutPeer = storeEntries(dir);
+    expect(withoutPeer.map(entry => entry.replace(/[0-9a-f]{16}$/, "<peers>"))).toStrictEqual([
+      "one-dep@1.0.0+<peers>",
+      "optional-peer-deps@1.0.0+<peers>",
+    ]);
+    expect(peer()).toBeFalse();
+
+    const kept = await prune(dir, ...flags, "--linker", "isolated");
+    expect(out(kept.stdout)).toEndWith(nothing.filtered);
+    expect(kept.exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(withoutPeer);
+    expect(await install(dir, ...filtered)).toContain("no changes");
+
+    await install(dir, "--frozen-lockfile", "--linker", "isolated");
+    expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.0", "no-deps@2.0.0", ...withoutPeer]);
+    expect(peer()).toBeTrue();
+    const full = await prune(dir, ...flags, "--linker", "isolated");
+    expect(out(full.stdout)).toEndWith(nothing.full);
+    expect(full.exitCode).toBe(0);
   },
 );
 

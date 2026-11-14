@@ -663,74 +663,68 @@ fn finalize_bundle_inner(
         )?;
 
         let global = dev.global();
-        let server_modules = if let Some(json) = source_map_json {
-            // This memory will be owned by the `DevServerSourceProvider` in C++
-            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
+        // JavaScriptCore can refuse text that Bun's parser takes, such as `/(/`. The error is printed, and the
+        // modules of this bundle stay as they were.
+        'load: {
+            let server_modules = if let Some(json) = source_map_json {
+                // This memory will be owned by the `DevServerSourceProvider` in C++
+                let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
 
-            match server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+                match server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+                    global,
+                    BunString::clone_utf8(&server_bundle),
+                    json.as_ptr(),
+                    json.len(),
+                ) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
+                        // `print_error_like_object_to_console` needs `&mut`.
+                        dev.vm_mut()
+                            .print_error_like_object_to_console(global.take_exception(err));
+                        break 'load;
+                    }
+                }
+            } else {
+                match server_hmr_ffi::bake_load_server_hmr_patch(
+                    global,
+                    BunString::clone_latin1(&server_bundle),
+                ) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
+                        // `print_error_like_object_to_console` needs `&mut`.
+                        dev.vm_mut()
+                            .print_error_like_object_to_console(global.take_exception(err));
+                        break 'load;
+                    }
+                }
+            };
+            let errors = match dev.server_register_update_callback.get().unwrap().call(
                 global,
-                BunString::clone_utf8(&server_bundle),
-                json.as_ptr(),
-                json.len(),
+                global.to_js_value(),
+                &[
+                    server_modules,
+                    dev.make_array_for_server_components_patch(
+                        global,
+                        &dev.incremental_result.client_components_added,
+                    )?,
+                    dev.make_array_for_server_components_patch(
+                        global,
+                        &dev.incremental_result.client_components_removed,
+                    )?,
+                ],
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
+                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                     dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
+                    break 'load;
                 }
-            }
-        } else {
-            match server_hmr_ffi::bake_load_server_hmr_patch(
-                global,
-                BunString::clone_latin1(&server_bundle),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
-                }
-            }
-        };
-        let errors = match dev.server_register_update_callback.get().unwrap().call(
-            global,
-            global.to_js_value(),
-            &[
-                server_modules,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.incremental_result.client_components_added,
-                )?,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.incremental_result.client_components_removed,
-                )?,
-            ],
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                dev.vm_mut()
-                    .print_error_like_object_to_console(global.take_exception(err));
-                panic!(
-                    "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
-                );
-            }
-        };
-        let _ = errors; // TODO:
+            };
+            let _ = errors; // TODO:
+        }
     }
 
     let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;

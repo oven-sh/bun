@@ -1569,6 +1569,22 @@ devTest("barrel optimization: server: a save of one importer of a barrel does no
   },
 });
 
+// Bun's parser takes this regular expression.
+devTest("server: text that JavaScriptCore refuses does not abort the dev server", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `export default () => new Response("v1");`,
+    "routes/other.ts": `export default () => new Response("other");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+    await dev.write("routes/index.ts", `const r = /(/; export default () => new Response("v2 " + r);`);
+    await dev.fetch("/other").equals("other");
+    await dev.write("routes/index.ts", `export default () => new Response("v3");`);
+    await dev.fetch("/").equals("v3");
+  },
+});
+
 // Pins a known cost. The first request for /other makes a build in which the barrel has one more
 // re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
 // counter.ts runs again at that request, which imports it, and its count starts over.

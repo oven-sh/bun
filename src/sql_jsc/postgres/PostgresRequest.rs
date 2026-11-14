@@ -9,7 +9,7 @@ use bun_sql::postgres::TLSStatus;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::{AnyPostgresError, Int4};
-use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
+use bun_sql::postgres::protocol::WriterContext;
 use bun_sql::shared::SSLMode;
 
 use crate::jsc::js_error_to_postgres;
@@ -410,9 +410,9 @@ fn on_ssl_request_reply(
     }
 }
 
-pub(crate) fn on_data<Context: ReaderContext>(
+pub(crate) fn on_data(
     connection: &PostgresSQLConnection,
-    mut reader: protocol::NewReader<Context>,
+    reader: &protocol::NewReader<'_>,
 ) -> Result<(), AnyPostgresError> {
     use MessageType as M;
     loop {
@@ -442,28 +442,28 @@ pub(crate) fn on_data<Context: ReaderContext>(
         let after = before - length;
 
         match c {
-            b'D' => connection.on(M::DataRow, reader.reborrow())?,
-            b'd' => connection.on(M::CopyData, reader.reborrow())?,
-            b'S' => connection.on(M::ParameterStatus, reader.reborrow())?,
-            b'Z' => connection.on(M::ReadyForQuery, reader.reborrow())?,
-            b'C' => connection.on(M::CommandComplete, reader.reborrow())?,
-            b'2' => connection.on(M::BindComplete, reader.reborrow())?,
-            b'1' => connection.on(M::ParseComplete, reader.reborrow())?,
-            b't' => connection.on(M::ParameterDescription, reader.reborrow())?,
-            b'T' => connection.on(M::RowDescription, reader.reborrow())?,
-            b'R' => connection.on(M::Authentication, reader.reborrow())?,
-            b'n' => connection.on(M::NoData, reader.reborrow())?,
-            b'K' => connection.on(M::BackendKeyData, reader.reborrow())?,
-            b'E' => connection.on(M::ErrorResponse, reader.reborrow())?,
-            b's' => connection.on(M::PortalSuspended, reader.reborrow())?,
-            b'3' => connection.on(M::CloseComplete, reader.reborrow())?,
-            b'G' => connection.on(M::CopyInResponse, reader.reborrow())?,
-            b'N' => connection.on(M::NoticeResponse, reader.reborrow())?,
-            b'I' => connection.on(M::EmptyQueryResponse, reader.reborrow())?,
-            b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
-            b'c' => connection.on(M::CopyDone, reader.reborrow())?,
-            b'W' => connection.on(M::CopyBothResponse, reader.reborrow())?,
-            b'A' => connection.on(M::NotificationResponse, reader.reborrow())?,
+            b'D' => connection.on(M::DataRow, reader)?,
+            b'd' => connection.on(M::CopyData, reader)?,
+            b'S' => connection.on(M::ParameterStatus, reader)?,
+            b'Z' => connection.on(M::ReadyForQuery, reader)?,
+            b'C' => connection.on(M::CommandComplete, reader)?,
+            b'2' => connection.on(M::BindComplete, reader)?,
+            b'1' => connection.on(M::ParseComplete, reader)?,
+            b't' => connection.on(M::ParameterDescription, reader)?,
+            b'T' => connection.on(M::RowDescription, reader)?,
+            b'R' => connection.on(M::Authentication, reader)?,
+            b'n' => connection.on(M::NoData, reader)?,
+            b'K' => connection.on(M::BackendKeyData, reader)?,
+            b'E' => connection.on(M::ErrorResponse, reader)?,
+            b's' => connection.on(M::PortalSuspended, reader)?,
+            b'3' => connection.on(M::CloseComplete, reader)?,
+            b'G' => connection.on(M::CopyInResponse, reader)?,
+            b'N' => connection.on(M::NoticeResponse, reader)?,
+            b'I' => connection.on(M::EmptyQueryResponse, reader)?,
+            b'H' => connection.on(M::CopyOutResponse, reader)?,
+            b'c' => connection.on(M::CopyDone, reader)?,
+            b'W' => connection.on(M::CopyBothResponse, reader)?,
+            b'A' => connection.on(M::NotificationResponse, reader)?,
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);

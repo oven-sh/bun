@@ -51,7 +51,7 @@ WRAP(void, vkDestroyDevice, void *device, In allocator) {
 }
 
 // How many there have been.
-COUNT(frees) COUNT(submits) COUNT(waits)
+COUNT(frees) COUNT(looks) COUNT(submits) COUNT(waits)
 
 WRAP(void, vkFreeMemory, void *device, Handle memory, In allocator) {
   real_vkFreeMemory(device, memory, allocator);
@@ -87,6 +87,7 @@ WRAP(int, vkWaitForFences, void *device, uint32_t count, const Handle *fences, u
 }
 
 WRAP(int, vkGetFenceStatus, void *device, Handle fence) {
+  looksCount++;
   if (resultOfWaits == DEVICE_LOST)
     return looksUntilLost-- > 0 ? NOT_READY : DEVICE_LOST;
   if (looksUntilFinished == 0)

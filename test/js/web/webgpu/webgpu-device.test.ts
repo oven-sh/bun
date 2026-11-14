@@ -531,6 +531,32 @@ describe.skipIf(!hasAdapter)("GPUDevice", () => {
       expect(() => device.queue.writeBuffer(buffer, 0, [1, 2, 3, 4] as any)).toThrow(TypeError);
     });
 
+    test("what is destroyed stays for the uploads and the submits that use it", async () => {
+      const [width, height] = [2048, 1024];
+      const layout = { bytesPerRow: width * 4 };
+      const pixels = Buffer.alloc(width * height * 4, "pixels");
+      const create = () =>
+        device.createTexture({
+          size: [width, height],
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
+        });
+      const [unused, first, second] = [create(), create(), create()];
+      device.queue.submit([]);
+      // It has a staging buffer of its own, which Dawn releases at once.
+      device.queue.writeTexture({ texture: first }, pixels, layout, [width, height]);
+      await device.queue.onSubmittedWorkDone();
+      device.queue.writeTexture({ texture: unused }, pixels, layout, [1, 1]);
+      unused.destroy();
+      await device.queue.onSubmittedWorkDone();
+      submit(encoder => encoder.copyTextureToTexture({ texture: first }, { texture: second }, [width, height]));
+      first.destroy();
+      const copy = await readBack(pixels.length, (encoder, buffer) =>
+        encoder.copyTextureToBuffer({ texture: second }, { buffer, ...layout }, [width, height]),
+      );
+      expect(pixels.equals(new Uint8Array(copy))).toBe(true);
+    });
+
     test("copyBufferToBuffer() and clearBuffer()", async () => {
       const source = bufferWith(new Uint32Array([1, 2, 3, 4]), COPY_SRC);
       const copy = async (record: (encoder: GPUCommandEncoder, to: GPUBuffer) => void) => [

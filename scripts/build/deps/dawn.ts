@@ -119,7 +119,7 @@ export const dawn: Dependency = {
     "patches/dawn/reuse-staging-buffers.patch",
     "patches/dawn/tick-after-last-serial.patch",
     "patches/dawn/vulkan-lend-fence.patch",
-    "patches/dawn/wake-for-awaited-serial.patch",
+    "patches/dawn/wake-to-free-memory.patch",
   ],
 
   fetchDeps: ["abseil", "jinja", "markupsafe"],

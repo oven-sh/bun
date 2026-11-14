@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 
 #include "dawn/platform/DawnPlatform.h"
 #include "src/dawn/common/RefCounted.h"
@@ -35,15 +36,15 @@ private:
     ~Host() override { m_host.release(m_host.context); }
 
     std::unique_ptr<dawn::platform::WorkerTaskPool> CreateWorkerTaskPool() override;
-    void OnSerialRaised() override { wake(); }
+    void OnTickNeeded() override { wake(); }
 
     const BunDawnHost m_host;
 };
 
-enum class Wake : uint8_t {
-    None,
-    Follows,
-    Missed,
+enum class Moment : uint8_t {
+    BeforeResults,
+    AfterWake,
+    AfterDelay,
 };
 
 // Wakes the host when the GPU has finished what a device submitted. Dawn's own wait holds a lock that the next submit needs.
@@ -52,11 +53,11 @@ public:
     static std::unique_ptr<QueueWatcher> create(dawn::native::DeviceBase*);
     virtual ~QueueWatcher() = default;
 
-    // Asks for a wake at this serial, or at the last one submitted if that comes first. Wakes that were asked for before need not come.
-    Wake arm(dawn::native::ExecutionSerial);
+    // Asks for a wake at this serial, or at the last one submitted if that comes first. False if it has to be asked again. Wakes that were asked for before need not come.
+    bool arm(dawn::native::ExecutionSerial);
 
-    // If true, the next call is to be made in 100 ms. Otherwise after the next wake.
-    bool freeMemory();
+    // To be called after each wake. True if it wants another call after a delay.
+    bool freeMemory(Moment);
 
     // Called before the device is destroyed. The watcher is deleted after.
     virtual void stop() {}
@@ -76,10 +77,10 @@ private:
     dawn::native::ExecutionSerial m_armedSerial { dawn::native::kBeginningOfGPUTime };
     bool m_hasFailedToArm { false };
 
-    // The last one that freeMemory() has seen submitted or awaited.
-    dawn::native::ExecutionSerial m_knownSerial { dawn::native::kBeginningOfGPUTime };
-    unsigned m_idleCalls { 0 };
-    bool m_hasFreedAll { true };
+    dawn::native::ExecutionSerial m_postponedSerial { dawn::native::kBeginningOfGPUTime };
+    unsigned m_postponements { 0 };
+    std::optional<uint64_t> m_ticksBeforeDelay;
+    uint64_t m_ticksBeforeReduction { 0 };
 };
 
 } // namespace Bun::Dawn

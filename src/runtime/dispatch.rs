@@ -1335,8 +1335,8 @@ pub(crate) unsafe fn fire_timer(
             })
         }
         EventLoopTimerTag::WebGpuFreeMemory => {
-            feature_timer_arm!([WebGpu], crate::webgpu::Instance, timer, |c, _now, _vm| {
-                (*c).on_timer()
+            feature_timer_arm!([WebGpu], crate::webgpu::Device, timer, |c, _now, _vm| {
+                crate::webgpu::Device::on_timer(c)
             })
         }
         EventLoopTimerTag::GcRepeating => {

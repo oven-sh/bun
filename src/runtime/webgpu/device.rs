@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use bun_collections::ArrayHashMap;
 use bun_collections::smallvec::SmallVec;
-use bun_core::String;
+use bun_core::{String, Timespec, TimespecMockMode};
 use bun_dawn_sys::{
     self as dawn, AllLimits, Chain, DeviceLostReason, ErrorType, FeatureName, Host as _,
-    LoggingType, OwnedAdapter, OwnedDevice, Serial, Wake,
+    LoggingType, Moment, OwnedAdapter, OwnedDevice, Serial,
 };
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_jsc::bindgen::{Error, EventBase, JsHeap, JsPayload as _, JsScope, JsWrapper, Result};
 use bun_jsc::console_object::{self, MessageLevel, MessageType};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -30,10 +31,12 @@ use super::{
     GPURenderBundleEncoder, GPURenderPipeline, GPUSampler, GPUShaderModule, GPUSupportedFeatures,
     GPUSupportedLimits, GPUTexture, GPUUncapturedErrorEvent, Object, idl,
 };
+use crate::jsc_hooks::timer_all;
 
 bun_core::declare_scope!(WebGPU, hidden);
 
 const MAX_WARNINGS: u32 = 500;
+const IDLE_MILLISECONDS: i64 = 500;
 /// So that devices nobody refers to are collected before the driver runs out of them.
 const ESTIMATED_SIZE_OF_DEVICE: usize = 16 * 1024 * 1024;
 
@@ -107,6 +110,7 @@ pub(crate) struct Device {
     warnings: Cell<u32>,
     queue_label: String,
     abort_handle: AbortHandle,
+    pub(crate) timer: EventLoopTimer,
 }
 
 bun_jsc::impl_abort_handle_owner!(
@@ -139,6 +143,7 @@ bun_jsc::impl_abort_handle_owner!(
 impl Drop for Device {
     fn drop(&mut self) {
         self.stop_events();
+        VirtualMachine::get().timer_remove(&self.timer);
     }
 }
 
@@ -211,12 +216,32 @@ impl Device {
     }
 
     pub(super) fn watch_queue(&self) {
-        let serial = self.serial_to_wake_after();
-        match self.dawn.wake_after(serial) {
-            Wake::Follows => {}
-            Wake::None if serial.is_none() => {}
-            Wake::None | Wake::Missed => self.instance.schedule(),
+        if !self.dawn.wake_after(self.serial_to_wake_after()) {
+            self.instance.schedule();
         }
+    }
+
+    pub(super) fn has_queue_waits(&self) -> bool {
+        !self.queue_waits.borrow().is_empty()
+    }
+
+    pub(super) fn free_memory(self: &Rc<Self>, moment: Moment) {
+        if self.dawn.free_memory(moment) {
+            let time = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(IDLE_MILLISECONDS);
+            // SAFETY: a field of what `self` keeps alive.
+            timer_all().update(unsafe { &raw const (*Rc::as_ptr(self)).timer }, &time);
+        }
+    }
+
+    /// SAFETY: `this` has the timer that `free_memory` started.
+    pub(crate) unsafe fn on_timer(this: *const Self) {
+        // SAFETY: `Rc::as_ptr` of a device that has not been dropped, which removes the timer.
+        let this = unsafe {
+            Rc::increment_strong_count(this);
+            Rc::from_raw(this)
+        };
+        this.timer.state.set(TimerState::FIRED);
+        this.free_memory(Moment::AfterDelay);
     }
 
     pub(super) fn add_mapped_buffer(&self, buffer: &Rc<Buffer>) {
@@ -397,6 +422,7 @@ impl GPUDevice {
             warnings: Cell::new(0),
             queue_label: descriptor.default_queue.label.clone(),
             abort_handle: AbortHandle::for_owner::<Device>(),
+            timer: EventLoopTimer::init_paused(TimerTag::WebGpuFreeMemory),
         });
         instance.add_device(&device);
 

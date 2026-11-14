@@ -46,70 +46,76 @@ QueueWatcher::QueueWatcher(DeviceBase* device)
 {
 }
 
-Wake QueueWatcher::arm(ExecutionSerial serial)
+bool QueueWatcher::arm(ExecutionSerial serial)
 {
     QueueBase* queue = m_device->GetQueue();
     ExecutionSerial submitted = queue->GetLastSubmittedCommandSerial();
     ExecutionSerial completed = queue->GetCompletedCommandSerial();
+    const bool nothingWaits = serial == kMaxExecutionSerial;
 
     // Another thread found the device lost, and the next tick reports it.
     DeviceBase::State state = m_device->GetState();
     if (state == DeviceBase::State::Disconnecting)
-        return Wake::Missed;
-    if (state != DeviceBase::State::Alive)
-        return Wake::None;
-
-    if (submitted <= completed)
-        return serial == kMaxExecutionSerial ? Wake::None : Wake::Missed;
+        return false;
+    if (state != DeviceBase::State::Alive || submitted <= completed)
+        return nothingWaits;
 
     serial = std::min(serial, submitted);
     if (serial <= completed)
-        return Wake::Missed;
+        return false;
 
     if (serial != m_armedSerial) {
         m_hasFailedToArm = !wakeAfter(serial);
         if (m_hasFailedToArm)
-            return Wake::None;
+            return nothingWaits;
         m_armedSerial = serial;
     }
-    return resume(serial) ? Wake::Follows : Wake::Missed;
+    return resume(serial);
 }
 
-bool QueueWatcher::freeMemory()
+bool QueueWatcher::freeMemory(Moment moment)
 {
-    if (m_device->GetState() != DeviceBase::State::Alive)
-        return false;
-    if (std::exchange(m_hasFailedToArm, false)) {
-        m_host->wake();
+    const std::optional<uint64_t> ticksBeforeDelay = moment == Moment::AfterDelay ? std::exchange(m_ticksBeforeDelay, std::nullopt) : std::nullopt;
+    auto startDelay = [&] {
+        if (m_ticksBeforeDelay)
+            return false;
+        m_ticksBeforeDelay = m_device->GetTickCount();
         return true;
-    }
+    };
+
+    if (m_device->GetState() != DeviceBase::State::Alive || m_device->GetTickCount() == m_ticksBeforeReduction)
+        return false;
 
     QueueBase* queue = m_device->GetQueue();
-    auto lastSerial = [&] { return std::max(queue->GetLastSubmittedCommandSerial(), queue->GetLastAwaitedSerial()); };
-    const ExecutionSerial serial = lastSerial();
-    const bool isNew = std::exchange(m_knownSerial, serial) != serial;
-    if (isNew) {
-        m_idleCalls = 0;
-        m_hasFreedAll = false;
+    const ExecutionSerial submitted = queue->GetLastSubmittedCommandSerial();
+    if (submitted > queue->GetCompletedCommandSerial()) {
+        if (!m_hasFailedToArm)
+            return false;
+        if (moment == Moment::AfterDelay)
+            m_host->wake();
+        return startDelay();
     }
 
-    if (serial <= queue->GetCompletedCommandSerial()) {
-        if (m_hasFreedAll)
-            return false;
-        // The GPU may have finished after the last tick.
-        m_device->APITick();
-        if (++m_idleCalls <= 10)
-            return true;
-        // What Dawn keeps for reuse. That can release more of it.
-        m_device->ReduceMemoryUsage();
-        m_knownSerial = lastSerial();
-        m_hasFreedAll = m_knownSerial == serial;
-    } else if (isNew)
-        return serial > queue->GetLastSubmittedCommandSerial();
+    // Dawn holds uploads back until the next submit, and with them what they may use.
+    if (const ExecutionSerial awaited = queue->GetLastAwaitedSerial(); awaited > submitted) {
+        if (std::exchange(m_postponedSerial, awaited) != awaited)
+            m_postponements = 0;
+        // The script may go on to submit.
+        if (moment != Moment::AfterWake && ++m_postponements <= 4)
+            m_host->wake();
+        else
+            wgpuQueueSubmit(ToAPI(queue), 0, nullptr);
+        return false;
+    }
 
-    // Dawn frees what has been released once the GPU has finished the next submit, which the script has had the time to make.
-    if (m_knownSerial > queue->GetLastSubmittedCommandSerial())
-        wgpuQueueSubmit(ToAPI(queue), 0, nullptr);
+    // The GPU may have finished after the last tick.
+    m_device->APITick();
+    if (m_device->GetTickCount() != ticksBeforeDelay)
+        return startDelay();
+
+    // What Dawn keeps for reuse.
+    ReduceMemoryUsage(ToAPI(m_device));
+    m_ticksBeforeReduction = *ticksBeforeDelay;
     return false;
 }
 
@@ -196,7 +202,7 @@ static bool keepsTransientAttachmentsInTiles(DeviceBase* device)
 #if defined(DAWN_ENABLE_BACKEND_METAL)
     return device->GetAdapter()->APIHasFeature(wgpu::FeatureName::TransientAttachments);
 #else
-    return device->GetAllocatorMemoryInfo().totalLazyUsedMemory;
+    return GetAllocatorMemoryInfo(ToAPI(device)).totalLazyUsedMemory;
 #endif
 }
 
@@ -222,14 +228,22 @@ extern "C" QueueWatcher* BunDawn__createQueueWatcher(WGPUDevice device)
     return QueueWatcher::create(FromAPI(device)).release();
 }
 
-extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial)
+extern "C" bool BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial)
 {
     return watcher->arm(ExecutionSerial(serial));
 }
 
-extern "C" bool BunDawn__freeMemory(QueueWatcher* watcher)
+extern "C" bool BunDawn__freeMemory(QueueWatcher* watcher, Moment moment)
 {
-    return watcher->freeMemory();
+    return watcher->freeMemory(moment);
+}
+
+// With Vulkan, commands that have yet to be submitted hold the buffers that can be mapped.
+extern "C" void BunDawn__willReleaseBuffer(WGPUBuffer buffer)
+{
+    QueueBase* queue = FromAPI(buffer)->GetDevice()->GetQueue();
+    if (FromAPI(buffer)->GetLastUsageSerial() > queue->GetLastSubmittedCommandSerial())
+        queue->AwaitRecordedCommands();
 }
 
 extern "C" uint64_t BunDawn__serialOfLastUse(WGPUBuffer buffer)

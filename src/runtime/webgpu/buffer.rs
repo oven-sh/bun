@@ -90,6 +90,12 @@ pub(crate) struct Buffer {
     memory_size: AtomicUsize,
 }
 
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        self.handle.will_be_released();
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Contents {
     Keep,

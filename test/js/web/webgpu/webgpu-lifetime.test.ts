@@ -1,6 +1,6 @@
 // Runs alone: its last tests disturb other processes that use the GPU of a macOS virtual machine.
 import { describe, expect, test } from "bun:test";
-import { isArm64, isLinux, isMacOS, libcPathForDlopen, withoutAsanQuarantine } from "harness";
+import { isArm64, isASAN, isDebug, isLinux, isMacOS, libcPathForDlopen, withoutAsanQuarantine } from "harness";
 import { hasAdapter, runWithDriverOfChrome } from "./driver";
 import { bunEnv, printed, run, uploads, withMacro, withoutGC, withoutGCTimer, withoutMacroLog } from "./subprocess";
 
@@ -300,7 +300,8 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       prepareUploads(device)(3);
       let turns;
       const end = performance.now() + 30_000;
-      do turns = await countTurns(350);
+      // An idle device is looked at after 500 ms.
+      do turns = await countTurns(600);
       while (turns > asleep && turns < 100 && performance.now() < end);
       console.log(turns - asleep);`;
     expect(await run({ "index.js": script }, undefined, withoutGC)).toEqual(printed("0"));
@@ -519,14 +520,33 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       const rss = () => process.memoryUsage.rss() >> 20;
       const devices = await Promise.all(Array.from({ length: 4 }, requestDevice));
       for (const upload of devices.map(prepareUploads)) upload(${count});
-      // 48 MB or more
+      // 32 MB or more
       const inUse = rss();
-      const expected = devices[0].adapterInfo.isFallbackAdapter || ${isMacOS} ? 24 : -Infinity;
+      const expected = devices[0].adapterInfo.isFallbackAdapter || ${isMacOS} ? 16 : -Infinity;
       const end = performance.now() + 30_000;
       do await Bun.sleep(1);
       while (inUse - rss() < expected && performance.now() < end);
       console.log(inUse - rss() < expected ? inUse - rss() + " MB" : "freed");`;
     expect(await run({ "index.js": script }, undefined, returningFreedMemory(withoutGC))).toEqual(printed("freed"));
+  });
+
+  test("gets back the memory of what a loop destroys while that goes on", async () => {
+    const script = `
+      const device = await requestDevice();
+      device.queue.submit([]);
+      const before = process.memoryUsage.rss();
+      let most = 0;
+      for (let i = 0; i < 24; i++) {
+        const buffer = device.createBuffer({ size: 8 << 20, usage: GPUBufferUsage.MAP_READ, mappedAtCreation: true });
+        most = Math.max(most, process.memoryUsage.rss() - before);
+        buffer.destroy();
+        await device.queue.onSubmittedWorkDone();
+      }
+      console.log(most >> 20);`;
+    const { stdout, exitCode } = await run({ "index.js": script }, undefined, returningFreedMemory(withoutGC));
+    // 192 if nothing comes back.
+    expect(parseInt(stdout)).toBeLessThan(isASAN || isDebug ? 96 : 64);
+    expect(exitCode).toBe(0);
   });
 
   test("gets back the memory of uploads before the event loop turns", async () => {
@@ -645,10 +665,11 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
       };
       for (let i = 0; i < 4; i++) await new Promise(new ShadowRealm().evaluate(\`done => void (\${use})(done)\`));
       // The last one, with its prototype.
+      const end = performance.now() + 30_000;
       do Bun.gc(true), await Bun.sleep(1);
-      while (heapStats().objectTypeCounts.GPU > 2);
-      console.log("collected");`;
-    expect(await run({ "index.js": script })).toEqual(printed("collected"));
+      while (heapStats().objectTypeCounts.GPU > 2 && performance.now() < end);
+      console.log(heapStats().objectTypeCounts.GPU <= 2);`;
+    expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
 
   test.each([

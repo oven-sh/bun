@@ -9,7 +9,7 @@ mod host;
 
 pub use generated::*;
 pub use host::{
-    DeviceEvents, DeviceOptions, Host, OwnedAdapter, OwnedDevice, OwnedInstance, Serial, Wake,
+    DeviceEvents, DeviceOptions, Host, Moment, OwnedAdapter, OwnedDevice, OwnedInstance, Serial,
     WorkerTask,
 };
 

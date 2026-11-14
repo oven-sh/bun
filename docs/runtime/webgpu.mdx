@@ -186,7 +186,7 @@ device.addEventListener("uncapturederror", event => {
 
 A pending `mapAsync()`, `onSubmittedWorkDone()` or other promise of WebGPU keeps the process alive. An idle device does not, and neither does `device.lost`.
 
-The garbage collector frees buffers, textures and devices that nothing refers to. Call `destroy()` to free one sooner. A device keeps some memory for its next buffers, textures and uploads until it has been idle for a second.
+The garbage collector frees buffers, textures and devices that nothing refers to. Call `destroy()` to free one sooner. A device that is in use keeps some memory for its next buffers, textures and uploads.
 
 ## Differences from browsers
 

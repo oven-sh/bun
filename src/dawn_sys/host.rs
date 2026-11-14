@@ -103,14 +103,13 @@ bun_opaque::opaque_ffi! {
 #[repr(transparent)]
 pub struct Serial(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 #[repr(u8)]
-pub enum Wake {
-    /// The GPU is idle, the device is lost, or the system is out of resources.
-    None,
-    Follows,
-    /// It has to be asked again.
-    Missed,
+pub enum Moment {
+    /// After a wake that the script is about to hear of.
+    BeforeResults,
+    AfterWake,
+    AfterDelay,
 }
 
 unsafe extern "C" {
@@ -131,8 +130,9 @@ unsafe extern "C" {
     safe fn BunDawn__bufferMemorySize(buffer: &Buffer) -> u64;
     safe fn BunDawn__textureMemorySize(texture: &Texture) -> u64;
     safe fn BunDawn__createQueueWatcher(device: &Device) -> NonNull<QueueWatcher>;
-    fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>, serial: Serial) -> Wake;
-    fn BunDawn__freeMemory(watcher: NonNull<QueueWatcher>) -> bool;
+    fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>, serial: Serial) -> bool;
+    fn BunDawn__freeMemory(watcher: NonNull<QueueWatcher>, moment: Moment) -> bool;
+    safe fn BunDawn__willReleaseBuffer(buffer: &Buffer);
     safe fn BunDawn__serialOfLastUse(buffer: &Buffer) -> Serial;
     safe fn BunDawn__serialOfScheduledWork(queue: &Queue) -> Serial;
     fn BunDawn__destroyDevice(device: &Device, watcher: NonNull<QueueWatcher>);
@@ -356,22 +356,23 @@ impl OwnedDevice {
         self.device.clone()
     }
 
-    /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. Wakes that were asked for before need not come.
-    pub fn wake_after(&self, serial: Option<Serial>) -> Wake {
-        self.watcher.get().map_or(Wake::None, |watcher| {
-            let _pool = AutoreleasePool::new();
-            let serial = serial.unwrap_or(Serial(u64::MAX));
-            // SAFETY: only `destroy` frees it, which takes it out first.
-            unsafe { BunDawn__armQueueWatcher(watcher, serial) }
-        })
+    /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. False if it has to be asked again. Wakes that were asked for before need not come.
+    pub fn wake_after(&self, serial: Option<Serial>) -> bool {
+        let Some(watcher) = self.watcher.get() else {
+            return serial.is_none();
+        };
+        let _pool = AutoreleasePool::new();
+        let serial = serial.unwrap_or(Serial(u64::MAX));
+        // SAFETY: only `destroy` frees it, which takes it out first.
+        unsafe { BunDawn__armQueueWatcher(watcher, serial) }
     }
 
-    /// If true, the next call is to be made in 100 ms. Otherwise after the next `Host::wake`.
-    pub fn free_memory(&self) -> bool {
+    /// To be called after each `Host::wake`. True if it wants another call after a delay.
+    pub fn free_memory(&self, moment: Moment) -> bool {
         self.watcher.get().is_some_and(|watcher| {
             let _pool = AutoreleasePool::new();
             // SAFETY: only `destroy` frees it, which takes it out first.
-            unsafe { BunDawn__freeMemory(watcher) }
+            unsafe { BunDawn__freeMemory(watcher, moment) }
         })
     }
 
@@ -406,6 +407,10 @@ impl Buffer {
     /// 0 for an invalid buffer.
     pub fn memory_size(&self) -> u64 {
         BunDawn__bufferMemorySize(self)
+    }
+
+    pub fn will_be_released(&self) {
+        BunDawn__willReleaseBuffer(self);
     }
 
     /// What the last `map_async` waits for.

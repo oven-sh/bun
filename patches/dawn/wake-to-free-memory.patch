@@ -1,0 +1,332 @@
+What was released stayed until the GPU had finished the next submit, which may never be made. It
+only has to wait for the commands that have been recorded. The embedder is told when to tick.
+https://crbug.com/398193014
+
+--- a/include/dawn/platform/DawnPlatform.h
++++ b/include/dawn/platform/DawnPlatform.h
+@@ -201,6 +201,10 @@
+     // stuck.
+     virtual void ReportProgress();
+ 
++    // Commands have been submitted, or something has been released. Called on any thread, with
++    // locks held.
++    virtual void OnTickNeeded() {}
++
+   private:
+     Platform(const Platform&) = delete;
+     Platform& operator=(const Platform&) = delete;
+--- a/src/dawn/native/Device.cpp
++++ b/src/dawn/native/Device.cpp
+@@ -1607,7 +1607,7 @@
+     if (mState == State::Disconnecting) {
+         Disconnect();
+     }
+-    if (IsLost() || (!mQueue->HasScheduledCommands() &&
++    if (IsLost() || (!mQueue->AcquireNeedsTick() && !mQueue->HasScheduledCommands() &&
+                      mLastTickedSerial == mQueue->GetCompletedCommandSerial())) {
+         return {};
+     }
+@@ -1617,6 +1617,7 @@
+     // 2. or the backend still has pending commands to submit.
+     DAWN_TRY(mQueue->UpdateCompletedSerial(QueuePriority::Lowest));
+     mLastTickedSerial = mQueue->GetCompletedCommandSerial();
++    mTickCount++;
+     DAWN_TRY(TickImpl());
+ 
+     // TODO(crbug.com/dawn/833): decouple TickImpl from updating the serial so that we can
+--- a/src/dawn/native/Device.h
++++ b/src/dawn/native/Device.h
+@@ -481,6 +481,7 @@
+     void DumpMemoryStatistics(dawn::native::MemoryDump* dump) const;
+     MemoryUsageInfo ComputeEstimatedMemoryUsage() const;
+     bool ReduceMemoryUsage();
++    uint64_t GetTickCount() const { return mTickCount; }
+     void PerformIdleTasks();
+ 
+     // Returns the memory information gathered from backend specific allocators.
+@@ -669,6 +670,7 @@
+ 
+     std::unique_ptr<DynamicUploader> mDynamicUploader;
+     ExecutionSerial mLastTickedSerial = kBeginningOfGPUTime;
++    uint64_t mTickCount = 0;
+     std::unique_ptr<MemoryBlockAllocator> mMemoryBlockAllocator;
+     Ref<QueueBase> mQueue;
+ 
+--- a/src/dawn/native/DynamicUploader.cpp
++++ b/src/dawn/native/DynamicUploader.cpp
+@@ -100,6 +100,7 @@
+     // Upon failure, append a newly created ring buffer to fulfill the
+     // request.
+     if (startOffset == RingBufferAllocator::kInvalidOffset) {
++        mDevice->GetQueue()->AwaitRecordedCommands();
+         mRingBuffers.emplace_back(std::unique_ptr<RingBuffer>(
+             new RingBuffer{nullptr, RingBufferAllocator(kRingBufferSize)}));
+ 
+@@ -188,6 +189,10 @@
+             i++;
+         }
+     }
++
++    if (freeAll && mRingBuffers.size() > 1) {
++        mDevice->GetQueue()->AwaitRecordedCommands();
++    }
+ }
+ 
+ void DynamicUploader::UpdateMemoryPendingSubmit() {
+--- a/src/dawn/native/ExecutionQueue.cpp
++++ b/src/dawn/native/ExecutionQueue.cpp
+@@ -33,6 +33,7 @@
+ #include <utility>
+ #include <vector>
+ 
++#include "dawn/platform/DawnPlatform.h"
+ #include "src/dawn/common/Atomic.h"
+ #include "src/dawn/native/Device.h"
+ #include "src/dawn/native/Error.h"
+@@ -64,6 +65,27 @@
+ 
+ ExecutionSerial ExecutionQueueBase::GetPendingCommandSerial() const {
+     return ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire) + 1);
++}
++
++void ExecutionQueueBase::WillRecordCommands() {
++    mLastRecordedSerial.store(static_cast<uint64_t>(GetPendingCommandSerial()));
++}
++
++ExecutionSerial ExecutionQueueBase::AwaitRecordedCommands() {
++    const uint64_t serial = std::max(mLastSubmittedSerial.load(), mLastRecordedSerial.load());
++    FetchMax(mLastAwaitedSerial, serial);
++    if (!mNeedsTick.exchange(true)) {
++        GetDevice()->GetPlatform()->OnTickNeeded();
++    }
++    return ExecutionSerial(serial);
++}
++
++ExecutionSerial ExecutionQueueBase::GetLastAwaitedSerial() const {
++    return ExecutionSerial(mLastAwaitedSerial.load());
++}
++
++bool ExecutionQueueBase::AcquireNeedsTick() {
++    return mNeedsTick.exchange(false);
+ }
+ 
+ ExecutionSerial ExecutionQueueBase::GetLastSubmittedCommandSerial() const {
+@@ -371,6 +393,7 @@
+ 
+ void ExecutionQueueBase::IncrementLastSubmittedCommandSerial() {
+     mLastSubmittedSerial.fetch_add(1u, std::memory_order_release);
++    GetDevice()->GetPlatform()->OnTickNeeded();
+ }
+ 
+ bool ExecutionQueueBase::HasScheduledCommands() const {
+--- a/src/dawn/native/ExecutionQueue.h
++++ b/src/dawn/native/ExecutionQueue.h
+@@ -95,6 +95,12 @@
+     ExecutionSerial GetLastSubmittedCommandSerial() const;
+     // The serial of the batch that is currently pending submission.
+     ExecutionSerial GetPendingCommandSerial() const;
++    void WillRecordCommands();
++    // The serial of the last commands that were recorded, for what a tick is to clean up once they
++    // have completed. To be called with the lock of the list that it is added to.
++    ExecutionSerial AwaitRecordedCommands();
++    ExecutionSerial GetLastAwaitedSerial() const;
++    bool AcquireNeedsTick();
+     // The serial by which time all currently submitted or pending operations will be completed.
+     ExecutionSerial GetScheduledWorkDoneSerial() const;
+     // Whether the execution queue has scheduled commands to be submitted or executing.
+@@ -189,6 +195,9 @@
+     // commands have been completed.
+     MutexCondVarProtected<uint64_t> mCompletedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
+     std::atomic<uint64_t> mLastSubmittedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
++    std::atomic<uint64_t> mLastRecordedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
++    std::atomic<uint64_t> mLastAwaitedSerial = static_cast<uint64_t>(kBeginningOfGPUTime);
++    std::atomic<bool> mNeedsTick = false;
+ 
+     // Mutex, condition variable, and boolean statuses are used by the class to synchronize task
+     // completion to ensure that:
+--- a/src/dawn/native/d3d12/DeviceD3D12.cpp
++++ b/src/dawn/native/d3d12/DeviceD3D12.cpp
+@@ -411,7 +411,7 @@
+ }
+ 
+ void Device::ReferenceUntilUnused(ComPtr<IUnknown> object) {
+-    mUsedComObjectRefs->Enqueue(std::move(object), GetQueue()->GetPendingCommandSerial());
++    mUsedComObjectRefs->Enqueue(std::move(object), GetQueue()->AwaitRecordedCommands());
+ }
+ 
+ ResultOrError<Ref<BindGroupBase>> Device::CreateBindGroupImpl(
+--- a/src/dawn/native/d3d12/HeapAllocatorD3D12.cpp
++++ b/src/dawn/native/d3d12/HeapAllocatorD3D12.cpp
+@@ -81,7 +81,7 @@
+ void HeapAllocator::DeallocateResourceHeap(std::unique_ptr<ResourceHeapBase> heap) {
+     Heap* d3d12Heap = static_cast<Heap*>(heap.get());
+     mDevice->ReferenceUntilUnused(d3d12Heap->GetD3D12Heap());
+-    mAllocationMemoryTracker->Decrement(mDevice->GetQueue()->GetPendingCommandSerial(),
++    mAllocationMemoryTracker->Decrement(mDevice->GetQueue()->AwaitRecordedCommands(),
+                                         d3d12Heap->GetSize());
+ }
+ 
+--- a/src/dawn/native/d3d12/QueueD3D12.cpp
++++ b/src/dawn/native/d3d12/QueueD3D12.cpp
+@@ -207,6 +207,7 @@
+ }
+ 
+ CommandRecordingContext* Queue::GetPendingCommandContext(SubmitMode submitMode) {
++    WillRecordCommands();
+     if (submitMode == SubmitMode::Normal) {
+         mPendingCommands.SetNeedsSubmit();
+     }
+--- a/src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.cpp
++++ b/src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.cpp
+@@ -423,7 +423,8 @@
+         return;
+     }
+ 
+-    mAllocationsToDelete.Enqueue(allocation, mDevice->GetQueue()->GetPendingCommandSerial());
++    const ExecutionSerial serial = mDevice->GetQueue()->AwaitRecordedCommands();
++    mAllocationsToDelete.Enqueue(allocation, serial);
+ 
+     // Directly allocated ResourceHeapAllocations are created with a heap object that must be
+     // manually deleted upon deallocation. See ResourceAllocatorManager::CreateCommittedResource
+@@ -432,15 +433,12 @@
+     // pending commands.
+     if (allocation.GetInfo().mMethod == AllocationMethod::kDirect) {
+         mHeapsToDelete.Enqueue(std::unique_ptr<ResourceHeapBase>(allocation.GetResourceHeap()),
+-                               mDevice->GetQueue()->GetPendingCommandSerial());
+-
+-        mUsedMemoryTracker->Decrement(mDevice->GetQueue()->GetPendingCommandSerial(),
+-                                      allocation.GetInfo().mRequestedSize);
+-        mAllocatedMemoryTracker->Decrement(mDevice->GetQueue()->GetPendingCommandSerial(),
+-                                           allocation.GetInfo().mRequestedSize);
++                               serial);
++
++        mUsedMemoryTracker->Decrement(serial, allocation.GetInfo().mRequestedSize);
++        mAllocatedMemoryTracker->Decrement(serial, allocation.GetInfo().mRequestedSize);
+     } else if (allocation.GetInfo().mMethod == AllocationMethod::kSubAllocated) {
+-        mUsedMemoryTracker->Decrement(mDevice->GetQueue()->GetPendingCommandSerial(),
+-                                      allocation.GetInfo().mRequestedSize);
++        mUsedMemoryTracker->Decrement(serial, allocation.GetInfo().mRequestedSize);
+     }
+ 
+     // Invalidate the allocation immediately in case one accidentally
+--- a/src/dawn/native/metal/BufferMTL.mm
++++ b/src/dawn/native/metal/BufferMTL.mm
+@@ -238,6 +238,8 @@
+     //   other threads using the buffer since there are no other live refs.
+     BufferBase::DestroyImpl(reason);
+     mMtlBuffer = nullptr;
++    // They may retain it.
++    GetDevice()->GetQueue()->AwaitRecordedCommands();
+ }
+ 
+ void Buffer::TrackUsage() {
+--- a/src/dawn/native/metal/FencedReferencer.mm
++++ b/src/dawn/native/metal/FencedReferencer.mm
+@@ -44,7 +44,7 @@
+ 
+ void FencedReferencer::RefUntilUnused(id handle) {
+     mPendingDeletions.Use([&](auto pending) {
+-        ExecutionSerial deletionSerial = mDevice->GetQueue()->GetPendingCommandSerial();
++        ExecutionSerial deletionSerial = mDevice->GetQueue()->AwaitRecordedCommands();
+         if (pending->mCompletedSerial >= deletionSerial) {
+             // If the serial has already passed (e.g. queue is shutdown), we can just drop the ref.
+             return;
+--- a/src/dawn/native/metal/QueueMTL.mm
++++ b/src/dawn/native/metal/QueueMTL.mm
+@@ -202,6 +202,7 @@
+ }
+ 
+ CommandRecordingContext* Queue::GetPendingCommandContext(SubmitMode submitMode) {
++    WillRecordCommands();
+     if (submitMode == SubmitMode::Normal) {
+         mCommandContext.SetNeedsSubmit();
+     }
+--- a/src/dawn/native/metal/TextureMTL.mm
++++ b/src/dawn/native/metal/TextureMTL.mm
+@@ -434,6 +434,8 @@
+     TextureBase::DestroyImpl(reason);
+     mMtlPlaneTextures.clear();
+     mIOSurface = nullptr;
++    // They may retain it.
++    GetDevice()->GetQueue()->AwaitRecordedCommands();
+ }
+ 
+ void Texture::SetLabelImpl() {
+--- a/src/dawn/native/vulkan/BufferVk.cpp
++++ b/src/dawn/native/vulkan/BufferVk.cpp
+@@ -772,12 +772,11 @@
+     //   other threads using the buffer since there are no other live refs.
+     BufferBase::DestroyImpl(reason);
+ 
+-    ToBackend(GetDevice())->GetResourceMemoryAllocator()->Deallocate(&mMemoryAllocation);
+-
+     if (mOwnsHandle) {
+         ToBackend(GetDevice())->GetFencedDeleter()->DeleteWhenUnused(mHandle);
+         mOwnsHandle = false;
+     }
++    ToBackend(GetDevice())->GetResourceMemoryAllocator()->Deallocate(&mMemoryAllocation);
+     mHandle = ToBackend(GetDevice())->GetPlaceholderBufferHandle();
+ 
+     if (mDedicatedDeviceMemory != VK_NULL_HANDLE) {
+--- a/src/dawn/native/vulkan/DescriptorSetAllocator.cpp
++++ b/src/dawn/native/vulkan/DescriptorSetAllocator.cpp
+@@ -127,14 +127,11 @@
+         // host execution (on "bindful" GPU that inline the descriptors in the command stream) of
+         // the command and the end of the draw/dispatch (for "bindless" GPUs where shaders read
+         // directly from the VkDescriptorPool).
+-        const ExecutionSerial serial = mDevice->GetQueue()->GetPendingCommandSerial();
++        const ExecutionSerial serial = mDevice->GetQueue()->AwaitRecordedCommands();
++        enqueueDeferredDeallocation =
++            mPendingDeallocations.Empty() || mPendingDeallocations.LastSerial() != serial;
+         mPendingDeallocations.Enqueue({allocationInfo->poolIndex, allocationInfo->setIndex},
+                                       serial);
+-
+-        if (mLastDeallocationSerial != serial) {
+-            enqueueDeferredDeallocation = true;
+-            mLastDeallocationSerial = serial;
+-        }
+ 
+         // Clear the content of the allocation so that use after frees are more visible.
+         *allocationInfo = {};
+--- a/src/dawn/native/vulkan/DescriptorSetAllocator.h
++++ b/src/dawn/native/vulkan/DescriptorSetAllocator.h
+@@ -104,7 +104,6 @@
+         SetIndex setIndex;
+     };
+     SerialQueue<ExecutionSerial, Deallocation> mPendingDeallocations;
+-    ExecutionSerial mLastDeallocationSerial = ExecutionSerial(0u);
+ 
+     // Used to guard all public member functions.
+     Mutex mMutex;
+--- a/src/dawn/native/vulkan/DeviceVk.cpp
++++ b/src/dawn/native/vulkan/DeviceVk.cpp
+@@ -543,7 +543,7 @@
+ 
+ void Device::EnqueueDeferredDeallocation(DescriptorSetAllocator* allocator) {
+     mDescriptorAllocatorsPendingDeallocation->Enqueue(allocator,
+-                                                      GetQueue()->GetPendingCommandSerial());
++                                                      GetQueue()->AwaitRecordedCommands());
+ }
+ 
+ void Device::CacheStaticSampler(const Ref<Sampler>& s) {
+--- a/src/dawn/native/vulkan/FencedDeleter.cpp
++++ b/src/dawn/native/vulkan/FencedDeleter.cpp
+@@ -78,7 +78,7 @@
+ }
+ 
+ ExecutionSerial FencedDeleter::GetCurrentDeletionSerial() {
+-    return mDevice->GetQueue()->GetPendingCommandSerial();
++    return mDevice->GetQueue()->AwaitRecordedCommands();
+ }
+ 
+ void FencedDeleter::UpdateCompletedSerialTo(ExecutionSerial completedSerial) {
+--- a/src/dawn/native/vulkan/QueueVk.cpp
++++ b/src/dawn/native/vulkan/QueueVk.cpp
+@@ -205,6 +205,7 @@
+ 
+ CommandRecordingContext* Queue::GetPendingRecordingContext(SubmitMode submitMode) {
+     DAWN_ASSERT(mRecordingContext.commandBuffer != VK_NULL_HANDLE);
++    WillRecordCommands();
+     mRecordingContext.needsSubmit |= (submitMode == SubmitMode::Normal);
+     mRecordingContext.used = true;
+     return &mRecordingContext;

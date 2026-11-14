@@ -3,16 +3,25 @@ https://crbug.com/42240396
 
 --- a/src/dawn/native/DynamicUploader.cpp
 +++ b/src/dawn/native/DynamicUploader.cpp
-@@ -41,6 +41,8 @@
+@@ -41,6 +41,9 @@
  
  namespace {
  constexpr uint64_t kRingBufferSize = 4ULL * 1024 * 1024;
 +// Those of an early submit, and those that fill up meanwhile.
 +constexpr size_t kRingBuffersToKeep = 8;
++constexpr std::chrono::milliseconds kTimeToKeepRingBuffers(500);
  }  // anonymous namespace
  
  DynamicUploader::DynamicUploader(DeviceBase* device) : mDevice(device) {}
-@@ -158,9 +160,8 @@
+@@ -105,6 +108,7 @@
+     }
+ 
+     DAWN_ASSERT(startOffset != RingBufferAllocator::kInvalidOffset);
++    targetRingBuffer->mEmptySince.reset();
+ 
+     // Allocate the staging buffer backing the ringbuffer.
+     // Note: the first ringbuffer will be lazily created.
+@@ -158,9 +162,8 @@
  
      // TODO(crbug.com/42240396): Consider blocking when there is too much memory in flight for
      // freeing, which could cause OOM even if we eagerly flush when too much memory is pending.
@@ -24,14 +33,52 @@ https://crbug.com/42240396
  }
  
  void DynamicUploader::Deallocate(ExecutionSerial lastCompletedSerial, bool freeAll) {
-@@ -172,9 +173,7 @@
-     while (i < mRingBuffers.size()) {
-         mRingBuffers[i]->mAllocator.Deallocate(lastCompletedSerial);
+@@ -168,14 +171,18 @@
  
+     // Reclaim memory within the ring buffers by ticking (or removing requests no longer
+     // in-flight).
++    const TimePoint now = mRingBuffers.size() > 1 ? TimePoint::clock::now() : TimePoint();
+     size_t i = 0;
+     while (i < mRingBuffers.size()) {
+-        mRingBuffers[i]->mAllocator.Deallocate(lastCompletedSerial);
+-
 -        // Never erase the last buffer as to prevent re-creating smaller buffers
 -        // again unless explicitly asked to do so. The last buffer is the largest.
 -        const bool shouldFree = (i < mRingBuffers.size() - 1) || freeAll;
-+        const bool shouldFree = mRingBuffers.size() > kRingBuffersToKeep || freeAll;
-         if (mRingBuffers[i]->mAllocator.Empty() && shouldFree) {
+-        if (mRingBuffers[i]->mAllocator.Empty() && shouldFree) {
++        RingBuffer& ringBuffer = *mRingBuffers[i];
++        ringBuffer.mAllocator.Deallocate(lastCompletedSerial);
++        if (ringBuffer.mAllocator.Empty() && !ringBuffer.mEmptySince) {
++            ringBuffer.mEmptySince = now;
++        }
++
++        const bool isOld = now - ringBuffer.mEmptySince.value_or(now) > kTimeToKeepRingBuffers;
++        const bool shouldFree = mRingBuffers.size() > (freeAll || isOld ? 1 : kRingBuffersToKeep);
++        if (ringBuffer.mAllocator.Empty() && shouldFree) {
              mRingBuffers.erase(mRingBuffers.begin() + sign_cast(i));
          } else {
+             i++;
+--- a/src/dawn/native/DynamicUploader.h
++++ b/src/dawn/native/DynamicUploader.h
+@@ -29,7 +29,9 @@
+ #define SRC_DAWN_NATIVE_DYNAMICUPLOADER_H_
+ 
+ #include <atomic>
++#include <chrono>
+ #include <memory>
++#include <optional>
+ #include <vector>
+ 
+ #include "partition_alloc/pointers/raw_ptr.h"
+@@ -85,9 +87,11 @@
+     // Checks if a submit happened and resets memory to be freed pending submit if so.
+     void UpdateMemoryPendingSubmit();
+ 
++    using TimePoint = std::chrono::steady_clock::time_point;
+     struct RingBuffer {
+         Ref<BufferBase> mStagingBuffer;
+         RingBufferAllocator mAllocator;
++        std::optional<TimePoint> mEmptySince = std::nullopt;
+     };
+     std::vector<std::unique_ptr<RingBuffer>> mRingBuffers;
+ 

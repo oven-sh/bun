@@ -22,7 +22,7 @@ pub(crate) use adapter::{
     GPU, GPUAdapter, GPUAdapterInfo, GPUSupportedFeatures, GPUSupportedLimits, WGSLLanguageFeatures,
 };
 pub(crate) use buffer::GPUBuffer;
-pub(crate) use device::{GPUDevice, GPUQuerySet};
+pub(crate) use device::{Device, GPUDevice, GPUQuerySet};
 pub(crate) use encoder::{
     GPUCommandEncoder, GPUComputePassEncoder, GPURenderBundleEncoder, GPURenderPassEncoder,
 };

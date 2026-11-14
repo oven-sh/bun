@@ -1588,8 +1588,6 @@ impl InternalLoopDataExt for InternalLoopData {
 // definition forced callers (e.g. `socket_body.rs` start_tls) to
 // `.cast::<bun_uws_sys::SocketGroup>()` between two layout-identical types.
 
-/// Alias for the per-group C vtable struct under its pre-merge name.
-pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
 pub use bun_uws_sys::{ConnectResult, SocketGroup};
 
 // ═══════════════════════════════════════════════════════════════════════════

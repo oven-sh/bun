@@ -7,6 +7,7 @@
  */
 
 import { stripVTControlCharacters } from "node:util";
+import { runInNewContext } from "node:vm";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -4194,6 +4195,172 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // Jest, Vitest and toEqual() do not see a #field of a class.
+    test("the private fields of a class are not compared", () => {
+      class Counter {
+        #n;
+        constructor(/** @type {number} */ n) {
+          this.#n = n;
+          this.name = "c";
+        }
+        get n() {
+          return this.#n;
+        }
+      }
+      class Holder {
+        #o;
+        constructor(/** @type {number} */ n) {
+          this.#o = { n };
+        }
+        get o() {
+          return this.#o;
+        }
+      }
+      expect(new Counter(1)).toMatchObject(new Counter(2));
+      expect({ k: new Counter(1) }).toMatchObject({ k: new Counter(2) });
+      expect([new Counter(1)]).toMatchObject([new Counter(2)]);
+      expect(new Holder(1)).toMatchObject(new Holder(2));
+      expect({ name: "c" }).toMatchObject(new Counter(1));
+      // the other properties are compared as before
+      const other = new Counter(1);
+      other.name = "d";
+      expect(new Counter(1)).not.toMatchObject(other);
+      expect({}).not.toMatchObject(new Counter(1));
+    });
+
+    test("an expected array needs an array", () => {
+      expect({}).not.toMatchObject([]);
+      expect({ k: {} }).not.toMatchObject({ k: [] });
+      expect({ 0: 1, length: 1 }).not.toMatchObject([1]);
+      expect(new Uint8Array([1])).not.toMatchObject([1]);
+      const arrayLike = Object.create(Array.prototype);
+      arrayLike[0] = 1;
+      arrayLike.length = 1;
+      expect(arrayLike).not.toMatchObject([1]);
+      // an expected object can be satisfied by an array
+      expect([1]).toMatchObject({ 0: 1 });
+      expect([]).toMatchObject({});
+      // an array without a prototype and an array of another realm are arrays
+      expect(Object.setPrototypeOf(["x"], null)).toMatchObject(["x"]);
+      const otherRealm = () => runInNewContext("[1, { a: 1 }]");
+      expect(otherRealm()).toMatchObject([1, { a: 1 }]);
+      expect([1, { a: 1 }]).toMatchObject(otherRealm());
+      expect({ k: otherRealm() }).toMatchObject({ k: [1, { a: 1 }] });
+      expect(otherRealm()).not.toMatchObject([1, { a: 2 }]);
+    });
+
+    if (isBun) {
+      test("Bun.deepMatch leaves out private fields, and an array in the subset needs an array", () => {
+        class Counter {
+          #n;
+          constructor(/** @type {number} */ n) {
+            this.#n = n;
+          }
+          get n() {
+            return this.#n;
+          }
+        }
+        expect(Bun.deepMatch(new Counter(2), new Counter(1))).toBe(true);
+        expect(Bun.deepMatch({ k: [new Counter(2)] }, { k: [new Counter(1)] })).toBe(true);
+        expect(Bun.deepMatch([], {})).toBe(false);
+        expect(Bun.deepMatch([1], { 0: 1, length: 1 })).toBe(false);
+        expect(Bun.deepMatch({ 0: 1 }, [1])).toBe(true);
+        expect(Bun.deepMatch(["x"], Object.setPrototypeOf(["x"], null))).toBe(true);
+        expect(Bun.deepMatch([1, 2], runInNewContext("[1, 2]"))).toBe(true);
+      });
+    }
+
+    // A Date and an Error have no enumerable properties. Jest and Vitest compare an expected
+    // Date by its time value and an expected Error by its message.
+    test("an expected Date is compared by its time value", () => {
+      expect({ d: new Date(5) }).toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: new Date(6) });
+      expect({ a: { d: new Date(5) } }).not.toMatchObject({ a: { d: new Date(6) } });
+      expect({ a: [new Date(5)] }).toMatchObject({ a: [new Date(5)] });
+      expect({ a: [new Date(5)] }).not.toMatchObject({ a: [new Date(6)] });
+      expect({ d: {} }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: { x: 1 } }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: 5 }).not.toMatchObject({ d: new Date(5) });
+      expect(new Date(5)).toMatchObject(new Date(5));
+      expect(new Date(5)).not.toMatchObject(new Date(6));
+      // a plain expected object still matches the properties of a Date
+      expect({ d: new Date(5) }).toMatchObject({ d: {} });
+    });
+
+    test("an expected Error is compared by its message", () => {
+      expect({ e: new Error("x") }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: new Error("y") });
+      expect({ a: [new Error("x")] }).not.toMatchObject({ a: [new Error("y")] });
+      expect({ e: {} }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: { message: "x" } }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: "x" }).not.toMatchObject({ e: new Error("x") });
+      expect(new Error("x")).toMatchObject(new Error("x"));
+      expect(new Error("x")).not.toMatchObject(new Error("y"));
+      // a plain expected object still matches the properties of an Error
+      expect({ e: new Error("x") }).toMatchObject({ e: { message: "x" } });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: { message: "y" } });
+    });
+
+    test("an expected Date under a received object that refers to itself", () => {
+      /** @type {any} */
+      const received = { at: new Date(5) };
+      received.self = received;
+      expect(received).toMatchObject({ self: { at: new Date(5) } });
+      expect(received).not.toMatchObject({ self: { at: new Date(6) } });
+    });
+
+    test("a Date or an Error in a private field is not compared", () => {
+      class Stamp {
+        #at;
+        constructor(/** @type {number} */ time) {
+          this.#at = new Date(time);
+        }
+        get at() {
+          return this.#at;
+        }
+      }
+      class Failure {
+        #error;
+        constructor(/** @type {string} */ message) {
+          this.#error = new Error(message);
+        }
+        get error() {
+          return this.#error;
+        }
+      }
+      expect(new Stamp(1)).toMatchObject(new Stamp(2));
+      expect({ k: [new Stamp(1)] }).toMatchObject({ k: [new Stamp(2)] });
+      expect(new Failure("a")).toMatchObject(new Failure("b"));
+    });
+
+    if (isBun) {
+      test("Bun.deepMatch compares an expected Date and Error", () => {
+        expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(2) }, { d: new Date(1) })).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(1) }, { d: new Date(1) })).toBe(true);
+        expect(Bun.deepMatch(new Error("b"), new Error("a"))).toBe(false);
+        expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("x") })).toBe(true);
+        expect(Bun.deepMatch({ d: new Date() }, { d: {} })).toBe(false);
+        expect(Bun.deepMatch({ d: {} }, { d: new Date() })).toBe(true);
+      });
+
+      test("details of the Date and Error comparison", () => {
+        // an invalid Date equals no Date, as in toEqual and in Jest
+        expect({ d: new Date(NaN) }).not.toMatchObject({ d: new Date(NaN) });
+        // as in Jest, the class, the name and the cause of an Error are not compared
+        expect({ e: new TypeError("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x", { cause: 2 }) });
+        // a DOMException is an Error
+        expect({ e: new DOMException("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new DOMException("x") }).not.toMatchObject({ e: new Error("y") });
+        // the enumerable properties of the expected Date or Error are matched, as before
+        const withCode = () => Object.assign(new Error("x"), { code: 1 });
+        expect({ e: Object.assign(withCode(), { extra: 2 }) }).toMatchObject({ e: withCode() });
+        expect({ e: new Error("x") }).not.toMatchObject({ e: withCode() });
+        expect({ d: new Date(5) }).not.toMatchObject({ d: Object.assign(new Date(5), { x: 1 }) });
+      });
+    }
   });
 
   describe("toMatch()", () => {

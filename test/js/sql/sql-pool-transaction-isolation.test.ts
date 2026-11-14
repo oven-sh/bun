@@ -14,20 +14,24 @@ import {
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgBindComplete,
   pgCommandComplete,
+  pgParseComplete,
   pgReadyForQuery,
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
 type MockServer = (received: Received[]) => Promise<{ port: number; server: net.Server }>;
 
-// Query text containing "KILL" destroys the socket without answering.
+// Query text containing "KILL" destroys the socket without answering. BEGIN, COMMIT and ROLLBACK are prepared
+// statements: each of Parse, Bind, Execute and Sync is answered.
 const pgMockServer: MockServer = received => {
   let nextConn = 0;
   return listeningServer(socket => {
     const connId = nextConn++;
     let buffered = Buffer.alloc(0);
     let startup = true;
+    let prepared = "";
     socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       if (startup) {
@@ -44,14 +48,26 @@ const pgMockServer: MockServer = received => {
         if (buffered.length < 1 + len) return;
         const body = buffered.subarray(5, 1 + len);
         buffered = buffered.subarray(1 + len);
-        if (type !== "Q") continue;
-        const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
-        received.push({ conn: connId, sql });
-        if (sql.includes("KILL")) {
-          socket.destroy();
-          return;
+        if (type === "P") {
+          const nameEnd = body.indexOf(0);
+          prepared = body.subarray(nameEnd + 1, body.indexOf(0, nameEnd + 1)).toString("utf8");
+          received.push({ conn: connId, sql: prepared });
+          socket.write(pgParseComplete());
+        } else if (type === "B") {
+          socket.write(pgBindComplete());
+        } else if (type === "E") {
+          socket.write(pgCommandComplete("SELECT 0"));
+        } else if (type === "S") {
+          socket.write(pgReadyForQuery());
+        } else if (type === "Q") {
+          const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
+          received.push({ conn: connId, sql });
+          if (sql.includes("KILL")) {
+            socket.destroy();
+            return;
+          }
+          socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
         }
-        socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
       }
     });
     socket.on("error", () => {});

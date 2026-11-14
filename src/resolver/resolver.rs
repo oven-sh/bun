@@ -1995,14 +1995,13 @@ impl<'a> Resolver<'a> {
 
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
-            // map in place under that lock. The entry pointer stays valid after
-            // unlock (EntryStore-owned).
+            // map in place under that lock.
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                let symlink_path = query.entry().symlink(self.rfs_ref(), self.store_fd);
+                let symlink_path = query.symlink(self.rfs_ref(), self.store_fd);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
-                        result.file_fd = query.entry().cache().fd;
+                        result.file_fd = query.cache().fd;
                     }
 
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -2021,13 +2020,13 @@ impl<'a> Resolver<'a> {
                         >(
                             self.fs_ref().top_level_dir(),
                             &mut buf[..],
-                            &[dir.abs_real_path, query.entry().base()],
+                            &[dir.abs_real_path, query.base()],
                         )
                         .map(|joined| joined.len())
                 {
                     let store_fd = self.store_fd;
 
-                    if !query.entry().cache().fd.is_valid() && store_fd {
+                    if !query.cache().fd.is_valid() && store_fd {
                         let span = bun_core::ZStr::from_buf(&buf[..], out_len);
                         // I/O errors propagate so `resolveAndAutoInstall` can
                         // return them as `Result.Union.failure` — never
@@ -2036,32 +2035,21 @@ impl<'a> Resolver<'a> {
                             .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = query.entry().mutex.lock_guard();
-                            query.entry().set_cache_fd(file);
+                            let _entry_guard = query.mutex.lock_guard();
+                            query.set_cache_fd(file);
                         }
                         Fs::FileSystem::set_max_fd(file.native());
                     }
 
-                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                    // the closure captures only Copy values — keeps `self` and
-                    // `query.entry` reborrowable across the guard's lifetime.
                     let need_close = self.fs_ref().fs.need_to_close_files();
-                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                    // the slot is reused (resolver mutex held). Capture as `BackRef`
-                    // (Copy, Deref) so the closure stays Copy-only while the read is
-                    // a safe `BackRef::get()` instead of a raw-ptr deref.
-                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                    );
                     scopeguard::defer! {
                         if need_close {
-                            let e = entry_ref.get();
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = e.mutex.lock_guard();
-                            let fd = e.cache().fd;
+                            let _entry_guard = query.mutex.lock_guard();
+                            let fd = query.cache().fd;
                             if fd.is_valid() {
                                 fd.close();
-                                e.set_cache_fd(FD::INVALID);
+                                query.set_cache_fd(FD::INVALID);
                             }
                         }
                     }
@@ -2076,13 +2064,11 @@ impl<'a> Resolver<'a> {
                     }
                     {
                         // Every cached-`Entry` rewrite takes the per-entry mutex.
-                        let _entry_guard = query.entry().mutex.lock_guard();
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
+                        let _entry_guard = query.mutex.lock_guard();
+                        query.set_cache_symlink(Interned::from_static(symlink));
                     }
                     if !result.file_fd.is_valid() && store_fd {
-                        result.file_fd = query.entry().cache().fd;
+                        result.file_fd = query.cache().fd;
                     }
 
                     path.set_realpath(symlink);
@@ -4091,8 +4077,7 @@ impl<'a> Resolver<'a> {
                 let base = bun_paths::basename(abs_esm_path);
                 // One `entries_mutex` critical section for the probe and the
                 // listing fd: a concurrent resolver at a newer generation
-                // rewrites the `DirEntry` in place under that lock. The entry
-                // pointer stays valid after unlock (EntryStore-owned).
+                // rewrites the `DirEntry` in place under that lock.
                 let looked_up = {
                     let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
                     resolved_dir_info
@@ -4105,7 +4090,7 @@ impl<'a> Resolver<'a> {
                 };
                 let entry_kind = entry_lookup
                     .as_ref()
-                    .map(|q| q.entry().kind(self.rfs_ref(), self.store_fd));
+                    .map(|q| q.kind(self.rfs_ref(), self.store_fd));
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
                     _ => {
@@ -4160,7 +4145,7 @@ impl<'a> Resolver<'a> {
                                 let index_query =
                                     dir_info_ref.get_entry(self.generation, &file_name[..]);
                                 if let Some(iq) = index_query {
-                                    if iq.entry().kind(self.rfs_ref(), self.store_fd)
+                                    if iq.kind(self.rfs_ref(), self.store_fd)
                                         == Fs::file_system::EntryKind::File
                                     {
                                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4189,7 +4174,6 @@ impl<'a> Resolver<'a> {
                 }
 
                 let absolute_out_path: &[u8] = entry_query
-                    .entry()
                     .abs_path_or_fill(|| {
                         Interned::from_static(
                             self.fs_ref()
@@ -4211,7 +4195,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     dirname_fd,
-                    file_fd: entry_query.entry().cache().fd,
+                    file_fd: entry_query.cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
                     package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
@@ -4269,7 +4253,7 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
-                    if ext_query.entry().kind(self.rfs_ref(), self.store_fd)
+                    if ext_query.kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4283,7 +4267,7 @@ impl<'a> Resolver<'a> {
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
-                            &ext_query,
+                            ext_query,
                             out,
                         );
                     }
@@ -4309,7 +4293,7 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
-                        if ts_query.entry().kind(self.rfs_ref(), self.store_fd)
+                        if ts_query.kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -4323,7 +4307,7 @@ impl<'a> Resolver<'a> {
                                 resolved_dir_info,
                                 dirname_fd,
                                 package_json,
-                                &ts_query,
+                                ts_query,
                                 out,
                             );
                         }
@@ -4340,11 +4324,11 @@ impl<'a> Resolver<'a> {
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &'static PackageJSON,
-        query: &crate::fs::EntryLookup,
+        query: &crate::fs::Entry,
         out: &mut MatchResult,
     ) -> bool {
-        let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-            let parts = [query.entry().dir, query.entry().base()];
+        let Ok(abs_path) = query.abs_path_or_try_fill(|| {
+            let parts = [query.dir, query.base()];
             let abs = self
                 .fs_ref()
                 .abs_buf_checked(&parts, bufs!(remap_path))
@@ -4371,7 +4355,7 @@ impl<'a> Resolver<'a> {
                 secondary: None,
             },
             dirname_fd,
-            file_fd: query.entry().cache().fd,
+            file_fd: query.cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
             package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
@@ -5703,10 +5687,8 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            if lookup.entry().kind(self.rfs_ref(), self.store_fd)
-                == Fs::file_system::EntryKind::File
-            {
-                let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
+            if lookup.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
+                let Ok(out_buf) = lookup.abs_path_or_try_fill(|| {
                     let parts = [dir_info.abs_path, &base[..]];
                     let out_buf_ = self
                         .fs_ref()
@@ -6196,14 +6178,13 @@ impl<'a> Resolver<'a> {
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
         if let Some(query) = plain_query {
-            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
-            {
+            if query.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
-                let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-                    let abs_path_parts = [query.entry().dir, query.entry().base()];
+                let Ok(abs_path) = query.abs_path_or_try_fill(|| {
+                    let abs_path_parts = [query.dir, query.base()];
                     let joined = self
                         .fs_ref()
                         .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
@@ -6227,7 +6208,7 @@ impl<'a> Resolver<'a> {
                     dec_ret!(Some(LoadResult {
                         path: abs_path.as_bytes(),
                         dirname_fd: plain_dirname_fd,
-                        file_fd: query.entry().cache().fd,
+                        file_fd: query.cache().fd,
                     }));
                 }
             }
@@ -6286,7 +6267,7 @@ impl<'a> Resolver<'a> {
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
                     if let Some(query) = ts_query {
-                        if query.entry().kind(self.rfs_ref(), self.store_fd)
+                        if query.kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -6298,9 +6279,8 @@ impl<'a> Resolver<'a> {
 
                             dec_ret!(Some(LoadResult {
                                 path: query
-                                    .entry()
                                     .abs_path_or_fill(|| {
-                                        let entry_dir = query.entry().dir;
+                                        let entry_dir = query.dir;
                                         // the trailing separator CAN be missing here
                                         if !entry_dir.is_empty()
                                             && entry_dir[entry_dir.len() - 1] == SEP
@@ -6325,7 +6305,7 @@ impl<'a> Resolver<'a> {
                                     })
                                     .as_bytes(),
                                 dirname_fd: ts_dirname_fd,
-                                file_fd: query.entry().cache().fd,
+                                file_fd: query.cache().fd,
                             }));
                         }
                     }
@@ -6381,8 +6361,7 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
-            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
-            {
+            if query.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
                         "Found file \"{}\" ",
@@ -6393,7 +6372,6 @@ impl<'a> Resolver<'a> {
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
                     path: query
-                        .entry()
                         .abs_path_or_fill(|| {
                             Interned::from_static(
                                 self.fs_ref()
@@ -6404,7 +6382,7 @@ impl<'a> Resolver<'a> {
                         })
                         .as_bytes(),
                     dirname_fd,
-                    file_fd: query.entry().cache().fd,
+                    file_fd: query.cache().fd,
                 });
             }
         }
@@ -6474,8 +6452,7 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    entry.entry().kind(self.rfs_ref(), self.store_fd)
-                        == Fs::file_system::EntryKind::Dir,
+                    entry.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::Dir,
                 );
             }
         }
@@ -6501,8 +6478,7 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        if q.entry().kind(self.rfs_ref(), self.store_fd)
-                            == Fs::file_system::EntryKind::Dir
+                        if q.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::Dir
                         {
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
                             else {
@@ -6556,16 +6532,13 @@ impl<'a> Resolver<'a> {
                 if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
-                        if entries_fd.is_valid()
-                            && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
-                        {
+                        if entries_fd.is_valid() && !lookup.cache().fd.is_valid() && self.store_fd {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = lookup.entry().mutex.lock_guard();
-                            lookup.entry().set_cache_fd(entries_fd);
+                            let _entry_guard = lookup.mutex.lock_guard();
+                            lookup.set_cache_fd(entries_fd);
                         }
 
-                        let mut symlink = lookup.entry().symlink(self.rfs_ref(), self.store_fd);
+                        let mut symlink = lookup.symlink(self.rfs_ref(), self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6603,10 +6576,8 @@ impl<'a> Resolver<'a> {
                             }
                             {
                                 // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
+                                let _entry_guard = lookup.mutex.lock_guard();
+                                lookup.set_cache_symlink(Interned::from_static(symlink));
                             }
                             info.abs_real_path = symlink;
                         }
@@ -6623,9 +6594,7 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
-                    == Fs::file_system::EntryKind::File
-                {
+                if lookup.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6693,9 +6662,7 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
-                    == Fs::file_system::EntryKind::File
-                {
+                if lookup.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
                     let parts = [path, b"tsconfig.json".as_slice()];
                     tsconfig_path = self
                         .fs_ref()
@@ -6704,7 +6671,7 @@ impl<'a> Resolver<'a> {
             }
             if tsconfig_path.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                    if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                    if lookup.kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];

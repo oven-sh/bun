@@ -1534,6 +1534,22 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
 
+    // Without a socket, the connection would go to the host of the URL over TCP, with its credentials.
+    test.each(adapters)("%s: a unix:// URL with no socket path throws", adapter => {
+      const noSocket = expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: expect.stringContaining("must have the path of a unix socket"),
+      });
+      for (const url of ["unix://dbhost", "unix://dbhost:1234", "unix://dbhost?x=1", "unix://dbhost#f", "unix://"]) {
+        expect(() => new SQL(url, { adapter })).toThrow(noSocket);
+        expect(() => new SQL({ adapter, url })).toThrow(noSocket);
+      }
+      // The path of the socket can come from the options, the query or the host.
+      expect(new SQL("unix://dbhost", { adapter, path: "/run/db.sock" }).options.path).toBe("/run/db.sock");
+      expect(new SQL("unix://dbhost?path=/run/db.sock", { adapter }).options.path).toBe("/run/db.sock");
+      expect(new SQL("unix://%2Frun%2Fdb.sock", { adapter }).options.path).toStartWith("/run/db.sock");
+    });
+
     test.skipIf(isWindows).each(adapters)(
       "%s: the pathname of any other URL is the database, whatever is on the disk",
       adapter => {

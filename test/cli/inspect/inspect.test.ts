@@ -300,6 +300,26 @@ describe("websocket", () => {
   });
 });
 
+// Bun.serve() listens on a TCP port when `unix` is empty. An inspector there would check neither the Host header nor
+// the path of the request.
+describe("a ws+unix URL with no socket path", () => {
+  test.each(["ws+unix://localhost", "ws+unix://inspect.sock", "ws+unix://localhost?wait=1"])(
+    "bun --inspect=%s does not start an inspector",
+    async url => {
+      await using proc = spawn({
+        cmd: [bunExe(), `--inspect=${url}`, "-e", "setInterval(() => {}, 1 << 30)"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Failed to start inspector");
+      expect(stderr).toContain("has no unix socket path");
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
 describe("http metadata endpoint", () => {
   let metadataInspectee: Subprocess | undefined;
 

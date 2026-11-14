@@ -36,6 +36,13 @@ pub(crate) fn print_diff_main(
     config: &DiffConfig,
 ) -> std::fmt::Result {
     if not {
+        let mut shown = Vec::new();
+        let expected_slice = if strings::contains_char(expected_slice, b'\r') {
+            push_with_visible_carriage_returns(&mut shown, expected_slice);
+            &shown[..]
+        } else {
+            expected_slice
+        };
         match config.enable_ansi_colors {
             true => write!(
                 writer,
@@ -59,6 +66,8 @@ pub(crate) fn print_diff_main(
         limit: config.truncate_threshold.max(config.truncate_context * 2),
         config,
         chars: diff::CharDiff::default(),
+        has_carriage_return: strings::contains_char(received_slice, b'\r')
+            || strings::contains_char(expected_slice, b'\r'),
     };
 
     if strings::index_of_char(received_slice, b'\n').is_none()
@@ -71,6 +80,18 @@ pub(crate) fn print_diff_main(
     }
     p.flush();
     p.result
+}
+
+/// `␍` and not the two characters `\r`: the value printer writes a backslash as it is, so those could be a backslash and an `r`.
+#[optimize(size)]
+fn push_with_visible_carriage_returns(out: &mut Vec<u8>, text: &[u8]) {
+    let mut rest = text;
+    while let Some(i) = strings::index_of_char_usize(rest, b'\r') {
+        out.extend_from_slice(&rest[..i]);
+        out.extend_from_slice("\u{240D}".as_bytes());
+        rest = &rest[i + 1..];
+    }
+    out.extend_from_slice(rest);
 }
 
 /// Rendered output is handed to the writer in chunks of about this size, cut
@@ -133,6 +154,8 @@ struct Printer<'c, W: Write> {
     limit: usize,
     config: &'c DiffConfig,
     chars: diff::CharDiff,
+    /// Whether a side holds a `\r`. The diff compares the bytes as they are, and `b` draws them.
+    has_carriage_return: bool,
 }
 
 /// One row-group of the rendered diff. `Equal` covers a whole run of
@@ -213,8 +236,12 @@ impl<'c, W: Write> Printer<'c, W> {
     fn s(&mut self, s: &str) {
         self.out.extend_from_slice(s.as_bytes());
     }
+    /// The text of a value.
     #[inline]
     fn b(&mut self, b: &[u8]) {
+        if self.has_carriage_return {
+            return push_with_visible_carriage_returns(&mut self.out, b);
+        }
         self.out.extend_from_slice(b);
     }
     #[inline]

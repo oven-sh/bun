@@ -81,7 +81,7 @@ pub(crate) fn print_in_snapshot(
         out: Vec::new(),
         min: formatter.is_inline,
         is_inline: formatter.is_inline,
-        keeps_carriage_returns: format.is_pretty_format(),
+        keeps_carriage_returns: !formatter.normalize_newlines,
         shadow_roots: format == super::snapshot::Format::Vitest,
         max_depth: formatter.max_depth,
         max_width: formatter.max_width,
@@ -338,7 +338,7 @@ struct Printer<'a> {
     min: bool,
     /// See `pretty_format::Formatter::is_inline`.
     is_inline: bool,
-    /// False only for Bun's own snapshot format. `print_snapshot` normalizes Jest and Vitest snapshots as a whole.
+    /// False only for the text a Bun-format snapshot stores. `print_snapshot` normalizes Jest and Vitest snapshots as a whole.
     keeps_carriage_returns: bool,
     shadow_roots: bool,
     max_depth: u32,

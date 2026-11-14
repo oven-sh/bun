@@ -13,3 +13,14 @@ test("it will work with an existing snapshot file made with bun", () => {
     b: expect.any(String),
   });
 });
+
+test("it will work with a string with carriage returns in a snapshot that an older bun wrote", () => {
+  // The getter makes the stored text match only as what an older Bun printed for it: [native code].
+  expect({
+    get getter() {
+      return 1;
+    },
+    crlf: "a\r\nb",
+    lone: "a\rb",
+  }).toMatchSnapshot();
+});

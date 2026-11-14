@@ -792,6 +792,7 @@ export function mysqlHandshakeV10(
 }
 
 // Server status flags — SERVER_STATUS_flags_enum in mysql__com_8h.html (subset used by the mocks).
+export const MYSQL_SERVER_STATUS_IN_TRANS = 0x0001; // a transaction is active
 export const MYSQL_SERVER_STATUS_AUTOCOMMIT = 0x0002;
 export const MYSQL_SERVER_MORE_RESULTS_EXISTS = 0x0008; // another result set of the same response follows
 

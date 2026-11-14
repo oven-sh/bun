@@ -523,7 +523,7 @@ fn with_shared_temp_buffer(f: impl FnOnce(&mut SharedTempBuffer) -> fmt::Result)
 // UTF-16 formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
+pub(crate) fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
     with_shared_temp_buffer(|chunk| {
         let mut slice = slice_;
 

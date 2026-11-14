@@ -18,11 +18,6 @@ pub(crate) use crate::socket::SocketAddress;
 
 pub(crate) use crate::crypto;
 
-// ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Defined in `bun_jsc`.
-pub(crate) use bun_jsc::BuildMessage;
-pub(crate) use bun_jsc::ResolveMessage;
-
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/Archive.rs"]
 pub(crate) mod archive;

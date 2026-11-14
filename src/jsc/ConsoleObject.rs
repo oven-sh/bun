@@ -1592,6 +1592,123 @@ pub mod formatter {
         };
     }
 
+    /// First line of an `#[inline(never)]` function that runs only where `is_snapshot` is set, which only
+    /// `bun:test` does: `--trim` leaves the function out of an executable that has no test runner.
+    macro_rules! only_in_snapshots {
+        ($function:path) => {
+            bun_removable_features::removable_definition!(Test, $function)
+        };
+    }
+
+    /// What `bun:test` adds to [`Formatter::is_snapshot`]. The `Formatter` is on the stack, which roots the values.
+    #[derive(Clone, Copy)]
+    pub struct Snapshot<'a> {
+        /// Called before a value is printed. Returns true if it printed the value itself.
+        pub printer: Option<
+            fn(&mut Formatter<'_>, &mut dyn bun_io::Write, &mut Tag, JSValue) -> JsResult<bool>,
+        >,
+        pub serializers: Option<JSValue>,
+        /// The `config` that serializers get, once one was called.
+        pub config: Option<JSValue>,
+        /// Bytes copied between buffers so far.
+        pub copied: usize,
+        /// Print what older versions of Bun printed. The cell turns true once the output has diverged, so printing can stop.
+        pub like_older_bun: Option<&'a core::cell::Cell<bool>>,
+        pub same_as_older_bun: bool,
+        /// Bytes written so far. Only failure messages track it.
+        pub output_length: Option<&'a core::cell::Cell<usize>>,
+    }
+
+    impl Default for Snapshot<'_> {
+        fn default() -> Self {
+            Self {
+                printer: None,
+                serializers: None,
+                config: None,
+                copied: 0,
+                like_older_bun: None,
+                same_as_older_bun: true,
+                output_length: None,
+            }
+        }
+    }
+
+    impl Snapshot<'_> {
+        #[inline(never)]
+        fn name_of_class(
+            &mut self,
+            global_this: &JSGlobalObject,
+            value: JSValue,
+        ) -> JsResult<BunString> {
+            only_in_snapshots!(Self::name_of_class);
+            // Older versions printed a mock function, `URL` and the like as `[class Function]`.
+            let was_function = value.js_type() == jsc::JSType::InternalFunction
+                && value
+                    .get_class_info_name()
+                    .is_some_and(|name| name != b"Function");
+            if was_function && self.like_older_bun.is_some() {
+                return Ok(BunString::static_("Function"));
+            }
+            self.same_as_older_bun &= !was_function;
+            value.get_class_name(global_this)
+        }
+
+        #[inline(never)]
+        fn name_of_function(global_this: &JSGlobalObject, value: JSValue) -> JsResult<BunString> {
+            only_in_snapshots!(Self::name_of_function);
+            if value.is_placeholder_for_omitted_builtin() {
+                value.get_name(global_this)
+            } else {
+                value.get_name_property(global_this)
+            }
+        }
+
+        /// Snapshots print these as `JSON.stringify` does, or not at all.
+        #[inline(never)]
+        fn tag_of(js_type: jsc::JSType) -> Option<TagPayload> {
+            only_in_snapshots!(Self::tag_of);
+            use jsc::JSType as T;
+            match js_type {
+                T::DirectArguments
+                | T::ScopedArguments
+                | T::ClonedArguments
+                | T::MapIterator
+                | T::SetIterator
+                | T::WrapForValidIterator
+                | T::RegExpStringIterator
+                | T::JSArrayIterator
+                | T::Iterator
+                | T::IteratorHelper
+                | T::ProxyObject
+                | T::JSAsJSONType => Some(TagPayload::JSON),
+                T::GetterSetter | T::CustomGetterSetter => Some(TagPayload::NativeCode),
+                _ => None,
+            }
+        }
+
+        #[inline(never)]
+        fn element_of(global_this: &JSGlobalObject, array: JSValue, i: u32) -> JsResult<JSValue> {
+            only_in_snapshots!(Self::element_of);
+            array.get_index(global_this, i)
+        }
+
+        /// `Name ` in front of the `{` of an object that is no plain `Object`.
+        #[inline(never)]
+        fn write_class_name(
+            writer: &mut dyn bun_io::Write,
+            global_this: &JSGlobalObject,
+            value: JSValue,
+            has_properties: bool,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::write_class_name);
+            let class_name = value.get_class_name(global_this)?;
+            if !(class_name.eq_ascii(b"Object") || (has_properties && class_name.is_empty())) {
+                let _ = write!(writer, "{class_name} ");
+            }
+            Ok(())
+        }
+    }
+
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
 
@@ -1607,14 +1724,14 @@ pub mod formatter {
         /// `heap::alloc`/`from_raw` lifecycle.
         pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
         pub(crate) hide_native: bool,
-        pub(crate) indent: u32,
+        pub indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
         /// `max_depth` before the error property dump narrowed it.
         pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,
-        pub(crate) failed: bool,
+        pub failed: bool,
         pub(crate) estimated_line_length: usize,
         pub(crate) always_newline_scope: bool,
         pub single_line: bool,
@@ -1628,6 +1745,9 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// Print the way `bun test` writes snapshots and matcher diffs, modelled on Jest's `pretty-format`.
+        pub is_snapshot: bool,
+        pub snapshot: Snapshot<'a>,
         /// Set for `bun:test` matcher messages. Returns true if the value was a DOM node or collection and it printed it.
         pub dom_printer:
             Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
@@ -1660,9 +1780,23 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                is_snapshot: false,
+                snapshot: Snapshot::default(),
                 dom_printer: None,
                 call_own_getters: false,
             }
+        }
+
+        /// See [`Formatter::is_snapshot`].
+        pub fn new_snapshot(global_this: &'a JSGlobalObject) -> Self {
+            let mut fmt = Self::new(global_this);
+            fmt.is_snapshot = true;
+            fmt.ordered_properties = true;
+            fmt.quote_strings = true;
+            fmt.quote_keys = true;
+            fmt.max_depth = u16::MAX;
+            fmt.can_throw_stack_overflow = true;
+            fmt
         }
 
         /// `Formatter` has a `Drop` impl and owns `map`/`map_node`,
@@ -1698,6 +1832,8 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                is_snapshot: self.is_snapshot,
+                snapshot: self.snapshot,
                 dom_printer: self.dom_printer,
                 call_own_getters: self.call_own_getters,
             }
@@ -1899,7 +2035,7 @@ pub mod formatter {
     }
 
     impl Tag {
-        pub(crate) fn is_primitive(self) -> bool {
+        pub fn is_primitive(self) -> bool {
             matches!(
                 self,
                 Tag::String
@@ -2080,6 +2216,8 @@ pub mod formatter {
         pub struct TagOptions: u8 {
             const HIDE_GLOBAL = 1 << 0;
             const DISABLE_INSPECT_CUSTOM = 1 << 1;
+            /// See [`Formatter::is_snapshot`].
+            const SNAPSHOT = 1 << 2;
         }
     }
 
@@ -2157,7 +2295,7 @@ pub mod formatter {
 
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
-                && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
+                && !opts.intersects(TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::SNAPSHOT)
                 && let Some(callback_value) =
                     value.fast_get(global_this, jsc::BuiltinName::InspectCustom)?
                 && callback_value.is_callable()
@@ -2180,7 +2318,7 @@ pub mod formatter {
 
             // If we check an Object has a method table and it does not it will crash
             if js_type != jsc::JSType::Object
-                && js_type != jsc::JSType::ProxyObject
+                && (js_type != jsc::JSType::ProxyObject || opts.contains(TagOptions::SNAPSHOT))
                 && value.is_callable()
             {
                 if value.is_class(global_this) {
@@ -2208,7 +2346,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    return Tag::get(value.get_proxy_target(), global_this);
+                    return Tag::get_advanced(value.get_proxy_target(), global_this, opts);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -2240,6 +2378,11 @@ pub mod formatter {
             }
 
             use jsc::JSType as T;
+            if opts.contains(TagOptions::SNAPSHOT)
+                && let Some(tag) = Snapshot::tag_of(js_type)
+            {
+                return Ok(TagResult { tag, cell: js_type });
+            }
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
                 T::NumberObject => TagPayload::Double,
@@ -2754,6 +2897,20 @@ pub mod formatter {
 
     const INDENTATION_BUF: [u8; 64] = [b' '; 64];
 
+    const SNAPSHOT_MAX_INDENT: u32 = 32;
+
+    /// How many levels of indent to write. A macro so that it only reads the two fields, which a
+    /// live `WrappedWriter` does not borrow.
+    macro_rules! indent_width {
+        ($formatter:expr) => {
+            if $formatter.is_snapshot {
+                $formatter.indent.min(SNAPSHOT_MAX_INDENT)
+            } else {
+                $formatter.indent
+            }
+        };
+    }
+
     /// Free-function indent writer for callsites where a `WrappedWriter`
     /// already holds `&mut self.estimated_line_length`, which would otherwise
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
@@ -2774,7 +2931,7 @@ pub mod formatter {
 
     impl Formatter<'_> {
         pub(crate) fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
-            write_indent_n(self.indent, writer)
+            write_indent_n(indent_width!(self), writer)
         }
 
         pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(
@@ -2839,21 +2996,24 @@ pub mod formatter {
                         .write_indent(this.writer)
                         .expect("unreachable");
                 }
-                let mut opts = TagOptions::HIDE_GLOBAL;
-                if this.formatter.disable_inspect_custom {
-                    opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-                }
+                let opts = this.formatter.tag_opts();
                 let Ok(key_tag) = Tag::get_advanced(key, global_object, opts) else {
                     return;
                 };
 
-                let _ = this.formatter.format::<C>(
-                    key_tag,
-                    this.writer,
-                    key,
-                    this.formatter.global_this,
-                );
-                this.writer.write_all(b": ").expect("unreachable");
+                if this
+                    .formatter
+                    .format::<C>(key_tag, this.writer, key, this.formatter.global_this)
+                    .is_err()
+                {
+                    return;
+                }
+                let separator: &[u8] = if this.formatter.is_snapshot {
+                    b" => "
+                } else {
+                    b": "
+                };
+                this.writer.write_all(separator).expect("unreachable");
                 let Ok(value_tag) = Tag::get_advanced(value, global_object, opts) else {
                     return;
                 };
@@ -2870,10 +3030,7 @@ pub mod formatter {
                         .write_indent(this.writer)
                         .expect("unreachable");
                 }
-                let mut opts = TagOptions::HIDE_GLOBAL;
-                if this.formatter.disable_inspect_custom {
-                    opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-                }
+                let opts = this.formatter.tag_opts();
                 let Ok(tag) = Tag::get_advanced(next_value, global_object, opts) else {
                     return;
                 };
@@ -2927,10 +3084,7 @@ pub mod formatter {
             } else {
                 let _ = this.formatter.write_indent(this.writer);
             }
-            let mut opts = TagOptions::HIDE_GLOBAL;
-            if this.formatter.disable_inspect_custom {
-                opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-            }
+            let opts = this.formatter.tag_opts();
             let Ok(key_tag) = Tag::get_advanced(next_value, global_object, opts) else {
                 return;
             };
@@ -2960,6 +3114,27 @@ pub mod formatter {
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
+        #[inline(never)]
+        fn for_each_in_snapshot(&mut self, value: JSValue) -> JsResult<()> {
+            only_in_snapshots!(Self::for_each_in_snapshot);
+            let global_this = self.formatter.global_this;
+            let ctx = (&raw mut *self).cast::<c_void>();
+            if self.formatter.snapshot.like_older_bun.is_some() {
+                return value.for_each_property_ordered_with_non_enumerable(
+                    global_this,
+                    ctx,
+                    Self::for_each,
+                );
+            }
+            let is_same = value.for_each_property_ordered_calling_getters(
+                global_this,
+                ctx,
+                Self::for_each,
+            )?;
+            self.formatter.snapshot.same_as_older_bun &= is_same;
+            Ok(())
+        }
+
         pub(crate) fn handle_first_property(
             &mut self,
             global_this: &JSGlobalObject,
@@ -2972,7 +3147,12 @@ pub mod formatter {
                     estimated_line_length: &mut self.formatter.estimated_line_length,
                 };
 
-                if let Some(name_str) = get_object_name(global_this, value)? {
+                let name_str = if self.formatter.is_snapshot {
+                    get_to_string_tag_name(global_this, value)?
+                } else {
+                    get_object_name(global_this, value)?
+                };
+                if let Some(name_str) = name_str {
                     writer.print(format_args!("{name_str} "));
                 }
             }
@@ -2981,6 +3161,12 @@ pub mod formatter {
                 self.always_newline = true;
             }
             self.formatter.estimated_line_length = (self.formatter.indent as usize) * 2 + 1;
+            if self.formatter.is_snapshot {
+                if self.formatter.indent == 0 {
+                    let _ = self.writer.write_all(b"\n");
+                }
+                Snapshot::write_class_name(self.writer, global_this, value, true)?;
+            }
             self.formatter.indent += 1;
             self.formatter.depth += 1;
             if self.single_line {
@@ -3102,17 +3288,13 @@ pub mod formatter {
                 return None;
             }
 
-            let disable_inspect_custom = ctx.formatter.disable_inspect_custom;
             let single_line = ctx.formatter.single_line;
             let always_newline_scope = ctx.formatter.always_newline_scope;
             let quote_keys = ctx.formatter.quote_keys;
             let indent = ctx.formatter.indent;
+            let indent_width = indent_width!(ctx.formatter);
 
-            let mut opts = TagOptions::HIDE_GLOBAL;
-            if disable_inspect_custom {
-                opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-            }
-            let tag = Tag::get_advanced(value, global_this, opts).ok()?;
+            let tag = Tag::get_advanced(value, global_this, ctx.formatter.tag_opts()).ok()?;
             if tag.cell.is_hidden() {
                 return None;
             }
@@ -3142,7 +3324,7 @@ pub mod formatter {
                         || writer.good_time_for_a_new_line(indent))
                 {
                     writer.write_all(b"\n");
-                    writer.write_indent(indent);
+                    writer.write_indent(indent_width);
                     writer.reset_line(indent);
                 } else {
                     writer.space();
@@ -3198,6 +3380,24 @@ pub mod formatter {
                 }
             }
         }
+    }
+
+    /// What `is_snapshot` prints in front of an object's class name: its `Symbol.toStringTag`.
+    #[inline(never)]
+    fn get_to_string_tag_name(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<bun_core::String>> {
+        only_in_snapshots!(get_to_string_tag_name);
+        let is_name = |name: &bun_core::String| !name.is_empty() && !name.eq_ascii(b"Object");
+        let name_str = value.get_name_property(global_this)?;
+        if is_name(&name_str) {
+            return Ok(Some(name_str));
+        }
+        let name_str = value
+            .get_prototype(global_this)?
+            .get_name_property(global_this)?;
+        Ok(Some(name_str).filter(is_name))
     }
 
     fn get_object_name(
@@ -3385,12 +3585,7 @@ pub mod formatter {
                     self.print_getter_setter::<ENABLE_ANSI_COLORS, true>(writer_, value)
                 }
                 Tag::Array => self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
-                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(
-                    writer_,
-                    value,
-                    js_type,
-                    &mut remove_before_recurse,
-                ),
+                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
                 Tag::NativeCode => self.print_native_code(writer_, value),
                 Tag::Promise => self.print_promise::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Boolean => self.print_boolean::<ENABLE_ANSI_COLORS>(writer_, value),
@@ -3437,6 +3632,9 @@ pub mod formatter {
 
     impl<'a> Formatter<'a> {
         fn tag_opts(&self) -> TagOptions {
+            if self.is_snapshot {
+                return TagOptions::SNAPSHOT;
+            }
             let mut opts = TagOptions::HIDE_GLOBAL;
             if self.disable_inspect_custom {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
@@ -3496,7 +3694,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            if let Some(class_name) = value.get_class_info_name() {
+            if let Some(class_name) = value.get_class_info_name().filter(|_| !self.is_snapshot) {
                 writer.add_for_new_line("[native code: ]".len() + class_name.len());
                 writer.write_all(b"[native code: ");
                 writer.write_all(class_name);
@@ -3595,6 +3793,14 @@ pub mod formatter {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
             let str = BunString::from_js(value, self.global_this)?;
+            if self.is_snapshot {
+                if value.is_cell() && value.js_type().is_string_object_like() {
+                    return self.print_string_object_in_snapshot(writer_, &str);
+                }
+                if self.quote_strings && js_type != jsc::JSType::RegExpObject {
+                    return self.print_quoted_string_in_snapshot(writer_, &str);
+                }
+            }
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3700,6 +3906,90 @@ pub mod formatter {
             Ok(())
         }
 
+        /// `"` around the string as it is, with `\r\n` and `\r` turned into `\n`. A string with a
+        /// line break goes on lines of its own.
+        #[inline(never)]
+        fn print_quoted_string_in_snapshot(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            str: &BunString,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_quoted_string_in_snapshot);
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            writer.add_for_new_line(str.length());
+            if str.is_empty() {
+                writer.write_all(b"\"\"");
+            } else {
+                let mut remaining = str.to_encoded_slice();
+                let has_newline = remaining.index_of_any(b"\n\r").is_some();
+
+                if has_newline {
+                    writer.write_all(b"\n");
+                }
+                writer.write_all(b"\"");
+                while let Some(i) = remaining.index_of_any(b"\r") {
+                    writer.print(format_args!("{}", remaining.substring_with_len(0, i)));
+                    if i + 1 >= remaining.len || remaining.char_at(i + 1) != u16::from(b'\n') {
+                        writer.write_all(b"\n");
+                    }
+                    remaining = remaining.substring(i + 1);
+                }
+                writer.print(format_args!("{remaining}"));
+                writer.write_all(b"\"");
+                if has_newline {
+                    writer.write_all(b"\n");
+                }
+            }
+            if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        /// `String {` and one `"index": "code unit",` line for each code unit.
+        #[inline(never)]
+        fn print_string_object_in_snapshot(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            str: &BunString,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_string_object_in_snapshot);
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let str = str.to_encoded_slice();
+            if str.len == 0 {
+                writer.write_all(b"String {}");
+            } else {
+                if self.indent == 0 {
+                    writer.write_all(b"\n");
+                }
+                writer.write_all(b"String {\n");
+                self.indent += 1;
+                for i in 0..str.len {
+                    writer.write_indent(indent_width!(self));
+                    writer.print(format_args!(
+                        "\"{}\": \"{}\",\n",
+                        i,
+                        bun_core::fmt::utf16(&[str.char_at(i)])
+                    ));
+                }
+                writer.reset_line(self.indent);
+                writer.write_all(b"}\n");
+                self.indent -= 1;
+            }
+            if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
         #[inline(never)]
         fn print_integer<const C: bool>(
             &mut self,
@@ -3757,6 +4047,9 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.is_snapshot && value.is_cell() {
+                return self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Object);
+            }
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3899,8 +4192,9 @@ pub mod formatter {
                 ));
             } else {
                 writer.print(format_args!(
-                    "{}Symbol(){}",
+                    "{}Symbol{}{}",
                     pfmt!("<r><blue>", C),
+                    if self.is_snapshot { "" } else { "()" },
                     pfmt!("<r>", C)
                 ));
             }
@@ -3916,6 +4210,9 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.is_snapshot {
+                return self.print_error_in_snapshot(writer_, value);
+            }
             if self.single_line && self.dom_printer.is_some() {
                 let _ = write!(writer_, "[{}]", value.to_bun_string(self.global_this)?);
                 return Ok(());
@@ -3924,6 +4221,29 @@ pub mod formatter {
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             let vm = VirtualMachine::get();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_error_in_snapshot(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_error_in_snapshot);
+            let class_name = value.get_class_name(self.global_this)?;
+            let message = match value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
+                Some(message) => message.to_bun_string(self.global_this)?,
+                None => BunString::EMPTY,
+            };
+            let result = if message.is_empty() {
+                write!(writer_, "[{class_name}]")
+            } else {
+                write!(writer_, "[{class_name}: {message}]")
+            };
+            if result.is_err() {
+                self.failed = true;
+            }
             Ok(())
         }
 
@@ -3950,29 +4270,38 @@ pub mod formatter {
             // `Function.prototype.constructor === Function`, returning
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
-            let printable = value.get_name(self.global_this)?;
+            let printable = if self.is_snapshot {
+                self.snapshot.name_of_class(self.global_this, value)?
+            } else {
+                value.get_name(self.global_this)?
+            };
             writer.add_for_new_line(printable.length());
 
             // Only report `extends` when the parent is itself a class
             // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
             // have `Function.prototype` as their prototype, which would
             // render as `[class X extends Function]` and is noise.
-            let proto = value.get_prototype(self.global_this)?;
-            let proto_is_class = !proto.is_empty_or_undefined_or_null()
-                && proto.is_cell()
-                && proto.is_class(self.global_this);
-            let printable_proto = if proto_is_class {
-                proto.get_name(self.global_this)?
-            } else {
+            let printable_proto = if self.is_snapshot {
                 BunString::EMPTY
+            } else {
+                let proto = value.get_prototype(self.global_this)?;
+                let proto_is_class = !proto.is_empty_or_undefined_or_null()
+                    && proto.is_cell()
+                    && proto.is_class(self.global_this);
+                if proto_is_class {
+                    proto.get_name(self.global_this)?
+                } else {
+                    BunString::EMPTY
+                }
             };
             writer.add_for_new_line(printable_proto.length());
 
             if printable.is_empty() {
                 if printable_proto.is_empty() {
                     writer.print(format_args!(
-                        "{}[class (anonymous)]{}",
+                        "{}[class{}]{}",
                         pf!("<cyan>"),
+                        if self.is_snapshot { "" } else { " (anonymous)" },
                         pf!("<r>")
                     ));
                 } else {
@@ -4021,11 +4350,15 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            let printable = value.get_name(self.global_this)?;
-
-            let proto = value.get_prototype(self.global_this)?;
-            // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-            let func_name = proto.get_name(self.global_this)?;
+            // `func_name` is "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+            let (printable, func_name) = if self.is_snapshot {
+                let printable = Snapshot::name_of_function(self.global_this, value)?;
+                (printable, BunString::EMPTY)
+            } else {
+                let printable = value.get_name(self.global_this)?;
+                let proto = value.get_prototype(self.global_this)?;
+                (printable, proto.get_name(self.global_this)?)
+            };
 
             if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
@@ -4119,7 +4452,15 @@ pub mod formatter {
             };
             if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
                 writer.write_all(b"\n");
-                writer.write_indent(self.indent);
+                writer.write_indent(indent_width!(self));
+            }
+
+            if self.is_snapshot {
+                writer.write_all(b"Promise {}");
+                if writer.failed {
+                    self.failed = true;
+                }
+                return Ok(());
             }
 
             writer.write_all(b"Promise { ");
@@ -4148,6 +4489,9 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.is_snapshot && value.is_cell() {
+                return self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Object);
+            }
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4245,12 +4589,18 @@ pub mod formatter {
                     use std::io::Write as _;
                     let mut cursor = &mut iso_string_buf[..];
                     let start_len = cursor.len();
-                    let _ = write!(cursor, "{str}");
-                    let written = start_len - cursor.len();
+                    let fits = write!(cursor, "{str}").is_ok();
+                    // Snapshots have nothing for a `toJSON()` result that is too long.
+                    let written = if fits || !self.is_snapshot {
+                        start_len - cursor.len()
+                    } else {
+                        0
+                    };
                     &iso_string_buf[..written]
                 };
 
-                if out_buf == b"null" {
+                // Snapshots have `ul` for an invalid date: `null` without its "quotes".
+                if out_buf == b"null" && !self.is_snapshot {
                     out_buf = b"Invalid Date";
                 } else if out_buf.len() > 2 {
                     // trim the quotes
@@ -4311,6 +4661,21 @@ pub mod formatter {
                 return Ok(());
             }
 
+            // `is_snapshot` prints a hole as `undefined`.
+            let global_this = self.global_this;
+            let is_snapshot = self.is_snapshot;
+            let get_element = |i: u32| {
+                if is_snapshot {
+                    Snapshot::element_of(global_this, value, i)
+                } else {
+                    value.get_direct_index(global_this, i)
+                }
+            };
+
+            if is_snapshot && self.indent == 0 {
+                writer.write_all(b"\n");
+            }
+
             let mut was_good_time = self.always_newline_scope ||
                 // heuristic: more than 10, probably should have a newline before it
                 len > 10;
@@ -4327,7 +4692,7 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
-                    let element = value.get_direct_index(self.global_this, 0)?;
+                    let element = get_element(0)?;
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
@@ -4339,7 +4704,7 @@ pub mod formatter {
                         writer.reset_line(self.indent);
                         writer.write_all(b"[");
                         writer.write_all(b"\n");
-                        writer.write_indent(self.indent);
+                        writer.write_indent(indent_width!(self));
                         writer.add_for_new_line(1);
                     } else {
                         writer.write_all(b"[ ");
@@ -4367,7 +4732,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
-                    let element = value.get_direct_index(self.global_this, i)?;
+                    let element = get_element(i)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);
@@ -4388,7 +4753,7 @@ pub mod formatter {
                         }
                         continue;
                     }
-                    if nonempty_count >= 100 {
+                    if nonempty_count >= 100 && !is_snapshot {
                         writer.print_comma::<C>();
                         if self.single_line {
                             writer.space();
@@ -4451,7 +4816,7 @@ pub mod formatter {
                     {
                         writer.write_all(b"\n");
                         was_good_time = true;
-                        writer.write_indent(self.indent);
+                        writer.write_indent(indent_width!(self));
                     } else {
                         writer.space();
                     }
@@ -4506,7 +4871,9 @@ pub mod formatter {
                     }
                 }
 
-                if !js_type.is_arguments() {
+                if is_snapshot {
+                    writer.print_comma::<C>();
+                } else if !js_type.is_arguments() {
                     // Hoist field reads before `formatter: self` reborrows the
                     // whole `*self` (struct-literal field order is not eval
                     // order in the borrow checker's eyes once `self` is moved).
@@ -4545,8 +4912,11 @@ pub mod formatter {
             {
                 writer.reset_line(self.indent);
                 writer.write_all(b"\n");
-                writer.write_indent(self.indent);
+                writer.write_indent(indent_width!(self));
                 writer.write_all(b"]");
+                if is_snapshot && self.indent == 0 {
+                    writer.write_all(b"\n");
+                }
                 writer.reset_line(self.indent);
                 writer.add_for_new_line(1);
             } else {
@@ -4565,7 +4935,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
-            remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
             // LAYERING: this needs to downcast over
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
@@ -4585,43 +4954,48 @@ pub mod formatter {
             // `DOMFormData` is a C++-backed WebCore type — no `JsClass` impl,
             // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
             if crate::DOMFormData::from_js(value).is_some() {
-                if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
-                    let prev_quote_keys = self.quote_keys;
-                    self.quote_keys = true;
-                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-
+                if let Some(to_json_function) = value
+                    .get(self.global_this, "toJSON")?
+                    .filter(|f| f.is_callable())
+                {
                     let result = to_json_function.call(self.global_this, value, &[])?;
-                    return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
-                }
+                    if result.is_object() {
+                        let prev_quote_keys = self.quote_keys;
+                        self.quote_keys = true;
+                        let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
-                // this case should never happen
-                return self.print_as::<C>(
-                    Tag::Undefined,
-                    writer_,
-                    JSValue::UNDEFINED,
-                    jsc::JSType::Cell,
-                );
+                        if self.is_snapshot {
+                            self.add_for_new_line("FormData (entries) ".len());
+                            let _ = writer_.write_all(
+                                pfmt!("<r><blue>FormData<r> <d>(entries)<r> ", C).as_bytes(),
+                            );
+                        }
+                        return self.print_as::<C>(
+                            Tag::Object,
+                            writer_,
+                            result,
+                            jsc::JSType::Object,
+                        );
+                    }
+                }
             } else if js_type != jsc::JSType::DOMWrapper {
-                if *remove_before_recurse {
-                    *remove_before_recurse = false;
-                    self.visited_remove(value);
-                }
-
                 if value.is_callable() {
-                    *remove_before_recurse = true;
                     return self.print_as::<C>(Tag::Function, writer_, value, js_type);
                 }
 
-                *remove_before_recurse = true;
                 return self.print_as::<C>(Tag::Object, writer_, value, js_type);
             }
-            if *remove_before_recurse {
-                *remove_before_recurse = false;
-                self.visited_remove(value);
-            }
-
-            *remove_before_recurse = true;
             self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event)
+        }
+
+        /// The `size` of a `Map` or `Set`, which a subclass or an own property can replace.
+        fn collection_size(&self, value: JSValue) -> JsResult<i32> {
+            match value.get(self.global_this, "size")? {
+                Some(size) if size.is_number() || !self.is_snapshot => {
+                    size.coerce_to_i32(self.global_this)
+                }
+                _ => Ok(0),
+            }
         }
 
         #[inline(never)]
@@ -4630,10 +5004,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length_value = value
-                .get(self.global_this, "size")?
-                .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_to_i32(self.global_this)?;
+            let length = self.collection_size(value)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4654,7 +5025,9 @@ pub mod formatter {
                 return self.print_depth_exceeded_marker::<C>(writer_, map_name);
             }
 
-            if self.single_line {
+            if self.is_snapshot {
+                let _ = write!(writer_, "\n{map_name} {{\n");
+            } else if self.single_line {
                 let _ = write!(writer_, "{map_name}({length}) {{ ");
             } else {
                 let _ = writeln!(writer_, "{map_name}({length}) {{");
@@ -4702,7 +5075,8 @@ pub mod formatter {
             if !self.single_line {
                 let _ = self.write_indent(writer_);
             }
-            let _ = writer_.write_all(b"}");
+            let closing: &[u8] = if self.is_snapshot { b"}\n" } else { b"}" };
+            let _ = writer_.write_all(closing);
             Ok(())
         }
 
@@ -4779,10 +5153,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length_value = value
-                .get(self.global_this, "size")?
-                .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_to_i32(self.global_this)?;
+            let length = self.collection_size(value)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4794,6 +5165,11 @@ pub mod formatter {
                 "Set"
             };
 
+            // Snapshots indent a set once more, after whatever is already on the line.
+            if self.is_snapshot {
+                let _ = self.write_indent(writer_);
+            }
+
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
@@ -4803,7 +5179,9 @@ pub mod formatter {
                 return self.print_depth_exceeded_marker::<C>(writer_, set_name);
             }
 
-            if self.single_line {
+            if self.is_snapshot {
+                let _ = write!(writer_, "\n{set_name} {{\n");
+            } else if self.single_line {
                 let _ = write!(writer_, "{set_name}({length}) {{ ");
             } else {
                 let _ = writeln!(writer_, "{set_name}({length}) {{");
@@ -4851,7 +5229,8 @@ pub mod formatter {
             if !self.single_line {
                 let _ = self.write_indent(writer_);
             }
-            let _ = writer_.write_all(b"}");
+            let closing: &[u8] = if self.is_snapshot { b"}\n" } else { b"}" };
+            let _ = writer_.write_all(closing);
             Ok(())
         }
 
@@ -4967,10 +5346,7 @@ pub mod formatter {
                         if self.failed {
                             return Ok(());
                         }
-                        self.print_comma::<C>(writer_).expect("unreachable");
-                        if !self.single_line {
-                            let _ = writer_.write_all(b"\n");
-                        }
+                        self.print_event_field_end::<C>(writer_, b", \n");
                     }
                 }
 
@@ -4994,10 +5370,7 @@ pub mod formatter {
                         if self.failed {
                             return Ok(());
                         }
-                        self.print_comma::<C>(writer_).expect("unreachable");
-                        if !self.single_line {
-                            let _ = writer_.write_all(b"\n");
-                        }
+                        self.print_event_field_end::<C>(writer_, b", \n");
                     }
                     EventType::ErrorEvent => {
                         if let Some(error_value) =
@@ -5019,10 +5392,7 @@ pub mod formatter {
                             if self.failed {
                                 return Ok(());
                             }
-                            self.print_comma::<C>(writer_).expect("unreachable");
-                            if !self.single_line {
-                                let _ = writer_.write_all(b"\n");
-                            }
+                            self.print_event_field_end::<C>(writer_, b"\n");
                         }
                     }
                     _ => unreachable!(),
@@ -5034,6 +5404,21 @@ pub mod formatter {
             }
             let _ = writer_.write_all(b"}");
             Ok(())
+        }
+
+        fn print_event_field_end<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            snapshot_end: &[u8],
+        ) {
+            if self.is_snapshot {
+                let _ = writer_.write_all(snapshot_end);
+                return;
+            }
+            self.print_comma::<C>(writer_).expect("unreachable");
+            if !self.single_line {
+                let _ = writer_.write_all(b"\n");
+            }
         }
 
         // JSX printing is large (≈230 LOC) and entirely self-contained string
@@ -5164,8 +5549,11 @@ pub mod formatter {
                         let _ind = defer_decrement!(self.indent);
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
+                        // Snapshots count the props from 1, which leaves out the space before the last one. Stored snapshots have that text.
+                        let mut snapshot_i = 0;
 
                         while let Some((prop, property_value)) = props_iter.next()? {
+                            snapshot_i += 1;
                             if prop.eq_ascii(b"children") {
                                 continue;
                             }
@@ -5189,7 +5577,11 @@ pub mod formatter {
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));
-                            let props_i = props_iter.i.get() as usize;
+                            let props_i = if self.is_snapshot {
+                                snapshot_i
+                            } else {
+                                props_iter.i.get() as usize
+                            };
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r><green>", true).as_bytes());
@@ -5224,7 +5616,8 @@ pub mod formatter {
                                 )
                             {
                                 writer.write_all(b"\n");
-                                write_indent_n(self.indent, writer.ctx).expect("unreachable");
+                                write_indent_n(indent_width!(self), writer.ctx)
+                                    .expect("unreachable");
                             } else if props_i + 1 < count_without_children {
                                 writer.space();
                             }
@@ -5232,7 +5625,7 @@ pub mod formatter {
                     }
 
                     if let Some(children) = children_prop {
-                        let tag = Tag::get(children, self.global_this)?;
+                        let tag = Tag::get_advanced(children, self.global_this, tag_opts)?;
 
                         let print_children =
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
@@ -5255,12 +5648,12 @@ pub mod formatter {
                                         } else {
                                             self.indent += 1;
                                             writer.write_all(b"\n");
-                                            write_indent_n(self.indent, writer.ctx)
+                                            write_indent_n(indent_width!(self), writer.ctx)
                                                 .expect("unreachable");
                                             self.indent = self.indent.saturating_sub(1);
                                             writer.write_string(&children_string);
                                             writer.write_all(b"\n");
-                                            write_indent_n(self.indent, writer.ctx)
+                                            write_indent_n(indent_width!(self), writer.ctx)
                                                 .expect("unreachable");
                                         }
                                     }
@@ -5268,14 +5661,14 @@ pub mod formatter {
                                         writer.write_all(b">\n");
                                         {
                                             self.indent += 1;
-                                            write_indent_n(self.indent, writer.ctx)
+                                            write_indent_n(indent_width!(self), writer.ctx)
                                                 .expect("unreachable");
                                             let _ind = defer_decrement!(self.indent);
                                             if writer.failed {
                                                 self.failed = true;
                                             }
                                             self.format::<C>(
-                                                Tag::get(children, self.global_this)?,
+                                                tag,
                                                 writer_,
                                                 children,
                                                 self.global_this,
@@ -5288,7 +5681,7 @@ pub mod formatter {
                                             };
                                         }
                                         writer.write_all(b"\n");
-                                        write_indent_n(self.indent, writer.ctx)
+                                        write_indent_n(indent_width!(self), writer.ctx)
                                             .expect("unreachable");
                                     }
                                     Tag::Array => {
@@ -5299,7 +5692,7 @@ pub mod formatter {
                                         writer.write_all(b">\n");
                                         {
                                             self.indent += 1;
-                                            write_indent_n(self.indent, writer.ctx)
+                                            write_indent_n(indent_width!(self), writer.ctx)
                                                 .expect("unreachable");
                                             let _prev_quote_strings = self.quote_strings;
                                             self.quote_strings = false;
@@ -5336,14 +5729,14 @@ pub mod formatter {
                                                 };
                                                 if (j as u64) + 1 < length {
                                                     writer.write_all(b"\n");
-                                                    write_indent_n(self.indent, writer.ctx)
+                                                    write_indent_n(indent_width!(self), writer.ctx)
                                                         .expect("unreachable");
                                                 }
                                                 j += 1;
                                             }
                                         }
                                         writer.write_all(b"\n");
-                                        write_indent_n(self.indent, writer.ctx)
+                                        write_indent_n(indent_width!(self), writer.ctx)
                                             .expect("unreachable");
                                     }
                                     _ => unreachable!(),
@@ -5424,6 +5817,7 @@ pub mod formatter {
             }
             let ordered_properties = self.ordered_properties;
             let call_own_getters = self.call_own_getters;
+            let is_snapshot = self.is_snapshot;
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5434,7 +5828,9 @@ pub mod formatter {
                 i: 0,
             };
 
-            if ordered_properties {
+            if is_snapshot {
+                iter.for_each_in_snapshot(value)?;
+            } else if ordered_properties {
                 value.for_each_property_ordered(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
@@ -5524,7 +5920,10 @@ pub mod formatter {
             iter_always_newline: bool,
         ) -> JsResult<()> {
             if iter_i == 0 {
-                if value.is_callable() {
+                if self.is_snapshot {
+                    Snapshot::write_class_name(writer_, self.global_this, value, false)?;
+                    let _ = writer_.write_all(b"{}");
+                } else if value.is_callable() {
                     let tag = if value.is_class(self.global_this) {
                         Tag::Class
                     } else {
@@ -5557,6 +5956,10 @@ pub mod formatter {
                     self.estimated_line_length += 2;
                     let _ = writer_.write_all(b" }");
                 }
+
+                if self.is_snapshot && self.indent == 0 {
+                    let _ = writer_.write_all(b"\n");
+                }
             }
             Ok(())
         }
@@ -5568,6 +5971,9 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            if self.is_snapshot {
+                return self.print_typed_array_in_snapshot(writer_, value, js_type);
+            }
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -5639,6 +6045,93 @@ pub mod formatter {
             Ok(())
         }
 
+        /// One element on each line. A `Buffer` prints as its `toJSON()`.
+        #[inline(never)]
+        fn print_typed_array_in_snapshot(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_typed_array_in_snapshot);
+            let is_buffer = js_type == jsc::JSType::Uint8Array
+                && value.get_class_name(self.global_this)?.eq_ascii(b"Buffer");
+            let array_buffer = value.as_array_buffer(self.global_this).unwrap();
+            let slice = array_buffer.byte_slice();
+            let on_its_own_lines = self.indent == 0 && (is_buffer || !slice.is_empty());
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+
+            if on_its_own_lines {
+                writer.write_all(b"\n");
+            }
+            if is_buffer {
+                writer.write_all(b"{\n");
+                self.indent += 1;
+                writer.write_indent(indent_width!(self));
+                writer.write_all(b"\"data\": [");
+            } else {
+                writer.write_all(array_buffer.typed_array_type.typed_array_name());
+                writer.write_all(b" [");
+            }
+            if !slice.is_empty() {
+                self.indent += 1;
+                let indent = indent_width!(self);
+                use jsc::JSType as T;
+                match js_type {
+                    T::Int8Array => Self::write_lines_of::<i8>(&mut writer, slice, indent),
+                    T::Int16Array => Self::write_lines_of::<i16>(&mut writer, slice, indent),
+                    T::Uint16Array => Self::write_lines_of::<u16>(&mut writer, slice, indent),
+                    T::Int32Array => Self::write_lines_of::<i32>(&mut writer, slice, indent),
+                    T::Uint32Array => Self::write_lines_of::<u32>(&mut writer, slice, indent),
+                    T::Float16Array => {
+                        Self::write_lines_of::<bun_core::f16>(&mut writer, slice, indent)
+                    }
+                    T::Float32Array => Self::write_lines_of::<f32>(&mut writer, slice, indent),
+                    T::Float64Array => Self::write_lines_of::<f64>(&mut writer, slice, indent),
+                    T::BigInt64Array => Self::write_lines_of::<i64>(&mut writer, slice, indent),
+                    T::BigUint64Array => Self::write_lines_of::<u64>(&mut writer, slice, indent),
+                    // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                    _ => Self::write_lines_of::<u8>(&mut writer, slice, indent),
+                }
+                self.indent -= 1;
+                writer.write_all(b"\n");
+                writer.write_indent(indent_width!(self));
+            }
+            writer.write_all(b"]");
+            if is_buffer {
+                writer.write_all(b",\n");
+                writer.write_indent(indent_width!(self));
+                writer.write_all(b"\"type\": \"Buffer\",\n");
+                self.indent -= 1;
+                writer.write_indent(indent_width!(self));
+                writer.write_all(b"}");
+            }
+            if on_its_own_lines {
+                writer.write_all(b"\n");
+            }
+            if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        /// Each element of a typed array on a line of its own.
+        fn write_lines_of<N: TypedArrayElement>(
+            writer: &mut WrappedWriter<'_>,
+            bytes: &[u8],
+            indent: u32,
+        ) {
+            for element in bun_core::Unaligned::<N>::slice_of(bytes) {
+                writer.write_all(b"\n");
+                writer.write_indent(indent);
+                writer.print(format_args!("{},", element.get()));
+            }
+        }
+
         // associated fn (no `&mut self`) so callers can pass a
         // `WrappedWriter` that already borrows `&mut self.estimated_line_length`
         // without tripping E0499. The only `self` use was `print_comma`, which
@@ -5708,7 +6201,39 @@ pub mod formatter {
             if let TagPayload::CustomFormattedObject(obj) = result.tag {
                 self.custom_formatted_object = obj;
             }
-            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+            self.print_formatted::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+        }
+
+        /// `print_as` for [`Self::format`]. Not in `format`, which is inlined at every call.
+        #[inline(never)]
+        fn print_formatted<const C: bool>(
+            &mut self,
+            tag: Tag,
+            writer: &mut dyn bun_io::Write,
+            value: JSValue,
+            cell: jsc::JSType,
+        ) -> JsResult<()> {
+            if self.is_snapshot {
+                return self.print_formatted_in_snapshot::<C>(tag, writer, value, cell);
+            }
+            self.print_as::<C>(tag, writer, value, cell)
+        }
+
+        #[inline(never)]
+        fn print_formatted_in_snapshot<const C: bool>(
+            &mut self,
+            mut tag: Tag,
+            writer: &mut dyn bun_io::Write,
+            value: JSValue,
+            cell: jsc::JSType,
+        ) -> JsResult<()> {
+            only_in_snapshots!(Self::print_formatted_in_snapshot::<C>);
+            if let Some(print) = self.snapshot.printer
+                && print(self, writer, &mut tag, value)?
+            {
+                return Ok(());
+            }
+            self.print_as::<C>(tag, writer, value, cell)
         }
 
         /// Format a single value into `writer`, propagating a JS exception
@@ -5725,7 +6250,12 @@ pub mod formatter {
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
-            let result = Tag::get(value, global)
+            let opts = if self.is_snapshot {
+                TagOptions::SNAPSHOT
+            } else {
+                TagOptions::empty()
+            };
+            let result = Tag::get_advanced(value, global, opts)
                 .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
             self.remaining_values = bun_ptr::RawSlice::EMPTY;
             result
@@ -5733,7 +6263,7 @@ pub mod formatter {
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    trait TypedArrayElement: bun_core::AnyBitPattern {
+    trait TypedArrayElement: bun_core::AnyBitPattern + core::fmt::Display {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;

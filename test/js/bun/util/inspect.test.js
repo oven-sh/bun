@@ -1727,6 +1727,41 @@ describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect 
   });
 });
 
+it("a native object that refers to itself more than once", () => {
+  const decoder = new TextDecoder();
+  decoder.first = decoder;
+  decoder.second = decoder;
+  expect(Bun.inspect(decoder)).toStartWith("TextDecoder {\n  first: [Circular],\n  second: [Circular],\n");
+});
+
+it("a Set whose size is a string", () => {
+  class StringSize extends Set {
+    get size() {
+      return String(super.size);
+    }
+  }
+  expect(Bun.inspect(new StringSize([1, 2]))).toBe("Set(2) {\n  1,\n  2,\n}");
+});
+
+it("a Map key that throws while it is printed", () => {
+  const key = {
+    [Bun.inspect.custom]() {
+      throw new Error("from the key");
+    },
+  };
+  expect(() => Bun.inspect(new Map([[key, {}]]))).toThrow("from the key");
+});
+
+it("a FormData whose toJSON is not callable or returns a primitive", () => {
+  const formData = new FormData();
+  Object.defineProperty(formData, "toJSON", { value: 42, enumerable: true });
+  expect(Bun.inspect(formData)).toStartWith("FormData {\n  toJSON: 42,\n");
+
+  const primitive = new FormData();
+  Object.defineProperty(primitive, "toJSON", { value: () => 5 });
+  expect(Bun.inspect(primitive)).toStartWith("FormData {\n  append: ");
+});
+
 // Runs in a subprocess because a native stack overflow would kill the test runner.
 it.concurrent.each([
   [

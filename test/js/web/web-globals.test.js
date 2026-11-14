@@ -594,6 +594,158 @@ test("globalThis.self = 123 works", () => {
   }
 });
 
+// Web IDL defines an interface object, the constructor of a Web class, as a writable, configurable and
+// non-enumerable property of the global object. `enumerableNames` is every name that Bun lists. Node lists
+// neither `Buffer` nor `process`: it defines both as non-enumerable accessors.
+describe("Web classes on globalThis are not enumerable", () => {
+  // prettier-ignore
+  const enumerableNames = [
+    "Buffer", "BuildError", "BuildMessage", "Bun", "HTMLRewriter", "ResolveError", "ResolveMessage",
+    "addEventListener", "alert", "atob", "btoa", "clearImmediate", "clearInterval", "clearTimeout", "confirm",
+    "crypto", "dispatchEvent", "fetch", "global", "navigator", "onerror", "onmessage", "performance", "postMessage",
+    "process", "prompt", "queueMicrotask", "removeEventListener", "reportError", "self", "setImmediate",
+    "setInterval", "setTimeout", "structuredClone",
+  ];
+  const hidden = { writable: true, enumerable: false, configurable: true };
+  const listed = { writable: true, enumerable: true, configurable: true };
+
+  // The names that each way to list the global object gives, and the attributes of five of its names.
+  // It runs from its source text in the ShadowRealm, so it uses nothing outside itself.
+  const probe = `
+    function probe() {
+      const attributes = name => {
+        const { value, ...rest } = Object.getOwnPropertyDescriptor(globalThis, name);
+        return rest;
+      };
+      const forIn = [];
+      for (const name in globalThis) forIn.push(name);
+      const printed = Bun.inspect(globalThis, { depth: 0 })
+        .split("\\n")
+        .map(line => /^  (\\w+):/.exec(line)?.[1])
+        .filter(name => name !== undefined);
+      return JSON.stringify({
+        keys: Object.keys(globalThis).sort(),
+        forIn: forIn.sort(),
+        spread: Object.keys({ ...globalThis }).sort(),
+        assign: Object.keys(Object.assign({}, globalThis)).sort(),
+        inspect: printed.sort(),
+        Headers: attributes("Headers"),
+        File: attributes("File"),
+        Buffer: attributes("Buffer"),
+        process: attributes("process"),
+        Bun: attributes("Bun"),
+      });
+    }
+  `;
+  const realms = {
+    "the main realm": `console.log(probe());`,
+    "a Worker": `
+      if (Bun.isMainThread) {
+        const worker = new Worker(import.meta.url);
+        worker.onerror = event => {
+          console.error(event.message);
+          process.exit(1);
+        };
+        worker.onmessage = event => {
+          console.log(event.data);
+          worker.terminate();
+        };
+      } else {
+        postMessage(probe());
+      }
+    `,
+  };
+  // A Bun built with --shadow-realm=off has no ShadowRealm.
+  if (typeof ShadowRealm === "function") {
+    realms["a ShadowRealm"] = `console.log(new ShadowRealm().evaluate("(" + probe + ")()"));`;
+  }
+
+  test.concurrent.each(Object.keys(realms))("in %s", async realm => {
+    using dir = tempDir("global-enumerable-names", { "realm.mjs": probe + realms[realm] });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "realm.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      keys: enumerableNames,
+      forIn: enumerableNames,
+      spread: enumerableNames,
+      assign: enumerableNames,
+      inspect: enumerableNames,
+      Headers: hidden,
+      File: hidden,
+      Buffer: listed,
+      process: listed,
+      Bun: { writable: false, enumerable: true, configurable: false },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A row of the global object's static table becomes a property on first use. Each kind of first use
+  // keeps the property non-enumerable, as Node does.
+  test.concurrent("whichever comes first: a read, a write, a definition or a delete", async () => {
+    const script = `
+      const attributes = name => {
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+        if (descriptor === undefined) return null;
+        const { value, ...rest } = descriptor;
+        return rest;
+      };
+      const result = {};
+
+      result.neverRead = attributes("Headers");
+
+      if (typeof Response !== "function") throw new Error("Response is not a class");
+      result.afterRead = attributes("Response");
+
+      globalThis.FormData = 1;
+      globalThis.File = 2;
+      result.afterWrite = [attributes("FormData"), attributes("File")];
+
+      Object.defineProperty(globalThis, "CloseEvent", { value: 3 });
+      result.afterDefinitionOfValue = attributes("CloseEvent");
+
+      // A delete turns every remaining row into a property.
+      delete globalThis.BroadcastChannel;
+      result.deleted = attributes("BroadcastChannel");
+      result.afterDeleteOfAnother = [attributes("CustomEvent"), attributes("TextEncoder")];
+
+      globalThis.BroadcastChannel = 4;
+      result.writtenAfterDelete = attributes("BroadcastChannel");
+
+      Object.defineProperty(globalThis, "EventTarget", { enumerable: true });
+      result.definedEnumerable = attributes("EventTarget");
+
+      // bun -e also lists the names of the built-in modules, which are all lowercase.
+      result.capitalKeys = Object.keys(globalThis).filter(name => /^[A-Z]/.test(name)).sort();
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      neverRead: hidden,
+      afterRead: hidden,
+      afterWrite: [hidden, hidden],
+      afterDefinitionOfValue: hidden,
+      deleted: null,
+      afterDeleteOfAnother: [hidden, hidden],
+      writtenAfterDelete: listed,
+      definedEnumerable: listed,
+      capitalKeys: [...enumerableNames.filter(name => /^[A-Z]/.test(name)), "BroadcastChannel", "EventTarget"].sort(),
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // A constructor reads `new.target.prototype` for the prototype of the object it makes. The read can
 // run script and throw, so it comes after the arguments convert and before the constructor steps.
 describe("new.target.prototype", () => {

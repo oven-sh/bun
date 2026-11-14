@@ -30,7 +30,8 @@ the whole process and is therefore never executed, in either mode.
 
 | | subtests | pass | fail | timeout | crash | pass % |
 |---|---|---|---|---|---|---|
-| **total** | **1402** | **1402** | 0 | 0 | 0 | **100%** |
+| **total** | **1422** | **1422** | 0 | 0 | 0 | **100%** |
+| compression idlharness (WebIDL surface) | 20 | 20 | 0 | 0 | 0 | 100% |
 | idlharness (WebIDL surface) | 228 | 228 | 0 | 0 | 0 | 100% |
 | piping | 229 | 229 | 0 | 0 | 0 | 100% |
 | queuing-strategies (top level) | 20 | 20 | 0 | 0 | 0 | 100% |

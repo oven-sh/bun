@@ -952,6 +952,61 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Also runs on debug builds. The fixture is checked with lib.dom and without
+  // it. lib.webworker declares the web streams too, but not the `onabort` that
+  // `LibDomIsLoaded` looks for. The global reader is the one of that lib, as
+  // with lib.dom, and not the reader of node:stream/web.
+  describe("ReadableStreamDefaultReader with lib.webworker.d.ts", () => {
+    async function checkReader(name: string, skipLibCheck: boolean) {
+      const checkDir = join(TEMP_DIR, name);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["reader-check.ts"];
+      tsconfig.compilerOptions.lib = ["ESNext", "WebWorker"];
+      tsconfig.compilerOptions.skipLibCheck = skipLibCheck;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "reader-check.ts": `import { ReadableStream as NodeReadableStream } from "node:stream/web";
+           const reader = new ReadableStream<Uint8Array>().getReader();
+           reader.readMany();
+           new NodeReadableStream<Uint8Array>().getReader().readMany();
+           const result = await reader.read();
+           if (result.done) result.value satisfies undefined;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    }
+
+    test.concurrent("read() keeps Bun's result type, and every default reader has readMany()", async () => {
+      expect(await checkReader("reader-lib-webworker-check", true)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    // With skipLibCheck off, tsc reports the declarations too. Beside lib.webworker, bun-types and
+    // @types/node have errors there for other globals (Request, Response, Worker and more), so
+    // this run cannot be clean. Those errors show that tsc checked the declarations. None of
+    // the errors may be in the program, and none may name the reader.
+    test.concurrent("no declaration error is about the reader", async () => {
+      const { stdout, stderr, exitCode } = await checkReader("reader-lib-webworker-declarations", false);
+      const errors = stdout.split("\n").filter(line => line.includes(": error TS"));
+      expect({
+        inTheProgram: errors.filter(line => line.startsWith("reader-check.ts")),
+        aboutTheReader: errors.filter(line => /\bReadableStreamDefaultReader\b/.test(line)),
+        reportedOtherErrors: errors.length > 0 && exitCode !== 0,
+        stderr,
+      }).toEqual({ inTheProgram: [], aboutTheReader: [], reportedOtherErrors: true, stderr: "" });
+    });
+  });
+
   // Also runs on debug builds: spawned tsc over a single file, like the
   // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
   // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in

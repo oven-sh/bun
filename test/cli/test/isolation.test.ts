@@ -1616,6 +1616,147 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
   });
 
+  test("a patch that keeps the original under an underscore-prefixed name is undone as a whole", async () => {
+    // As zone.js does: the original goes under `__zone_symbol__<name>`, and a method that has one isn't patched again.
+    const patchOnce = `
+      function patchOnce(object, name) {
+        const marker = "__zone_symbol__" + name;
+        if (Object.hasOwn(object, marker)) return "has the marker of an earlier file";
+        const original = (object[marker] = object[name]);
+        object[name] = function patched(...args) { return original.apply(this, args); };
+        return object[name].name;
+      }
+    `;
+    const file = `
+      ${patchOnce}
+      test("patches", () => {
+        console.log(JSON.stringify([
+          ...patchedByPreload, patchOnce(EventTarget.prototype, "addEventListener"), patchOnce(process, "nextTick"),
+          patchOnce(Promise.prototype, "then"), patchOnce(console, "warn"),
+        ]));
+      });
+    `;
+    const files = {
+      "preload.js": `
+        ${patchOnce}
+        globalThis.patchedByPreload = [patchOnce(EventTarget.prototype, "removeEventListener"), patchOnce(process, "emitWarning")];
+      `,
+      "a.test.js": file,
+      "b.test.js": file,
+      "c.test.js": file,
+    };
+    const lines = (await passes(files, 3, ["--preload", "./preload.js"]))
+      .split("\n")
+      .filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(3).fill(JSON.stringify(Array(6).fill("patched"))));
+  });
+
+  test("every file finds the underscore-prefixed properties of the builtins as the first one did", async () => {
+    const objects = `[process, console, Bun, Math, Array.prototype, Date.now]`;
+    const state = `JSON.stringify([
+      [...${objects}.map(object => Object.hasOwn(object, "_added")), Object.hasOwn(process, "s3"), Object.hasOwn(Bun, "mainModule")],
+      [process._kill.name, process._exiting, Object.hasOwn(process._tickCallback, "extra")],
+      [Object.prototype.__defineGetter__.name, typeof Object.prototype.__lookupGetter__, {}.__proto__ === Object.prototype],
+    ])`;
+    const change = [
+      `for (const object of ${objects}) object._added = 1; process.s3 = 1; Bun.mainModule = 1;`,
+      `process._kill = function fake() {}; process._exiting = "x"; process._tickCallback.extra = 1;`,
+      `Object.prototype.__defineGetter__ = function fake() {}; delete Object.prototype.__lookupGetter__;`,
+      `Object.defineProperty(Object.prototype, "__proto__", { get() { return null; }, configurable: true });`,
+      ``,
+    ];
+    const files = Object.fromEntries(
+      change.map((code, i) => [`${i}.test.js`, `test("${i}", () => { console.log(${state}); ${code} });`]),
+    );
+    const lines = (await passes(files, change.length)).split("\n").filter(line => line.startsWith("["));
+    const pristine = [Array(8).fill(false), ["_kill", false, false], ["__defineGetter__", "function", true]];
+    expect(lines).toEqual(Array(change.length).fill(JSON.stringify(pristine)));
+  });
+
+  test("a key that a file adds to any of the builtins is deleted, whatever its name", async () => {
+    // As the snapshot walks: globalThis, the objects on it, every function those reach, and their prototypes.
+    const builtins = `
+      function builtins() {
+        const unread = new Map([
+          [process, ["stdin", "stdout", "stderr", "argv", "mainModule"]],
+          [Bun, ["stdin", "stdout", "stderr", "sql", "postgres", "redis", "s3", "secrets", "argv"]],
+          [console, ["_stdout", "_stderr"]],
+        ]);
+        const seen = new Set();
+        const walk = (object, isGlobalThis) => {
+          if (seen.has(object)) return;
+          seen.add(object);
+          for (const key of Reflect.ownKeys(object)) {
+            if (unread.get(object)?.includes(key)) continue;
+            const { value, get, set } = Object.getOwnPropertyDescriptor(object, key) ?? {};
+            if (typeof value === "function" || (typeof value === "object" && value !== null && (isGlobalThis || key === "prototype"))) walk(value, false);
+            if (get) walk(get, false);
+            if (set) walk(set, false);
+          }
+          const prototype = Object.getPrototypeOf(object);
+          if (prototype) walk(prototype, false);
+        };
+        walk(globalThis, true);
+        return [...seen];
+      }
+      const added = ["leftByAFile", "_leftByAFile", Symbol.for("leftByAFile")];
+    `;
+    const files = {
+      "a.test.js": `${builtins}
+        test("a", () => {
+          const objects = builtins().filter(Object.isExtensible);
+          for (const object of objects) for (const key of added) Object.defineProperty(object, key, { value: 1, configurable: key !== "_leftByAFile" });
+          console.log(JSON.stringify([objects.length > 2000]));
+        });`,
+      "b.test.js": `${builtins}
+        test("b", () => {
+          console.log(JSON.stringify([builtins().filter(object => added.some(key => Object.hasOwn(object, key))).length]));
+        });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(["[true]", "[0]"]);
+  });
+
+  test("what a file redefined after a getter spy made it configurable is put back", async () => {
+    // None of the three is configurable or writable, so the restore could take them for what no file can change.
+    const state = `JSON.stringify([Math.PI, Bun.version === process.versions.bun, new Response("").ok])`;
+    const files = {
+      "a.test.js": `
+        import { spyOn } from "bun:test";
+        test("a", () => {
+          console.log(${state});
+          for (const [object, key] of [[Math, "PI"], [Bun, "version"], [Response.prototype, "ok"]]) {
+            spyOn(object, key, "get");
+            Object.defineProperty(object, key, { get: () => "from a" });
+          }
+        });`,
+      "b.test.js": `test("b", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([Math.PI, true, true])));
+  });
+
+  test("the restore of the builtins makes no stream or client, and leaves console._stdout and console._stderr unread", async () => {
+    const files = {
+      // To put back a deleted property, the restore goes through everything the snapshot has of that object.
+      "a.test.js": `test("a", () => { delete console.debug; });`,
+      // They are process.stdout and process.stderr as those are when first read. So a stand-in shows that nothing read one before.
+      "b.test.js": `
+        import { heapStats } from "bun:jsc";
+        test("b", () => {
+          // What a read of process.stdout, Bun.stdout, Bun.redis and Bun.s3 makes.
+          const { FileSink = 0, Blob = 0, RedisClient = 0, S3Client = 0 } = heapStats().objectTypeCounts;
+          const stdout = {}, stderr = {};
+          process.stdout = stdout;
+          process.stderr = stderr;
+          console.log(JSON.stringify([typeof console.debug, FileSink, Blob, RedisClient, S3Client, console._stdout === stdout, console._stderr === stderr]));
+        });
+      `,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual([JSON.stringify(["function", 0, 0, 0, 0, true, true])]);
+  });
+
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {
     const file = `
       import "node:perf_hooks";

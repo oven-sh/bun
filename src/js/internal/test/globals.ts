@@ -30,20 +30,14 @@ const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnProperty
 const { ownKeys } = Reflect;
 const { eventNames, rawListeners, removeListener } = process;
 
-type Properties = Map<PropertyKey, PropertyDescriptor>;
+// `null`: the key was there at the snapshot, and the restore leaves it as it is.
+type Properties = Map<PropertyKey, PropertyDescriptor | null>;
 
-// Reading these creates streams and clients. `argv` and `mainModule` depend on the test file.
-const skippedKeys = new Set([
-  "stdin",
-  "stdout",
-  "stderr",
-  "sql",
-  "postgres",
-  "redis",
-  "s3",
-  "secrets",
-  "argv",
-  "mainModule",
+// The snapshot doesn't read these. Reading them creates streams and clients. `argv` and `mainModule` depend on the test file.
+const unreadKeys = new Map<object, Set<PropertyKey>>([
+  [process, new Set(["stdin", "stdout", "stderr", "argv", "mainModule"])],
+  [Bun, new Set(["stdin", "stdout", "stderr", "sql", "postgres", "redis", "s3", "secrets", "argv"])],
+  [console, new Set(["_stdout", "_stderr"])],
 ]);
 
 const objects: object[] = [];
@@ -61,13 +55,6 @@ function getDescriptor(object: object, key: PropertyKey): PropertyDescriptor | u
   return descriptor && ({ __proto__: null, ...descriptor } as PropertyDescriptor);
 }
 
-function isTracked(object: object, key: PropertyKey) {
-  if (object === globalThis) return true;
-  // Underscore-prefixed properties hold internal state, like `process._events`.
-  if (typeof key === "string" && key.$charCodeAt(0) === 95) return false;
-  return !((object === process || object === Bun) && skippedKeys.$has(key as string));
-}
-
 // Walks globalThis, its object properties, every function reachable from those, and their prototypes.
 function saveProperties(object: object, isGlobalThis: boolean) {
   if (seen.$has(object)) return;
@@ -77,10 +64,14 @@ function saveProperties(object: object, isGlobalThis: boolean) {
   $arrayPush(objects, object);
   $arrayPush(savedProperties, properties);
   $arrayPush(savedPropertyCounts, 0);
+  const unread = unreadKeys.$get(object);
   const keys = ownKeys(object);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    if (!isTracked(object, key)) continue;
+    if (unread?.$has(key)) {
+      properties.$set(key, null);
+      continue;
+    }
     const descriptor = getDescriptor(object, key);
     if (!descriptor) continue;
     properties.$set(key, descriptor);
@@ -119,7 +110,8 @@ function restoreProperties(object: object, properties: Properties, size: number)
     // The next file's window replaces these.
     if (object === globalThis && isEnvironmentGlobal(key)) continue;
     if (!saved) {
-      if (isTracked(object, key)) deleteOwnProperty(object, key);
+      // Not there at the snapshot: a file added it.
+      if (saved === undefined) deleteOwnProperty(object, key);
       continue;
     }
     const current = getOwnPropertyDescriptor(object, key)!;
@@ -133,7 +125,7 @@ function restoreProperties(object: object, properties: Properties, size: number)
   }
   if (found === size) return;
   properties.$forEach((saved, key) => {
-    if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
+    if (saved && !getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
   });
 }
 

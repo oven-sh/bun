@@ -82,7 +82,7 @@ impl Order {
     /// Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
     pub(crate) fn generate_order_describe(&mut self, root: &mut DescribeScope) -> JsResult<()> {
         let mut open: Vec<OpenDescribe<'_>> = Vec::new();
-        if let Some(frame) = self.enter_describe(root)? {
+        if let Some(frame) = self.enter_describe(root, true)? {
             open.push(frame);
         }
         while let Some(frame) = open.last_mut() {
@@ -97,7 +97,7 @@ impl Order {
             }
             match entry {
                 TestScheduleEntry::Describe(describe) => {
-                    if let Some(child) = self.enter_describe(describe)? {
+                    if let Some(child) = self.enter_describe(describe, frame.use_hooks)? {
                         open.push(child);
                     }
                 }
@@ -109,18 +109,22 @@ impl Order {
         Ok(())
     }
 
+    /// `parent_use_hooks` is the `use_hooks` of the enclosing scope, or `true` for a file's root scope.
     fn enter_describe<'a>(
         &mut self,
         current: &'a mut DescribeScope,
+        parent_use_hooks: bool,
     ) -> JsResult<Option<OpenDescribe<'a>>> {
         if current.failed {
             return Ok(None); // do not schedule any tests in a failed describe scope
         }
-        let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
+        // A scope that runs no test leaves out its `aroundAll`, and with it the hooks that `aroundAll` wraps, nested scopes included.
+        let use_hooks = parent_use_hooks
+            && (current.base.has_callback || (self.cfg.always_use_hooks && current.around_all.is_empty()));
 
         // gather aroundAll
         let aroundall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.around_all, current.base.has_callback)?
+            self.generate_all_order(&current.around_all, true)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -174,7 +178,7 @@ impl Order {
         // An aroundAll that fails before `runSuite()` skips to the teardown of the ones around it. Its own slot has no callback.
         frame.aroundall_order.set_failure_skip_to(self);
         if frame.use_hooks {
-            self.generate_all_order(frame.around_all_teardown, frame.has_callback)?;
+            self.generate_all_order(frame.around_all_teardown, true)?;
         }
 
         Ok(())

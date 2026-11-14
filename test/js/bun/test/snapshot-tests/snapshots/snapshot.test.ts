@@ -1317,7 +1317,7 @@ const headers = {
 // Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
-  const tests = { vitest: 971, jest: 601 };
+  const tests = { vitest: 971, jest: 623 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});
@@ -1518,6 +1518,30 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect(stderr).toContain("Expected: 1\nReceived: 2");
         expect(snap(dir)).toBe(appendedTo);
         expect(exitCode).toBe(1);
+      });
+
+      test("still passes for a thrown error whatever its cause is, because Bun stored the message alone", async () => {
+        const causes = [
+          `new TypeError("inner")`,
+          `"inner"`,
+          `new Legacy("inner")`,
+          `new DOMException("inner")`,
+          `new Proxy(new Error("inner"), {})`,
+        ];
+        const thrown = causes.map(
+          (cause, i) =>
+            `test("cause ${i}", () => { expect(() => { throw new Error("outer", { cause: ${cause} }); }).toThrowErrorMatchingSnapshot(); });`,
+        );
+        const withCauses =
+          headers[format] + old + causes.map((_, i) => `\nexports[\`cause ${i} 1\`] = \`"outer"\`;\n`).join("");
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js": `function Legacy(message) { this.message = message; }\nLegacy.prototype = Object.create(Error.prototype);\n${thrown.join("\n")}`,
+          "__snapshots__/a.test.js.snap": withCauses,
+        });
+        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "false" });
+        expect({ pass, stderr: pass === causes.length ? "" : stderr }).toEqual({ pass: causes.length, stderr: "" });
+        expect(snap(dir)).toBe(withCauses);
+        expect(exitCode).toBe(0);
       });
 
       test("is still known for what it is after a run that adds an entry and does not see the others", async () => {
@@ -2659,6 +2683,34 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     });
     const message = "expect(received).toThrowErrorMatchingInlineSnapshot(expected)";
     expect(log).toEqual([`${message} 1`, `${message} 101`]);
+    expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("a failed require() is an Error as a cause, and an inline snapshot keeps its message whatever a cause's getPrototypeOf trap throws", async () => {
+    const { log, stderr, exitCode } = await logOf({
+      "a.test.js": `
+          ${firstLine}
+          const thrower = cause => () => { throw new Error("outer", { cause }); };
+          test("t", () => {
+            let unresolved;
+            try { require("./missing.js"); } catch (error) { unresolved = error; }
+            try {
+              expect(thrower(unresolved)).toThrowErrorMatchingSnapshot();
+            } catch (error) {
+              console.log(error.message.split("\\n").find(line => line.startsWith("Cause: ")));
+            }
+
+            let asked = 0;
+            const throws = new Proxy({}, { getPrototypeOf() { asked++; throw new RangeError("from the trap"); } });
+            console.log(firstLine(() => expect(thrower(throws)).toThrowErrorMatchingInlineSnapshot(\`"other"\`)), asked);
+          });
+        `,
+      "__snapshots__/a.test.js.snap": headers.jest,
+    });
+    expect(log).toEqual([
+      "Cause: Cannot find module './missing.js'",
+      "expect(received).toThrowErrorMatchingInlineSnapshot(expected) 1",
+    ]);
     expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 });

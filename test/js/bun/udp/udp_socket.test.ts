@@ -1,4 +1,5 @@
 import { udpSocket } from "bun";
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import {
@@ -6,12 +7,16 @@ import {
   bunExe,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
+  isAndroid,
+  isFreeBSD,
   isIPv6,
+  isLinux,
+  isMacOS,
   isWindows,
   randomPort,
   tempDir,
 } from "harness";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, openSync, statSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -850,4 +855,129 @@ test("udpSocket({ hostname }) does not leak the hostname", async () => {
 
   // Unfixed: ~100 MiB. Fixed: allocator slack only.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
+});
+
+// Where the kernel has no usable batch receive (macOS below 15.6) a batch is
+// one recvmsg per datagram, and each call consumes what it returns: a
+// datagram, or a pending socket error that the kernel clears as it reports it.
+// A receive that fails after the first one leaves two results, and both must
+// reach the socket. A recvmsg fault rule that names the descriptor puts a
+// fault-injection build of any POSIX platform on that per-datagram path.
+describe.skipIf(!fault.available() || isWindows)("a receive that fails in the middle of a batch", () => {
+  // Sends "1", "2", "3" to a socket whose second recvmsg fails with
+  // ECONNREFUSED. Returns what its handlers saw by the time `done` settles.
+  async function receiveThree(done: Promise<void>, onData: (socket: Bun.udp.Socket<"buffer">, text: string) => void) {
+    const events: string[] = [];
+    const receiver = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket, data) {
+          const text = data.toString();
+          events.push("data " + text);
+          // A failing syscall in the handler leaves its own errno behind. The
+          // error that follows must still be the one that the receive returned.
+          expect(() => statSync(path.join(import.meta.dir, "does-not-exist"))).toThrow("ENOENT");
+          onData(socket, text);
+        },
+        // The error is the handler's last argument.
+        error: (...args: unknown[]) => {
+          events.push("error " + (args.at(-1) as NodeJS.ErrnoException).code);
+        },
+      },
+    });
+    const sender = await udpSocket({ hostname: "127.0.0.1" });
+    try {
+      // The rule fails the second recvmsg whether or not a second datagram has
+      // arrived by then, so the order of the events does not depend on timing.
+      fault.set({
+        syscall: "recvmsg",
+        fd: (receiver as any).fd,
+        action: "errno",
+        errno: "ECONNREFUSED",
+        after: 1,
+        repeat: 1,
+      });
+      for (const payload of ["1", "2", "3"]) sender.send(payload, receiver.port, "127.0.0.1");
+      await done;
+      return { events, closed: receiver.closed };
+    } finally {
+      fault.clear();
+      sender.close();
+      receiver.close();
+    }
+  }
+
+  test("delivers the datagram read before it, then the error, and keeps the socket open", async () => {
+    const { promise: done, resolve } = Promise.withResolvers<void>();
+    const result = await receiveThree(done, (_socket, text) => {
+      if (text === "3") resolve();
+    });
+    expect(result).toEqual({
+      events: ["data 1", "error ECONNREFUSED", "data 2", "data 3"],
+      closed: false,
+    });
+  });
+
+  test("reports nothing after the data handler closed the socket", async () => {
+    const { promise: done, resolve } = Promise.withResolvers<void>();
+    const result = await receiveThree(done, socket => {
+      socket.close();
+      // An error report or another datagram would come from the same native
+      // dispatch as this call, so before the immediate runs.
+      setImmediate(resolve);
+    });
+    expect(result).toEqual({ events: ["data 1"], closed: true });
+  });
+});
+
+// The same two results from a real kernel. A peer sends three datagrams and
+// goes away, and the socket's own send to the closed port draws an ICMP error,
+// so the datagrams and the error are pending for one readable dispatch. Node
+// emits every message and the error, and keeps the socket open.
+describe.skipIf(isWindows)("a connected socket with datagrams queued ahead of an ICMP error", () => {
+  async function run(env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "udp-recv-error-after-data-fixture.ts")],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.trim()) throw new Error(`the fixture printed nothing (exit code ${exitCode}):\n${stderr}`);
+    return { ...JSON.parse(stdout), exitCode };
+  }
+
+  const datagrams = ["data 1", "data 2", "data 3"];
+  const error = "error ECONNREFUSED";
+  // A Linux kernel reports a pending error before the queued datagrams. macOS
+  // hands out the datagrams first, then the error, and clears it.
+  const events = isLinux || isAndroid ? [error, ...datagrams] : [...datagrams, error];
+
+  // FreeBSD's kernel does what macOS does, but the batch there is libc's
+  // recvmmsg, which returns the count and drops that error: the socket gets
+  // the datagrams and never the error.
+  test.todoIf(isFreeBSD)("gets the datagrams and the error", async () => {
+    expect(await run()).toEqual({ events, closed: false, exitCode: 0 });
+  });
+
+  // Below macOS 15.6 a batch is one recvmsg per datagram. There the call that
+  // returns the error used to discard the datagrams read before it. Up to
+  // macOS 15, a process that has SYSTEM_VERSION_COMPAT=1 in its environment is
+  // told that the version is 10.16, so it takes that path on 15.6 and later
+  // too. Where the answer is not below 15.6 (macOS 26), the test is skipped.
+  const compat = { SYSTEM_VERSION_COMPAT: "1" };
+  function compatReportsBelow15_6() {
+    const { stdout } = Bun.spawnSync({
+      cmd: ["/usr/sbin/sysctl", "-n", "kern.osproductversion"],
+      env: { ...bunEnv, ...compat },
+    });
+    const [major, minor = 0] = stdout.toString().trim().split(".").map(Number);
+    return major < 15 || (major === 15 && minor < 6);
+  }
+  test.skipIf(!isMacOS || !compatReportsBelow15_6())(
+    "gets the datagrams and the error with one recvmsg per datagram",
+    async () => {
+      expect(await run(compat)).toEqual({ events, closed: false, exitCode: 0 });
+    },
+  );
 });

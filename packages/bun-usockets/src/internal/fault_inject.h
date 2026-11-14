@@ -97,6 +97,9 @@ void us_fault_set(int syscall, const struct us_fault_rule *rule);
 void us_fault_clear(int syscall);
 void us_fault_clear_all(void);
 int us_fault_hit(int syscall, int fd, ssize_t *out, int *clamp);
+/* Whether an armed rule for `syscall` names `fd` (target_fd). A rule for any
+ * descriptor does not. Counts nothing and fires nothing. */
+int us_fault_targets(int syscall, int fd);
 
 #ifdef __cplusplus
 }
@@ -109,9 +112,14 @@ int us_fault_hit(int syscall, int fd, ssize_t *out, int *clamp);
     (__builtin_expect(__atomic_load_n(&us_fault_armed, __ATOMIC_ACQUIRE), 0)                             \
         && us_fault_hit((sc), (int)(fd), &(out_lvalue), &(clamp_lvalue)))
 
+#define US_FAULT_TARGETS(sc, fd)                                                                         \
+    (__builtin_expect(__atomic_load_n(&us_fault_armed, __ATOMIC_ACQUIRE), 0)                             \
+        && us_fault_targets((sc), (int)(fd)))
+
 #else /* !LIBUS_SOCKET_FAULT_INJECTION */
 
 #define US_FAULT_CHECK(sc, fd, out_lvalue, clamp_lvalue) 0
+#define US_FAULT_TARGETS(sc, fd) 0
 
 #endif
 #endif /* LIBUS_FAULT_INJECT_H */

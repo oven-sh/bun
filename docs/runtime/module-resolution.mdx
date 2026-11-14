@@ -54,9 +54,11 @@ Here `./hello` is a relative path with no extension. **Extensioned imports are o
 - `./hello/index.json`
 
 <Note>
-  The exact order varies by context: `require()` tries CommonJS extensions (`.cts`, `.cjs`) before ESM ones (`.mts`,
-  `.mjs`). Imports inside `node_modules` try JavaScript extensions before TypeScript ones. The list above shows the
-  order for a local ESM `import`.
+
+The exact order varies by context. The list above shows the order for an ESM `import` of a path outside `node_modules`. Outside `node_modules`, `require()` tries CommonJS extensions (`.cts`, `.cjs`) before ESM ones (`.mjs`, `.mts`). For a path inside `node_modules`, Bun tries JavaScript extensions before TypeScript ones, except that an `import` tries `.mts` before `.js` and `.cjs`.
+
+The `"main"` field of a `package.json` follows none of these orders. When `"main"` has no extension, Bun tries `.js`, `.cjs`, `.cts`, `.tsx`, `.ts`, `.jsx` and `.json` in that order, for `import` and `require()` alike. Bun uses the same order for the `index` file of a directory that `"main"` names, and for the `index` file of a package that has a `"module"` field and no `"main"`.
+
 </Note>
 
 If the import path includes an extension, Bun checks for that exact file first. If no exact match exists, Bun falls back to trying the extension list above appended to the full path (so `./hello.world` can resolve to `./hello.world.ts`).
@@ -66,7 +68,7 @@ import { hello } from "./hello";
 import { hello } from "./hello.ts"; // this works
 ```
 
-There's one additional rule for TypeScript compatibility. If you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts` or `*.tsx` file. Outside `node_modules`, `from "*.mjs"` also matches `*.mts`. This rule follows the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths. Unlike TypeScript, Bun doesn't rewrite `.cjs` to `.cts`.
+There's one additional rule for TypeScript compatibility. If you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts`, `*.tsx` or `*.mts` file, in that order. Outside `node_modules`, `from "*.mjs"` also matches `*.mts`, and `from "*.cjs"` also matches `*.cts`. This rule is based on the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths.
 
 ```ts index.ts icon="/icons/typescript.svg"
 import { hello } from "./hello";

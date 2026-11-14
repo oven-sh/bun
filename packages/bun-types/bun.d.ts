@@ -8140,7 +8140,9 @@ declare module "bun" {
        * via {@link Subprocess.stdio} is owned by the caller and is never
        * closed by the subprocess. Use this when you wrap the fd in
        * something that will close it itself (e.g. `net.connect({fd})`).
-       * On Windows it behaves the same as `"pipe"`.
+       * On Windows it behaves the same as `"pipe"`. {@link spawnSync} throws
+       * for `"socket-fd"`: the object it returns has no `stdio` to hand the
+       * fd over.
        *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
@@ -8194,6 +8196,9 @@ declare module "bun" {
        *
        * An alternative is `await subprocess.exited`.
        *
+       * {@link spawnSync} never calls this callback. Read `exitCode` and
+       * `signalCode` from the object it returns.
+       *
        * @example
        *
        * ```ts
@@ -8239,6 +8244,8 @@ declare module "bun" {
        *   first.
        * - Only runs when {@link ipc} is enabled and runs at most once per
        *   subprocess.
+       * - {@link spawnSync} opens no IPC channel, so it never calls this
+       *   callback.
        * - If the child becomes a zombie (exited but not yet reaped), the IPC is
        *   already closed, and this callback will fire (or may already have
        *   fired).
@@ -8266,6 +8273,8 @@ declare module "bun" {
        * respectively. This is the same API that Node.js exposes when `child_process.fork()` is used.
        *
        * This is only compatible with processes that are other `bun` instances.
+       *
+       * {@link spawnSync} opens no IPC channel and never calls this callback.
        */
       ipc?(
         message: any,

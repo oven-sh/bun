@@ -70,11 +70,11 @@ var pkg = {
 pkg.name;
 ```
 
-If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module that `export default`s the parsed object.
+If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
-```json Input
+```json data.json
 {
   "name": "John Doe",
   "age": 35,
@@ -83,11 +83,16 @@ If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a
 ```
 
 ```ts Output
-export default {
-  name: "John Doe",
-  age: 35,
-  email: "johndoe@example.com",
+// data.json
+var name = "John Doe";
+var age = 35;
+var email = "johndoe@example.com";
+var data_default = {
+  name,
+  age,
+  email,
 };
+export { age, data_default as default, email, name };
 ```
 
 </CodeGroup>
@@ -139,22 +144,27 @@ var config = {
 config.logLevel;
 ```
 
-If you pass a `.toml` file as an entrypoint, Bun converts it to a `.js` module that `export default`s the parsed object.
+If you pass a `.toml` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
-```toml Input
+```toml data.toml
 name = "John Doe"
 age = 35
 email = "johndoe@example.com"
 ```
 
 ```ts Output
-export default {
-  name: "John Doe",
-  age: 35,
-  email: "johndoe@example.com",
+// data.toml
+var name = "John Doe";
+var age = 35;
+var email = "johndoe@example.com";
+var data_default = {
+  name,
+  age,
+  email,
 };
+export { age, data_default as default, email, name };
 ```
 
 </CodeGroup>
@@ -183,22 +193,27 @@ var config = {
 };
 ```
 
-If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module that `export default`s the parsed object.
+If you pass a `.yaml` or `.yml` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level string key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
-```yaml Input
+```yaml data.yaml
 name: John Doe
 age: 35
 email: johndoe@example.com
 ```
 
 ```ts Output
-export default {
-  name: "John Doe",
-  age: 35,
-  email: "johndoe@example.com",
+// data.yaml
+var name = "John Doe";
+var age = 35;
+var email = "johndoe@example.com";
+var data_default = {
+  name,
+  age,
+  email,
 };
+export { age, data_default as default, email, name };
 ```
 
 </CodeGroup>
@@ -227,11 +242,11 @@ var config = {
 };
 ```
 
-If you pass a `.json5` file as an entrypoint, Bun converts it to a `.js` module that `export default`s the parsed object.
+If you pass a `.json5` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `default` and `__esModule`.
 
 <CodeGroup>
 
-```json5 Input
+```json5 data.json5
 {
   // Configuration
   name: "John Doe",
@@ -241,11 +256,16 @@ If you pass a `.json5` file as an entrypoint, Bun converts it to a `.js` module 
 ```
 
 ```ts Output
-export default {
-  name: "John Doe",
-  age: 35,
-  email: "johndoe@example.com",
+// data.json5
+var name = "John Doe";
+var age = 35;
+var email = "johndoe@example.com";
+var data_default = {
+  name,
+  age,
+  email,
 };
+export { age, data_default as default, email, name };
 ```
 
 </CodeGroup>
@@ -281,11 +301,11 @@ var doc = {
 };
 ```
 
-If you pass a `.xml` file as an entrypoint, Bun converts it to a `.js` module that `export default`s the parsed object.
+If you pass a `.xml` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed object. The root element's name is also a named export when it is a valid identifier other than `default` or `__esModule`.
 
 <CodeGroup>
 
-```xml Input
+```xml data.xml
 <user id="1">
   <name>John Doe</name>
   <email>johndoe@example.com</email>
@@ -295,14 +315,17 @@ If you pass a `.xml` file as an entrypoint, Bun converts it to a `.js` module th
 ```
 
 ```ts Output
-export default {
-  user: {
-    "@id": "1",
-    name: "John Doe",
-    email: "johndoe@example.com",
-    role: ["admin", "editor"],
-  },
+// data.xml
+var user = {
+  "@id": "1",
+  name: "John Doe",
+  email: "johndoe@example.com",
+  role: ["admin", "editor"],
 };
+var data_default = {
+  user,
+};
+export { data_default as default, user };
 ```
 
 </CodeGroup>
@@ -329,16 +352,19 @@ var contents = `Hello, world!`;
 console.log(contents);
 ```
 
-If you pass a `.txt` file as an entrypoint, Bun converts it to a `.js` module that `export default`s the file contents.
+If you pass a `.txt` file as an entrypoint to the bundler, Bun converts it to a `.js` module that `export default`s the file contents.
 
 <CodeGroup>
 
-```txt Input
+```txt file.txt
 Hello, world!
 ```
 
 ```ts Output
-export default "Hello, world!";
+// file.txt
+var file_default = `Hello, world!
+`;
+export { file_default as default };
 ```
 
 </CodeGroup>
@@ -525,22 +551,30 @@ bun run logo.ts
 /path/to/project/logo.svg
 ```
 
-_In the bundler_, Bun copies the file into `outdir` as-is, and the import resolves to a relative path pointing to the copied file.
+_In the bundler_, Bun copies the file into `outdir` and adds a hash of the file's contents to the name of the copy. The import resolves to a relative path pointing to the copied file.
 
 ```ts Output
-var logo = "./logo.svg";
-console.log(logo);
+// logo.svg
+var logo_default = "./logo-r2wfzjrq.svg";
+
+// logo.ts
+console.log(logo_default);
 ```
 
 If `publicPath` is set, the import uses its value as a prefix to construct an absolute path/URL.
 
-| Public path                  | Resolved import                    |
-| ---------------------------- | ---------------------------------- |
-| `""` (default)               | `./logo.svg`                       |
-| `"/assets/"`                 | `/assets/logo.svg`                 |
-| `"https://cdn.example.com/"` | `https://cdn.example.com/logo.svg` |
+| Public path                  | Resolved import                             |
+| ---------------------------- | ------------------------------------------- |
+| `""` (default)               | `./logo-r2wfzjrq.svg`                       |
+| `"/assets/"`                 | `/assets/logo-r2wfzjrq.svg`                 |
+| `"https://cdn.example.com/"` | `https://cdn.example.com/logo-r2wfzjrq.svg` |
 
-<Note>The value of [`naming.asset`](/bundler#naming) determines the location and file name of the copied file.</Note>
+<Note>
+  The value of [`naming.asset`](/bundler#naming) determines the location and file name of the copied file. The default
+  is `[name]-[hash].[ext]`. Set it to `[name].[ext]` to keep the original file name. With that pattern, two assets with
+  the same file name get the same output path, and one overwrites the other. Add `[dir]` to the pattern to keep them
+  apart.
+</Note>
 
 <Accordion title="Fixing TypeScript import errors">
 If you're using TypeScript, you may get an error like this:

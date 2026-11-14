@@ -534,20 +534,20 @@ impl Cmd {
         // `&Interpreter` is live across the re-entrant spawn. `child_out`
         // points into the `Box<SubprocExec>` heap allocation, which is
         // address-stable for the lifetime of the Cmd (only dropped in
-        // `deinit`). argv pointers borrow `cmd.args[i]` storage, which is not
-        // reallocated between here and `spawn_process`.
+        // `deinit`).
         //
         // `cmd_parent` is `(interp, NodeId)` rather than the spec's `*ShellCmd`
         // — the Cmd lives inline in `interp.nodes: Vec<Node>`, and a raw
         // `*mut Cmd` would dangle on the next `alloc_node` reallocation.
+        let args;
         let child_out: *mut *mut ShellSubprocess = {
             let cmd = interp.as_cmd_mut(this);
-            spawn_args.argv.reserve_exact(cmd.args.len() + 1);
-            for arg in &cmd.args {
-                debug_assert_eq!(arg.last(), Some(&0));
-                spawn_args.argv.push(arg.as_ptr().cast());
+            args = core::mem::take(&mut cmd.args);
+            spawn_args.argv.reserve_exact(args.len() + 1);
+            for arg in &args {
+                let arg = bun_core::CStrRef::from_bytes_with_nul(arg);
+                spawn_args.argv.push(Some(arg));
             }
-            spawn_args.argv.push(core::ptr::null());
             match &mut cmd.exec {
                 Exec::Subproc(sub) => core::ptr::addr_of_mut!(sub.child),
                 _ => unreachable!(),

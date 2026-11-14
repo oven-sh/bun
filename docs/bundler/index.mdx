@@ -436,7 +436,7 @@ To build an IIFE bundle, set `format` to `"iife"`. Bun wraps the bundle in an im
 
 ### `jsx`
 
-Configures how JSX is compiled.
+Configures how JSX is compiled. An option that you set here wins over the same option in the `tsconfig.json` of your project. `tsconfig.json` still decides the options that you do not set.
 
 **Classic runtime example** (uses `factory` and `fragment`):
 

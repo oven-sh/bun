@@ -20,6 +20,7 @@ use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
 };
+use bun_options_types::jsx;
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -101,11 +102,11 @@ pub(crate) fn resolve_defines(values: &[&'static [u8]]) -> crate::Result<Option<
     }))
 }
 
-fn resolve_jsx_runtime(s: &[u8]) -> api::JsxRuntime {
+fn resolve_jsx_runtime(s: &[u8]) -> jsx::Runtime {
     if s == b"automatic" {
-        api::JsxRuntime::Automatic
+        jsx::Runtime::Automatic
     } else if s == b"fallback" || s == b"classic" {
-        api::JsxRuntime::Classic
+        jsx::Runtime::Classic
     } else {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: Invalid --jsx-runtime: \"{}\", expected \"automatic\" or \"classic\"",
@@ -1985,45 +1986,18 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    if jsx_factory.is_some()
-        || jsx_fragment.is_some()
-        || jsx_import_source.is_some()
-        || jsx_runtime.is_some()
-    {
-        let default_factory: &[u8] = b"";
-        let default_fragment: &[u8] = b"";
-        let default_import_source: &[u8] = b"";
-        if opts.jsx.is_none() {
-            opts.jsx = Some(api::Jsx {
-                factory: jsx_factory.unwrap_or(default_factory).into(),
-                fragment: jsx_fragment.unwrap_or(default_fragment).into(),
-                import_source: jsx_import_source.unwrap_or(default_import_source).into(),
-                runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)
-                } else {
-                    api::JsxRuntime::Automatic
-                },
-                development: false,
-                side_effects: jsx_side_effects,
-            });
-        } else {
-            let prev = opts.jsx.take().unwrap();
-            opts.jsx = Some(api::Jsx {
-                factory: jsx_factory.map(Box::<[u8]>::from).unwrap_or(prev.factory),
-                fragment: jsx_fragment.map(Box::<[u8]>::from).unwrap_or(prev.fragment),
-                import_source: jsx_import_source
-                    .map(Box::<[u8]>::from)
-                    .unwrap_or(prev.import_source),
-                runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)
-                } else {
-                    prev.runtime
-                },
-                development: false,
-                side_effects: jsx_side_effects,
-            });
-        }
-    }
+    // A flag with an empty value states nothing.
+    opts.jsx.flags = jsx::Stated {
+        runtime: jsx_runtime.map(resolve_jsx_runtime),
+        factory: jsx_factory.and_then(|text| jsx::MemberList::stated(text, jsx::defaults::FACTORY)),
+        fragment: jsx_fragment
+            .and_then(|text| jsx::MemberList::stated(text, jsx::defaults::FRAGMENT)),
+        import_source: jsx_import_source
+            .filter(|name| !name.is_empty())
+            .map(jsx::ImportSource::new),
+        side_effects: jsx_side_effects.then_some(true),
+        ..Default::default()
+    };
 
     if is_build {
         if cmd == CommandTag::BuildCommand

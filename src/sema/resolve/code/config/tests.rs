@@ -483,6 +483,80 @@ fn settings_start_from_command_line() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn project_config_does_not_decide_what_the_program_states() {
+    let written = r#"{"compilerOptions": {"jsx": "react-jsx", "jsxFactory": "config", "jsxFragmentFactory": "config", "jsxImportSource": "config"}}"#;
+    let own_fragment = |extends: &str| {
+        format!(r#"{{"extends": "{extends}", "compilerOptions": {{"jsxFragmentFactory": "own"}}}}"#)
+    };
+    let (extends_project, extends_base) = (
+        own_fragment("../tsconfig.json"),
+        own_fragment("../base.json"),
+    );
+    let host = MemoryHost::new(&[
+        // The config of the project, and the file that it extends.
+        ("/app/tsconfig.json", r#"{"extends": "./base.json"}"#),
+        ("/app/base.json", written),
+        ("/app/nested/tsconfig.json", written),
+        ("/app/extends_project/tsconfig.json", &extends_project),
+        ("/app/extends_base/tsconfig.json", &extends_base),
+        ("/named.json", written),
+    ]);
+    let mut options = bun_run();
+    options.jsx.runtime = JsxRuntime::Classic;
+    options.jsx.factory = vec![b"program".to_vec()];
+    options.jsx.import_source = b"program".to_vec();
+    let of = |options: &CodeOptions, path| render_jsx(&settings_with(&host, options, path).jsx);
+    let decided_by_config = "Automatic prod config config config";
+    assert_eq!(of(&options, "/app/a.tsx"), decided_by_config);
+
+    options.jsx_stated.runtime = true;
+    options.jsx_stated.factory = true;
+    assert_eq!(
+        of(&options, "/app/a.tsx"),
+        "Classic prod program config config"
+    );
+    // A config of a directory below decides all that it states itself, and so does the file of `--tsconfig-override`.
+    assert_eq!(of(&options, "/app/nested/a.tsx"), decided_by_config);
+    // What it takes from a file of the project with `extends` is not what it states itself.
+    let takes_from_project = "Classic prod program own config";
+    assert_eq!(
+        of(&options, "/app/extends_project/a.tsx"),
+        takes_from_project
+    );
+    assert_eq!(of(&options, "/app/extends_base/a.tsx"), takes_from_project);
+    options.tsconfig_override = Some(b"/named.json".to_vec());
+    assert_eq!(of(&options, "/app/a.tsx"), decided_by_config);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn project_config_that_extends_the_manifest_of_an_aot_package_leaves_the_package_its_options() {
+    let exports = r#""exports": {".": {"aot": "./index.aot.tsx", "default": "./index.js"}}"#;
+    let manifest =
+        format!(r#"{{"name": "shapes", {exports}, "compilerOptions": {{"jsxFactory": "make"}}}}"#);
+    let host = MemoryHost::new(&[
+        (
+            "/app/tsconfig.json",
+            r#"{"extends": "./node_modules/shapes/package.json"}"#,
+        ),
+        ("/app/node_modules/shapes/package.json", manifest.as_str()),
+    ]);
+    let mut options = bun_run();
+    options.jsx.factory = vec![b"program".to_vec()];
+    options.jsx_stated.factory = true;
+    let of = |path| render_jsx(&settings_with(&host, &options, path).jsx);
+    assert_eq!(
+        of("/app/a.tsx"),
+        "Automatic dev program React.Fragment react"
+    );
+    assert_eq!(
+        of("/app/node_modules/shapes/index.aot.tsx"),
+        "Automatic dev make React.Fragment react"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn options_of_other_json_types_are_ignored() {
     let ignored = lib_settings(
         r#"{

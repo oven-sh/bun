@@ -2,13 +2,12 @@
 //!
 //! MOVE_DOWN COMPLETE for the resolver↔bundler cycle: these are the types the
 //! resolver reads, defined at the lowest tier that can name all their parts
-//! (`jsx::Pragma`/`ConditionsMap` live in this crate; `Target`/`Loader` in
+//! (`ConditionsMap` lives in this crate; `Target`/`Loader` in
 //! `bun_options_types`). `bun_bundler::options::BundleOptions` is the ~200-field
 //! CLI/config aggregate; `bun_bundler::transpiler::resolver_bundle_options_subset`
 //! projects it into this struct for `Resolver::init1`. These are NOT a re-decl
 //! of the bundler type — the bundler depends on this crate and re-exports them.
 
-pub use crate::tsconfig_json::options::jsx;
 pub(crate) use bun_ast::Target;
 pub use bun_options_types::bundle_enums::ModuleType;
 
@@ -172,7 +171,6 @@ pub struct Framework {
 pub struct BundleOptions {
     pub target: Target,
     pub packages: Packages,
-    pub jsx: jsx::Pragma,
     pub extension_order: ExtensionOrder,
     pub conditions: Conditions,
     pub external: ExternalModules,
@@ -225,7 +223,6 @@ impl BundleOptions {
     pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
-            self.jsx.development = !value;
         }
     }
 }

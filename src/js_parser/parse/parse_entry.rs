@@ -670,7 +670,7 @@ impl<'a> Parser<'a> {
             let arena = p.arena;
             let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
             let classic_import_source: &'a [u8] =
-                arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
+                arena.alloc_slice_copy(p.options.jsx.package_name());
             let _ = p.add_import_record(
                 bun_ast::ImportKind::Require,
                 bun_ast::Loc { start: 0 },
@@ -2392,7 +2392,7 @@ impl<'a> Parser<'a> {
             // `generate_import_stmt` takes `import_path: &'a [u8]`, so the Pragma-owned `Box<[u8]>`
             // paths are copied into the bump arena.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
-            let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
+            let package_name: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.package_name());
             let with_symbols = |names: &[&'static [u8]]| -> Vec<(&'static [u8], js_ast::Ref)> {
                 names
                     .iter()

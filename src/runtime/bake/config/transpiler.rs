@@ -114,7 +114,7 @@ impl Framework {
         out.configure_linker();
         out.configure_defines()?;
 
-        out.options.jsx.development = mode == Mode::Development;
+        out.options.set_jsx_development(mode == Mode::Development);
 
         add_import_meta_defines(
             &mut out.options.define,

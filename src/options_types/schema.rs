@@ -58,7 +58,7 @@ pub mod api {
     #[derive(Clone, Debug, Default)]
     pub struct TransformOptions {
         /// jsx
-        pub jsx: Option<Jsx>,
+        pub jsx: crate::jsx::Sources,
         /// tsconfig_override
         pub tsconfig_override: Option<Box<[u8]>>,
         /// origin
@@ -425,26 +425,6 @@ pub mod api {
                 _ => Loader::_none,
             }
         }
-    }
-
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum JsxRuntime {
-        #[default]
-        _none = 0,
-        Automatic = 1,
-        Classic = 2,
-    }
-
-    /// JSX transform configuration (factory, fragment, runtime, …).
-    #[derive(Clone, Debug, Default)]
-    pub struct Jsx {
-        pub factory: Box<[u8]>,
-        pub runtime: JsxRuntime,
-        pub fragment: Box<[u8]>,
-        pub development: bool,
-        pub import_source: Box<[u8]>,
-        pub side_effects: bool,
     }
 
     /// Parallel-array string→string map as transmitted on the wire.

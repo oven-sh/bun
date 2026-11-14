@@ -21,6 +21,8 @@ console.log(<Component message="Hello world!" />);
 
 Bun reads your `tsconfig.json` or `jsconfig.json` to determine how to perform the JSX transform internally. If you'd rather not use either, you can set the same options in [`bunfig.toml`](/runtime/bunfig).
 
+An option that you set in `bunfig.toml`, with a `--jsx-*` flag, or in the `jsx` option of [`Bun.build`](/bundler#jsx) wins over the same option in the `tsconfig.json` of your project and in the files that it extends, also where another `tsconfig.json` inherits the option from one of them. A `tsconfig.json` in a subdirectory or in a dependency keeps all of its other options. The file that `--tsconfig-override` names keeps all of its options.
+
 Bun respects the following compiler options.
 
 ### [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)

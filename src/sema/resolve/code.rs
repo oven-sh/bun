@@ -14,7 +14,7 @@ mod search;
 #[cfg(test)]
 mod tests;
 
-pub use self::config::{JsxRuntime, JsxSettings, TranspileSettings};
+pub use self::config::{JsxRuntime, JsxSettings, JsxStated, TranspileSettings};
 pub use self::options::{AOT_CONDITION, CodeOptions, ExtensionOrders};
 pub use self::search::find_file_plainly;
 

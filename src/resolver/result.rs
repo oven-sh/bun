@@ -4,6 +4,7 @@
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
 use std::io::Write as _;
+use std::sync::Arc;
 
 use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
@@ -14,7 +15,8 @@ use bun_sys::Fd as FD;
 use crate::dir_info::DirInfoRef;
 use crate::options;
 use crate::package_json::PackageJSON;
-use crate::resolver::Dependency;
+use crate::resolver::{Dependency, TSConfigRef};
+use crate::tsconfig_json::TSConfigJSON;
 
 // NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
@@ -49,10 +51,42 @@ impl<'r> PathPair<'r> {
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
+/// Whose JSX options a resolved file takes. The bundler resolves them.
+#[derive(Default)]
+pub struct JsxConfig {
+    /// Whether the options of the build rank below `layers`. Not for a file in memory or a module of an executable.
+    pub of_build: bool,
+    /// Each configuration that the resolver found for the file, lowest rank first.
+    pub layers: [Option<JsxLayer>; 3],
+}
+
+/// A configuration that the resolver found for a file.
+pub enum JsxLayer {
+    /// A tsconfig.json: what it states wins over what ranks below it.
+    TSConfig(TSConfigRef),
+    /// The `compilerOptions` of a package with the "aot" condition. Of what ranks below it, only `development` stays.
+    AotPackage(Arc<TSConfigJSON>),
+}
+
+impl JsxConfig {
+    /// The options of the build and no configuration file.
+    pub const OF_BUILD: JsxConfig = JsxConfig {
+        of_build: true,
+        layers: [None, None, None],
+    };
+
+    /// Lists `layer` above the others.
+    pub(crate) fn push(&mut self, layer: JsxLayer) {
+        let free = self.layers.iter_mut().find(|slot| slot.is_none());
+        *free.expect("one layer from a `paths` hit and one for each path of the pair") =
+            Some(layer);
+    }
+}
+
 pub struct Result<'r> {
     pub path_pair: PathPair<'r>,
 
-    pub jsx: options::jsx::Pragma,
+    pub jsx: JsxConfig,
 
     pub package_json: Option<&'static PackageJSON>,
 
@@ -76,7 +110,7 @@ impl Default for Result<'_> {
     fn default() -> Self {
         Self {
             path_pair: PathPair::default(),
-            jsx: options::jsx::Pragma::default(),
+            jsx: JsxConfig::default(),
             package_json: None,
             primary_side_effects_data: SideEffects::HasSideEffects,
             module_type: options::ModuleType::Unknown,

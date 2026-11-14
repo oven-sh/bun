@@ -47,6 +47,10 @@ jsxFragment = "Fragment"
 jsxImportSource = "react"
 ```
 
+A field that you set here wins over the same field in the `tsconfig.json` of your project and in the files that it extends, also where another `tsconfig.json` inherits the field from one of them. Set only the fields that you want to change: `tsconfig.json` still decides the fields that you do not set here, and a `--jsx-*` flag wins over both files. A `tsconfig.json` in a subdirectory or in a dependency keeps all of its other fields. The file that `--tsconfig-override` names keeps all of its fields.
+
+`bun run`, `bun test` and `bun build` read these fields. `Bun.build()` takes its own [`jsx`](/bundler#jsx) option and does not read them, and neither do HTML imports.
+
 Refer to the tsconfig docs for more information on these fields.
 
 - [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)

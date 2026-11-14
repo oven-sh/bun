@@ -2205,6 +2205,37 @@ export { greeting };`,
   });
 });
 
+describe("jsx option", () => {
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  // https://github.com/oven-sh/bun/issues/15844
+  test("an option that jsx states is not taken from the tsconfig.json of the project", async () => {
+    const dir = tempDirWithFiles("jsx-option-over-tsconfig", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsxdev", jsxImportSource: "from-tsconfig" } }),
+      "m.jsx": `console.log(<div />);`,
+    });
+    const fromPackage = (source: string) =>
+      `import { jsxDEV } from "${source}/jsx-dev-runtime"; console.log(/* @__PURE__ */ jsxDEV("div", {}, undefined, false, undefined, this));`;
+    process.chdir(dir);
+    const build = async (jsx: NonNullable<Bun.BuildConfig["jsx"]>) => {
+      const built = await Bun.build({ entrypoints: ["./m.jsx"], external: ["*"], jsx });
+      return (await built.outputs[0].text()).trim().split("\n").slice(1).join(" ");
+    };
+    expect({
+      classic: await build({ runtime: "classic", factory: "stated" }),
+      importSource: await build({ importSource: "stated" }),
+      // tsconfig.json still decides what `jsx` does not state.
+      factoryAlone: await build({ factory: "stated" }),
+    }).toEqual({
+      classic: `console.log(/* @__PURE__ */ stated("div", null));`,
+      importSource: fromPackage("stated"),
+      factoryAlone: fromPackage("from-tsconfig"),
+    });
+  });
+});
+
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"
 // for this path. Under debug/ASAN the allocator behaviour is stable enough to

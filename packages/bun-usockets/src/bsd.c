@@ -1617,10 +1617,16 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 }
 
 
-/* Receive-path options every UDP socket needs, whether freshly created or
- * adopted from an existing fd: destination-address and TOS reporting for
- * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR (opt-in). */
-static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family, int options) {
+/* Receive-path options of a UDP socket we create: destination-address and TOS
+ * reporting for recvmmsg, and Windows ICMP-reset suppression.
+ *
+ * Linux IP_RECVERR is deliberately not set, as in libuv (Node never passes
+ * UV_UDP_LINUX_RECVERR). With it the kernel records every ICMP error on the
+ * socket, connected or not, and fails the next recv or send with it whichever
+ * peer that is for: one client that closes its port ends a reply server.
+ * Without it only a connected socket gets a (hard) ICMP error, as the pending
+ * error that the next recvmmsg fails with. */
+static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd) {
     /* We need destination address for udp packets in both ipv6 and ipv4 */
 
 /* On FreeBSD this option seems to be called like so */
@@ -1659,31 +1665,11 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family, i
 #endif
     }
 #endif
-
-#if defined(__linux__)
-    /* IP_RECVERR/IPV6_RECVERR queues ICMP errors on the socket's error queue
-     * for on_recv_error to drain. libuv gates this on UV_UDP_LINUX_RECVERR
-     * (Node's dgram never passes it). Opt-in only: on a shared unconnected
-     * socket (the HTTP/3 fetch client) it also makes a queued ICMP fail the
-     * next send to a different, live peer. */
-    if (options & LIBUS_UDP_LINUX_RECVERR) {
-#ifdef IP_RECVERR
-        setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
-#endif
-#ifdef IPV6_RECVERR
-        if (family == AF_INET6) {
-            setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-        }
-#endif
-    }
-#else
-    (void) options;
-#endif
 }
 
 /* Prepares an externally created UDP fd for adoption, matching uv_udp_open:
- * nonblock + SO_REUSEADDR only. Recv-path options (IP_RECVERR, PKTINFO,
- * SIO_UDP_CONNRESET) are NOT applied — mutating the caller's fd is observable. */
+ * nonblock + SO_REUSEADDR only. Recv-path options (PKTINFO, SIO_UDP_CONNRESET)
+ * are NOT applied — mutating the caller's fd is observable. */
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     /* Refuse to adopt anything that isn't a datagram socket. */
     int sock_type = 0;
@@ -1813,7 +1799,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family, options);
+    bsd_apply_udp_recv_options(listenFd);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {

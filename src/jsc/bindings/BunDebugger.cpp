@@ -52,11 +52,6 @@ static PausedWait& pausedWait()
 
 static bool waitingForConnection = false;
 static bool bunControllerInstalled = false;
-// Tracks whether connectFrontend has ever been called on the Bun-installed
-// inspector controller; once true, the exit path must leak that controller
-// (see Bun__InspectorConnection__disconnectAllOnExit) even if every
-// connection has since disconnected and been removed from inspectorConnections.
-static bool bunControllerHasEverConnected = false;
 extern "C" void Debugger__didConnect();
 
 class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
@@ -99,9 +94,8 @@ enum class ConnectionStatus : int32_t {
 class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
 public:
-    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, bool shouldRefEventLoop)
         : Inspector::FrontendChannel()
-        , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
         , unrefOnDisconnect(shouldRefEventLoop)
     {
@@ -111,9 +105,9 @@ public:
     {
     }
 
-    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, bool shouldRefEventLoop)
     {
-        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop));
+        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, shouldRefEventLoop));
     }
 
     ConnectionType connectionType() const override
@@ -125,6 +119,8 @@ public:
     {
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
+        // Not the global at creation: `bun test --isolate` can replace that one before this task runs.
+        this->globalObject = globalObject;
         if (this->unrefOnDisconnect) {
             Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
         }
@@ -147,7 +143,6 @@ public:
         }
 
         this->hasEverConnected = true;
-        bunControllerHasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -227,6 +222,7 @@ public:
         });
     }
 
+    // Only while attached: the controller it is attached to keeps `globalObject` alive (m_strongGlobalObject).
     JSC::JSGlobalObjectDebuggable& inspector()
     {
         return globalObject->inspectorDebuggable();
@@ -470,7 +466,7 @@ public:
     WTF::Lock jsThreadMessagesLock = WTF::Lock();
     std::atomic<uint32_t> jsThreadMessageScheduledCount { 0 };
 
-    JSC::JSGlobalObject* globalObject;
+    JSC::JSGlobalObject* globalObject { nullptr };
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
@@ -601,7 +597,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     // unpauseForResolvedAutomaticInspection hook that resolves
     // wait-for-debugger). Once installed, never recreate: destroying a
     // controller that ever had a frontend attached — even a since-disconnected
-    // one — trips the CheckedPtr ordering bug (see the exit-path comment
+    // one, trips the CheckedPtr ordering bug (see leakInspectorControllerThatHadFrontend
     // below). node:inspector re-enters this from waitForDebugger() at runtime.
     if (!bunControllerInstalled) {
         bunControllerInstalled = true;
@@ -662,9 +658,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
-    auto connection = BunInspectorConnection::create(
-        *targetContext,
-        targetContext->jsGlobalObject(), shouldRef);
+    auto connection = BunInspectorConnection::create(*targetContext, shouldRef);
 
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -1060,24 +1054,23 @@ extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::
         }
     }
 
-    // A controller that never had a frontend connect has no agents and is safe
-    // to destroy normally. One that did needs the leak workaround below even
-    // if every connection has already disconnected (e.g. inspector.close()
-    // before exit) — its destructor still trips the CheckedPtr ordering bug.
-    if (!bunControllerHasEverConnected)
+    // Under `bun test --isolate` a connection can be attached to the controller of an earlier global.
+    for (auto& connection : toDisconnect)
+        connection->inspector().disconnect(*connection);
+    JSC_END_REMOVABLE_ENTRY_POINT
+}
+
+// The destructor of a controller that made its lazy agents aborts: https://github.com/oven-sh/WebKit/pull/925
+NEVER_INLINE void leakInspectorControllerThatHadFrontend(JSC::JSGlobalObject& globalObject)
+{
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    if (!globalObject.m_inspectorController->debugger())
         return;
 
-    for (auto& connection : toDisconnect)
-        globalObject->inspectorDebuggable().disconnect(*connection);
-
-    globalObject->m_inspectorController->globalObjectDestroyed();
-
-    // WebKit header bug: `m_inspectorAgent` (CheckedPtr) is declared before
-    // `m_agents`, so `~JSGlobalObjectInspectorController` destroys the agent
-    // while a CheckedPtr still counts it -> `crashDueToCheckedPtrToDeadObject()`.
-    // Leak the connected controller and hand the global a fresh, never-connected one.
-    [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
-    globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+    globalObject.m_inspectorController->globalObjectDestroyed();
+    // Needed after that fix too: a client of an earlier file can enable the heap agent here, and the Heap keeps a pointer to it.
+    [[maybe_unused]] auto* leakedController = globalObject.m_inspectorController.release();
+    globalObject.m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(globalObject, Bun::BunInjectedScriptHost::create());
     JSC_END_REMOVABLE_ENTRY_POINT
 }
 }

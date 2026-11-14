@@ -55,7 +55,7 @@ impl PendingConnect {
         self.port == port
             && self.pool_id == pool_id
             && self.ssl_config == ssl_config
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
     /// Remove `this` from `ctx.pending_h2_connects` and hand the owning

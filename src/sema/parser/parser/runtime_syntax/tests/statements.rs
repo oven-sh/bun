@@ -35,7 +35,7 @@ fn directives() {
         (r#"function f() { x; "use strict" }"#, 0, false),
         (r#"function f() { { "use strict" } }"#, 0, false),
         (r#"function f() { "use\x20strict" }"#, 1, false),
-        (r#"namespace N { "use strict"; () => 1 }"#, 0, false),
+        (r#"namespace N { "use strict"; () => 1 }"#, 1, true),
         (r#"class A { static { "use strict" } }"#, 0, true),
         (r#"class A { m() { "use strict" } }"#, 1, true),
     ] {

@@ -864,6 +864,12 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     });
     expect(block.text).toMatch(/\nsloppy\.js ─+ formatting only\n/);
     expect(block.text).toMatch(/\nwith\.js ─+ formatting only\n/);
+    // Also where the string is all that the block holds, behind another statement or at the start of a function.
+    const only = await pretty({
+      "a/only.js": `exports.f = function (g) { g(); { "x"; } return g; };\nexports.h = function () { { "use strict"; } return this; };\n`,
+      "b/only.js": `exports.f = function (g) {\n  g();\n  {\n    "x";\n  }\n  return g;\n};\nexports.h = function () {\n  {\n    "use strict";\n  }\n  return this;\n};\n`,
+    });
+    expect(only.text).toMatch(/\nonly\.js ─+ formatting only\n/);
     // A string statement that is not a directive is shown as it is written.
     const added = await pretty({
       "a/README.md": "x\n",

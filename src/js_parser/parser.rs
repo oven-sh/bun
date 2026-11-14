@@ -1012,9 +1012,12 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     match stmt.data {
         SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
         | SForOf(_) | SDoWhile(_) | SWhile(_) | SWith(_) | STry(_) | SSwitch(_) | SReturn(_)
-        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) | SLabel(_) => false,
+        | SThrow(_) | SBreak(_) | SContinue(_) | SLabel(_) => false,
 
         SLocal(ref local) => local.kind != js_ast::LocalKind::KVar,
+        // With `keep_directives` the string that starts a block is one. Outside the block it could become
+        // the directive of a function.
+        SDirective(_) => true,
         _ => true,
     }
 }

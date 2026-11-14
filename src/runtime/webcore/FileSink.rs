@@ -206,6 +206,16 @@ impl FileSink {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
         self.writer.get().memory_cost()
     }
+
+    /// `_handle.setBlocking()` of the stream over this sink. The caller already set or cleared `O_NONBLOCK` on the fd.
+    #[cfg(unix)]
+    pub(crate) fn set_blocking(&self, blocking: bool) {
+        // Only a stdio sink: any other still holds a small write (`should_buffer`) when `write()` returns.
+        debug_assert!(self.writer.get().force_sync);
+        if let Some(poll) = self.writer.get().get_poll() {
+            poll.set_blocking_writes(blocking);
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -995,6 +1005,19 @@ impl FileSink {
             if (*this).done.get() {
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
+            }
+            // After `_handle.setBlocking(true)` a flush waits for the reader, so only an exit makes one. Until then the writable poll has what is queued, as in libuv (https://github.com/libuv/libuv/blob/v1.52.1/src/unix/stream.c#L1385-L1403).
+            #[cfg(unix)]
+            if (*this)
+                .writer
+                .get()
+                .get_poll()
+                .is_some_and(|poll| poll.has_blocking_writes())
+                && !(*this)
+                    .js_vm()
+                    .is_some_and(|vm| vm.exit_handler.requested || vm.is_shutting_down())
+            {
+                return true;
             }
 
             let _guard = RefPtr::init_ref(this);

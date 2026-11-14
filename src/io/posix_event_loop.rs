@@ -310,13 +310,38 @@ impl FilePoll {
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
         }
-        if flags.contains(Flags::Tty) {
+        if flags.contains(Flags::PlainWrite) {
             return FileType::File;
         }
         if flags.contains(Flags::Nonblocking) {
             return FileType::NonblockingPipe;
         }
         FileType::Pipe
+    }
+
+    /// Whether `set_blocking_writes(true)` holds: a terminal has `PlainWrite` too, and was never asked.
+    #[cfg(not(windows))]
+    pub(crate) fn has_blocking_writes(&self) -> bool {
+        self.flags.contains(Flags::PlainWrite) && !self.flags.contains(Flags::Tty)
+    }
+
+    /// `uv_stream_set_blocking` for a writer's socket or pipe. In blocking mode a socket carries `PlainWrite` in place of `Socket`.
+    #[cfg(not(windows))]
+    pub(crate) fn set_blocking_writes(&mut self, blocking: bool) {
+        let flags = &mut self.flags;
+        if blocking {
+            if flags.contains(Flags::Socket) {
+                flags.remove(Flags::Socket);
+                flags.insert(Flags::PlainWrite);
+            } else if flags.contains(Flags::Fifo) {
+                flags.insert(Flags::PlainWrite);
+            }
+        } else if flags.contains(Flags::Fifo) {
+            flags.remove(Flags::PlainWrite);
+        } else if flags.contains(Flags::PlainWrite) && !flags.contains(Flags::Tty) {
+            flags.remove(Flags::PlainWrite);
+            flags.insert(Flags::Socket);
+        }
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1188,6 +1213,8 @@ pub enum Flags {
     IgnoreUpdates,
 
     Socket,
+    /// `file_type()` answers `File`: the writer uses plain `write(2)`, which waits for the reader when the fd is blocking.
+    PlainWrite,
     Tty,
 }
 

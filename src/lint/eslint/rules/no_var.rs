@@ -298,9 +298,22 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
     false
 }
 
+/// True if the declaration binds a name in `top_level`, the top-level scope of a script whose markup can assign it. No
+/// reference in the script shows that assignment.
+fn markup_may_write<'a>(declaration: VarDecl<'a>, top_level: Scope<'a>) -> bool {
+    let mut may_write = false;
+    declaration.pat().for_each_binding(&mut |pat| {
+        may_write |= pat.symbol().is_some_and(|it| it.scope() == top_level);
+    });
+    may_write
+}
+
 /// oxlint 1.87's fix. There's none if a variable is referenced outside the declaration's parent. The keyword is `const`
 /// if nothing is assigned later and every variable has an initializer. The fix replaces the whole declaration, so that
 /// no other fix changes it in the same pass.
+///
+/// oxlint picks `const` for a top-level binding in a `.vue` or `.svelte` script too, where the template can assign it
+/// (`v-model="x"`, `bind:value={x}`). The component then throws or doesn't compile. Here that binding gets `let`.
 fn fix_as_oxlint<'a>(
     fixer: Fixer<'a>,
     statement: Stmt<'a>,
@@ -331,9 +344,15 @@ fn fix_as_oxlint<'a>(
             return None;
         }
     }
-    let is_let = declarations
-        .iter()
-        .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
+    let file = fixer.file();
+    let top_level = file
+        .markup_assigns_bindings()
+        .then(|| file.top_level_scope());
+    let is_let = declarations.iter().any(|it| {
+        it.init().is_none()
+            || oxlint_is_written_to(it.pat())
+            || top_level.is_some_and(|top_level| markup_may_write(it, top_level))
+    });
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));
     let after = file.slice(Span::after(var, span.end));

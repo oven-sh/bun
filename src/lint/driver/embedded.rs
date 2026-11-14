@@ -5,6 +5,7 @@
 
 use crate::lint::{Context, RuleFilter};
 use bun_core::strings;
+use bun_lint::ast::EmbeddedScript;
 use bun_lint::context::Severity;
 use bun_lint::fix::Fix;
 use bun_lint::linter::config::oxlint_runs_on;
@@ -29,6 +30,17 @@ impl Framework {
             b".svelte" => Some(Framework::Svelte),
             b".astro" => Some(Framework::Astro),
             _ => None,
+        }
+    }
+
+    /// True if the file's markup can assign a script's top-level bindings. A Vue template does with `v-model="x"` or
+    /// `@click="x++"`, Svelte markup with `bind:value={x}`. An Astro expression can only do it as plain JavaScript,
+    /// which no directive does, and oxlint's `prefer-const` treats Astro as read-only too. The markup isn't parsed, so
+    /// a rule that decides from the absence of a write can't see those assignments.
+    pub(crate) fn markup_assigns_bindings(self) -> bool {
+        match self {
+            Framework::Vue | Framework::Svelte => true,
+            Framework::Astro => false,
         }
     }
 }
@@ -293,8 +305,9 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// The `should_run` of the oxlint 1.80 rules that check for these file extensions. There's no way to tell what the
-/// template uses or assigns to, and `$:` is Svelte syntax. Each rule was tried.
+/// The `should_run` of the oxlint 1.92 rules that check for these file extensions. There's no way to tell what the
+/// template uses, `$:` is Svelte syntax, and a rule that decides from the absence of a write is wrong where the
+/// [markup assigns](Framework::markup_assigns_bindings). Each rule was tried.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;
@@ -303,9 +316,10 @@ fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
         (Plugin::Eslint | Plugin::TypeScript, "no-unused-vars")
         | (Plugin::TypeScript, "consistent-type-imports") => true,
         (Plugin::Eslint, "no-unused-labels") => framework == Framework::Svelte,
-        (Plugin::Eslint, "prefer-const") | (Plugin::ReactHooks, "rules-of-hooks") => {
-            framework != Framework::Astro
+        (Plugin::Eslint, "prefer-const" | "no-unassigned-vars") => {
+            framework.markup_assigns_bindings()
         }
+        (Plugin::ReactHooks, "rules-of-hooks") => framework != Framework::Astro,
         _ => false,
     };
     !is_off && oxlint_runs_on(meta, is_typescript)
@@ -407,7 +421,11 @@ impl Context<'_, '_> {
                     && outer.is_none_or(|outer| outer(rule, severity))
             };
             let code = &text[script.start..script.end];
-            let how = (script.kind, index > 0);
+            let embedded = EmbeddedScript {
+                is_later: index > 0,
+                markup_assigns_bindings: framework.markup_assigns_bindings(),
+            };
+            let how = (script.kind, embedded);
             let mut result = self.verify_script(path, code, config, how, &filter);
             if result.thrown.is_some() {
                 return result;

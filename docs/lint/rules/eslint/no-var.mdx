@@ -14,7 +14,7 @@ deprecated: false
 
 A `var` belongs to the whole function, not to the block it's written in, and you can read it before the line that declares it. `let` and `const` are scoped to their block and can't be used before they're declared, which turns a class of silent bugs into errors.
 
-`--fix` rewrites `var` to `let` where that can't change what the code does.
+`--fix` rewrites `var` to `let` where that can't change what the code does. With an oxlint config it writes `const` instead when nothing assigns the variable later, except for a top-level `var` in the script of a `.vue` or `.svelte` file: the template can assign that one, so it stays `let`.
 
 This rule is on by default in TypeScript files.
 

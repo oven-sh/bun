@@ -702,30 +702,13 @@ impl TranspilerJob {
         transpiler.set_log(&raw mut *log_clone_guard.1);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
-        transpiler.macro_context = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // Note: `parse_maybe` re-creates the macro context per-iteration
-        // when `macro_context.is_none()`. It boxes a
-        // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
-        // stays with the long-lived `vm.transpiler`, but here
-        // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
-        // MUST free what `parse_maybe` allocates or every dynamic `import()`
-        // leaks one `Box<MacroContext>` (require-cache.test.ts "files
-        // transpiled and loaded don't leak file paths > via import()" OOMs at
-        // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
-        // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
-        // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
-        // small `Box`.
-        let mut macro_ctx_guard = scopeguard::guard(transpiler, |transpiler| {
-            if let Some(ctx) = transpiler.macro_context.take() {
-                ctx.deinit();
-            }
-        });
-        let transpiler: &mut Transpiler<'_> = &mut macro_ctx_guard;
+        // The one in the copy is the VM's.
+        let mut macro_context = None;
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -791,6 +774,7 @@ impl TranspilerJob {
             opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
+            macro_context: Some(&mut macro_context),
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,

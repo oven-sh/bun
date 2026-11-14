@@ -76,12 +76,7 @@ fn create_page_outputs(
 
         // SAFETY: the bundle that borrowed the transpiler is gone, so this is the only pointer to it. The arena frees
         // the struct's bytes, and `drop_in_place` releases what its fields own on the global heap. No double free.
-        unsafe {
-            if let Some(macros) = (*transpiler_pointer).macro_context.take() {
-                macros.deinit();
-            }
-            core::ptr::drop_in_place(transpiler_pointer);
-        }
+        unsafe { core::ptr::drop_in_place(transpiler_pointer) };
 
         let has_page_errors = page_log.errors > 0;
         page_log.append_to(log);

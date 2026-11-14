@@ -10,6 +10,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/ArrayPrototype.h"
 #include "JavaScriptCore/IdentifierInlines.h"
 
 namespace Bun {
@@ -71,6 +72,22 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+// The length, and bit 32 when the prototype is not its realm's Array.prototype. UINT64_MAX: not an ArrayType cell.
+extern "C" uint64_t Bun__JSArray__lengthAndFlags(JSC::EncodedJSValue encodedValue)
+{
+    static constexpr uint64_t otherPrototype = 1ULL << 32;
+
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isCell() || value.asCell()->type() != ArrayType)
+        return std::numeric_limits<uint64_t>::max();
+
+    JSArray* array = uncheckedDowncast<JSArray>(value.asCell());
+    uint64_t length = array->length();
+    if (array->getPrototypeDirect() != JSValue(array->realm()->arrayPrototype()))
+        length |= otherPrototype;
+    return length;
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

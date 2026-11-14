@@ -288,11 +288,7 @@ impl JSType {
     /// ```
     pub const Array: JSType = JSType(48);
 
-    /// Array subclass created through class extension.
-    /// ```js
-    /// class MyArray extends Array {}
-    /// const arr = new MyArray();
-    /// ```
+    /// `Array.prototype`. An instance of an `Array` subclass is [`JSType::Array`].
     pub const DerivedArray: JSType = JSType(49);
 
     /// ArrayBuffer for binary data storage.

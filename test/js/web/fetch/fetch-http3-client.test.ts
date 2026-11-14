@@ -1312,6 +1312,8 @@ describe("the origin ended the stream with no final response", () => {
   const interimOnly = (stream: any) => {
     stream.sendInformationalHeaders({ ":status": "103" });
     stream.writer.endSync();
+    // node:quic holds the end of the body until the final response. destroy() ends the stream without one.
+    stream.destroy();
   };
 
   test.each([

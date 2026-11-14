@@ -963,11 +963,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             for i in 0..records_len {
                 let (flags, src, key) = {
                     let ir = &ctx.import_records[idx.get() as usize].as_slice()[i];
-                    (
-                        ir.flags,
-                        ir.source_index,
-                        ir.path.key_for_incremental_graph(),
-                    )
+                    // As in `process_chunk_import_records`: a plugin-resolved record keeps the specifier.
+                    let path = if ir.source_index.is_valid() {
+                        &ctx.sources[ir.source_index.get() as usize].path
+                    } else {
+                        &ir.path
+                    };
+                    (ir.flags, ir.source_index, path.key_for_incremental_graph())
                 };
                 let result = self.process_edge_attachment(
                     ctx,
@@ -1028,6 +1030,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         self.receive_css_child(index);
                     }
                     break 'brk index;
+                } else if matches!(SIDE, Side::Client)
+                    && ctx.loaders[ir_source_index.get() as usize].is_css()
+                {
+                    self.receive_failed_css_root(key);
                 }
             }
             match mode {
@@ -1090,9 +1096,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 file.content = Content::CssChild;
             }
             Content::CssChild => {}
+            // A failed root that html or a script no longer imports is a child again.
+            Content::CssRoot(_) if file.failed => {
+                if self.has_html_or_script_importer(index) {
+                    return;
+                }
+                self.bundled_files.values_mut()[index.get() as usize].content = Content::CssChild;
+            }
             _ => return,
         }
-        if !file.failed {
+        if !self.bundled_files.values()[index.get() as usize].failed {
             return;
         }
         let failed_in_this_bundle = |failure: &SerializedFailure| {
@@ -1113,6 +1126,39 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let owner = serialized_failure::OwnerPacked::new(Side::Client, index.get());
         if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
             self.dev_incremental_result().failures_removed.push(kv.1);
+        }
+    }
+
+    /// True if html, a script or a server file imports this stylesheet: it needs a chunk of its own.
+    #[cold]
+    fn has_html_or_script_importer(&mut self, index: FileIndex<SIDE>) -> bool {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let mut it = self.edge_lists[index.get() as usize].first_dep;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            if self.bundled_files.values()[edge.dependency.get() as usize].kind != FileKind::Css {
+                return true;
+            }
+            it = edge.next_dependency;
+        }
+        let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[index.get() as usize]);
+        // SAFETY: see `owner()`. This is the client graph, and `server_graph` is only read.
+        let server_graph = unsafe { &(*self.owner()).server_graph };
+        server_graph.get_file_index(key.slice()).is_some_and(|i| {
+            server_graph.edge_lists[i.get() as usize]
+                .first_dep
+                .is_some()
+        })
+    }
+
+    /// Keeps a failed stylesheet that html or a script imports a css root for `invalidate`.
+    #[cold]
+    fn receive_failed_css_root(&mut self, key: &[u8]) {
+        let Some(index) = self.bundled_files.get_index(key) else {
+            return;
+        };
+        if self.bundled_files.values()[index].failed {
+            self.restore_failed_css_root(FileIndex::init(index as u32), bun_wyhash::hash(key));
         }
     }
 
@@ -1499,7 +1545,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// Makes the entry point of a chunk that failed to print a css root again, so a trace
+    /// Makes a failed stylesheet that html or a script imports a css root, so a trace
     /// still finds the stylesheet. `id` is the hash of its path.
     pub(crate) fn restore_failed_css_root(&mut self, index: FileIndex<SIDE>, id: u64) {
         debug_assert!(matches!(SIDE, Side::Client));

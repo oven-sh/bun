@@ -332,18 +332,36 @@ pub fn may_be_misread<'a>(file: &'a File<'a>) -> bool {
 
 /// The message for a file that ESLint's parser throws on. No rules run on such a file.
 pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
-    parse_errors(file).into_iter().next()
+    verdict(file).messages.first().cloned()
 }
 
-/// [`parse_error`], plus any further errors oxlint prints for the file, in oxlint's order. ESLint's parsers throw only
-/// one.
-pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
-    parse_errors_and_stage(file).0
+/// What [`verdict`] decides about a file before any rule runs.
+pub(crate) struct Verdict {
+    /// [`parse_error`], plus any further errors oxlint prints for the file, in oxlint's order. Empty if the file is linted.
+    pub(super) messages: Vec<LintMessage>,
+    /// True if oxlint silently skips the file. See [`is_flow`].
+    pub(super) is_flow: bool,
 }
 
-/// [`parse_errors`], and true if they come from a parser. False means oxc parsed the file and its semantic pass
-/// reported them.
-pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage>, bool) {
+/// True if TypeScript's parser has an error for `file` that isn't tolerated, so the tree has holes.
+pub(super) fn has_holes<'a>(file: &'a File<'a>) -> bool {
+    first_parser_error(file).is_some()
+}
+
+/// Whether `file` is rejected. Computed once per file, for the linter and for the import graph.
+pub(super) fn verdict<'a>(file: &'a File<'a>) -> &'a Verdict {
+    file.lazy.linter.verdict.get_or_init(|| {
+        let (messages, is_of_parser) = errors_and_stage(file);
+        let is_silent = !messages.is_empty() && is_of_parser && file.language().is_oxlint;
+        Verdict {
+            is_flow: is_silent && is_flow(file),
+            messages,
+        }
+    })
+}
+
+/// [`Verdict::messages`], and true if they come from a parser. False means oxc's semantic pass reported them.
+fn errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage>, bool) {
     let parser = file.language().parser;
     // This error has no position.
     if parser == Parser::Espree
@@ -461,7 +479,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
 /// True if oxlint silently skips this file, which it can't parse, because it's JavaScript and its first comment has
 /// `@flow`. If oxc can parse the file, oxlint still prints the semantic pass's errors. oxc only sees the comments its
 /// lexer got past, so if it gives up, that's the comments before the bad token.
-pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
+fn is_flow<'a>(file: &'a File<'a>) -> bool {
     let mut comments = file.comments().map(|it| it.span());
     let first = comments.find(|it| !file.slice(*it).starts_with(b"#!"));
     let Some(first) = first.filter(|_| file.is_javascript()) else {

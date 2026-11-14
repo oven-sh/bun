@@ -12,7 +12,7 @@ use crate::invalid_package_id;
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use super::PackageManager;
 use super::enqueue;
-use super::run_tasks::{self, RunTasksCallbacks};
+use super::run_tasks::{self, Caller};
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
 
@@ -102,15 +102,6 @@ pub enum Packages<'a> {
     Ids(&'a [PackageID]),
     /// The manifests of these packages themselves (by name), not of their dependencies; best-effort, so failures are warnings.
     Exact(&'a [PackageID]),
-}
-
-/// `RunTasksCallbacks` impl for the void-callback `runTasks` call in
-/// `populateManifestCache`.
-struct ManifestsOnlyCallbacks;
-impl RunTasksCallbacks for ManifestsOnlyCallbacks {
-    type Ctx = ();
-    const PROGRESS_BAR: bool = true;
-    const MANIFESTS_ONLY: bool = true;
 }
 
 /// Populate the manifest cache for packages included from `root_pkg_ids`. Only manifests of
@@ -323,8 +314,7 @@ pub fn populate_manifest_cache(
         let mut result = Ok(());
         manager.sleep_until(|manager| {
             let log_level = manager.options.log_level;
-            result =
-                run_tasks::run_tasks::<ManifestsOnlyCallbacks>(manager, &mut (), true, log_level);
+            result = run_tasks::run_tasks(manager, Caller::ManifestCache, true, log_level);
             result.is_err() || manager.pending_task_count() == 0
         });
 

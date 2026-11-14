@@ -3759,6 +3759,293 @@ if (isBun) {
       expect(mocked.withImplementation(() => 1, () => {})).toBe(isVitest ? mocked : undefined); // prettier-ignore
     });
 
+    describe.each(flavors)("%s: a once-value queued during withImplementation()", (_, isVitest, fn, spyOn) => {
+      const three = mocked => [mocked(), mocked(), mocked()];
+
+      test.each([
+        ["mockReturnValueOnce()", mocked => mocked.mockReturnValueOnce("once"), "once"],
+        ["mockImplementationOnce()", mocked => mocked.mockImplementationOnce(() => "once"), "once"],
+        ["mockResolvedValueOnce()", mocked => mocked.mockResolvedValueOnce("once"), "once"],
+        ["mockRejectedValueOnce()", mocked => mocked.mockRejectedValueOnce("once"), "rejected: once"],
+        ["mockThrowOnce()", mocked => mocked.mockThrowOnce("once"), "thrown: once"],
+      ])("%s is for one call, then the temporary implementation runs again", async (_, queue, first) => {
+        const mocked = fn(() => "default");
+        const seen = [];
+        mocked.withImplementation(
+          () => "temporary",
+          () => {
+            queue(mocked);
+            for (let i = 0; i < 3; i++) {
+              try {
+                seen.push(mocked());
+              } catch (thrown) {
+                seen.push("thrown: " + thrown);
+              }
+            }
+          },
+        );
+        seen.push(mocked());
+        const settled = seen.map(value => Promise.resolve(value).catch(reason => "rejected: " + reason));
+        expect(await Promise.all(settled)).toEqual([first, "temporary", "temporary", "default"]);
+      });
+
+      test("several of them run in the order they were queued", () => {
+        const mocked = fn(() => "default");
+        let inside;
+        mocked.withImplementation(
+          () => "temporary",
+          () => {
+            mocked.mockReturnValueOnce("first").mockReturnValueOnce("second");
+            inside = three(mocked);
+          },
+        );
+        expect([inside, mocked()]).toEqual([["first", "second", "temporary"], "default"]);
+      });
+
+      test("in an async callback, and from outside while its promise is pending", async () => {
+        const mocked = fn(() => "default");
+        let inside;
+        await mocked.withImplementation(
+          () => "temporary",
+          async () => {
+            await undefined;
+            mocked.mockReturnValueOnce("once");
+            inside = three(mocked);
+          },
+        );
+        expect([inside, mocked()]).toEqual([["once", "temporary", "temporary"], "default"]);
+
+        const callback = Promise.withResolvers();
+        const done = mocked.withImplementation(
+          () => "temporary",
+          () => callback.promise,
+        );
+        mocked.mockReturnValueOnce("once");
+        const outside = three(mocked);
+        callback.resolve();
+        await done;
+        expect([outside, mocked()]).toEqual([["once", "temporary", "temporary"], "default"]);
+      });
+
+      test("on a spy", () => {
+        const object = { method: () => "original" };
+        const spied = spyOn(object, "method");
+        let inside;
+        spied.withImplementation(
+          () => "temporary",
+          () => {
+            spied.mockReturnValueOnce("once");
+            inside = three(() => object.method());
+          },
+        );
+        expect([inside, object.method()]).toEqual([["once", "temporary", "temporary"], "original"]);
+        spied.mockRestore();
+      });
+
+      test("after a callback that threw, which leaves the temporary implementation in place", () => {
+        const mocked = fn(() => "default");
+        expect(() =>
+          mocked.withImplementation(
+            () => "temporary",
+            () => {
+              throw new Error("thrown by the callback");
+            },
+          ),
+        ).toThrow("thrown by the callback");
+        mocked.mockReturnValueOnce("once");
+        expect(three(mocked)).toEqual(["once", "temporary", "temporary"]);
+      });
+
+      test("in nested calls", () => {
+        const mocked = fn(() => "default");
+        const seen = {};
+        mocked.withImplementation(
+          () => "outer",
+          () => {
+            mocked.mockReturnValueOnce("once of the outer");
+            mocked.withImplementation(
+              () => "inner",
+              () => {
+                mocked.mockReturnValueOnce("once of the inner");
+                seen.inner = three(mocked);
+              },
+            );
+            seen.outer = three(mocked);
+          },
+        );
+        expect(seen).toEqual({
+          inner: ["once of the inner", "inner", "inner"],
+          outer: ["once of the outer", "outer", "outer"],
+        });
+        expect(mocked()).toBe("default");
+      });
+
+      test("by the temporary implementation itself", () => {
+        const mocked = fn(() => "default");
+        let queued = false;
+        let inside;
+        mocked.withImplementation(
+          () => {
+            if (!queued) mocked.mockReturnValueOnce("once");
+            queued = true;
+            return "temporary";
+          },
+          () => {
+            inside = three(mocked);
+          },
+        );
+        expect(inside).toEqual(["temporary", "once", "temporary"]);
+      });
+
+      test("those queued before the call wait until it ends, and one that the callback leaves over is dropped", () => {
+        const mocked = fn(() => "default").mockReturnValueOnce("from before");
+        let inside;
+        mocked.withImplementation(
+          () => "temporary",
+          () => {
+            mocked.mockReturnValueOnce("once");
+            inside = three(mocked);
+            mocked.mockReturnValueOnce("left over");
+          },
+        );
+        expect([inside, three(mocked)]).toEqual([
+          ["once", "temporary", "temporary"],
+          ["from before", "default", "default"],
+        ]);
+      });
+
+      test("on a mock with no implementation, before and after a once-value of its own is used", () => {
+        const mocked = fn();
+        const inside = [];
+        const queueInside = () =>
+          mocked.withImplementation(
+            () => "temporary",
+            () => {
+              mocked.mockReturnValueOnce("once");
+              inside.push(three(mocked));
+            },
+          );
+        queueInside();
+        const between = [mocked.mockReturnValueOnce("own")(), mocked()];
+        queueInside();
+        expect([inside, between, three(mocked)]).toEqual([
+          [
+            ["once", "temporary", "temporary"],
+            ["once", "temporary", "temporary"],
+          ],
+          ["own", undefined],
+          [undefined, undefined, undefined],
+        ]);
+      });
+
+      test("getMockImplementation() meanwhile", () => {
+        const mocked = fn(() => "default");
+        const temporary = () => "temporary";
+        let whileWaiting, whenSpent;
+        mocked.withImplementation(temporary, () => {
+          mocked.mockReturnValueOnce("once");
+          whileWaiting = mocked.getMockImplementation();
+          mocked();
+          whenSpent = mocked.getMockImplementation();
+        });
+        // Vitest returns what the next call will run. Jest returns the implementation that stays.
+        expect(isVitest ? whileWaiting() : whileWaiting).toBe(isVitest ? "once" : temporary);
+        expect(whenSpent).toBe(temporary);
+      });
+
+      test("new on a temporary class", () => {
+        const named = name =>
+          class {
+            name() {
+              return name;
+            }
+          };
+        const Mocked = fn(named("default"));
+        let inside;
+        Mocked.withImplementation(named("temporary"), () => {
+          Mocked.mockImplementationOnce(named("once"));
+          inside = [new Mocked().name(), new Mocked().name(), new Mocked().name()];
+        });
+        expect([inside, new Mocked().name()]).toEqual([["once", "temporary", "temporary"], "default"]);
+      });
+    });
+
+    describe.each(flavors)("%s: withImplementation() with a value that is not a function", (_, isVitest, fn, spyOn) => {
+      const falsy = [undefined, null, 0, "", false];
+
+      test("a falsy value: the mock has no implementation meanwhile", () => {
+        const seen = falsy.map(temporary => {
+          const mocked = fn(() => "default");
+          let inside;
+          mocked.withImplementation(temporary, () => {
+            inside = [mocked(), mocked.mockReturnValueOnce("once")(), mocked(), typeof new mocked()];
+          });
+          return [...inside, mocked()];
+        });
+        expect(seen).toEqual(falsy.map(() => [undefined, "once", undefined, "object", "default"]));
+      });
+
+      // Vitest calls the original here. Bun returns undefined through vi.spyOn too, as after mockImplementation(undefined).
+      test("a falsy value on a spy", () => {
+        const object = { method: () => "original" };
+        const spied = spyOn(object, "method");
+        let inside;
+        spied.withImplementation(undefined, () => {
+          inside = [object.method(), spied.mockReturnValueOnce("once")(), object.method()];
+        });
+        expect([inside, object.method()]).toEqual([[undefined, "once", undefined], "original"]);
+        spied.mockRestore();
+      });
+
+      test("a truthy value: the mock throws when it is called", () => {
+        const mocked = fn(() => "default");
+        mocked.withImplementation({}, () => {
+          expect(mocked.mockReturnValueOnce("once")()).toBe("once");
+          expect(mocked).toThrow(TypeError);
+        });
+        expect(mocked()).toBe("default");
+      });
+    });
+
+    // The instance's mock falls back on the prototype's mock only when it has no implementation of its own.
+    describe("withImplementation() on a method of an automocked instance", () => {
+      const automocked = () => {
+        const Mocked = vi.mockObject(
+          class {
+            method() {}
+          },
+        );
+        Mocked.prototype.method.mockReturnValue("prototype");
+        return new Mocked();
+      };
+
+      test("a once-value queued meanwhile", () => {
+        const instance = automocked();
+        let inside;
+        instance.method.withImplementation(
+          () => "temporary",
+          () => {
+            instance.method.mockReturnValueOnce("once");
+            inside = [instance.method(), instance.method(), instance.method()];
+          },
+        );
+        expect([inside, instance.method()]).toEqual([["once", "temporary", "temporary"], "prototype"]);
+      });
+
+      test("a falsy value: the prototype's mock answers meanwhile", () => {
+        const falsy = [undefined, null, 0, "", false];
+        const seen = falsy.map(temporary => {
+          const instance = automocked();
+          let inside;
+          instance.method.withImplementation(temporary, () => {
+            inside = [instance.method(), instance.method.mockReturnValueOnce("once")(), instance.method()];
+          });
+          return inside;
+        });
+        expect(seen).toEqual(falsy.map(() => ["prototype", "once", "prototype"]));
+      });
+    });
+
     describe.each(flavors)("%s: getMockImplementation()", (_, isVitest, fn) => {
       test("is a function after mockReturnValue() and the like", async () => {
         const receiver = {};
@@ -4846,7 +5133,7 @@ if (isBun) {
             mockImplementation: mocked => mocked.mockImplementation(() => "configured"),
             mockResolvedValue: mocked => mocked.mockResolvedValue("configured"),
           };
-          for (const fn of [jest.fn, vi.fn, mock]) {
+          for (const [fn, temporarily] of [jest.fn, vi.fn, mock].flatMap(fn => [[fn, false], [fn, true]])) {
             const seen = [];
             for (const configure of Object.values(configurations)) {
               for (const construct of [false, true]) {
@@ -4864,7 +5151,9 @@ if (isBun) {
                 });
                 let result;
                 try {
-                  result = construct ? typeof new mocked() : mocked.call("this");
+                  const call = () => { result = construct ? typeof new mocked() : mocked.call("this"); };
+                  if (temporarily) mocked.withImplementation(function () { return "temporary"; }, call);
+                  else call();
                 } catch (thrown) {
                   result = "thrown: " + thrown;
                 }
@@ -4881,8 +5170,10 @@ if (isBun) {
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       // `new` on a vi.fn() mock picks its implementation before recording the call, so the mockThrow() comes too late.
-      const seen = thrownByNew =>
+      const line = thrownByNew =>
         `configured,object,this,object,thrown: configured,${thrownByNew},configured,object,promise,object\n`;
+      // Each line comes twice: the second time the calls are made while withImplementation() is in force.
+      const seen = thrownByNew => line(thrownByNew) + line(thrownByNew);
       expect(stdout).toBe(seen("thrown: configured") + seen("object") + seen("thrown: configured"));
       expect(exitCode).toBe(0);
     });

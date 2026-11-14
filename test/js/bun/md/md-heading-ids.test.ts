@@ -48,6 +48,11 @@ describe("headingIds option", () => {
     expect(result).toBe('<h2 id="use-foo-here">Use <code>foo()</code> here</h2>\n');
   });
 
+  test("a line ending in inline code is the space that it is written as", () => {
+    const result = Markdown.html("Use `foo\nbar` here\n===\n", { headings: { ids: true } });
+    expect(result).toBe('<h1 id="use-foo-bar-here">Use <code>foo bar</code> here</h1>\n');
+  });
+
   test("hyphens in heading text are preserved", () => {
     const result = Markdown.html("## my-heading-text\n", { headings: { ids: true } });
     expect(result).toBe('<h2 id="my-heading-text">my-heading-text</h2>\n');

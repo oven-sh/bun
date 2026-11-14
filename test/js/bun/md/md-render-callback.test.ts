@@ -133,6 +133,76 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe("<code>code</code>");
   });
 
+  // CommonMark 6.1, code spans: "First, line endings are converted to spaces."
+  describe("a line ending in a code span is a space", () => {
+    test.each([
+      ["`a\nb`", "a b"],
+      ["`a\r\nb`", "a b"],
+      ["`a\rb`", "a b"],
+      ["``a\nb\nc``", "a b c"],
+      // The spaces before the line ending stay, and a backslash is no hard break.
+      ["`a  \nb`", "a   b"],
+      ["`a\\\nb`", "a\\ b"],
+      // One space goes from each end, whether it is written as a space or as a line ending.
+      ["`\na\n`", "a"],
+      ["` a\nb `", "a b"],
+      ["`  a\nb  `", " a b "],
+      ["`a\n`", "a "],
+      ["`\na`", " a"],
+      // Around other characters that mean something outside of a code span, and behind a long run of backticks.
+      ["``*a* [b]\n&amp; `c` \\\n<d> _e_``", "*a* [b] &amp; `c` \\ <d> _e_"],
+      ["`````a`b\nc`````", "a`b c"],
+      // Far into a long span.
+      [
+        "`0123456789abcdef 0123456789abcdef\n0123456789abcdef\n0123456789abcdef 0123456789abcdef`",
+        "0123456789abcdef 0123456789abcdef 0123456789abcdef 0123456789abcdef 0123456789abcdef",
+      ],
+    ])("%j has the text %j", (markdown, text) => {
+      for (const input of [markdown, Buffer.from(markdown)]) {
+        const texts: string[] = [];
+        const result = Markdown.render(input as string, {
+          codespan: (children: string) => `<code>${children}</code>`,
+          text: (text: string) => (texts.push(text), text),
+        });
+        expect({ result, texts }).toEqual({ result: `<code>${text}</code>`, texts: [text] });
+      }
+      expect(Markdown.render(markdown)).toBe(text);
+    });
+
+    test.each([
+      ["> x `a\n> b` y", "> x `a b` y"],
+      ["- x `a\n  b` y", "- x `a b` y"],
+      ["[`a\nb`](/u)", "[`a b`](/u)"],
+      ["*`a\nb`* **`c\nd`**", "*`a b`* **`c d`**"],
+      ["![`a\nb` c](/u)", "![`a b` c](/u)"],
+      ["`a\nb`\n===", "`a b`\n==="],
+      // Between two code spans that are on one line, and in the text of a link around an image.
+      ["`*a*` x\n`b\nc` `d`", "`*a*` x\n`b c` `d`"],
+      ["[x ![`a\nb`](/i) `c\nd`](/u) `e\nf`", "[x ![`a b`](/i) `c d`](/u) `e f`"],
+    ])("%j renders like %j", (markdown, onOneLine) => {
+      const names = ["paragraph", "blockquote", "list", "listItem", "heading", "link", "image", "emphasis", "strong"];
+      const callbacks = Object.fromEntries(
+        names.map(name => [
+          name,
+          (children: string, meta?: unknown) => `<${name} ${JSON.stringify(meta)}>${children}</>`,
+        ]),
+      );
+      const options = { headings: { ids: true } };
+      expect(Markdown.render(markdown, callbacks, options)).toBe(Markdown.render(onOneLine, callbacks, options));
+    });
+
+    test("in the alt of an image and in the id of a heading", () => {
+      expect(Markdown.render("![`a\nb`](/u)", { image: (children: string) => `[${children}]` })).toBe("[a b]");
+      expect(
+        Markdown.render(
+          "`a\nb`\n===",
+          { heading: (children: string, { id }: any) => `${id}: ${children}` },
+          { headings: { ids: true } },
+        ),
+      ).toBe("a-b: a b");
+    });
+  });
+
   test("hr callback", () => {
     const result = Markdown.render("---\n", {
       hr: () => "<hr />",

@@ -286,6 +286,64 @@ describe("Floyd–Steinberg dither", () => {
     expect(Buffer.compare(Buffer.from(a), Buffer.from(b))).toBe(0);
   });
 
+  type Px = [number, number, number, number];
+  const ditherBack = async (w: number, h: number, pixelOf: (x: number, y: number) => Px, colors: number) => {
+    const png = await new Bun.Image(makePng(w, h, pixelOf)).png({ palette: true, colors, dither: true }).bytes();
+    return decodePng(await new Bun.Image(png).png().bytes()).data;
+  };
+  // Pixels from row `from` on that are not `flat`.
+  const displaced = (data: Uint8Array, w: number, from: number, flat: Px) => {
+    let count = 0;
+    for (let i = from * w * 4; i < data.length; i += 4) {
+      if (data[i] !== flat[0] || data[i + 1] !== flat[1] || data[i + 2] !== flat[2] || data[i + 3] !== flat[3]) count++;
+    }
+    return count;
+  };
+
+  // The four shares of a pixel's error add up to that error. With four
+  // floored shares an error of -1 pushed -4: small errors grew as they
+  // travelled and speckled a flat area that has its own palette entry.
+  test("a flat area with its own entry stays flat below a fine ramp", async () => {
+    const grey128: Px = [128, 128, 128, 255];
+    // Every grey, with a tint per row so that there are more than 256 colours.
+    const ramp = (x: number, y: number): Px => [x, x, Math.min(255, x + (y & 3)), 255];
+    const data = await ditherBack(256, 64, (x, y) => (y < 16 ? ramp(x, y) : grey128), 256);
+    // Rows 16 and 17 take the error of the last ramp row.
+    expect(displaced(data, 256, 18, grey128)).toBe(0);
+  });
+
+  // The error is measured inside 0..255. The palette here is black and grey
+  // 192: white is 63 past it. Unclamped, every white pixel added 63 that
+  // nothing could absorb, and the sum came down on the black area as a band
+  // of grey.
+  test("error past the palette's range does not spill into a flat area", async () => {
+    const black: Px = [0, 0, 0, 255];
+    const top = (x: number): Px => (x < 32 ? [255, 255, 255, 255] : [128, 128, 128, 255]);
+    const data = await ditherBack(64, 64, (x, y) => (y < 32 ? top(x) : black), 2);
+    // Rows 32 and 33 take the error of the last row above them.
+    expect(displaced(data, 64, 34, black)).toBe(0);
+  });
+
+  // The error rows hold sixteenths of a level, so an error of 1 still splits
+  // 7/3/5/1. In whole levels it went straight down and the grain lined up in
+  // rows. On a gradient that is the same along x and along y, neighbours in a
+  // row and neighbours in a column must differ by about the same amount.
+  test("the grain of a diagonal gradient has no direction", async () => {
+    const data = await ditherBack(256, 256, (x, y) => [(x + y) >> 1, (x + y) >> 1, (x + y) >> 1, 255], 32);
+    let alongRows = 0;
+    let alongColumns = 0;
+    for (let y = 0; y < 255; y++) {
+      for (let x = 0; x < 255; x++) {
+        const i = (y * 256 + x) * 4;
+        alongRows += Math.abs(data[i] - data[i + 4]);
+        alongColumns += Math.abs(data[i] - data[i + 256 * 4]);
+      }
+    }
+    const ratio = alongRows / alongColumns;
+    expect(ratio).toBeGreaterThan(0.85);
+    expect(ratio).toBeLessThan(1.25);
+  });
+
   // 1×N and N×1 are the edge cases where FS has no "below" or no "right".
   test("1-pixel-wide and 1-pixel-tall sources", async () => {
     for (const [w, h] of [

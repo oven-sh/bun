@@ -1,9 +1,10 @@
-use core::ffi::c_void;
 use core::marker::PhantomData;
 #[cfg(windows)]
 use core::mem::MaybeUninit;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicU8, Ordering};
+
+use scopeguard::ScopeGuard;
 
 #[cfg(not(windows))]
 use crate::Error;
@@ -84,9 +85,7 @@ impl<F: ReadFileToJs> NewReadFileHandler<F> {
     }
 }
 
-/// A typed receiver for a file read's bytes. [`ReadFileCompletionFns::of`] erases it to the
-/// `(ctx, run, cancel)` a `ReadFile` job carries as its JS side (or a `ReadFileUV` as a field): the
-/// shims call `C::run` / `C::cancel` directly and `ctx` is the `Box<C>` itself, no extra heap wrapper.
+/// A receiver for a file read's bytes. See [`PendingReadFileCompletion`].
 pub(crate) trait ReadFileCompletion {
     fn run(self: Box<Self>, bytes: ReadFileResultType) -> JsResult<()>;
     /// The read will never complete (its VM stopped before it did). Exactly one of the two is called.
@@ -136,54 +135,27 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
 // Type aliases / result types
 // ──────────────────────────────────────────────────────────────────────────
 
-type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType) -> JsResult<()>;
-/// The read never completed; do with `ctx` what its owner needs (free it, or tell it).
-type ReadFileOnCancelCallback = fn(ctx: *mut c_void);
-
 /// What a `ReadFile`/`ReadFileUV` does with the bytes (or the lack of them): `run` on completion,
 /// `cancel` if it is dropped before completing. Exactly one of the two is invoked, once, on the JS
-/// thread — the ctx typically owns a promise and a Blob, so this is the job's JS side.
-pub(crate) struct ReadFileCompletionFns {
-    ctx: *mut c_void,
-    run: ReadFileOnReadFileCallback,
-    cancel: ReadFileOnCancelCallback,
-}
+/// thread — it typically owns a promise and a Blob, so this is the job's JS side.
+pub(crate) struct PendingReadFileCompletion(
+    ScopeGuard<Box<dyn ReadFileCompletion>, fn(Box<dyn ReadFileCompletion>)>,
+);
 
-impl ReadFileCompletionFns {
-    /// Erase a typed `ReadFileCompletion`.
-    pub(crate) fn of<C: ReadFileCompletion + 'static>(ctx: Box<C>) -> Self {
-        fn run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) -> JsResult<()> {
-            // SAFETY: `ctx` is the `Box<C>` erased below, and only one of `run` and `cancel` is
-            // called, once.
-            C::run(unsafe { bun_core::heap::take(ctx.cast::<C>()) }, bytes)
-        }
-        fn cancel<C: ReadFileCompletion>(ctx: *mut c_void) {
-            // SAFETY: as for `run`.
-            C::cancel(unsafe { bun_core::heap::take(ctx.cast::<C>()) })
-        }
-        Self {
-            ctx: bun_core::heap::into_raw(ctx).cast::<c_void>(),
-            run: run::<C>,
-            cancel: cancel::<C>,
-        }
+impl PendingReadFileCompletion {
+    fn new(completion: Box<dyn ReadFileCompletion>) -> Self {
+        Self(scopeguard::guard(completion, ReadFileCompletion::cancel))
     }
 
     fn complete(self, bytes: ReadFileResultType) -> JsResult<()> {
-        let this = core::mem::ManuallyDrop::new(self);
-        (this.run)(this.ctx, bytes)
+        ScopeGuard::into_inner(self.0).run(bytes)
     }
 }
 
-impl Drop for ReadFileCompletionFns {
-    fn drop(&mut self) {
-        (self.cancel)(self.ctx)
-    }
-}
-
-// SAFETY: the ctx holds JS-thread state (promise, Blob); it is only ever completed or cancelled on
+// SAFETY: it holds JS-thread state (promise, Blob); it is only ever completed or cancelled on
 // the JS thread, as a Job's `Js` side.
 #[cfg(not(windows))]
-unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
+unsafe impl bun_jsc::job::JsAffine for PendingReadFileCompletion {}
 
 pub(crate) struct ReadFileRead {
     /// Not a `Vec`: `to_*_with_bytes::<Temporary>` reclaims it from `(ptr, len)` alone.
@@ -205,7 +177,7 @@ pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
 // SAFETY: file store / byte store / blob store ref (atomic), the read buffer and io-loop
 // registration state — nothing thread-affine. What the bytes are delivered to lives in the job's
-// JS side (`ReadFileCompletionFns`), never here.
+// JS side (`PendingReadFileCompletion`), never here.
 #[cfg(not(windows))]
 unsafe impl Send for ReadFile {}
 
@@ -215,7 +187,7 @@ impl bun_jsc::JobContext for ReadFile {
     type OffThread = Self;
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
     /// back to a VM that is no longer running script and is released unrun.
-    type Js = ReadFileCompletionFns;
+    type Js = PendingReadFileCompletion;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);
@@ -223,7 +195,7 @@ impl bun_jsc::JobContext for ReadFile {
     }
     fn then(
         this: Self,
-        completion: ReadFileCompletionFns,
+        completion: PendingReadFileCompletion,
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         ReadFile::then(this, completion, cx.global())
@@ -248,10 +220,10 @@ impl ReadFile {
     /// job is its one heap allocation).
     pub(crate) fn schedule(
         this: ReadFile,
-        completion: ReadFileCompletionFns,
+        completion: Box<dyn ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(cx, this, completion);
+        bun_jsc::Job::<ReadFile>::schedule(cx, this, PendingReadFileCompletion::new(completion));
     }
 }
 
@@ -551,7 +523,7 @@ impl ReadFile {
 
     pub(crate) fn then(
         this: Self,
-        completion: ReadFileCompletionFns,
+        completion: PendingReadFileCompletion,
         _: &JSGlobalObject,
     ) -> JsResult<()> {
         let mut this = this;
@@ -875,7 +847,7 @@ pub(crate) struct ReadFileUV {
     pub(crate) buffer: Vec<u8>,
     pub(crate) system_error: Option<SystemError>,
     /// `Some` until the read completes; a `ReadFileUV` dropped before that cancels it.
-    pub(crate) completion: Option<ReadFileCompletionFns>,
+    pub(crate) completion: Option<PendingReadFileCompletion>,
     pub(crate) is_regular_file: bool,
     /// The context of the script that asked for the read.
     pub(crate) context: jsc::ContextId,
@@ -890,7 +862,7 @@ bun_io::intrusive_uv_fs!(ReadFileUV, req);
 impl ReadFileUV {
     pub(crate) fn start(
         blob: &Blob,
-        completion: ReadFileCompletionFns,
+        completion: Box<dyn ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
         log!("ReadFileUV.start");
@@ -910,7 +882,7 @@ impl ReadFileUV {
             read_off: 0,
             buffer: Vec::new(),
             system_error: None,
-            completion: Some(completion),
+            completion: Some(PendingReadFileCompletion::new(completion)),
             is_regular_file: false,
             context: cx.context().id(),
             req: bun_core::ffi::zeroed(),

@@ -320,6 +320,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
     s: *mut us_socket_t,
     session: *mut bun_boringssl_sys::SSL_SESSION,
 ) -> c_int {
+    use bun_boringssl_sys::{OwnedSslSession, SSL_SESSION};
     let s_ref = us_socket_t::opaque_mut(s);
     match s_ref.kind() {
         SocketKind::HttpClientTls => {
@@ -331,7 +332,9 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
                 return 0;
             };
-            tls.set_latest_session(session);
+            let session = SSL_SESSION::opaque_ref(session);
+            tls.latest_session
+                .set(Some(OwnedSslSession::retain(session)));
             1
         }
         _ => 0,

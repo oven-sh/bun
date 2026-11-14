@@ -172,9 +172,9 @@ pub mod ssl_wrapper {
             BIO, BIO_CTRL_FLUSH, BIO_METHOD, BIO_TYPE_SOURCE_SINK, BIO_clear_retry_flags,
             BIO_get_data, BIO_get_new_index, BIO_meth_new, BIO_meth_set_ctrl, BIO_meth_set_read,
             BIO_meth_set_write, BIO_new, BIO_set_data, BIO_set_init, BIO_set_retry_read,
-            ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
-            SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE,
-            SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free,
+            ERR_clear_error, OwnedSslCtx, OwnedSslSession, SSL, SSL_CTX, SSL_ERROR_SSL,
+            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
             SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished,
             SSL_new, SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
@@ -323,18 +323,9 @@ pub mod ssl_wrapper {
         >,
         wants_session: bool,
         wants_keylog: bool,
-        latest_session: Cell<Option<NonNull<boring_sys::SSL_SESSION>>>,
+        latest_session: Cell<Option<boring_sys::OwnedSslSession>>,
         sessions: RefCell<VecDeque<Box<[u8]>>>,
         keylog: RefCell<VecDeque<Box<[u8]>>>,
-    }
-
-    impl Drop for CallbackState {
-        fn drop(&mut self) {
-            if let Some(session) = self.latest_session.take() {
-                // SAFETY: `latest_session` owns one reference.
-                unsafe { boring_sys::SSL_SESSION_free(session.as_ptr()) };
-            }
-        }
     }
 
     /// Boxed: the `SSL` holds a pointer to the state, so the state must not move.
@@ -711,10 +702,12 @@ pub mod ssl_wrapper {
 
         /// The session most recently given to the new-session callback, borrowed.
         pub fn latest_session(&self) -> *mut boring_sys::SSL_SESSION {
-            self.callbacks
-                .latest_session
-                .get()
-                .map_or(core::ptr::null_mut(), NonNull::as_ptr)
+            let session = self.callbacks.latest_session.take();
+            let borrowed = session
+                .as_ref()
+                .map_or(core::ptr::null_mut(), |session| session.as_ptr());
+            self.callbacks.latest_session.set(session);
+            borrowed
         }
 
         pub fn start(&self) {
@@ -1491,12 +1484,10 @@ pub mod ssl_wrapper {
         let Some(session) = NonNull::new(session).filter(|_| state.wants_session) else {
             return;
         };
-        // SAFETY: `session` is live for this call; the new reference goes to `latest_session`.
-        unsafe { SSL_SESSION_up_ref(session.as_ptr()) };
-        if let Some(prev) = state.latest_session.replace(Some(session)) {
-            // SAFETY: `latest_session` owned one reference.
-            unsafe { boring_sys::SSL_SESSION_free(prev.as_ptr()) };
-        }
+        let retained = boring_sys::SSL_SESSION::opaque_ref(session.as_ptr());
+        state
+            .latest_session
+            .set(Some(boring_sys::OwnedSslSession::retain(retained)));
         // SAFETY: a null `out` only measures.
         let len = unsafe { i2d_SSL_SESSION(session.as_ptr(), core::ptr::null_mut()) };
         let Some(len) = usize::try_from(len)
@@ -1540,7 +1531,6 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
-        fn SSL_SESSION_up_ref(session: *mut boring_sys::SSL_SESSION) -> c_int;
         /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
         /// openssl.c: formats the reason into `reason[..length]`, NUL-terminated. 0 when nothing is queued.

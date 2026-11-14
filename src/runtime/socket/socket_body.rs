@@ -345,8 +345,8 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
     pub(crate) verify_error: JsCell<Option<StoredVerifyError>>,
-    /// Owns one reference to the session the new-session callback gave last: TLS 1.3 never stores it on the `SSL`.
-    pub(crate) latest_session: Cell<Option<ptr::NonNull<boringssl_sys::SSL_SESSION>>>,
+    /// The session the new-session callback gave last: TLS 1.3 never stores it on the `SSL`.
+    pub(crate) latest_session: JsCell<Option<boringssl_sys::OwnedSslSession>>,
 }
 
 /// Associated `Socket` handler type.
@@ -354,7 +354,6 @@ pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> Drop for NewSocket<SSL> {
     fn drop(&mut self) {
-        self.set_latest_session(ptr::null_mut());
         self.mark_inactive();
         self.detach_native_callback();
         self.poll_ref.unref(js_loop_ctx());
@@ -1380,7 +1379,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket: SocketHandler<SSL>,
     ) -> JsResult<()> {
         let this_ptr = this.as_ptr();
-        this.set_latest_session(ptr::null_mut());
+        this.latest_session.set(None);
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1999,19 +1998,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// unwound, so the JS handler may safely destroy the socket.
     ///
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
-    /// Takes a reference to `session` and drops the one held before. Null only drops.
-    pub(crate) fn set_latest_session(&self, session: *mut boringssl_sys::SSL_SESSION) {
-        let session = ptr::NonNull::new(session);
-        if let Some(session) = session {
-            // SAFETY: the caller passes a live session.
-            unsafe { tls_socket_functions::ffi::SSL_SESSION_up_ref(session.as_ptr().cast()) };
-        }
-        if let Some(prev) = self.latest_session.replace(session) {
-            // SAFETY: `latest_session` owned one reference.
-            unsafe { boringssl_sys::SSL_SESSION_free(prev.as_ptr()) };
-        }
-    }
-
     pub(crate) fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
@@ -2105,7 +2091,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        this.set_latest_session(ptr::null_mut());
+        this.latest_session.set(None);
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -3445,7 +3431,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
-            latest_session: Cell::new(None),
+            latest_session: JsCell::new(None),
         });
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
@@ -3566,7 +3552,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
-            latest_session: Cell::new(None),
+            latest_session: JsCell::new(None),
         });
         let raw_ref = raw;
         raw_ref.ref_();
@@ -4493,7 +4479,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),
-        latest_session: Cell::new(None),
+        latest_session: JsCell::new(None),
     });
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);

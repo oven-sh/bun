@@ -376,13 +376,13 @@ const savedKeys = (chunk: string) => {
   const again = bundledAgain(chunk);
   return hmrChunkKeys(chunk).filter(key => !again.includes(key));
 };
-async function expectOnlyFooInHotUpdate(dev: Dev, sharedKey: string) {
+async function expectOnlyFooInHotUpdate(dev: Dev, again: string[]) {
   await using c = await dev.client("/", { storeHotChunks: true });
   await c.expectMessage("shared evaluated", "foo loaded 1", "index loaded");
   await dev.patch("foo.ts", { find: "foo loaded 1", replace: "foo loaded 2" });
   await c.expectMessage("foo loaded 2", "accept foo.ts");
   const chunk = await c.getMostRecentHmrChunk();
-  expect({ saved: savedKeys(chunk), again: bundledAgain(chunk) }).toEqual({ saved: ["foo.ts"], again: [sharedKey] });
+  expect({ saved: savedKeys(chunk), again: bundledAgain(chunk) }).toEqual({ saved: ["foo.ts"], again });
 }
 devTest("virtual module shared by two importers does not run again when one importer changes", {
   files: {
@@ -409,7 +409,7 @@ devTest("virtual module shared by two importers does not run again when one impo
     ...withShared("virtual:__foo__"),
   },
   async test(dev) {
-    await expectOnlyFooInHotUpdate(dev, "virtual:__foo__");
+    await expectOnlyFooInHotUpdate(dev, ["virtual:__foo__"]);
   },
 });
 // The module and what it imports have the same output, but the page never loaded them.
@@ -591,7 +591,8 @@ devTest(
       ...withShared("./bar.ts"),
     },
     async test(dev) {
-      await expectOnlyFooInHotUpdate(dev, "bar.ts");
+      // As with no plugin, it is not bundled again.
+      await expectOnlyFooInHotUpdate(dev, []);
     },
   },
 );
@@ -957,10 +958,11 @@ for (const [kind, specifier, plugin, reExporter] of [
 // module that the new route shares with them is bundled again and has the
 // same output: it does not run again in those tabs.
 const sharedWithNewRoute = `console.log("shared evaluated"); export const s = "shared";`;
-for (const [kind, specifier, key] of [
-  ["virtual module", "virtual:shared", "virtual:shared"],
-  ["disk module that an onResolve filter matches", "./matched.ts", "matched.ts"],
-  ["barrel file", "barrel-lib", "node_modules/barrel-lib/index.js"],
+for (const [kind, specifier, again] of [
+  ["virtual module", "virtual:shared", ["virtual:shared"]],
+  // As with no plugin, it is not bundled again.
+  ["disk module that an onResolve filter matches", "./matched.ts", []],
+  ["barrel file", "barrel-lib", ["node_modules/barrel-lib/index.js"]],
 ] as const) {
   devTest(`${kind} shared with a route that loads for the first time does not run again in the open tab`, {
     files: {
@@ -1009,7 +1011,8 @@ for (const [kind, specifier, key] of [
       const firstBundle = await a.getMostRecentHmrChunk();
       await a.drainAcks();
       expect(firstBundle).toContain('"b.ts": [');
-      expect(bundledAgain(firstBundle)).toContain(key);
+      expect(hmrChunkKeys(firstBundle)).not.toContain("matched.ts");
+      expect(bundledAgain(firstBundle)).toEqual(expect.arrayContaining([...again]));
       await a.expectMessage();
     },
   });
@@ -1079,7 +1082,7 @@ devTest("file that an onResolve plugin resolves to does not run again when one o
     ...withShared("@alias/bar"),
   },
   async test(dev) {
-    await expectOnlyFooInHotUpdate(dev, "bar.ts");
+    await expectOnlyFooInHotUpdate(dev, ["bar.ts"]);
   },
 });
 

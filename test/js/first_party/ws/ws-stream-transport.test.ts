@@ -1,7 +1,7 @@
 // Tests `ws` sockets that run over a plain JS stream: handleUpgrade() with an arbitrary Duplex, or a client with
 // `createConnection`. The other end of the stream is either a raw peer or a second `ws` socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { openAsBlob } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -161,14 +161,17 @@ function synchronousPair(): Pair {
   return pair as Pair;
 }
 
-/** Prelude for runScript(). `connect()` resolves with an OPEN client and server socket joined by a duplexPair(). */
+/**
+ * Prelude for runScript(). `connect()` resolves with an OPEN client and server socket joined by a duplexPair(), or by
+ * the pair it's given.
+ */
 const connectScript = `
-  const { duplexPair } = require("node:stream");
+  const { Duplex, duplexPair } = require("node:stream");
   ${parseRequest}
   ${readRequest}
+  ${synchronousPair}
   const wss = new WebSocketServer({ noServer: true, clientTracking: false });
-  async function connect() {
-    const [near, far] = duplexPair();
+  async function connect([near, far] = duplexPair()) {
     const accepted = new Promise(resolve =>
       readRequest(far, head => wss.handleUpgrade(parseRequest(head), far, Buffer.alloc(0), resolve)),
     );
@@ -1377,5 +1380,225 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       },
       scriptTimeout,
     );
+
+    // A worker's process.exit(), its parent's terminate(), a node:vm timeout and a SIGINT under `breakOnSigint` stop
+    // script with an exception that script can't catch. A listener runs inside the call that delivers its frame, and
+    // the stream's write() runs inside send(). So a stop that lands in one of them ends the script that made the call
+    // too: nothing after the call runs, and the listener isn't called for the next frame of the chunk.
+    //
+    // What must not run only calls `ran`, a bound host function, and every other function on the way back to the
+    // script has run before. JSC throws a termination again when it links a function for its first call, which would
+    // hide a socket that dropped the termination.
+    describe("a stop that lands in a listener or in the stream's write() ends the script that reached it", () => {
+      const ways = [
+        "two messages in one chunk",
+        "send() on a synchronous pair",
+        "the stream's write() under send()",
+        "the stream's write() under the answer to a Close frame",
+      ];
+      // The built-in reports a listener's error as uncaught from inside the call. npm ws throws it to the caller.
+      if (builtin) ways.push("the capture callback for a listener's error");
+      /** `reach(way, stop, ran)` resolves with a function that reaches a call to `stop()` before it returns. */
+      const reachScript = `
+        async function reach(way, stop, ran) {
+          let calls = 0;
+          if (way === "send() on a synchronous pair") {
+            const [client, server] = await connect(synchronousPair());
+            server.on("message", () => {
+              if (calls++) stop();
+            });
+            // The first message runs every function on the way once.
+            client.send("first");
+            return () => client.send("second");
+          }
+          if (way.startsWith("the stream's write()")) {
+            const pair = synchronousPair();
+            const { _write } = pair[0];
+            pair[0]._write = function (chunk, encoding, callback) {
+              if (calls) stop();
+              _write.call(this, chunk, encoding, callback);
+            };
+            const [client, server] = await connect(pair);
+            client.send("first");
+            return () => {
+              calls++;
+              // The client answers a Close frame with its own, inside the call that delivers it.
+              if (way.endsWith("a Close frame")) server._socket.write(Buffer.from([0x88, 0]));
+              else client.send("second");
+            };
+          }
+          // Each frame is FIN and the opcode, then the length, then the payload.
+          const twoMessages = [0x81, 1, 0x61, 0x81, 1, 0x62];
+          if (way.startsWith("the capture callback")) {
+            const [client, server] = await connect(synchronousPair());
+            let throws = false;
+            process.setUncaughtExceptionCaptureCallback(stop);
+            client.on("message", () => {
+              if (!throws) return;
+              if (calls++) return ran("the listener, for the second frame");
+              throw new Error("from the listener");
+            });
+            server._socket.write(Buffer.from(twoMessages));
+            return () => {
+              throws = true;
+              server._socket.write(Buffer.from(twoMessages));
+            };
+          }
+          const [client, server] = await connect();
+          client.on("message", () => (calls++ ? ran("the listener, for the second frame") : stop()));
+          return () => server._socket.write(Buffer.from(twoMessages));
+        }
+      `;
+      // Long enough for a 50 ms timeout to land in it. It ends by itself, so a lost timeout fails the test and
+      // doesn't hang it. The inner loop keeps it in script: a loop that only reads the clock can see a timeout
+      // seconds late.
+      const spin = `{ const end = performance.now() + 3000; do { for (let i = 0; i < 1e5; i++); } while (performance.now() < end); }`;
+
+      test.concurrent(
+        "in a worker",
+        async () => {
+          const worker = `
+            const { parentPort, workerData } = require("node:worker_threads");
+            const { WebSocket, WebSocketServer } = require(process.env.WS_SPECIFIER);
+            ${connectScript}
+            ${reachScript}
+            const ran = parentPort.postMessage.bind(parentPort);
+            const stops = {
+              "process.exit()": () => process.exit(0),
+              "terminate()": () => {
+                ran("spinning");
+                for (;;) {}
+              },
+              "an uncaught error": () => {
+                throw new Error("from the listener");
+              },
+            };
+            reach(workerData.way, stops[workerData.stop], ran).then(call =>
+              setTimeout(() => {
+                call();
+                ran("the script after the call");
+              }, 1),
+            );
+          `;
+          const { lines, exitCode } = await runScript(
+            { specifier },
+            `
+            const { Worker } = require("node:worker_threads");
+            function run(stop, way) {
+              const worker = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: { stop, way } });
+              const saw = [];
+              worker.on("message", what => (what === "spinning" ? worker.terminate() : saw.push(what)));
+              worker.on("error", error => saw.push("the worker's error: " + error.message));
+              return new Promise(resolve =>
+                worker.on("exit", code => resolve(stop + ", " + way + ": saw " + JSON.stringify(saw) + ", exit code " + code)),
+              );
+            }
+            Promise.all([
+              run("process.exit()", "two messages in one chunk"),
+              run("terminate()", "send() on a synchronous pair"),
+              run("terminate()", "the stream's write() under send()"),
+              run("an uncaught error", "send() on a synchronous pair"),
+            ]).then(lines => console.log(lines.join("\\n")));
+          `,
+          );
+          expect(lines).toEqual([
+            "process.exit(), two messages in one chunk: saw [], exit code 0",
+            "terminate(), send() on a synchronous pair: saw [], exit code 1",
+            "terminate(), the stream's write() under send(): saw [], exit code 1",
+            `an uncaught error, send() on a synchronous pair: saw ["the worker's error: from the listener"], exit code 1`,
+          ]);
+          expect(exitCode).toBe(0);
+        },
+        scriptTimeout,
+      );
+
+      test.concurrent(
+        "in a node:vm script",
+        async () => {
+          // Only POSIX can send a SIGINT that a handler sees.
+          const stops = isWindows ? ["timeout"] : ["timeout", "SIGINT"];
+          const { lines, exitCode } = await runScript(
+            { specifier },
+            connectScript +
+              reachScript +
+              `
+              const vm = require("node:vm");
+              const stops = {
+                timeout: [{ timeout: 50 }, () => ${spin}],
+                SIGINT: [{ breakOnSigint: true }, () => { process.kill(process.pid, "SIGINT"); for (;;) {} }],
+              };
+              (async () => {
+                for (const name of ${JSON.stringify(stops)}) {
+                  for (const way of ${JSON.stringify(ways)}) {
+                    const [options, stop] = stops[name];
+                    const seen = [];
+                    const ran = seen.push.bind(seen);
+                    const call = await reach(way, stop, ran);
+                    let outcome;
+                    try {
+                      outcome = "returned " + vm.runInNewContext("call(); ran('the script after the call'); 1", { call, ran }, options);
+                    } catch (error) {
+                      outcome = "threw " + error.code;
+                    }
+                    process.setUncaughtExceptionCaptureCallback(null);
+                    console.log(name + ", " + way + ": " + outcome + ", ran " + JSON.stringify(seen));
+                  }
+                }
+                process.exit(0);
+              })();
+            `,
+          );
+          expect(lines).toEqual(
+            stops.flatMap(stop =>
+              ways.map(
+                way =>
+                  `${stop}, ${way}: threw ERR_SCRIPT_EXECUTION_${stop === "timeout" ? "TIMEOUT" : "INTERRUPTED"}, ran []`,
+              ),
+            ),
+          );
+          expect(exitCode).toBe(0);
+        },
+        scriptTimeout,
+      );
+
+      // The program goes on after a node:vm run that was cut short, and the socket delivers what it reads from then on.
+      // npm ws leaves its receiver in the middle of a write and delivers no more frames.
+      test.concurrent.skipIf(isWindows)(
+        "after a node:vm stop in a 'message' listener, the socket still receives and sends",
+        async () => {
+          const { lines, exitCode } = await runScript(
+            { specifier },
+            connectScript +
+              `
+              const vm = require("node:vm");
+              connect(synchronousPair()).then(([client, server]) => {
+                const seen = [];
+                client.on("message", data => {
+                  seen.push("client got " + data);
+                  if (seen.length > 1) return;
+                  process.kill(process.pid, "SIGINT");
+                  for (;;) {}
+                });
+                server.on("message", data => seen.push("server got " + data));
+                try {
+                  vm.runInNewContext("send('a')", { send: data => server.send(data) }, { breakOnSigint: true });
+                } catch (error) {
+                  seen.push("threw " + error.code);
+                }
+                server.send("b");
+                client.send("c");
+                console.log(seen.join(", "));
+                process.exit(0);
+              });
+            `,
+          );
+          expect(lines).toEqual([
+            `client got a, threw ERR_SCRIPT_EXECUTION_INTERRUPTED, ${builtin ? "client got b, " : ""}server got c`,
+          ]);
+          expect(exitCode).toBe(0);
+        },
+        scriptTimeout,
+      );
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { WriteStream } from "node:tty";
@@ -177,7 +177,7 @@ describe("ReadStream.prototype.setRawMode", () => {
   // chose how to cancel the console read from the new mode, not from the read that was pending, and marked a line
   // read as cancelled when there was none. readline's close() reaches the same state with pause(). Node has the same
   // libuv code: v26.12.1 loses the line for both children.
-  test.each([
+  test.concurrent.each([
     [
       "three setRawMode calls in one turn",
       `process.stdin.setRawMode(false);
@@ -205,7 +205,7 @@ describe("ReadStream.prototype.setRawMode", () => {
 
   // The same mark kept setRawMode(true) from ending a line read that was in progress. The console went on editing
   // a line: it echoed the keys and held them back until Enter, and libuv then dropped the line.
-  test.each([
+  test.concurrent.each([
     ["", ""],
     [" after two mode changes in one turn", "process.stdin.setRawMode(false); process.stdin.setRawMode(true);"],
   ])("setRawMode(true) ends a line read in progress%s", async (_, before) => {
@@ -263,7 +263,7 @@ describe("ReadStream.prototype.setRawMode", () => {
 
   // A prompt that pauses stdin leaves the terminal to the child that it starts. The same mark kept pause() from
   // ending the parent's line read, and that read took the first line typed for the child.
-  test("pause() leaves the next line to a child on the same terminal", async () => {
+  test.concurrent("pause() leaves the next line to a child on the same terminal", async () => {
     const result = await reportOf(
       [
         bunExe(),
@@ -309,14 +309,18 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 
   // A 'data' listener runs inside libuv's read callback. When it started a read and stopped it again there, libuv
-  // forgot the stop as the callback returned. The empty line that a console makes up to end a line read then arrived
-  // as data.
-  test("delivers nothing from a line read that a 'data' listener started and stopped", async () => {
-    const result = await reportOf(
+  // forgot the stop as the callback returned. What the console hands back to end a line read then arrived as data:
+  // here a line with the "#" that the console had in it.
+  test.concurrent("delivers nothing from a line read that a 'data' listener started and stopped", async () => {
+    using dir = tempDir("tty-line-read-in-progress", {});
+    const echoed = String(dir) + "/echoed";
+
+    const { report, exitCode } = await reportOf(
       [
         bunExe(),
         "-e",
         `
+          const { existsSync } = require("node:fs");
           let first = true;
           let typed = "";
           process.stdin.on("data", chunk => {
@@ -326,9 +330,17 @@ describe("ReadStream.prototype.setRawMode", () => {
               process.stdin.pause();
               process.nextTick(() => {
                 process.stdin.resume();
-                // Time for the console to start the read. A stop that comes before that ends the read with nothing
-                // made up, and then the test passes with or without the fix.
-                Bun.sleepSync(100);
+                // The parent makes this file when the terminal has echoed the "#". A console echoes from the line
+                // read itself, so the read that the next pause() stops is then in progress. A stop that comes
+                // before that has nothing to hand back, with or without the fix.
+                const deadline = Date.now() + 3000;
+                while (!existsSync(process.env.ECHOED)) {
+                  if (Date.now() > deadline) {
+                    process.stdout.write('GOT "no echo" END');
+                    process.exit(1);
+                  }
+                  Bun.sleepSync(1);
+                }
                 process.stdin.pause();
                 setImmediate(() => {
                   process.stdin.resume();
@@ -346,12 +358,17 @@ describe("ReadStream.prototype.setRawMode", () => {
       ],
       async ({ until, type }) => {
         await until("READY");
-        type("one\r");
+        type("one\r#");
+        await until(/READY.*#/);
+        fs.writeFileSync(echoed, "");
         await until("AGAIN");
         type("two\r");
       },
+      { ...bunEnv, ECHOED: echoed },
     );
-    expect(result).toEqual({ report: ["one", "two"], exitCode: 0 });
+    // A POSIX terminal keeps the "#" for the next line. A console drops it with the read that pause() stops.
+    const lines = Array.isArray(report) ? report.map(line => String(line).replace(/^#/, "")) : report;
+    expect({ lines, exitCode }).toEqual({ lines: ["one", "two"], exitCode: 0 });
   });
 
   // Raw mode is per-stream in libuv (each uv_tty_t holds its own mode and its

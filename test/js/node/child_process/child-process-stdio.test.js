@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isFreeBSD, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execSync, spawn } from "node:child_process";
@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { stdinCallOrders } from "./fixtures/stdin-call-orders-fixture.js";
+import { tables } from "./fixtures/stdin-exited-child-fixture.js";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -611,5 +612,202 @@ describe("the pipes of a child in the turn of spawn()", () => {
       destroyed: [true, true, true],
       stdio: [true, true, true],
     });
+  });
+});
+
+// One callback after spawn(), a child that lives a few milliseconds has exited, and this loop has yet to report that:
+// it runs its task queue and its immediates ahead of the poll that sees an exit. Node.js polls first, so there the exit
+// has destroyed child.stdin before the callback runs, and a write to it ends with no 'error'. Here the write was sent,
+// and its EPIPE became an 'error' that ended a parent with no listener for it.
+//
+// Each row of the fixture proves that its child has exited, without a poll of the event loop. Windows: the fixture has
+// no such proof there. FreeBSD: the question that the stream asks is not wired.
+describe.skipIf(isWindows || isFreeBSD)("child.stdin one callback after spawn()", () => {
+  const fixture = join(import.meta.dir, "fixtures", "stdin-exited-child-fixture.js");
+
+  // The rows of a table of the fixture: { [row]: what followed the calls of the row, in order }.
+  async function table(name, { entry = fixture, env = bunEnv } = {}) {
+    using dir = tempDir("stdin-exited-child", {});
+    await using proc = Bun.spawn({ cmd: [bunExe(), entry, name, String(dir)], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  // The part of a row that Node.js shows too: the 'error' of child.stdin, or that it closed with none.
+  const ending = events =>
+    events.find(event => event.startsWith("stdin error ")) ??
+    (events.includes("stdin finish")
+      ? "'finish'"
+      : events.some(event => event.startsWith("stdin close"))
+        ? "no 'error'"
+        : "never closed");
+  const endings = rows => Object.fromEntries(Object.entries(rows).map(([row, events]) => [row, ending(events)]));
+  const every = (name, value) => Object.fromEntries(tables[name].map(row => [row, value]));
+
+  it.concurrent("a parent with no 'error' listener survives a write to a child that has exited", async () => {
+    expect(endings(await table("no listener"))).toEqual(every("no listener", "no 'error'"));
+  });
+
+  it.concurrent("no 'error' for a child that exited before the callback", async () => {
+    expect(endings(await table("exited"))).toEqual(every("exited", "no 'error'"));
+  });
+
+  // In the turn of spawn(), for a child that lived through a poll, for a live child that closed its stdin, and for a
+  // child that took bytes in the callback and then exited (all of them, or a part while the rest waited): Node.js
+  // reports the EPIPE in each.
+  it.concurrent("'error' EPIPE where no loop could have reported an exit", async () => {
+    expect(endings(await table("not reported"))).toEqual(every("not reported", "stdin error EPIPE"));
+  });
+
+  // An ES module with a pending top-level await is run by another function of the event loop (auto_tick).
+  it.concurrent("the same from a program that waits in a top-level await", async () => {
+    expect(endings(await table("both kinds", { entry: fixture.replace(/js$/, "mjs") }))).toEqual({
+      "immediate, end": "no 'error'",
+      "immediate, write large": "no 'error'",
+      "promise, end": "no 'error'",
+      "fs, end": "no 'error'",
+      "spawn turn, end": "stdin error EPIPE",
+      "closed, end": "stdin error EPIPE",
+    });
+  });
+
+  // Without a pidfd a thread waits for the child, and the stream gets no answer. These rows have a live child, and the
+  // fixture has /dev/null as its stdin: an answer that is read from descriptor 0 says that the child has exited.
+  it.skipIf(!isLinux && !isAndroid).concurrent("'error' EPIPE for a live child that a thread waits for", async () => {
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" };
+    expect(endings(await table("closed", { env }))).toEqual(every("closed", "stdin error EPIPE"));
+  });
+
+  // The loop reports the exit itself, as it always has: what the child sent before it exited is read first.
+  it.concurrent("the output and the message of the child arrive ahead of its 'exit'", async () => {
+    const rows = await table("order");
+    const ahead = (row, event) =>
+      rows[row].includes(event) && rows[row].indexOf(event) < rows[row].indexOf("exit SIGKILL");
+    expect({
+      stdout: ahead("immediate, end large, output", "stdout data"),
+      stderr: ahead("immediate, end large, output", "stderr data"),
+      message: [ahead("immediate, end large, ipc", "message"), ahead("fs, end large, ipc", "message")],
+      "'close' of the child for a listener that was added late":
+        rows["immediate, end, then listen for 'close' of the child, output"].includes("late close"),
+    }).toEqual({
+      stdout: true,
+      stderr: true,
+      message: [true, true],
+      "'close' of the child for a listener that was added late": true,
+    });
+  });
+
+  // kill() sends no signal to a child whose exit Node.js has reported, and returns false:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L502-L527
+  // An AbortSignal emits its AbortError only if kill() returned true.
+  it.concurrent("kill() and an AbortSignal leave a child that has exited alone", async () => {
+    const rows = await table("kill");
+    const said = Object.fromEntries(
+      Object.entries(rows).map(([row, events]) => [row, events.filter(event => !/^(exit|stdin) /.test(event))]),
+    );
+    expect(said).toEqual({
+      "immediate, kill()": ["kill() false, killed false"],
+      "promise, kill()": ["kill() false, killed false"],
+      "fs, kill()": ["kill() false, killed false"],
+      "spawn turn, kill()": ["kill() true, killed true"],
+      "later, kill()": ["kill() true, killed true"],
+      "immediate, abort, signal": [],
+      "spawn turn, abort, signal": ["child error AbortError"],
+      // The error of execFile() is that of the exit: the child was killed from outside.
+      "immediate, abort, execFile": ["execFile callback Error"],
+      "spawn turn, abort, execFile": ["execFile callback AbortError", "child error AbortError"],
+    });
+  });
+
+  // What the rows above leave out, because it differs from Node.js. Here the failed send itself ends the stream, and the
+  // loop reports the exit after it: the callbacks, `errored` and finished() have the EPIPE of the send, and 'exit'
+  // comes last. Under Node.js the exit comes first and destroys the stream: `errored` is null, a callback gets
+  // ERR_STREAM_DESTROYED or is not called, and finished() after write() and end() resolves.
+  //
+  // Once this loop reports an exit ahead of its immediates and its tasks, these rows fail. Delete them then, with the
+  // question that the stream asks (has_exited_before_first_poll in subprocess.rs).
+  describe("while the loop reports an exit behind its immediates and tasks", () => {
+    it.concurrent("the callbacks and `errored` have the EPIPE, and 'exit' is last", async () => {
+      const rows = await table("exited");
+      const closed = ["stdin close, errored EPIPE", "exit SIGKILL"];
+      const expected = {};
+      for (const when of ["immediate", "promise"]) {
+        Object.assign(expected, {
+          [`${when}, end`]: ["end callback EPIPE", ...closed],
+          [`${when}, end large`]: ["end callback EPIPE", ...closed],
+          [`${when}, write large`]: ["write callback EPIPE", ...closed],
+          [`${when}, write large twice`]: ["write callback EPIPE", "write callback EPIPE", ...closed],
+          [`${when}, write large, end`]: ["write callback EPIPE", "end callback EPIPE", ...closed],
+          [`${when}, write, end`]: closed,
+          // The sink holds back a small write, and answers it before anything is sent.
+          [`${when}, write, end with callback`]: ["write callback ok", "end callback EPIPE", ...closed],
+          [`${when}, write, destroy`]: ["stdin close, errored null", "exit SIGKILL"],
+        });
+      }
+      expect(Object.fromEntries(Object.keys(expected).map(row => [row, rows[row]]))).toEqual(expected);
+    });
+
+    // The first two rows differ only in where the sink sends: 4096 bytes go out in write(), fewer in end().
+    it.concurrent("finished() has the EPIPE whatever the size of the write", async () => {
+      const rows = await table("finished");
+      const closed = ["stdin close, errored EPIPE", "finished EPIPE", "exit SIGKILL"];
+      expect({
+        "immediate, write 4095, end, finished": rows["immediate, write 4095, end, finished"],
+        "immediate, write 4096, end, finished": rows["immediate, write 4096, end, finished"],
+        "immediate, end large, finished": rows["immediate, end large, finished"],
+        // fs.stat() is one request to the thread pool. Node.js runs its callback in the poll that also sees the exit,
+        // ahead of the exit, and reports EPIPE. Bun does not tell it from fs.readFile(), which is several.
+        "fs one hop, end": ending(rows["fs one hop, end"]),
+        "fs one hop, write large": ending(rows["fs one hop, write large"]),
+      }).toEqual({
+        "immediate, write 4095, end, finished": closed,
+        "immediate, write 4096, end, finished": closed,
+        "immediate, end large, finished": ["end callback EPIPE", ...closed],
+        "fs one hop, end": "no 'error'",
+        "fs one hop, write large": "no 'error'",
+      });
+    });
+
+    // Where spawn() runs, against when end() runs. The child of each cell has exited by then.
+    it.concurrent("spawn() in a callback", async () => {
+      expect(await table("origins")).toEqual({
+        "spawn() in a timer, the same turn": "EPIPE",
+        "spawn() in a timer, the next immediate": "no 'error'",
+        "spawn() in an fs callback, the same turn": "EPIPE",
+        // Node.js reports EPIPE in the next two: it has not polled between the two callbacks.
+        "spawn() in an fs callback, the next immediate": "no 'error'",
+        "spawn() in an fs callback, the next fs callback": "no 'error'",
+        "spawn() in an immediate, the same turn": "EPIPE",
+        "spawn() in an immediate, the next immediate": "no 'error'",
+        "spawn() in an immediate, an immediate of the same batch": "EPIPE",
+      });
+    });
+  });
+
+  // The stream holds the Subprocess of its child to ask about it, and lets go of it when it is destroyed.
+  it.concurrent("a stdin that is kept does not keep the Subprocess of its child", async () => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const { heapStats } = require("bun:jsc");
+      const kept = [];
+      let open = 30;
+      for (let i = 0; i < 30; i++) {
+        const child = spawn("true", { stdio: ["pipe", "ignore", "ignore"] });
+        kept.push(child.stdin);
+        child.on("close", () => {
+          if (--open > 0) return;
+          setImmediate(() => {
+            Bun.gc(true);
+            console.log(JSON.stringify({ kept: kept.length, subprocesses: heapStats().objectTypeCounts.Subprocess ?? 0 }));
+          });
+        });
+      }`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const { kept, subprocesses } = JSON.parse(stdout);
+    expect(kept).toBe(30);
+    expect(subprocesses).toBeLessThan(5);
   });
 });

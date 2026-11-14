@@ -41,6 +41,11 @@ pub struct FileSink {
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
     pub(crate) written: Cell<usize>,
+    /// `EventLoop::callback_number` when bytes last reached the descriptor. `Subprocess` reads it for its stdin: a
+    /// child that took bytes in a callback was alive in that callback.
+    pub(crate) sent_in_callback: Cell<u32>,
+    /// A write that the sink had held back failed: the error went to a caller that had returned. For `Subprocess`.
+    pub(crate) held_write_failed: Cell<bool>,
     pub(crate) pending: JsCell<streams::WritablePending>,
     pub(crate) source: JsCell<streams::SourceHandle>,
     pub(crate) done: Cell<bool>,
@@ -346,6 +351,11 @@ impl FileSink {
             (*this).run_pending_later.has.set(false);
 
             let _entered = (*this).event_loop().entered();
+            if (*this).pending.get().state == streams::PendingState::Pending
+                && matches!((*this).pending.get().result, streams::Writable::Err(_))
+            {
+                (*this).held_write_failed.set(true);
+            }
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
             // re-enter JS, but no other path holds a borrow of `self.pending` for
             // the duration (host-fns gate on `pending.state != Pending` first).
@@ -376,6 +386,10 @@ impl FileSink {
             // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer
             // we should unify the behaviors to simplify this
             let has_pending_data = (*this).writer.get().has_pending_data();
+            // `Drained` with bytes still held is the writer's report of a chunk that it only buffered.
+            if amount > 0 && !(status == WriteStatus::Drained && has_pending_data) {
+                (*this).note_sent();
+            }
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
             // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
@@ -949,6 +963,25 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
+    /// Bytes reached the descriptor in the callback of the event loop that is running.
+    fn note_sent(&self) {
+        if let Some(vm) = self.js_vm() {
+            self.sent_in_callback
+                .set(vm.event_loop_shared().callback_number());
+        }
+    }
+
+    /// As [`note_sent`](Self::note_sent), for what `writer.flush()` returned: it reports no write to `on_write`.
+    fn note_flushed(&self, flushed: &WriteResult) {
+        if let WriteResult::Done(sent) | WriteResult::Wrote(sent) | WriteResult::Pending(sent) =
+            flushed
+        {
+            if *sent > 0 {
+                self.note_sent();
+            }
+        }
+    }
+
     pub(crate) fn run_pending_later(&self) {
         if self.run_pending_later.has.get() {
             return;
@@ -998,7 +1031,9 @@ impl FileSink {
 
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
-            match (*this).writer.with_mut(|w| w.flush()) {
+            let flushed = (*this).writer.with_mut(|w| w.flush());
+            (*this).note_flushed(&flushed);
+            match flushed {
                 WriteResult::Err(err) => {
                     (*this).update_ref(false);
                     // `flush()` returns a write error without routing through the
@@ -1068,6 +1103,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS re-entry while
         // the `&mut IOWriter` is held.
         let rc = self.writer.with_mut(|w| w.flush());
+        self.note_flushed(&rc);
         // `on_write` keeps the event loop alive while bytes sit in the buffer
         // and `on_auto_flush` releases that once it drains them. A flush from
         // JS that drained them has to release it too, or the loop still counts
@@ -1312,7 +1348,9 @@ impl FileSink {
 
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; any callback re-entry
         // goes via the stored `*mut FileSink` backref, not this borrow.
-        match self.writer.with_mut(|w| w.flush()) {
+        let flushed = self.writer.with_mut(|w| w.flush());
+        self.note_flushed(&flushed);
+        match flushed {
             WriteResult::Done(written) | WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
                 if has_pending {
@@ -1375,6 +1413,7 @@ impl FileSink {
 
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
         let flush_result = self.writer.with_mut(|w| w.flush());
+        self.note_flushed(&flush_result);
 
         // `writer.end()` only re-enters `on_close`, which never touches
         // `self.pending`; every arm that tears the writer down here with a
@@ -1628,6 +1667,8 @@ impl FileSink {
             writer: JsCell::new(IOWriter::default()),
             event_loop_handle,
             written: Cell::new(0),
+            sent_in_callback: Cell::new(0),
+            held_write_failed: Cell::new(false),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
                 ..Default::default()

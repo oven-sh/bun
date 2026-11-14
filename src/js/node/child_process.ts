@@ -685,6 +685,10 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
+const hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean = $bindgen(
+  "subprocess.bind.ts",
+  "hasExitedBeforeFirstPoll",
+);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1268,7 +1272,12 @@ class ChildProcess extends EventEmitter {
               stream.destroy();
               return stream;
             }
-            return require("internal/fs/streams").attachFileSink(made, stdin as $Node.FileSink);
+            return require("internal/fs/streams").attachFileSink(
+              made,
+              stdin as $Node.FileSink,
+              handle,
+              hasExitedBeforeFirstPoll,
+            );
           }
           case "inherit":
             return null;
@@ -1658,8 +1667,9 @@ class ChildProcess extends EventEmitter {
     if (handle) {
       // Bun.spawn's `killed` is true once the process has exited or been
       // terminated by a signal. Node treats kill() on a dead process as
-      // ESRCH: return false and leave `.killed` untouched.
-      if (handle.killed) {
+      // ESRCH: return false and leave `.killed` untouched. So does an exit
+      // that node's loop has reported by now and this loop has not.
+      if (handle.killed || hasExitedBeforeFirstPoll(handle)) {
         return false;
       }
 

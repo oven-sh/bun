@@ -387,7 +387,12 @@ export default b.declarations(
 
   // Other features need Spawn, so it stays in programs that name neither function. What guards the function is a feature that only its name keeps.
   extendAll(["BunSpawnSync", ...spawnFeatures], "Bun.spawnSync"),
-  extendAll(["Spawn"], "%Subprocess%", "%ResourceUsage%"),
+  extendAll(
+    ["Spawn"],
+    "%Subprocess%",
+    "%ResourceUsage%",
+    ...nativeBindings("Bindgen", "subprocess.bind.ts", "hasExitedBeforeFirstPoll"),
+  ),
   extendAll(["BunSpawn", ...spawnFeatures, ...externalValueFeatures], "Bun.spawn"),
 
   extendAll(

@@ -905,6 +905,7 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
+        el.begin_callback();
         // A task continues what the script of some context started: it runs inside that context
         // (what it opens next, and the script it calls, are that context's), and once that context
         // has stopped it is released unrun. Not live either: the context of a file

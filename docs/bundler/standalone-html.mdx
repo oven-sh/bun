@@ -206,12 +206,14 @@ createRoot(document.getElementById("root")!).render(<App />);
 Build with the plugin using the JavaScript API:
 
 ```ts build.ts icon="/icons/typescript.svg"
+import tailwind from "bun-plugin-tailwind";
+
 await Bun.build({
   entrypoints: ["./index.html"],
   compile: true,
   target: "browser",
   outdir: "./dist",
-  plugins: [require("bun-plugin-tailwind")],
+  plugins: [tailwind],
 });
 ```
 

@@ -1,0 +1,4 @@
+# The version that Tailwind builds its scanner with. Without this file, Bun's nightly would be used.
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"

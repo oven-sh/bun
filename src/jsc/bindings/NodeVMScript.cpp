@@ -220,7 +220,12 @@ JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Excep
     // If the compile fails now (stack overflow, OOM), the block is null and
     // JSC::evaluate reports the failure the way it always has, by compiling itself.
     JSC::ParserError ignoredError;
-    return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), globalObject, exception);
+    JSValue thisValue = globalObject;
+    if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(globalObject);
+        nodeVmGlobalObject && nodeVmGlobalObject->isNotContextified()) {
+        thisValue = nodeVmGlobalObject->specialSandbox();
+    }
+    return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), thisValue, exception);
 }
 
 void NodeVMScript::cacheBytecode()

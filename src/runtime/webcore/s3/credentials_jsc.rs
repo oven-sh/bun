@@ -8,7 +8,8 @@ use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
 
 use bun_s3_signing::{
-    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
+    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, SseCustomerKey,
+    StorageClass,
 };
 use bun_url::URL;
 
@@ -258,9 +259,111 @@ pub(crate) fn get_credentials_with_options(
             if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {
                 new_credentials.request_payer = request_payer;
             }
+
+            if let Some(sse) = opts.get(global_object, "sse")? {
+                new_credentials.credentials.sse_customer_key = if sse.is_null() {
+                    None
+                } else if sse.is_object() {
+                    Some(get_sse_customer_key(sse, global_object)?)
+                } else {
+                    return Err(
+                        global_object.throw_invalid_argument_type_value(b"sse", b"object", sse)
+                    );
+                };
+                new_credentials.changed_credentials = true;
+            }
         }
     }
+    if new_credentials.credentials.sse_customer_key.is_some()
+        && new_credentials.credentials.insecure_http
+    {
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "sse needs an https endpoint. The customer key would be sent in clear text over http"
+        )));
+    }
     Ok(new_credentials)
+}
+
+/// `sse: { type: "customer", algorithm?: "AES256", key }`
+fn get_sse_customer_key(sse: JSValue, global: &JSGlobalObject) -> JsResult<Box<SseCustomerKey>> {
+    match sse.get_truthy(global, "type")? {
+        Some(kind) if !kind.is_string() => {
+            return Err(global.throw_invalid_argument_type_value(b"sse.type", b"string", kind));
+        }
+        Some(kind) if kind.to_utf8(global)?.slice() == b"customer" => {}
+        _ => {
+            return Err(
+                global.throw_invalid_arguments(format_args!("sse.type must be \"customer\""))
+            );
+        }
+    }
+    match sse.get(global, "algorithm")?.filter(|v| !v.is_null()) {
+        Some(algorithm) if !algorithm.is_string() => {
+            return Err(global.throw_invalid_argument_type_value(
+                b"sse.algorithm",
+                b"string",
+                algorithm,
+            ));
+        }
+        Some(algorithm) if algorithm.to_utf8(global)?.slice() != SseCustomerKey::ALGORITHM => {
+            return Err(
+                global.throw_invalid_arguments(format_args!("sse.algorithm must be \"AES256\""))
+            );
+        }
+        _ => {}
+    }
+
+    let Some(key) = sse.get_truthy(global, "key")? else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "sse.key is required: the {}-byte customer key as a Uint8Array, or its base64",
+            SseCustomerKey::KEY_LEN
+        )));
+    };
+    let mut raw = [0u8; SseCustomerKey::KEY_LEN];
+    if key.is_string() {
+        let encoded = key.to_utf8(global)?;
+        if !decode_sse_key_base64(encoded.slice(), &mut raw) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "sse.key as a string must be the standard base64 of {} bytes ({} characters, with padding). \
+                 Pass the raw key as a Uint8Array instead",
+                SseCustomerKey::KEY_LEN,
+                SseCustomerKey::KEY_B64_LEN
+            )));
+        }
+    } else if let Some(buffer) = key.as_array_buffer(global) {
+        let bytes = buffer.byte_slice();
+        if bytes.len() != raw.len() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "sse.key must be {} bytes, got {}",
+                SseCustomerKey::KEY_LEN,
+                bytes.len()
+            )));
+        }
+        raw.copy_from_slice(bytes);
+    } else {
+        return Err(global.throw_invalid_argument_type_value(
+            b"sse.key",
+            b"Uint8Array, ArrayBuffer or string",
+            key,
+        ));
+    }
+    let customer_key = SseCustomerKey::new(&raw);
+    bun_core::secure_zero(&mut raw);
+    Ok(customer_key)
+}
+
+/// Only the padded standard spelling passes: it is the header value Bun signs.
+fn decode_sse_key_base64(encoded: &[u8], raw: &mut [u8; SseCustomerKey::KEY_LEN]) -> bool {
+    if encoded.len() != SseCustomerKey::KEY_B64_LEN {
+        return false;
+    }
+    let result = bun_base64::decode(raw, encoded);
+    if !result.is_successful() || result.count != raw.len() {
+        return false;
+    }
+    let mut canonical = [0u8; SseCustomerKey::KEY_B64_LEN];
+    bun_base64::encode(&mut canonical, raw);
+    canonical == encoded
 }
 
 fn contains_newline_or_cr(value: &[u8]) -> bool {

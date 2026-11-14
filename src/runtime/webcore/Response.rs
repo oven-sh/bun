@@ -1052,6 +1052,11 @@ impl Response {
 
                     let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
                     let credentials = s3.get_credentials();
+                    if credentials.sse_customer_key.is_some() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "new Response(s3File) cannot redirect to an object that uses SSE-C",
+                        )));
+                    }
 
                     let result = match credentials.sign_request::<false>(
                         &bun_s3_signing::SignOptions {

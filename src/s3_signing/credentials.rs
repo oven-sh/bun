@@ -151,6 +151,65 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// SseCustomerKey
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The two SSE-C header values: base64 of the key and base64 of its MD5.
+pub struct SseCustomerKey {
+    key_b64: [u8; Self::KEY_B64_LEN],
+    key_md5_b64: [u8; Self::KEY_MD5_B64_LEN],
+}
+
+impl SseCustomerKey {
+    /// SSE-C keys are 256-bit AES keys.
+    pub const KEY_LEN: usize = 32;
+    /// The only algorithm S3 accepts for SSE-C.
+    pub const ALGORITHM: &'static [u8] = b"AES256";
+    /// Length of the base64 of a key: 44.
+    pub const KEY_B64_LEN: usize = bun_base64::encode_len_from_size(Self::KEY_LEN);
+    const KEY_MD5_B64_LEN: usize = bun_base64::encode_len_from_size(bun_sha_hmac::MD5::DIGEST);
+
+    pub fn new(key: &[u8; Self::KEY_LEN]) -> Box<Self> {
+        let mut this = Box::new(Self {
+            key_b64: [0; Self::KEY_B64_LEN],
+            key_md5_b64: [0; Self::KEY_MD5_B64_LEN],
+        });
+        let n = bun_base64::encode(&mut this.key_b64, key);
+        debug_assert_eq!(n, Self::KEY_B64_LEN);
+        let mut md5 = [0u8; bun_sha_hmac::MD5::DIGEST];
+        bun_sha_hmac::MD5::hash(key, &mut md5);
+        let n = bun_base64::encode(&mut this.key_md5_b64, &md5);
+        debug_assert_eq!(n, Self::KEY_MD5_B64_LEN);
+        bun_core::secure_zero(&mut md5);
+        this
+    }
+
+    pub fn key_b64(&self) -> &[u8] {
+        &self.key_b64
+    }
+
+    pub fn key_md5_b64(&self) -> &[u8] {
+        &self.key_md5_b64
+    }
+}
+
+impl Clone for SseCustomerKey {
+    fn clone(&self) -> Self {
+        Self {
+            key_b64: self.key_b64,
+            key_md5_b64: self.key_md5_b64,
+        }
+    }
+}
+
+impl Drop for SseCustomerKey {
+    fn drop(&mut self) {
+        bun_core::secure_zero(&mut self.key_b64);
+        bun_core::secure_zero(&mut self.key_md5_b64);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -164,6 +223,7 @@ pub struct S3Credentials {
     pub bucket: Box<[u8]>,
     pub session_token: Box<[u8]>,
     pub(crate) storage_class: Option<StorageClass>,
+    pub sse_customer_key: Option<Box<SseCustomerKey>>,
     /// Important for MinIO support.
     pub insecure_http: bool,
     /// indicates if the endpoint is a virtual hosted style bucket
@@ -185,6 +245,7 @@ impl Clone for S3Credentials {
             bucket: self.bucket.clone(),
             session_token: self.session_token.clone(),
             storage_class: self.storage_class,
+            sse_customer_key: self.sse_customer_key.clone(),
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
         }
@@ -202,6 +263,7 @@ impl Default for S3Credentials {
             bucket: Box::default(),
             session_token: Box::default(),
             storage_class: None,
+            sse_customer_key: None,
             insecure_http: false,
             virtual_hosted_style: false,
         }
@@ -231,6 +293,7 @@ impl S3Credentials {
             bucket,
             session_token,
             storage_class: None,
+            sse_customer_key: None,
             insecure_http,
             virtual_hosted_style: false,
         }
@@ -255,6 +318,7 @@ impl S3Credentials {
             bucket: self.bucket.clone(),
             session_token: self.session_token.clone(),
             storage_class: None,
+            sse_customer_key: self.sse_customer_key.clone(),
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
         })
@@ -443,6 +507,11 @@ impl S3Credentials {
 
         let amz_day = &amz_date[0..8];
         let request_payer = sign_options.request_payer;
+        // DeleteObject, AbortMultipartUpload and ListObjectsV2 take no SSE-C headers.
+        let sse_customer_key: Option<&SseCustomerKey> = self
+            .sse_customer_key
+            .as_deref()
+            .filter(|_| !path.is_empty() && method != Method::DELETE);
         let header_key = SignedHeadersKey {
             content_disposition: content_disposition.is_some(),
             content_encoding: content_encoding.is_some(),
@@ -450,11 +519,13 @@ impl S3Credentials {
             acl: acl.is_some(),
             request_payer,
             session_token: session_token.is_some(),
+            sse_customer_key: sse_customer_key.is_some(),
             storage_class: storage_class.is_some(),
         };
-        let mut signed_headers_buf = [0u8; 256];
+        let mut signed_headers_buf = [0u8; SignedHeaders::MAX_LEN];
         let signed_headers: &[u8] = if sign_query {
-            b"host"
+            // The SSE-C key must travel in headers, never in the URL.
+            SignedHeaders::get_presign(sse_customer_key.is_some(), &mut signed_headers_buf)
         } else {
             SignedHeaders::get(header_key, &mut signed_headers_buf)
         };
@@ -462,7 +533,7 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        let mut tmp_buffer = [0u8; CANONICAL_REQUEST_BUFFER_LEN];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -570,6 +641,24 @@ impl S3Credentials {
                     );
                 }
 
+                // `;` between the header names becomes `%3B`.
+                let mut signed_headers_encoded_buffer = [0u8; SignedHeaders::ENCODED_MAX_LEN];
+                let encoded_signed_headers = encode_uri_component::<true>(
+                    signed_headers,
+                    &mut signed_headers_encoded_buffer,
+                )
+                .map_err(|_| SignError::FailedToGenerateSignature)?;
+
+                // The CanonicalHeaders lines after `host`.
+                let mut sse_canonical_buffer = [0u8; SSE_CANONICAL_HEADERS_MAX_LEN];
+                let sse_canonical_headers: &[u8] = match sse_customer_key {
+                    Some(key) => {
+                        CanonicalRequest::format_sse_customer_key(&mut sse_canonical_buffer, key)
+                            .map_err(|_| SignError::NoSpaceLeft)?
+                    }
+                    None => b"",
+                };
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
                     let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
@@ -595,7 +684,10 @@ impl S3Credentials {
                     if let Some(token) = encoded_session_token {
                         query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                     }
-                    query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                    query_parts.push(alloc_print!(
+                        "X-Amz-SignedHeaders={}",
+                        BStr::new(encoded_signed_headers)
+                    ));
                     if let Some(cd) = encoded_content_disposition {
                         query_parts.push(alloc_print!(
                             "response-content-disposition={}",
@@ -624,11 +716,13 @@ impl S3Credentials {
                     break 'brk_canonical buf_print(
                         &mut tmp_buffer,
                         format_args!(
-                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
+                            "{}\n{}\n{}\nhost:{}\n{}\n{}\n{}",
                             method_name,
                             BStr::new(normalized_path),
                             BStr::new(&query_string),
                             BStr::new(&host),
+                            BStr::new(sse_canonical_headers),
+                            BStr::new(signed_headers),
                             BStr::new(aws_content_hash)
                         ),
                     )
@@ -686,7 +780,10 @@ impl S3Credentials {
                     "X-Amz-Signature={}",
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
-                url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                url_query_parts.push(alloc_print!(
+                    "X-Amz-SignedHeaders={}",
+                    BStr::new(encoded_signed_headers)
+                ));
                 if let Some(cd) = encoded_content_disposition {
                     url_query_parts.push(alloc_print!(
                         "response-content-disposition={}",
@@ -735,6 +832,7 @@ impl S3Credentials {
                     aws_content_hash,
                     &amz_date,
                     session_token,
+                    sse_customer_key,
                     storage_class,
                     signed_headers,
                 )
@@ -879,6 +977,22 @@ impl S3Credentials {
             result._headers_len += 1;
         }
 
+        if let Some(key) = sse_customer_key {
+            result._headers[result._headers_len as usize] =
+                pico_header_new(SSE_CUSTOMER_ALGORITHM_HEADER, SseCustomerKey::ALGORITHM);
+            result._headers_len += 1;
+            let key_value = Box::<[u8]>::from(key.key_b64());
+            result._headers[result._headers_len as usize] =
+                pico_header_new(SSE_CUSTOMER_KEY_HEADER, &key_value);
+            result.sse_customer_key = key_value;
+            result._headers_len += 1;
+            let key_md5_value = Box::<[u8]>::from(key.key_md5_b64());
+            result._headers[result._headers_len as usize] =
+                pico_header_new(SSE_CUSTOMER_KEY_MD5_HEADER, &key_md5_value);
+            result.sse_customer_key_md5 = key_md5_value;
+            result._headers_len += 1;
+        }
+
         Ok(result)
     }
 }
@@ -960,6 +1074,8 @@ pub struct SignResult {
     pub(crate) content_encoding: Box<[u8]>,
     pub(crate) content_md5: Box<[u8]>,
     pub(crate) session_token: Box<[u8]>,
+    pub(crate) sse_customer_key: Box<[u8]>,
+    pub(crate) sse_customer_key_md5: Box<[u8]>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
@@ -970,7 +1086,8 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    /// The four base headers plus every optional one `SignedHeaders::get` can list.
+    pub const MAX_HEADERS: usize = 14;
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
@@ -1002,6 +1119,8 @@ impl Default for SignResult {
             content_encoding: Box::default(),
             content_md5: Box::default(),
             session_token: Box::default(),
+            sse_customer_key: Box::default(),
+            sse_customer_key_md5: Box::default(),
             acl: None,
             storage_class: None,
             request_payer: false,
@@ -1016,6 +1135,8 @@ impl Drop for SignResult {
         // Zero-before-free for secrets.
         zero_sensitive(&mut self.amz_date);
         zero_sensitive(&mut self.session_token);
+        zero_sensitive(&mut self.sse_customer_key);
+        zero_sensitive(&mut self.sse_customer_key_md5);
         zero_sensitive(&mut self.content_disposition);
         zero_sensitive(&mut self.content_encoding);
         zero_sensitive(&mut self.host);
@@ -1247,15 +1368,59 @@ pub(crate) struct SignedHeadersKey {
     pub acl: bool,
     pub request_payer: bool,
     pub session_token: bool,
+    pub sse_customer_key: bool,
     pub storage_class: bool,
 }
+
+const SSE_CUSTOMER_ALGORITHM_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-algorithm";
+const SSE_CUSTOMER_KEY_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-key";
+const SSE_CUSTOMER_KEY_MD5_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-key-md5";
+
+/// 4096 plus what the SSE-C header lines and names add.
+const CANONICAL_REQUEST_BUFFER_LEN: usize = 4096
+    + SSE_CANONICAL_HEADERS_MAX_LEN
+    + 3
+    + SSE_CUSTOMER_ALGORITHM_HEADER.len()
+    + SSE_CUSTOMER_KEY_HEADER.len()
+    + SSE_CUSTOMER_KEY_MD5_HEADER.len();
+
+/// The three CanonicalHeaders lines of SSE-C.
+const SSE_CANONICAL_HEADERS_MAX_LEN: usize = SSE_CUSTOMER_ALGORITHM_HEADER.len()
+    + 1
+    + SseCustomerKey::ALGORITHM.len()
+    + 1
+    + SSE_CUSTOMER_KEY_HEADER.len()
+    + 1
+    + SseCustomerKey::KEY_B64_LEN
+    + 1
+    + SSE_CUSTOMER_KEY_MD5_HEADER.len()
+    + 1
+    + SseCustomerKey::KEY_MD5_B64_LEN
+    + 1;
 
 struct SignedHeaders;
 
 impl SignedHeaders {
+    /// Every name `get` can push, `;` between them.
+    const MAX_LEN: usize = b"content-disposition;".len()
+        + b"content-encoding;".len()
+        + b"content-md5;".len()
+        + b"host;".len()
+        + b"x-amz-acl;".len()
+        + b"x-amz-content-sha256;x-amz-date".len()
+        + b";x-amz-request-payer".len()
+        + b";x-amz-security-token".len()
+        + 3
+        + SSE_CUSTOMER_ALGORITHM_HEADER.len()
+        + SSE_CUSTOMER_KEY_HEADER.len()
+        + SSE_CUSTOMER_KEY_MD5_HEADER.len()
+        + b";x-amz-storage-class".len();
+    /// `MAX_LEN` after `encode_uri_component`: each `;` is `%3B`.
+    const ENCODED_MAX_LEN: usize = Self::MAX_LEN + 2 * (SignResult::MAX_HEADERS - 2);
+
     // Built at runtime into a caller buffer.
     // Could switch to a build.rs-generated static table if profiling shows this matters.
-    fn get(key: SignedHeadersKey, buf: &mut [u8; 256]) -> &[u8] {
+    fn get(key: SignedHeadersKey, buf: &mut [u8; Self::MAX_LEN]) -> &[u8] {
         let mut n = 0usize;
         macro_rules! push {
             ($s:expr) => {{
@@ -1284,11 +1449,40 @@ impl SignedHeaders {
         if key.session_token {
             push!(b";x-amz-security-token");
         }
+        if key.sse_customer_key {
+            push!(b";");
+            push!(SSE_CUSTOMER_ALGORITHM_HEADER);
+            push!(b";");
+            push!(SSE_CUSTOMER_KEY_HEADER);
+            push!(b";");
+            push!(SSE_CUSTOMER_KEY_MD5_HEADER);
+        }
         if key.storage_class {
             push!(b";x-amz-storage-class");
         }
-        // SAFETY: n <= 256 by construction.
-        unsafe { core::slice::from_raw_parts(buf.as_ptr(), n) }
+        &buf[..n]
+    }
+
+    /// `host`, plus the SSE-C headers when the object uses a customer key.
+    fn get_presign(sse_customer_key: bool, buf: &mut [u8; Self::MAX_LEN]) -> &[u8] {
+        let mut n = 0usize;
+        macro_rules! push {
+            ($s:expr) => {{
+                let s: &[u8] = $s;
+                buf[n..n + s.len()].copy_from_slice(s);
+                n += s.len();
+            }};
+        }
+        push!(b"host");
+        if sse_customer_key {
+            push!(b";");
+            push!(SSE_CUSTOMER_ALGORITHM_HEADER);
+            push!(b";");
+            push!(SSE_CUSTOMER_KEY_HEADER);
+            push!(b";");
+            push!(SSE_CUSTOMER_KEY_MD5_HEADER);
+        }
+        &buf[..n]
     }
 }
 
@@ -1314,6 +1508,7 @@ impl CanonicalRequest {
         hash: &[u8],
         date: &[u8],
         session_token: Option<&[u8]>,
+        sse_customer_key: Option<&SseCustomerKey>,
         storage_class: Option<&[u8]>,
         signed_headers: &[u8],
     ) -> Result<&'b [u8], core::fmt::Error> {
@@ -1361,6 +1556,9 @@ impl CanonicalRequest {
                 BStr::new(session_token.unwrap())
             );
         }
+        if key.sse_customer_key {
+            Self::write_sse_customer_key(&mut c, sse_customer_key.unwrap())?;
+        }
         if key.storage_class {
             w!(
                 "x-amz-storage-class:{}\n",
@@ -1372,6 +1570,35 @@ impl CanonicalRequest {
 
         let len = c.at;
         Ok(&c.buf[..len])
+    }
+
+    /// The three SSE-C CanonicalHeaders lines.
+    fn format_sse_customer_key<'b>(
+        buf: &'b mut [u8; SSE_CANONICAL_HEADERS_MAX_LEN],
+        key: &SseCustomerKey,
+    ) -> Result<&'b [u8], core::fmt::Error> {
+        let mut c = bun_core::fmt::SliceCursor::new(buf);
+        Self::write_sse_customer_key(&mut c, key)?;
+        let len = c.at;
+        Ok(&c.buf[..len])
+    }
+
+    fn write_sse_customer_key(
+        c: &mut bun_core::fmt::SliceCursor<'_>,
+        key: &SseCustomerKey,
+    ) -> core::fmt::Result {
+        core::fmt::Write::write_fmt(
+            c,
+            format_args!(
+                "{}:{}\n{}:{}\n{}:{}\n",
+                BStr::new(SSE_CUSTOMER_ALGORITHM_HEADER),
+                BStr::new(SseCustomerKey::ALGORITHM),
+                BStr::new(SSE_CUSTOMER_KEY_HEADER),
+                BStr::new(key.key_b64()),
+                BStr::new(SSE_CUSTOMER_KEY_MD5_HEADER),
+                BStr::new(key.key_md5_b64())
+            ),
+        )
     }
 }
 

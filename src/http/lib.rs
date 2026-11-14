@@ -1452,6 +1452,12 @@ pub(crate) fn print_request(
         let name = header.name();
         if strings::eql_case_insensitive_ascii(name, b"authorization", true)
             || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+            || strings::eql_case_insensitive_ascii(name, b"x-amz-security-token", true)
+            || strings::eql_case_insensitive_ascii(
+                name,
+                b"x-amz-server-side-encryption-customer-key",
+                true,
+            )
         {
             let value = header.value();
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);

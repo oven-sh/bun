@@ -849,8 +849,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
         Err(err)
             if err.get_errno() == E::ENOSYS
                 || err.get_errno() == E::EINVAL
-                || err.get_errno() == E::ENOTSUP
-                || err.get_errno() == E::EOPNOTSUPP =>
+                || bun_errno::is_not_supported(err.get_errno()) =>
         {
             sys::renameat(from_dir, from, to_dir, to)
         }

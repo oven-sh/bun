@@ -274,6 +274,13 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     }
 }
 
+/// Darwin has two values: 45 (`ENOTSUP`) from a file system, 102 (`EOPNOTSUPP`) from a socket.
+#[inline]
+#[allow(deprecated)] // the one place that means both values
+pub fn is_not_supported(errno: E) -> bool {
+    errno == E::ENOTSUP || errno == E::EOPNOTSUPP
+}
+
 impl SystemErrno {
     /// The kernel is not bound to this table (FUSE, `ENOTSUPP` 524): an undeclared code is `EUNKNOWN`.
     #[inline]

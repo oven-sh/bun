@@ -58,6 +58,9 @@ const maxWorkers = 3;
 const maxAttemptsPerWorker = 400;
 // Ports and file watchers can run out for a moment when many of these processes start together.
 const maxFailedStartsPerWorker = 8;
+// Where a function takes a descriptor, a number among the operands names a file of the process that makes the call. A read of the one by which another
+// thread wakes its event loop waits for good, or takes the wakeup. So each process has the null device under every number up to the largest of them, 256.
+const nullDevices = new Array<Bun.BunFile>(254).fill(Bun.file("/dev/null"));
 
 const dump: TableDump = tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8"));
 const table = new Table(dump);
@@ -518,9 +521,7 @@ function defineTests(): void {
           AOT_BUILTINS_FOLDER: import.meta.dir,
           ...(way === "test" ? { AOT_BUILTINS_WORKER_FILES: `${requestPath}\n${reportsPath}` } : {}),
         },
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
+        stdio: ["ignore", "ignore", "ignore", ...nullDevices],
         timeout: secondsPerAttempt * 1000,
       });
       const noteOfCall = () => (existsSync(notePath) ? readFileSync(notePath, "utf8") : "");

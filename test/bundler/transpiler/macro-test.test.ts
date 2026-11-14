@@ -421,6 +421,51 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
   expect(exitCode).toBe(0);
 });
 
+// The strings of the object that a JSON body parses into point into the JSON text. The Blob that holds the
+// text is collected once the macro call is over, so the text has to be copied out of it first.
+test("a JSON Blob or Response returned from a macro does not have to outlive the macro call", async () => {
+  using dir = tempDir("macro-json-body-lifetime", {
+    "m.ts": [
+      `const body = JSON.stringify({ key: Buffer.alloc(4000, "A").toString() });`,
+      `export function blob() {`,
+      `  return new Blob([body], { type: "application/json" });`,
+      `}`,
+      `export function response() {`,
+      `  return new Response(body, { headers: { "content-type": "application/json" } });`,
+      `}`,
+      `export function collect() {`,
+      `  Bun.gc(true);`,
+      `  const sameSize = [];`,
+      `  for (let i = 0; i < 200; i++) sameSize.push(new Blob([Buffer.alloc(body.length, "Z")]));`,
+      `  return sameSize.length;`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { blob, response, collect } from "./m.ts" with { type: "macro" };`,
+      `const fromBlob = blob();`,
+      `const fromResponse = response();`,
+      `const count = collect();`,
+      `const expected = Buffer.alloc(4000, "A").toString();`,
+      `console.log(JSON.stringify([Object.keys(fromBlob), fromBlob.key === expected, Object.keys(fromResponse), fromResponse.key === expected, count]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([["key"], true, ["key"], true, 200]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),

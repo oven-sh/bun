@@ -1325,30 +1325,48 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
-  // The wait for the peer's close_notify takes 8 s or more.
-  test.each([
-    ["stop()", (server: Server) => server.stop()],
-    ["closeIdleConnections() and stop()", (server: Server) => ((server as any).closeIdleConnections(), server.stop())],
-  ])("%s doesn't wait for an idle TLS peer to answer the close_notify", async (_label, stop) => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("hello") });
-    const responded = Promise.withResolvers<void>();
-    const ended = Promise.withResolvers<void>();
-    using _client = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port!,
-      tls: { ca: tls.cert },
-      allowHalfOpen: true,
-      socket: {
-        handshake: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
-        data: (_socket, chunk) => void (chunk.toString().endsWith("hello") && responded.resolve()),
-        end: () => ended.resolve(),
-        close: () => responded.reject(new Error("closed before the response")),
-      },
+  describe("an idle TLS peer that doesn't answer the close_notify", () => {
+    async function idlePeer() {
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("hello") });
+      const responded = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<void>();
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port!,
+        tls: { ca: tls.cert },
+        allowHalfOpen: true,
+        socket: {
+          handshake: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+          data: (_socket, chunk) => void (chunk.toString().endsWith("hello") && responded.resolve()),
+          end: () => ended.resolve(),
+          close: () => responded.reject(new Error("closed before the response")),
+        },
+      });
+      await responded.promise;
+      const dispose = () => (client.terminate(), void server.stop(true));
+      return { server, client, ended: ended.promise, [Symbol.dispose]: dispose };
+    }
+
+    test("holds stop() until it does", async () => {
+      using peer = await idlePeer();
+      const stopped = peer.server.stop();
+      await peer.ended;
+      await new Promise(setImmediate);
+      expect(Bun.peek.status(stopped)).toBe("pending");
+      peer.client.end();
+      await stopped;
     });
-    await responded.promise;
-    const startedAt = performance.now();
-    await Promise.all([stop(server), ended.promise]);
-    expect(performance.now() - startedAt).toBeLessThan(5_000);
+
+    // The deadline is 8 s away or more.
+    test.each([
+      ["before", (server: Server) => (server.closeIdleConnections(), server.stop())],
+      ["after", (server: Server) => Promise.all([server.stop(), server.closeIdleConnections()])],
+    ])("doesn't hold stop() with closeIdleConnections() %s it", async (_label, stop) => {
+      using peer = await idlePeer();
+      const startedAt = performance.now();
+      await Promise.all([stop(peer.server), peer.ended]);
+      expect(performance.now() - startedAt).toBeLessThan(5_000);
+    });
   });
 
   test("closeIdleConnections() is a one-shot sweep that spares busy connections and keeps listening", async () => {

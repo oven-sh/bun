@@ -1029,6 +1029,35 @@ describe("Bun.serve http2 in-process", () => {
     });
   });
 
+  // The deadline is 8 s away or more.
+  describe.each([
+    ["cleartext", false],
+    ["TLS", true],
+  ] as const)("an idle client that never ends its side (%s)", (_name, secure) => {
+    test.each([
+      ["before", (server: Bun.Server) => (server.closeIdleConnections(), server.stop())],
+      ["after", (server: Bun.Server) => Promise.all([server.stop(), server.closeIdleConnections()])],
+    ])("doesn't hold stop() with closeIdleConnections() %s it", async (_label, stop) => {
+      using server = Bun.serve({
+        port: 0,
+        tls: secure ? tlsCert : undefined,
+        http2: true,
+        fetch: () => new Response(),
+      });
+      const raw = await RawH2.connect(server.port!, secure);
+      try {
+        raw.socket.allowHalfOpen = true;
+        raw.headers(1, baseHeaders("/"));
+        await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+        const startedAt = performance.now();
+        await Promise.all([stop(server), raw.waitFor(f => f.type === T.GOAWAY)]);
+        expect(performance.now() - startedAt).toBeLessThan(5_000);
+      } finally {
+        raw.close();
+      }
+    });
+  });
+
   // Linux only: macOS sends to a reader that freed less than a segment of its window only at the next persist probe, seconds later.
   test.skipIf(!isLinux).each([
     ["cleartext", false],

@@ -319,7 +319,8 @@ public:
             /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
              * adopted into its own group), so the ext block is an HttpResponseData. */
             struct us_socket_t *next = s->next;
-            if (((HttpResponse<SSL> *) s)->closeIfIdle()) {
+            /* A program that exits once stop() resolves would reset what the kernel hasn't delivered. */
+            if (((HttpResponse<SSL> *) s)->closeIfIdle(closeWhenIdle)) {
                 closed++;
             } else if (closeWhenIdle) {
                 ((HttpResponse<SSL> *) s)->closeWhenIdle();

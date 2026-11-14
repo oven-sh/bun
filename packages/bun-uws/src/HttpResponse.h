@@ -324,7 +324,7 @@ public:
     }
 
     /* Closes this connection if it is idle: no request is being received, and no response is in flight or queued. Returns whether it closed it. */
-    bool closeIfIdle() {
+    bool closeIfIdle(bool waitForCloseNotify = false) {
         HttpResponseData<SSL> *data = getHttpResponseData();
         bool idle = data->isIdle;
         if (idle && HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
@@ -350,7 +350,7 @@ public:
          * sit in the cork buffer, and JS that runs before the loop ends
          * (a graceful stop() from a microtask) gets here. */
         Super::uncork();
-        if (SSL && !Super::getBufferedAmount()) {
+        if (SSL && !waitForCloseNotify && !Super::getBufferedAmount()) {
             /* close() counts the connection until the peer has answered the close_notify, which a peer that is gone never does. */
             closeAfterLastByte();
         } else {

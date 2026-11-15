@@ -28,8 +28,6 @@ impl RequestEnsureRouteBundledCtx<'_> {
     fn on_loaded(&mut self, dev: &mut DevServer) -> JsResult<()> {
         match self.kind {
             deferred_request::HandlerKind::ServerHandler => {
-                // The `Strong` field is move-only. Take ownership out of `self.req`
-                // (it is consumed by `on_framework_request_with_bundle`).
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
                     ReqOrSaved::Req(r) => SavedRequestUnion::Stack(r),
                     ReqOrSaved::Aborted => unreachable!(),
@@ -288,8 +286,7 @@ impl DevServer {
                 else {
                     return Ok(Deferral::Answered);
                 };
-                let ctx = saved.ctx;
-                ctx.ref_();
+                let ctx = *saved.ctx;
                 let handler = Handler::ServerHandler(saved);
                 let deferred = self.queue_request(bundle_field, route_bundle_index, handler);
                 ctx.set_deferred_request(deferred.clone());

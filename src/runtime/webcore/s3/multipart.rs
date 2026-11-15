@@ -98,7 +98,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
@@ -138,7 +138,7 @@ pub struct MultiPartUpload {
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
     pub(crate) credentials: RefPtr<S3Credentials>,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
@@ -372,17 +372,6 @@ impl UploadPart {
             // if is not pending we will free later or is already freed
             _ => {}
         }
-    }
-}
-
-impl Drop for MultiPartUpload {
-    fn drop(&mut self) {
-        scoped_log!(S3MultiPartUpload, "deinit");
-        // queue: Box<[UploadPart]> — dropped automatically, with any `data` a part still owns
-        // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
-        // not `&VirtualMachine`. Route through the global hook like simple_request does.
-        let _ = self.vm;
-        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 }
 

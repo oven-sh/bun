@@ -15,7 +15,7 @@ use super::services::{BuildContext, with_ast_scope};
 use crate::bundle_v2::bv2_impl::generate_unique_key;
 use crate::mal_prelude::*;
 use crate::options::{CompileMode, Loader, ModuleType, OutputFile, OutputKind, Side, Target};
-use crate::{BundleV2, Chunk, Index, Transpiler};
+use crate::{BundleV2, Chunk, Index, LinkerContext, LinkerGraph, Transpiler};
 
 const ENTRY_NAMESPACE: &[u8] = b"bun-aot-page";
 const ENTRY_FILE_NAME: &[u8] = b"page-entry.js";
@@ -170,23 +170,25 @@ fn run<'h>(
 
     bundle.scan_for_secondary_paths();
     bundle.process_server_component_manifest_files()?;
-    bundle.clone_ast()?;
+    let mut linker_graph = bundle.clone_ast()?;
 
     let reachable_files = bundle.find_reachable_files()?;
-    bundle.process_files_to_copy(&reachable_files)?;
+    linker_graph.additional_output_files = bundle.process_files_to_copy(&reachable_files)?;
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
-    let mut chunks = bundle.link(&reachable_files)?;
+    let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
+    let mut chunks = linker.link(bundle.transpiler.log_mut())?;
     if bundle.transpiler.log().errors > 0 {
         return Err(crate::Error::BuildFailed);
     }
 
     let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-        &mut bundle.linker,
+        &mut linker,
+        bundle.transpiler.log_mut(),
         &mut chunks,
     )?;
 
-    let manifests = write_page_manifests(bundle, &chunks, &output_files, pages)?;
+    let manifests = write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages)?;
     Ok(PageOutputs {
         manifests,
         output_files,
@@ -195,11 +197,12 @@ fn run<'h>(
 
 fn write_page_manifests(
     bundle: &BundleV2<'_>,
+    linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk<'_>],
     output_files: &[OutputFile],
     pages: &[&[u8]],
 ) -> Result<Vec<Vec<u8>>, crate::Error> {
-    let server_source_indices = &bundle.graph.html_imports.server_source_indices;
+    let server_source_indices = &bundle.graph.html_imports;
     if server_source_indices.len() != pages.len() {
         return Err(report_page_count(
             bundle,
@@ -225,8 +228,8 @@ fn write_page_manifests(
         let mut manifest: Vec<u8> = Vec::new();
         crate::HTMLImportManifest::write_with_assets(
             index as u32,
-            &bundle.graph,
-            &bundle.linker.graph,
+            bundle,
+            linker_graph,
             chunks,
             output_files,
             &mut manifest,

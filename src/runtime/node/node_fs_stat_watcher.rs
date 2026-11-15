@@ -6,7 +6,7 @@ use std::time::Instant;
 use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -364,7 +364,7 @@ pub(crate) struct StatWatcher {
 
     this_value: JsCell<JsRef>,
 
-    poll_ref: KeepAlive,
+    poll_ref: JsKeepAlive,
 
     last_stat: Guarded<PosixStat>,
 
@@ -390,10 +390,9 @@ impl Drop for StatWatcher {
         // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
         // self-ref keeps the wrapper alive until `close()` downgrades it, so
         // `finalize` cannot drop the wrapper ref first).
-        if self.poll_ref.is_active() {
-            debug_assert!(core::ptr::eq(VirtualMachine::get(), self.ctx.get())); // We cannot unref() on another thread this way.
-            self.poll_ref.unref(self.ctx.loop_ctx());
-        }
+        debug_assert!(
+            !self.poll_ref.is_active() || core::ptr::eq(VirtualMachine::get(), self.ctx.get())
+        );
     }
 }
 
@@ -645,7 +644,7 @@ impl StatWatcher {
             last_check: Cell::new(Instant::now()),
             global_this: args.global_this,
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::default(),
+            poll_ref: JsKeepAlive::default(),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),

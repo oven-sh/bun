@@ -8,7 +8,7 @@ use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
     Method,
 };
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
 use bun_ptr::RefPtr;
@@ -124,7 +124,7 @@ pub(crate) struct S3HttpSimpleTask {
     /// concurrently for the lifetime of the request, so the task owns its own
     /// copy instead of borrowing caller memory.
     pub(crate) body: Box<[u8]>,
-    pub poll_ref: KeepAlive,
+    pub(crate) _keep_alive: JsKeepAlive,
     /// The HTTP client's abort flag: set when the request's context stops so a
     /// request still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
@@ -523,17 +523,6 @@ impl S3HttpSimpleTask {
     }
 }
 
-impl Drop for S3HttpSimpleTask {
-    fn drop(&mut self) {
-        // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
-        // the global hook (registered by crate::init) — same pattern as
-        // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
-    }
-}
-
 // callers in `client.rs` / `multipart.rs` were translated with three different
 // names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
 // and two for the callback enum. Alias them here so the call sites compile without churn.
@@ -670,10 +659,6 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let poll_ref = KeepAlive::init();
-    poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-        bun_io::AllocatorType::Js,
-    ));
     let proxy_url = resolve_proxy(options.proxy_url, &result.url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         async_http_id: 0,
@@ -686,7 +671,7 @@ pub(crate) fn execute_simple_s3_request(
         concurrent_task: ConcurrentTask::default(),
         proxy_url,
         body: Box::<[u8]>::from(options.body),
-        poll_ref,
+        _keep_alive: JsKeepAlive::active(),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),

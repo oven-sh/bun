@@ -77,7 +77,7 @@ impl Stmt {
             me.currently_executing = None;
         }
         // Async children are *not* freed here (they outlive their parent's
-        // notion of "done"); see `Async`'s empty `deinit`.
+        // notion of "done").
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
         }

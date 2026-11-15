@@ -8,7 +8,7 @@ use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_io::KeepAlive;
+use bun_io::{JsKeepAlive, KeepAlive};
 use bun_jsc::StringJsc;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
@@ -1928,7 +1928,7 @@ pub(crate) struct napi_async_work {
     pub(crate) data: *mut c_void,
     pub(crate) status: AtomicU32, // AsyncWorkStatus
     pub(crate) scheduled: bool,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     /// The context whose script created the work: `complete` runs in it.
     pub(crate) context: bun_jsc::ContextId,
 }
@@ -1959,7 +1959,7 @@ impl napi_async_work {
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
             scheduled: false,
-            poll_ref: KeepAlive::default(),
+            poll_ref: JsKeepAlive::default(),
             context: global.bun_vm().context_of_caller().id(),
         }))
     }
@@ -2055,12 +2055,7 @@ impl napi_async_work {
 
     pub(crate) fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         // Note: the "this" value here may already be freed by the user in `complete`
-        // Note: KeepAlive is not `Copy`, so move it out (the original slot may
-        // be freed under us by `complete`).
-        let poll_ref = core::mem::take(&mut self.poll_ref);
-        // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
-        // generically; this is a genuine one-off cleanup.
-        scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
+        let _poll_ref = core::mem::take(&mut self.poll_ref);
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {

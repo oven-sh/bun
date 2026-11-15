@@ -107,7 +107,7 @@ pub(crate) fn post_process_js_chunk(
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
-    let c: &mut LinkerContext = ctx.c();
+    let c = ctx.c;
     debug_assert!(matches!(
         chunk.content,
         crate::chunk::Content::Javascript(_)
@@ -244,7 +244,7 @@ pub(crate) fn post_process_js_chunk(
             .to_ast(),
         );
         let source = c.get_source(chunk.entry_point.source_index());
-        let target = c.resolver().opts.target;
+        let target = c.resolver.opts.target;
 
         let prefix_stmts = bun_ast::StoreSlice::new_mut(
             chunk
@@ -768,9 +768,9 @@ pub(crate) fn post_process_js_chunk(
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (slots pre-sized in generateChunksInParallel, filled in place by the print
     // workers before post-processing, never reassigned afterwards), `c.options`
-    // banner/footer (`&'static`), graph/parse-graph data (hashbangs, source paths,
+    // banner/footer (the bundle's options), graph/parse-graph data (hashbangs, source paths,
     // HMR runtime), or `'static` literals; `watcher.input` is `chunk.unique_key`
-    // (`&'static`). All of these outlive the joiner stored in
+    // (bundle arena). All of these outlive the joiner stored in
     // `chunk.intermediate_output`, which is only read while the chunk and the
     // linker graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
@@ -780,7 +780,7 @@ pub(crate) fn post_process_js_chunk(
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk);
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
@@ -790,15 +790,11 @@ pub(crate) fn post_process_js_chunk(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
         );
-        // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
-        // local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)`.
-        let resolver = c.resolver.expect("resolver set in load()");
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
+            &c.resolver.opts.output_dir,
             can_have_shifts,
         )?;
     }
@@ -1276,7 +1272,7 @@ pub(crate) fn generate_entry_point_tail_js(
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
-            c.resolver().opts.target,
+            c.resolver.opts.target,
             &ast_view,
             c.get_source(source_index),
             print_options,

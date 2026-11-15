@@ -1364,7 +1364,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
-    stop_cron_for_vm_teardown,
+    stop_watches_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
@@ -1456,14 +1456,18 @@ unsafe fn parse_worker_exec_argv_flags(
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
 /// stops every in-process `Bun.cron()` job registered on
 /// this VM and releases the pending-promise ref so the struct frees (the event
-/// loop is dying; settle callbacks will never run).
-fn stop_cron_for_vm_teardown(vm: &VirtualMachine) {
+/// loop is dying; settle callbacks will never run). Drops the memory pressure watcher too.
+fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
+    if let Some(state) = try_runtime_state() {
+        // Its poll is a slot of `RareData`, which is freed before the runtime state.
+        state.memory_pressure_watcher.set(None);
+    }
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —
-/// same impl as [`stop_cron_for_vm_teardown`] but skips
+/// the cron half of [`stop_watches_for_vm_teardown`], but skips
 /// the pending-promise force-release (the event loop survives a hot reload, so
 /// settle callbacks will still run).
 fn cron_clear_all_reload(vm: &VirtualMachine) {

@@ -4,7 +4,7 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
@@ -63,7 +63,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             // policy in JS, so a hostname mismatch is never enforced natively.
             flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
             this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             server_name: JsCell::new(None),

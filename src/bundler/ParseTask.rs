@@ -2658,7 +2658,7 @@ pub mod parse_worker {
                     loader,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
-                    &task_ctx.linker.has_any_css_locals,
+                    &task_ctx.has_any_css_locals,
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)
@@ -2851,20 +2851,10 @@ pub mod parse_worker {
         // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
         drop(core::mem::take(&mut this.jsx));
 
-        // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-        // of `linker.r#loop` is centralised in `LinkerContext::any_loop`.
-        //
-        // The loop is effectively non-optional — `BundleV2::init`
-        // always sets `linker.r#loop` before scheduling any ParseTask. Running
-        // `on_complete` inline on the worker thread would violate
+        // Running `on_complete` inline on the worker thread would violate
         // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
         // bundler graph, which is owned by the main/bundler thread).
-        match worker
-            .ctx
-            .linker
-            .any_loop()
-            .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
-        {
+        match worker.ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
                 let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
                 let poster = worker

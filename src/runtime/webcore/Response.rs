@@ -193,7 +193,7 @@ impl bun_jsc::JsClass for Response {
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Response::destroy)]
+#[ref_count(destroy = bun_ptr::weak_ptr::destroy)]
 pub(crate) struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
@@ -232,7 +232,8 @@ impl Default for Response {
     }
 }
 
-impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
+// SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
+unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
         unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
@@ -773,38 +774,6 @@ impl Response {
 
     pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<RefPtr<Response>> {
         Ok(RefPtr::new(self.clone_value(cx)?))
-    }
-
-    fn destroy(this: *mut Response) {
-        // SAFETY: ref_count hit 0; this is the unique owner
-        unsafe {
-            // We assign safe-empty values rather than `drop_in_place` so the
-            // struct stays in a valid (all-empty) state if `on_finalize()`
-            // returns false and the allocation outlives this call until the
-            // last WeakRef releases it.
-            //
-            // - `Init` field drop glue releases `headers` (HeadersRef::Drop →
-            //   C++ deref) and `status_text` (WTF deref).
-            // - `url` — assignment drops the old value (WTF deref).
-            // - `JsRef` — assignment drops the `Strong` arm (block slot released).
-            (*this).init.set(Init::default());
-            (*this).body.get_mut().reset();
-            (*this).url.set(BunString::EMPTY);
-            (*this).js_ref.set(JsRef::empty());
-            (*this).abort_listener.set(None);
-
-            // Contents are gone; the allocation itself stays until any outstanding
-            // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
-            // null from here on.
-            if (*this).weak_ptr_data.on_finalize() {
-                // Do NOT use heap::take — that would re-run field drop glue
-                // on init/url/js_ref. They are now safe-empty so the second drop
-                // would be a no-op, but it is still wasted work and fragile under
-                // future field additions; free the allocation with a raw dealloc.
-                let layout = std::alloc::Layout::new::<Response>();
-                std::alloc::dealloc(this.cast::<u8>(), layout);
-            }
-        }
     }
 
     pub(crate) fn finalize(&self) {

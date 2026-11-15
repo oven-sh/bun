@@ -425,14 +425,8 @@ fn lower_jsx_children(
     if is_static_children {
         if let ExprData::EArray(arr) = &value.data {
             for item in arr.items.iter() {
-                match &item.data {
-                    ExprData::EMissing(_) => {}
-                    ExprData::ESpread(spread) => {
-                        out.push(lower_expression_to_temporary(builder, &spread.value)?);
-                    }
-                    _ => {
-                        out.push(lower_expression_to_temporary(builder, item)?);
-                    }
+                if !matches!(item.data, ExprData::EMissing(_)) {
+                    out.push(lower_expression_to_temporary(builder, item)?);
                 }
             }
             return Ok(());

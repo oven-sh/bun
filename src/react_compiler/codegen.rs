@@ -2718,19 +2718,17 @@ fn codegen_jsx_call(
 ) -> Expr {
     let is_dev = cx.cg.host.is_jsx_dev();
 
-    // TypeScript defines static jsx as children.len > 1 or a single spread.
-    let is_static_jsx = children.len() > 1
-        || (children.len() == 1 && matches!(children[0].data, ExprData::ESpread(..)));
+    // TypeScript defines static jsx as children.len > 1 or a single spread. Lowering leaves a
+    // function with a spread child as written, so no child is a spread here.
+    let is_static_jsx = children.len() > 1;
 
     let children_key = string_expr("children", close_loc);
     if is_static_jsx {
-        let is_single_line = children.len() < 2;
         properties.push(G::Property {
             key: Some(children_key),
             value: Some(Expr::init(
                 E::Array {
                     items: children,
-                    is_single_line,
                     ..Default::default()
                 },
                 close_loc,

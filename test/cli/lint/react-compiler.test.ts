@@ -185,12 +185,15 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
       "own-name-of-the-component.jsx",
       "parentheses.tsx",
       "ref-in-memo.jsx",
+      "spread-child.jsx",
       "tagged-template.jsx",
       "unreachable.jsx",
       "update.jsx",
       "virtual.jsx",
     ]);
     expect(locationsOf(diagnostics["captured-target.jsx"])).toEqual([["react(invariant)", 12, 9]]);
+    // The operand of the second spread child is read, and neither spread child is a `react(todo)`.
+    expect(locationsOf(diagnostics["spread-child.jsx"])).toEqual([["react(refs)", 5, 28]]);
     expect(files).toBe(expected.reports.fork.files);
     expect(exit).toBe(1);
   });

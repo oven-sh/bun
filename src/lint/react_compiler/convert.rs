@@ -1232,6 +1232,12 @@ impl<'a> Converter<'a, '_> {
             }
         });
         for child in children {
+            // oxc's lowering takes the operand of a spread child as the child, and has no Todo for it
+            // (oxc-project/oxc#26013, "Unsupported JSX children").
+            let child = match child.kind() {
+                ExprKind::Spread(operand) => operand,
+                _ => child,
+            };
             if !child.is_missing() {
                 args.push(self.expr(child)?);
             }

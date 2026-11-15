@@ -149,6 +149,16 @@ A function that is nested more deeply than the thread has the stack for bails ou
 Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting
 of the source asks `Environment::has_stack()`, and the pipeline asks after each pass whether one has said no.
 
+Array literals, argument lists and array patterns lower their own spreads, so an `E::Spread` that reaches
+`lower_expression` is a JSX spread child: the visit pass keeps it in the `children` array, or in the arguments of the
+factory call, and `lower_jsx_call` reads each child as an expression. `JsxExpression` has no spread child, so
+`lower_expression` records the Todo "Handle SpreadElement expressions" and the function stays as written. Upstream's
+TypeScript does the same (`lowerJsxElement`, and the default arm of `lowerExpression`). Upstream's Rust port lowers
+the operand in place of the spread (`Expression::SpreadElement`, `JSXChild::JSXSpreadChild`,
+`PatternLike::RestElement`), so the runtime gets the list itself as one child. A sync must not bring those arms back.
+oxlint's compiler lowers the operand too, so `bun lint` hands the operand over in place of a spread child
+(`src/lint/react_compiler/convert.rs`), and no spread of its tree reaches this Todo.
+
 ## Hook placement
 
 The compiler runs **per-function, post-visit** at the `S::Function` /

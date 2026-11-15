@@ -608,6 +608,15 @@ function Component(props) {
   return <div>{virtualizer.getTotalSize()}</div>;
 }
 `,
+    // The fork takes the operand of a spread child as the child. Upstream records a Todo, and leaves the function as
+    // it is written.
+    "spread-child.jsx": `import { useRef } from "react";
+
+export function Component({ list }) {
+  const ref = useRef(null);
+  return <div>{...list}{...ref.current}</div>;
+}
+`,
   },
   casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
   long: {

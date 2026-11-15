@@ -3969,6 +3969,33 @@ console.log(resolve.length)
           "if (undefined) {\n  let y = Math.random();\n}",
         );
       });
+      // The call goes and its arguments stay. A "..." alone is no expression. These transpilers minify
+      // syntax, so that they unwrap an unused pure call whatever a transpiler does by default.
+      it("keeps a spread argument of an unused pure call in an array", () => {
+        const minified = code => parsed(code, true, false, transpilerMinifySyntax);
+        expect(minified("/* @__PURE__ */ f(...xs)")).toBe("[...xs]");
+        expect(minified("/* @__PURE__ */ new F(...xs)")).toBe("[...xs]");
+        expect(minified("/* @__PURE__ */ f(a(), ...xs, 1, b())")).toBe("a(), [...xs], b()");
+        expect(minified("/* @__PURE__ */ f(...xs, ...ys)")).toBe("[...xs], [...ys]");
+        expect(minified("/* @__PURE__ */ f(...xs) ? 1 : 2")).toBe("[...xs]");
+        expect(parsed("/* @__PURE__ */ f(...xs)", true, false, transpilerNoDCE)).toBe("f(...xs)");
+        // An element of the classic runtime is such a call, and a spread child is such an argument.
+        const classic = new Bun.Transpiler({
+          loader: "jsx",
+          tsconfig: JSON.stringify({ compilerOptions: { jsx: "react" } }),
+          minify: { syntax: true },
+        });
+        expect(classic.transformSync("<b>{a()}{...xs}</b>")).toBe("a(), [...xs];\n");
+      });
+      it("what is left of an unused pure call with a spread argument runs the iterator, and not the call", () => {
+        const code = transpilerMinifySyntax.transformSync(`
+          const seen = [];
+          const xs = { *[Symbol.iterator]() { seen.push("iterated"); } };
+          const f = () => seen.push("called");
+          /* @__PURE__ */ f(...xs);
+        `);
+        expect(new Function(code + "\nreturn seen;")()).toEqual(["iterated"]);
+      });
     });
   });
 

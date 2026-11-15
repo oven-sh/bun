@@ -206,7 +206,18 @@ pub(crate) fn lower_expression(
             })?;
             Ok(unsupported_node("YieldExpression", loc))
         }
-        Data::ESpread(spread) => lower_expression(builder, &spread.value),
+        // An array literal and `lower_arguments` take their own spreads. This one is a JSX spread
+        // child, which `lower_jsx_call` reads as an expression and `JsxExpression` cannot hold.
+        Data::ESpread(_) => {
+            builder.record_error(CompilerErrorDetail {
+                category: ErrorCategory::Todo,
+                reason: "(BuildHIR::lowerExpression) Handle SpreadElement expressions".to_string(),
+                description: None,
+                loc,
+                suggestions: None,
+            })?;
+            Ok(unsupported_node("SpreadElement", loc))
+        }
         Data::EImportMeta(_) => Ok(InstructionValue::MetaProperty {
             meta: "import",
             property: "meta",

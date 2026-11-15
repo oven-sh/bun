@@ -3311,7 +3311,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("dce/PureCallsWithSpread", {
-    todo: true,
     files: {
       // this changes to "[...args]"
       "/entry.js": /* js */ `

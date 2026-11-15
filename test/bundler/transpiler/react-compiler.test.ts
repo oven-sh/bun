@@ -3093,6 +3093,169 @@ describe("bundler", () => {
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
 
+  // The visit pass keeps a JSX spread child as a spread: `children: [n, ...list]`, or
+  // `createElement("a", null, n, ...list)`. The compiler's JSX instruction has no spread child, so a
+  // function with one stays as written. With the list itself as the child, the runtime gets `[n, list]`.
+  //
+  // Each line is what one component gives: the function of the runtime that was called, and the
+  // children it got. A name ends in `*` when the render took a memo cache, which only a compiled
+  // function does.
+  const spreadChildRuntime = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      const show = (callee, children) =>
+        callee + " " + JSON.stringify(children, (key, value) => (value instanceof Set ? "a Set" : value));
+      exports.show = show;
+      exports.Fragment = "React.Fragment";
+      exports.createElement = (type, props, ...children) => show("createElement", children);
+    `,
+    "/node_modules/react/jsx-runtime.js": /* js */ `
+      const { show } = require("./index.js");
+      exports.Fragment = "Fragment";
+      exports.jsx = (type, props) => show("jsx", props.children);
+      exports.jsxs = (type, props) => show("jsxs", props.children);
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      const { show } = require("./index.js");
+      exports.Fragment = "Fragment";
+      exports.jsxDEV = (type, props, key, isStaticChildren) =>
+        show(isStaticChildren ? "jsxDEV(static)" : "jsxDEV", props.children);
+    `,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      exports.c = size => {
+        globalThis.memoCaches++;
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  const spreadChildEntry = (prelude: string, components: string) => /* jsx */ `
+    ${prelude}
+    ${components}
+    const props = { n: 1, list: [7, 8], text: "hi", none: null, rest: { id: "r" } };
+    const lines = [];
+    for (const [name, Component] of Object.entries(components)) {
+      globalThis.memoCaches = 0;
+      let result;
+      try {
+        result = Component(props);
+      } catch (error) {
+        result = "threw " + error.name;
+      }
+      lines.push(name + (globalThis.memoCaches ? "*" : "") + " " + result);
+    }
+    console.log(lines.join("\\n"));
+  `;
+  const spreadChildComponents = /* jsx */ `
+    function After({ n, list }) { return <a>{n}{...list}</a>; }
+    function Before({ n, list }) { return <a>{...list}{n}</a>; }
+    function Alone({ list }) { return <a>{...list}</a>; }
+    function Two({ list }) { return <a>{...list}{...list}</a>; }
+    function AfterAnElement({ list }) { return <a><i />{...list}</a>; }
+    function InAFragment({ n, list }) { return <>{n}{...list}</>; }
+    function OfAString({ n, text }) { return <a>{n}{...text}</a>; }
+    function OfASet({ n, list }) { return <a>{n}{...new Set(list)}</a>; }
+    function OfNull({ n, none }) { return <a>{n}{...none}</a>; }
+    function InACallback({ n, list }) { return <a>{list.map(x => <i>{n}{...[x, x]}</i>)}</a>; }
+    function makeNested() {
+      function Nested({ n, list }) { return <a>{n}{...list}</a>; }
+      return Nested;
+    }
+    // No spread child: these two are compiled.
+    function ArrayAsAChild({ n, list }) { return <a>{n}{[...list]}</a>; }
+    function ListAsAChild({ n, list }) { return <a>{n}{list}</a>; }
+    const components = {
+      After, Before, Alone, Two, AfterAnElement, InAFragment, OfAString, OfASet, OfNull, InACallback,
+      Nested: makeNested(), ArrayAsAChild, ListAsAChild,
+    };
+  `;
+  const spreadChildAutomatic = `
+    After jsxDEV(static) [1,7,8]
+    Before jsxDEV(static) [7,8,1]
+    Alone jsxDEV(static) [7,8]
+    Two jsxDEV(static) [7,8,7,8]
+    AfterAnElement jsxDEV(static) ["jsxDEV undefined",7,8]
+    InAFragment jsxDEV(static) [1,7,8]
+    OfAString jsxDEV(static) [1,"h","i"]
+    OfASet jsxDEV(static) [1,7,8]
+    OfNull threw TypeError
+    InACallback jsxDEV ["jsxDEV(static) [1,7,7]","jsxDEV(static) [1,8,8]"]
+    Nested jsxDEV(static) [1,7,8]
+    ArrayAsAChild* jsxDEV(static) [1,[7,8]]
+    ListAsAChild* jsxDEV(static) [1,[7,8]]
+  `;
+  const spreadChildClassic = `
+    After createElement [1,7,8]
+    Before createElement [7,8,1]
+    Alone createElement [7,8]
+    Two createElement [7,8,7,8]
+    AfterAnElement createElement ["createElement []",7,8]
+    InAFragment createElement [1,7,8]
+    OfAString createElement [1,"h","i"]
+    OfASet createElement [1,7,8]
+    OfNull threw TypeError
+    InACallback createElement [["createElement [1,7,7]","createElement [1,8,8]"]]
+    Nested createElement [1,7,8]
+    ArrayAsAChild* createElement [1,[7,8]]
+    ListAsAChild* createElement [1,[7,8]]
+  `;
+  const spreadChildModes: Record<string, Partial<BundlerTestInput> & { prelude?: string; stdout: string }> = {
+    Automatic: { stdout: spreadChildAutomatic },
+    // The production runtime has `jsxs` for a static list of children, and `jsx` for the rest.
+    Production: {
+      production: true,
+      stdout: spreadChildAutomatic.replaceAll("jsxDEV(static)", "jsxs").replaceAll("jsxDEV", "jsx"),
+    },
+    Classic: { prelude: `import React from "react";`, jsx: { runtime: "classic" }, stdout: spreadChildClassic },
+  };
+  for (const [mode, { prelude = "", stdout, ...options }] of Object.entries(spreadChildModes)) {
+    for (const reactCompiler of [false, true]) {
+      itBundled(`react-compiler/JsxSpreadChild-${mode}-${reactCompiler ? "compiled" : "plain"}`, {
+        files: { "/entry.jsx": spreadChildEntry(prelude, spreadChildComponents), ...spreadChildRuntime },
+        ...options,
+        reactCompiler,
+        target: "browser",
+        backend: "cli",
+        run: { stdout: reactCompiler ? stdout : stdout.replaceAll("*", "") },
+      });
+    }
+  }
+
+  // For the server the compiler memoizes nothing, so no render takes a memo cache.
+  itBundled("react-compiler/JsxSpreadChild-Ssr", {
+    files: { "/entry.jsx": spreadChildEntry("", spreadChildComponents), ...spreadChildRuntime },
+    reactCompiler: true,
+    target: "bun",
+    backend: "api",
+    run: { stdout: spreadChildAutomatic.replaceAll("*", "") },
+  });
+
+  // `key` after a spread makes the element a createElement() call in the automatic runtime too.
+  itBundled("react-compiler/JsxSpreadChild-KeyAfterSpread", {
+    files: {
+      "/entry.jsx": spreadChildEntry(
+        "",
+        /* jsx */ `
+          function KeyAfterSpread({ n, list, rest }) { return <a {...rest} key="k">{n}{...list}</a>; }
+          function NoSpreadChild({ n, list, rest }) { return <a {...rest} key="k">{n}{list}</a>; }
+          const components = { KeyAfterSpread, NoSpreadChild };
+        `,
+      ),
+      ...spreadChildRuntime,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    bundleWarnings: {
+      "/entry.jsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+    },
+    run: {
+      stdout: `
+        KeyAfterSpread createElement [1,7,8]
+        NoSpreadChild* createElement [1,[7,8]]
+      `,
+    },
+  });
+
   // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
   // before the right-hand side runs. The compiler removes assignments and
   // propagates constants by the order of its own instructions, so it has to

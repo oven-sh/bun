@@ -962,8 +962,6 @@ pub(super) fn lower_assignment(
             lower_assignment(builder, pat_loc, kind, &b.left, temp, assignment_style)
         }
 
-        Data::ESpread(s) => lower_assignment(builder, loc, kind, &s.value, value, assignment_style),
-
         _ => {
             builder.record_error(CompilerErrorDetail {
                 category: ErrorCategory::Todo,

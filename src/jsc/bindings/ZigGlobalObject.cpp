@@ -4266,6 +4266,9 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
+    // Last, as in keyOfRequireUnderModuleMocks(): a factory that runs has to be asked about the path that require() resolves its name to, not about the key of its mock.
+    if (!globalObject->onLoadPlugins.moduleMockKeysByRequirePath.isEmpty()) [[unlikely]]
+        resolved = Bun::keyOfModuleMockAtRequirePath(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);

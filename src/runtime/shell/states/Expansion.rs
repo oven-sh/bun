@@ -665,7 +665,7 @@ impl Expansion {
         this: NodeId,
         result: Vec<Vec<u8>>,
         err: Option<crate::shell::dispatch_tasks::ShellGlobErr>,
-    ) {
+    ) -> Yield {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
         let walk_err = match err {
@@ -704,8 +704,7 @@ impl Expansion {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             }
-            Yield::Next(this).run(interp);
-            return;
+            return Yield::Next(this);
         }
 
         {
@@ -720,7 +719,7 @@ impl Expansion {
             }
             me.state = ExpansionState::Done;
         }
-        Yield::Next(this).run(interp);
+        Yield::Next(this)
     }
 
     /// Take the error out of `state == Err(_)` (called by the parent on

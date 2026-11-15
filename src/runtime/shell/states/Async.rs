@@ -18,8 +18,7 @@ pub(crate) struct Async {
     /// Heap payload for the main-thread bounce. The node lives in the
     /// reallocatable `Interpreter::nodes` arena, so the intrusive
     /// concurrent-task node must live in a stable heap allocation instead.
-    /// Allocated in `init`, freed in `actually_deinit`.
-    task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
+    task: bun_ptr::AliasableBox<crate::shell::dispatch_tasks::ShellAsyncTask>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -50,14 +49,12 @@ impl Async {
             io,
             state: AsyncState::Idle,
             event_loop: evtloop,
-            task: core::ptr::null_mut(),
-        }));
-        // The payload needs the NodeId, so it's allocated after the node.
-        interp.as_async_mut(id).task =
-            bun_core::heap::alloc(crate::shell::dispatch_tasks::ShellAsyncTask {
+            task: bun_ptr::AliasableBox::new(crate::shell::dispatch_tasks::ShellAsyncTask {
                 interp: interp.as_ctx_ptr(),
-                node: id,
-            });
+                node: core::cell::Cell::new(NodeId::NONE),
+            }),
+        }));
+        interp.as_async(id).task.node.set(id);
         id
     }
 
@@ -150,11 +147,9 @@ impl Async {
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
         let me = interp.as_async_mut(this);
-        let task = me.task;
-        debug_assert!(!task.is_null());
+        let task = me.task.as_ptr();
         match me.event_loop {
-            // Next loop iteration, after I/O has had a turn. `task` is the live
-            // heap payload allocated in `init` and freed only in `actually_deinit`.
+            // Next loop iteration, after I/O has had a turn.
             EventLoopHandle::Js { owner } => {
                 owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
             }
@@ -167,20 +162,6 @@ impl Async {
                 );
                 mini.enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
             }
-        }
-    }
-
-    /// `deinit` is purposefully empty: an `Async` appears "done" to its parent
-    /// immediately (see `start`), so the parent must not free it. Real cleanup
-    /// happens in `actually_deinit` once the background body finishes.
-    pub(crate) fn actually_deinit(interp: &Interpreter, this: NodeId) {
-        let me = interp.as_async_mut(this);
-        if !me.task.is_null() {
-            // SAFETY: allocated in `init`; the final bounce that reached
-            // `async_cmd_done` (and thus here) has already been dequeued and
-            // dispatched, so nothing else references the payload.
-            drop(unsafe { bun_core::heap::take(me.task) });
-            me.task = core::ptr::null_mut();
         }
     }
 
@@ -200,12 +181,8 @@ enum NextAction {
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
-    /// The `Async` node's bounce box, freed only at the end of a chain that
-    /// will not continue: free it here.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    /// The `Async` node's, which drops with the interpreter.
+    unsafe fn release_unrun(_: *mut Self) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -217,12 +194,11 @@ fn run_from_main_thread_mini(
     task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
     _: *mut core::ffi::c_void,
 ) {
-    // SAFETY: `task` is the live payload owned by the Async node; it is freed
-    // only in `actually_deinit`, which runs at the tail of this bounce chain
-    // (after the final `next()` dispatch), and `interp` outlives every node.
+    // SAFETY: `task` is owned by the Async node, which is freed at the tail of
+    // this bounce chain, and `interp` outlives every node.
     unsafe {
         let interp = &*(*task).interp;
-        let node = (*task).node;
+        let node = (*task).node.get();
         Async::run_from_main_thread(interp, node);
     }
 }

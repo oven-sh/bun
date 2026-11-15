@@ -85,7 +85,7 @@ use crate::shell::builtins::{
     yes::YesTask as ShellYesTask,
 };
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
-use crate::shell::interpreter::ShellTask;
+use crate::shell::interpreter::{PoolTask, ShellTask};
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
@@ -803,9 +803,6 @@ fn run_task_cold(task: Task) {
             task.ptr.cast::<$ty>()
         };
     }
-    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
-    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
-    /// the per-builtin body runs.
     /// The wrapper recovers `&mut Interpreter` from the embedded
     /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
@@ -814,48 +811,30 @@ fn run_task_cold(task: Task) {
             // `interp` was set at schedule time and outlives the task.
             unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
-        // Cond-expr wraps an inner `task: ShellTask`-embedding struct one
-        // level deeper. The type *does* implement `ShellTaskCtx`
-        // (with a two-hop `TASK_OFFSET`, needed for `ShellTask::schedule`),
-        // so this arm is behaviorally identical to the plain arm; the unref +
-        // interp-recovery are inlined here only to keep the `.task.task`
-        // shape explicit at the dispatch site.
-        (nested $ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: see above; `task.task` is the embedded ShellTask.
-            unsafe {
-                let st = &raw mut (*t).task.task;
-                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &*(*st).interp;
-                <$ty>::run_from_main_thread(t, interp);
-            }
-        }};
     }
 
     match task.tag {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
             // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
+            let t = unsafe { &*cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
             // SAFETY: `interp` set at enqueue; outlives task.
             let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node);
+            ShellAsync::run_from_main_thread(interp, t.node.get());
         }
-        task_tag::ShellCondExprStatTask => {
-            shell_dispatch!(nested ShellCondExprStatTask);
-        }
+        task_tag::ShellCondExprStatTask => shell_dispatch!(PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
-        task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
-        task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
-        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
+        task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
+        task_tag::ShellMkdirTask => shell_dispatch!(PoolTask<ShellMkdirTask>),
+        task_tag::ShellLsTask => shell_dispatch!(PoolTask<ShellLsTask>),
         task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
+        task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
             ShellRmDirTask::run_from_main_thread(t);
         }
-        task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
         task_tag::ShellYesTask => {
             // SAFETY: §Dispatch — tag identifies pointee; enqueued by
             // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
@@ -1743,16 +1722,16 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([Serve], ServerAllConnectionsClosedTask)
         }
         task_tag::ShellAsync => release_in!([Shell], crate::shell::dispatch_tasks::ShellAsyncTask),
-        task_tag::ShellCondExprStatTask => release_in!([Shell], ShellCondExprStatTask),
+        task_tag::ShellCondExprStatTask => release_in!([Shell], PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => release_in!([Shell], ShellCpTask),
-        task_tag::ShellGlobTask => release_in!([Shell], ShellGlobTask),
-        task_tag::ShellLsTask => release_in!([Shell], ShellLsTask),
-        task_tag::ShellMkdirTask => release_in!([Shell], ShellMkdirTask),
+        task_tag::ShellGlobTask => release_in!([Shell], PoolTask<ShellGlobTask>),
+        task_tag::ShellLsTask => release_in!([Shell], PoolTask<ShellLsTask>),
+        task_tag::ShellMkdirTask => release_in!([Shell], PoolTask<ShellMkdirTask>),
         task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => release_in!([Shell], ShellMvCheckTargetTask),
+        task_tag::ShellMvCheckTargetTask => release_in!([Shell], PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
-        task_tag::ShellTouchTask => release_in!([Shell], ShellTouchTask),
+        task_tag::ShellTouchTask => release_in!([Shell], PoolTask<ShellTouchTask>),
         task_tag::StatWatcherTimerUpdate => {
             release_in!(
                 [NodeFs],

@@ -8,7 +8,8 @@ use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OwnedFd, ShellTask, shell_lstatat, shell_openat, shell_statat,
+    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
+    shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -34,7 +35,8 @@ pub(crate) struct MvArgs {
 pub(crate) enum MvState {
     #[default]
     Idle,
-    CheckTarget(Box<ShellMvCheckTargetTask>),
+    /// `None` until the task is back.
+    CheckTarget(Option<Result<Option<OwnedFd>, bun_sys::Error>>),
     Executing {
         task_count: usize,
         tasks_done: usize,
@@ -113,46 +115,33 @@ impl Mv {
                 let cwd = Builtin::cwd(interp, cmd);
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let mut task = Box::new(ShellMvCheckTargetTask {
+                let task = ShellMvCheckTargetTask {
                     cmd,
                     cwd,
                     target,
                     result: None,
-                    done: false,
-                    task: ShellTask::new(evtloop),
-                });
-                task.task.interp = interp.as_ctx_ptr();
-                // SAFETY: `task` is heap-allocated and outlives the worker
-                // call (held in `MvState::CheckTarget` below).
-                unsafe { ShellTask::schedule(&raw mut *task) };
-                Self::state_mut(interp, cmd).state = MvState::CheckTarget(task);
+                };
+                PoolTask::schedule(interp, task);
+                Self::state_mut(interp, cmd).state = MvState::CheckTarget(None);
                 Yield::suspended()
             }
             Tag::CheckTarget => {
-                let done = match &Self::state_mut(interp, cmd).state {
-                    MvState::CheckTarget(t) => t.done,
-                    _ => unreachable!(),
-                };
-                if !done {
-                    return Yield::suspended();
-                }
                 let result = match &mut Self::state_mut(interp, cmd).state {
-                    MvState::CheckTarget(t) => t.result.take(),
+                    MvState::CheckTarget(result) => result.take(),
                     _ => unreachable!(),
                 };
-                debug_assert!(result.is_some());
-                let target_fd = match result.unwrap() {
+                let Some(result) = result else {
+                    return Yield::suspended();
+                };
+                let target_idx = Self::state_mut(interp, cmd).args.target_idx;
+                let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
+                let target_fd = match result {
                     Ok(fd) => fd,
                     Err(e) => {
                         // Only ENOENT (rename to a
                         // new path) is acceptable, and only with exactly
                         // one source. Any other errno (EACCES, ELOOP, …)
                         // is reported and fails regardless of source count.
-                        let target = match &Self::state_mut(interp, cmd).state {
-                            MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
-                            _ => unreachable!(),
-                        };
                         if e.get_errno() == bun_sys::E::ENOENT {
                             let n_sources = {
                                 let me = Self::state_mut(interp, cmd);
@@ -167,7 +156,7 @@ impl Mv {
                                     Some(Kind::Mv),
                                     format_args!(
                                         "{}: No such file or directory\n",
-                                        bstr::BStr::new(&target)
+                                        bstr::BStr::new(target)
                                     ),
                                 )
                                 .to_vec();
@@ -181,7 +170,7 @@ impl Mv {
                                 Some(Kind::Mv),
                                 format_args!(
                                     "{}: {}\n",
-                                    bstr::BStr::new(&target),
+                                    bstr::BStr::new(target),
                                     bstr::BStr::new(msg)
                                 ),
                             )
@@ -199,15 +188,11 @@ impl Mv {
                 };
                 // Trying to move multiple files into a non-directory.
                 if maybe_fd.is_none() && n_sources > 1 {
-                    let target = match &Self::state_mut(interp, cmd).state {
-                        MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
-                        _ => unreachable!(),
-                    };
                     let buf = Builtin::fmt_error_arena(
                         interp,
                         cmd,
                         Some(Kind::Mv),
-                        format_args!("{} is not a directory\n", bstr::BStr::new(&target)),
+                        format_args!("{} is not a directory\n", bstr::BStr::new(target)),
                     )
                     .to_vec();
                     return Self::write_failing_error(interp, cmd, &buf, 1);
@@ -216,16 +201,10 @@ impl Mv {
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let (sources_start, target_idx, no_clobber) = {
+                let (sources_start, no_clobber) = {
                     let me = Self::state_mut(interp, cmd);
-                    (
-                        me.args.sources_start,
-                        me.args.target_idx,
-                        me.args.no_clobber,
-                    )
+                    (me.args.sources_start, me.args.no_clobber)
                 };
-                let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
                 let mut tasks: Vec<ShellMvBatchedTask> = Vec::with_capacity(task_count);
                 for i in 0..task_count {
@@ -249,7 +228,7 @@ impl Mv {
                         cwd,
                         error_signal: None,
                         err: None,
-                        task: ShellTask::new(evtloop),
+                        task: ShellTask::new(interp),
                     });
                 }
 
@@ -262,7 +241,6 @@ impl Mv {
                 };
                 // Now that the AtomicBool has its final address, point
                 // every task at it and schedule.
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if let MvState::Executing {
                     error_signal,
                     tasks,
@@ -272,7 +250,6 @@ impl Mv {
                     let sig = BackRef::new(&*error_signal);
                     for t in tasks.iter_mut() {
                         t.error_signal = Some(sig);
-                        t.task.interp = interp_ptr;
                         // SAFETY: `t` lives in `MvState::Executing::tasks`,
                         // which is fully populated before any task is scheduled
                         // and never grown afterward, so its address is stable
@@ -308,13 +285,6 @@ impl Mv {
             }
             _ => panic!("Invalid state"),
         }
-    }
-
-    fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
-        if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
-            t.done = true;
-        }
-        Self::next(interp, cmd).run(interp);
     }
 
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
@@ -440,19 +410,21 @@ pub(crate) struct ShellMvCheckTargetTask {
     /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
     /// open error (e.g. ENOENT).
     pub(crate) result: Option<Result<Option<OwnedFd>, bun_sys::Error>>,
-    pub(crate) done: bool,
-    pub task: ShellTask,
 }
 
-impl ShellMvCheckTargetTask {
-    fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
+impl ShellWork for ShellMvCheckTargetTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+    fn run_from_thread_pool(&mut self, _: &ShellTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-        this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
+        self.result = Some(match shell_openat(self.cwd, &self.target, flags, 0) {
             Ok(fd) => Ok(Some(OwnedFd(fd))),
             Err(e) if e.get_errno() == bun_sys::E::ENOTDIR => Ok(None),
             Err(e) => Err(e),
         });
-        // Bounce-back is posted by `shell_task_trampoline`.
+    }
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+        Mv::state_mut(interp, self.cmd).state = MvState::CheckTarget(self.result.take());
+        Mv::next(interp, self.cmd)
     }
 }
 
@@ -827,26 +799,10 @@ impl ShellMvBatchedTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
-    /// Owned by the builtin's `MvState`, which frees it with the interpreter;
-    /// only the keep-alive is this hop's to drop.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the Mv state outlives the queue entry.
-        unsafe { (*this).task.unref_unrun() }
-    }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
-    /// An element of `MvState::Executing.tasks`; as `ShellMvCheckTargetTask`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: as above.
-        unsafe { (*this).task.unref_unrun() }
-    }
+    /// An element of `MvState::Executing.tasks`, which drops with the interpreter.
+    unsafe fn release_unrun(_: *mut Self) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -855,19 +811,6 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
 
 // `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's
 // internal deref is SAFETY-commented.
-impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
-        // is a live `ShellMvCheckTargetTask` held in `MvState::CheckTarget`.
-        let this = unsafe { this.as_ref() }.unwrap();
-        Mv::check_target_task_done(interp, this.cmd);
-    }
-}
-
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) {

@@ -2369,11 +2369,7 @@ mod _async_tasks {
         /// its promise handle, protected arguments and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            let this = unsafe { bun_core::heap::take(this) };
-            if let Some(shelltask) = &this.shelltask {
-                shelltask.task.unref_unrun();
-            }
-            this.destroy()
+            unsafe { bun_core::heap::take(this) }.destroy()
         }
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
             // SAFETY: fn contract.

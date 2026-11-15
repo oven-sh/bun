@@ -2,8 +2,10 @@
 //! the CLI crate so subsystems (install, bundler, bake, shell) can reference
 //! the parsed-options shape without importing the CLI itself.
 //!
-//! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
+//! `create()` (which calls `Arguments.parse`) and the
 //! `context_data` storage stay in `cli.rs`.
+
+use core::sync::atomic::{AtomicBool, AtomicU16};
 
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
@@ -20,12 +22,8 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Raw pointer (not `&mut`) so `Default` works and so the
-    /// process-global `CONTEXT_DATA` static can be zero-initialized before
-    /// `create_context_data()` writes the real `&mut Log` into it.
-    // SAFETY: written exactly once in single-threaded CLI startup; thereafter
-    // always non-null for the process lifetime. Callers deref via `ctx.log()`.
-    pub log: *const bun_ast::Log,
+    /// `None` until `create_context_data()` has run.
+    pub log: Option<&'static bun_ast::Log>,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
@@ -70,7 +68,7 @@ impl Default for ContextData {
         Self {
             start_time: 0,
             args: api::TransformOptions::default(),
-            log: core::ptr::null_mut(),
+            log: None,
             positionals: Vec::new(),
             passthrough: Vec::new(),
             install: None,
@@ -94,13 +92,9 @@ impl Default for ContextData {
 impl ContextData {
     #[track_caller]
     #[inline]
-    pub fn log(&self) -> &bun_ast::Log {
-        assert!(
-            !self.log.is_null(),
-            "ContextData::log() before create_context_data()"
-        );
-        // SAFETY: `self.log` is non-null (asserted) and outlives `self`.
-        unsafe { &*self.log }
+    pub fn log(&self) -> &'static bun_ast::Log {
+        self.log
+            .expect("ContextData::log() before create_context_data()")
     }
 }
 
@@ -246,50 +240,13 @@ impl Default for BundlerOptions {
 
 pub type Context<'a> = &'a mut ContextData;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Process-global CLI context handle.
-//
-// `ContextData` is owned by the CLI crate (storage lives in
-// `bun_runtime::cli::command::CONTEXT_DATA`), but lower-tier crates such as
-// `bun_jsc` need read access to parsed runtime options (e.g.
-// `runtime_options.console_depth`) without taking a forward dep on
-// `bun_runtime`. The CLI publishes its pointer here via `set_global` during
-// single-threaded startup; readers use `try_get`.
-static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+/// `--console-depth`, `console.depth`. Read by every thread that runs JavaScript.
+pub static CONSOLE_DEPTH: AtomicU16 = AtomicU16::new(2);
 
-/// Publish the process-global CLI context. Called once from
-/// `bun_runtime::cli::command::create_context_data` during single-threaded
-/// startup.
-///
-/// # Safety
-/// `ctx` must outlive the process (it points into a `static`).
-#[inline]
-pub unsafe fn set_global(ctx: *mut ContextData) {
-    GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
-}
-
-/// Raw pointer to the process-global CLI context (null before
-/// `set_global`). Higher-tier crates that need a `&mut` view should go
-/// through this single source of truth rather than keeping a parallel static.
-#[inline]
-pub fn global_ptr() -> *mut ContextData {
-    GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire)
-}
-
-/// Read-only handle to the process-global CLI context, or `None` if the CLI
-/// has not been initialized (embedder/tests). Prefer this over
-/// `bun_runtime::cli::Command::get` from crates below `bun_runtime`.
-#[inline]
-pub fn try_get<'a>() -> Option<&'a ContextData> {
-    let p = GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: pointer was published from a process-lifetime `static` in
-    // single-threaded startup; treated as read-only here.
-    unsafe { p.as_ref() }
-}
+/// `--silent`, `run.silent`. Read by every thread that runs a server.
+pub static SILENT: AtomicBool = AtomicBool::new(false);
 
 pub struct DebugOptions {
-    pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
@@ -322,7 +279,6 @@ impl Default for DebugOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
             watch_kill_signal_arg: None,
@@ -627,7 +583,6 @@ pub struct RuntimeOptions {
     /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
     pub interactive: bool,
     pub preserve_symlinks_main: bool,
-    pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
@@ -697,7 +652,6 @@ impl Default for RuntimeOptions {
             expose_gc: false,
             interactive: false,
             preserve_symlinks_main: false,
-            console_depth: None,
             cron_title: Box::default(),
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),

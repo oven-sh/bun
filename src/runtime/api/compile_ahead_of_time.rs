@@ -169,7 +169,7 @@ pub(super) fn compile(
     bundler: BundlerInputs<'_>,
 ) -> Compiled {
     let destination = executable_destination(config, compile)?;
-    let (log, env) = (bundler.transpiler.log, bundler.transpiler.env);
+    let (log, env) = (bundler.transpiler.log(), bundler.transpiler.env);
 
     // Without an output directory a metafile is handed to the caller and not written.
     let outdir = &config.outdir.list[..];

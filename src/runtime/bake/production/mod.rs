@@ -110,7 +110,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     bun_ast::initialize_store();
 
     let vm = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        log: NonNull::new(ctx.log.cast_mut()),
+        log: ctx.log.map(NonNull::from),
         args: ctx.args.clone(),
         argv: ctx.passthrough.clone().leak(),
         smol: ctx.runtime_options.smol,

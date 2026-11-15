@@ -12,6 +12,7 @@ use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
+use bun_options_types::context::SILENT;
 use bun_ptr::AsCtxPtr;
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
@@ -764,7 +765,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// The body ignores both arguments so a single non-generic shim suffices.
     fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
-            if !crate::cli::Command::get().debug.silent {
+            if !SILENT.load(Ordering::Relaxed) {
                 Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
                 bun_core::warn!(
                     "Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure."
@@ -776,7 +777,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn should_add_timeout_handler_for_warning(&self) -> bool {
         if DEBUG {
             if !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed)
-                && !crate::cli::Command::get().debug.silent
+                && !SILENT.load(Ordering::Relaxed)
             {
                 return !self.config.get().has_idle_timeout;
             }

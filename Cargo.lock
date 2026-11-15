@@ -1784,6 +1784,7 @@ dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
  "bun_core",
+ "bun_crash_handler",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",

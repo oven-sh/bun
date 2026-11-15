@@ -2739,13 +2739,14 @@ export const after = { a: 1 };
           return error.message;
         }
       };
-      let [fits, overflows] = [1, 1 << 17];
+      let [fits, overflows] = [1, isDebug ? 1 << 15 : 1 << 17];
       while (overflows - fits > 1) {
         const depth = (fits + overflows) >> 1;
         if (scan("FLAT", depth) === "ok") fits = depth;
         else overflows = depth;
       }
-      expect([scan("FLAT", fits - 10), scan("NESTED", fits - 10), scan("NESTED", 1)]).toEqual([
+      const margin = 10; // room for FLAT, not for 200 levels
+      expect([scan("FLAT", fits - margin), scan("NESTED", fits - margin), scan("NESTED", 1)]).toEqual([
         "ok",
         "Maximum call stack size exceeded",
         "ok",

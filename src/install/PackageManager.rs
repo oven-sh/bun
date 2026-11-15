@@ -487,7 +487,7 @@ pub(crate) fn install_pool() -> &'static ThreadPool {
 }
 
 pub struct PackageManager {
-    pub root_dir: &'static fs::DirEntry,
+    pub root_dir: fs::DirEntryRef,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     pub(crate) summary: Package::DiffSummary,
 
@@ -1507,7 +1507,7 @@ fn allocate_package_json_cache() -> WorkspacePackageJSONCache<'static> {
 fn allocate_package_manager(
     options: Options,
     log: &'static bun_ast::Log,
-    root_dir: &'static fs::DirEntry,
+    root_dir: fs::DirEntryRef,
     env: Arc<dot_env::Loader>,
     // NUL-terminated
     original_package_json_path: Vec<u8>,
@@ -2420,11 +2420,7 @@ pub fn init(
     drop(root_package_json_file);
 
     let top_level_dir = fs.top_level_dir();
-    // Returns the resolver's BSSMap-owned
-    // `*EntriesOption` slot.
-    let entries_option = FileSystem::instance()
-        .read_directory(top_level_dir, 0, true)?
-        .try_entries()?;
+    let root_dir = fs.read_directory(top_level_dir, 0, true)?;
 
     let mut env_loader = ctx.env_loader.take().unwrap_or_default();
     let env = Arc::make_mut(&mut env_loader);
@@ -2432,17 +2428,12 @@ pub fn init(
     // This is read before the project's `.env` files are loaded, so they cannot set it.
     let env_ignores_scripts = env_ignores_scripts(env);
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
-        // `.data` must only be probed while `entries_mutex` is held.
-        let env_probe_keys = {
-            let _entries_lock = FileSystem::get().fs.entries_mutex().lock_guard();
-            dot_env::DirEntryKeys(
-                entries_option
-                    .data
-                    .iter()
-                    .map(|(k, _)| Box::from(&**k))
-                    .collect(),
-            )
-        };
+        let env_probe_keys = dot_env::DirEntryKeys(
+            (fs.fs.entries.lock().at_index(root_dir.index).into_iter())
+                .flat_map(|entries| entries.data.keys())
+                .map(|k| Box::from(&**k))
+                .collect(),
+        );
         // Follows `BUN_ENV` / `NODE_ENV` like `bun run`, but defaults to the production set.
         let suffix = match env.get_node_env() {
             Some(b"development") => dot_env::DotEnvFileSuffix::Development,
@@ -2515,7 +2506,7 @@ pub fn init(
     let manager = allocate_package_manager(
         options,
         ctx.log(),
-        entries_option,
+        root_dir,
         env_loader,
         original_package_json_path_buf,
         root_package_json_path,
@@ -2708,11 +2699,8 @@ fn init_with_runtime_once(
     // Read the root directory BEFORE allocating the singleton. This is
     // user-reachable failure (the cwd may have been deleted out from under the
     // process, or be unreadable: ENOENT/EACCES/ENOTDIR).
-    // Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let top_level_dir = FileSystem::get().top_level_dir();
-    let root_dir = FileSystem::instance()
-        .read_directory(top_level_dir, 0, true)?
-        .try_entries()?;
+    let root_dir = FileSystem::get().read_directory(top_level_dir, 0, true)?;
 
     // A file inside `node_modules` belongs to the project that installed the package.
     let importer_dir = match strings::index_of(importer_dir, bun_paths::NODE_MODULES_NEEDLE) {
@@ -2871,12 +2859,15 @@ fn init_with_runtime_once(
     // `load_from_dir` fills the lockfile in place, so `Ok` keeps the loaded
     // value as-is.
     manager.lockfile.init_empty();
-    if let Ok(fs::EntriesOption::Entries(entries)) =
-        FileSystem::instance().read_directory(project_dir, 0, false)
+    if let Ok(project_dir_entry) = FileSystem::get().read_directory(project_dir, 0, false)
         && {
-            // `.data` probes must hold `entries_mutex`.
-            let _entries_lock = FileSystem::get().fs.entries_mutex().lock_guard();
-            entries.has_comptime_query(b"bun.lock") || entries.has_comptime_query(b"bun.lockb")
+            let entries_map = FileSystem::get().fs.entries.lock();
+            entries_map
+                .at_index(project_dir_entry.index)
+                .is_some_and(|entries| {
+                    entries.has_comptime_query(b"bun.lock")
+                        || entries.has_comptime_query(b"bun.lockb")
+                })
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)
     {
@@ -2887,7 +2878,7 @@ fn init_with_runtime_once(
         // Workspace paths are relative to `root_dir`. A lockfile records them relative to its own
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
-            manager.root_dir = entries;
+            manager.root_dir = project_dir_entry;
             // Auto-install ignores an override that points away from the registry, so it also drops
             // what such an override resolved to in the lockfile.
             let lockfile = &mut *manager.lockfile;

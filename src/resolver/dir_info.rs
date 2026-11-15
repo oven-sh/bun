@@ -1,6 +1,6 @@
-use core::hash::BuildHasherDefault;
+use core::hash::{BuildHasherDefault, Hasher};
 
-use bun_alloc::{BSSList, IdentityU64Hasher, IndexType};
+use bun_alloc::BSSList;
 use bun_collections::hashbrown::HashMap;
 use bun_core::feature_flags as FeatureFlags;
 use bun_core::{Generation, Once, strings};
@@ -11,7 +11,6 @@ use crate::fs;
 use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
 
-#[derive(Default)]
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
@@ -41,7 +40,7 @@ pub struct DirInfo {
 
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
-    pub(crate) entries: IndexType,
+    pub entries: fs::DirEntryIndex,
     /// Is there a "package.json" file?
     pub package_json: Option<&'static PackageJSON>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
@@ -74,55 +73,30 @@ impl DirInfo {
 
     pub(crate) fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Scalar field read; see `get_entries_const` for the contract.
-            return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
+            return (fs::FileSystem::get().fs.entries.lock())
+                .at_index(self.entries)
+                .map_or(Fd::INVALID, |e| e.fd);
         }
         Fd::INVALID
     }
 
-    /// Generation-checked listing accessor for call sites that already hold
-    /// `entries_mutex` (the mutex is non-recursive); see
-    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked). The
-    /// `DirEntry` is a slot in the BSSMap-backed `EntriesOptionMap` singleton
-    /// (ARENA — process lifetime), so a `&'static` reborrow of the
-    /// `&'static` returned by `entries_at_locked` is sound and needs no
-    /// `unsafe` here. The `.data` map must only be probed/iterated while the
-    /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
-    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        fs::FileSystem::instance()
-            .fs
-            .entries_at_locked(self.entries, generation)?
-            .as_entries()
+    /// The listing, read again first if it is older than `generation`.
+    pub fn get_entries<'a>(
+        &self,
+        entries_map: &'a mut fs::EntriesMap,
+        generation: Generation,
+    ) -> Option<&'a fs::DirEntry> {
+        entries_map.at_generation(self.entries, generation)
     }
 
-    /// Generation-checked lookup of one basename in this directory's cached
-    /// listing, performed in a single `entries_mutex` critical section. A
-    /// concurrent resolver with a newer generation rewrites the `DirEntry` in
-    /// place under that lock ([`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked)
-    /// drops the old `data` map's buckets), so probing the map after the lock
-    /// is released can walk freed buckets.
+    /// Generation-checked lookup of one basename. Locks `RealFS::entries`.
     pub(crate) fn get_entry(
         &self,
         generation: Generation,
         query: &[u8],
     ) -> Option<&'static fs::Entry> {
-        let rfs = &mut fs::FileSystem::instance().fs;
-        let _lock = rfs.entries_mutex().lock_guard();
-        rfs.entries_at_locked(self.entries, generation)?
-            .as_entries()?
+        self.get_entries(&mut fs::FileSystem::get().fs.entries.lock(), generation)?
             .get(query)
-    }
-
-    /// As-cached listing access with no generation check and no locking.
-    /// Scalar fields (`fd`, `dir`) may be read through this unlocked; the
-    /// `.data` map must only be probed/iterated while `entries_mutex` is held
-    /// (a concurrent stale-generation re-read rewrites it in place).
-    pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        fs::FileSystem::instance()
-            .fs
-            .entries
-            .at_index(self.entries)?
-            .as_entries()
     }
 
     pub(crate) fn get_enclosing_browser_scope(&'static self) -> Option<&'static DirInfo> {
@@ -166,16 +140,38 @@ pub(crate) struct Cache {
 const DIR_COUNT: usize = 2048;
 
 struct CacheState {
-    by_hash: HashMap<u64, Cached, BuildHasherDefault<IdentityU64Hasher>>,
+    by_hash: ByHash<&'static DirInfo>,
     store: BSSList<DirInfo, DIR_COUNT>,
 }
 
+/// Keyed by [`Cache::hash`].
+pub(crate) type ByHash<T> = HashMap<u64, Cached<T>, BuildHasherDefault<IdentityU64Hasher>>;
+
 #[derive(Clone, Copy, Default)]
-pub(crate) enum Cached {
+pub(crate) enum Cached<T> {
     #[default]
     Unknown,
     NotFound,
-    Exists(&'static DirInfo),
+    Exists(T),
+}
+
+/// The keys are `bun_wyhash` outputs, so they are not hashed again.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct IdentityU64Hasher(u64);
+
+impl Hasher for IdentityU64Hasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.0 = bun_wyhash::hash_with_seed(self.0, bytes);
+    }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n;
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
 }
 
 impl Cache {
@@ -194,7 +190,7 @@ impl Cache {
         bun_wyhash::hash(strings::trim_right(path, &[bun_paths::SEP]))
     }
 
-    pub(crate) fn get_or_put(&self, hash: u64) -> Cached {
+    pub(crate) fn get_or_put(&self, hash: u64) -> Cached<&'static DirInfo> {
         *self.state.lock().by_hash.entry(hash).or_default()
     }
 

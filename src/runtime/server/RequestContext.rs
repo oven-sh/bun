@@ -112,7 +112,7 @@ pub(crate) struct RequestContext<
     /// BACKREF to the `Server`, which outlives its requests. `None` once detached.
     server: JsCell<Option<PendingRequest<bun_ptr::BackRef<ThisServer>>>>,
     pub(crate) resp: AttachedResponse<Self>,
-    pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
+    pub(crate) req: Cell<Option<NonNull<Req<SSL_ENABLED, MUX>>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
     pub(crate) signal: JsCell<Option<jsc::PendingAbortSignal>>,
     pub method: Method,
@@ -579,7 +579,7 @@ where
         if resp.is_closed() {
             // `req` is still set only while the dispatch is on the stack: snapshot as `to_async` would have.
             if let (Some(req), Some(request)) = (self.req.get(), self.request()) {
-                self.to_async_without_abort_handler(req, request);
+                self.to_async_without_abort_handler(req.as_ptr(), request);
             }
             Self::on_abort(self.as_ctx_ptr(), resp);
             return;
@@ -1382,7 +1382,7 @@ where
             slot.write(Self {
                 root: Cell::new(slot),
                 resp: AttachedResponse(JsCell::new(None)),
-                req: Cell::new(Some(req)),
+                req: Cell::new(NonNull::new(req)),
                 method: resolved_method,
                 server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
                 range,
@@ -4387,7 +4387,7 @@ where
         }
 
         if !this.flags.has_abort_handler() {
-            if let Some(req) = this.req.get() {
+            if let Some(req) = this.req.get().map(NonNull::as_ptr) {
                 // Inlined `req_url` body to avoid carrying the
                 // `Transport`/`NativePromiseContextType` bounds onto this
                 // formatter impl.

@@ -359,7 +359,7 @@ impl VmHandle {
         })
     }
 
-    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted<()> {
         // SAFETY: handed over by the caller and not yet queued anywhere.
         let tag = unsafe { task.as_ref() }.task.tag();

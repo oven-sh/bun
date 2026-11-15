@@ -117,7 +117,7 @@ mod _impl {
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
-            // outlives the `stream.init` call below (E0716 otherwise).
+            // outlives the `Context::init` call below (E0716 otherwise).
             let dictionary_buf;
             let dictionary = if dictionary.is_undefined() {
                 &[]
@@ -303,7 +303,7 @@ mod _impl {
         fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
             match &mut self.state {
                 // Driven before `init()`.
-                None => {}
+                None => self.error = None,
                 Some(State::Compress(cctx)) => {
                     self.error = cctx.step(&mut buffers, self.flush as c_uint).1.err();
                 }
@@ -323,8 +323,8 @@ mod _impl {
             self.avail_out = buffers.avail_out();
         }
 
-        fn write_result(&mut self) -> Result<[u32; 2], Error> {
-            match self.error.take() {
+        fn write_result(&self) -> Result<[u32; 2], Error> {
+            match self.error {
                 None => Ok(
                     [self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast"))
                 ),

@@ -6,7 +6,7 @@ use bun_core::compress::Buffers;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{Error, InitError, Result};
 
 pub mod c {
     pub(crate) use bun_brotli_sys::brotli_c::*;
@@ -45,12 +45,6 @@ impl Allocator {
 
 /// Brotli does not check the size of a raw dictionary, and adds copy lengths to it in an `int`.
 const MAX_DICTIONARY_LEN: usize = 1 << 30;
-
-pub enum InitError {
-    CreateInstance,
-    PrepareDictionary,
-    AttachDictionary,
-}
 
 /// Runs `call(available_in, next_in, available_out, next_out)` and returns how much input it consumed.
 fn with_buffers<R>(
@@ -92,7 +86,7 @@ impl OwnedDecoder {
         })
     }
 
-    /// With a copy of a raw dictionary, unless it is empty.
+    /// Attaches a copy of `dictionary` as a raw dictionary, unless it is empty.
     pub fn with_dictionary(allocator: Allocator, dictionary: &[u8]) -> Result<Self, InitError> {
         let mut this = Self::new(allocator).ok_or(InitError::CreateInstance)?;
         if dictionary.is_empty() {
@@ -111,7 +105,10 @@ impl OwnedDecoder {
                 this.dictionary.as_ptr(),
             )
         };
-        (ok != 0).then_some(this).ok_or(InitError::AttachDictionary)
+        if ok == 0 {
+            return Err(InitError::AttachDictionary);
+        }
+        Ok(this)
     }
 
     pub fn set_parameter(&mut self, param: c_uint, value: u32) -> bool {
@@ -173,7 +170,7 @@ impl OwnedEncoder {
         })
     }
 
-    /// With a copy of a raw dictionary, unless it is empty.
+    /// Attaches a copy of `dictionary` as a raw dictionary, unless it is empty.
     pub fn with_dictionary(allocator: Allocator, dictionary: &[u8]) -> Result<Self, InitError> {
         let mut this = Self::new(allocator).ok_or(InitError::CreateInstance)?;
         if dictionary.is_empty() {
@@ -187,7 +184,10 @@ impl OwnedEncoder {
                 this.dictionary.insert(prepared).prepared.as_ptr(),
             )
         };
-        (ok != 0).then_some(this).ok_or(InitError::AttachDictionary)
+        if ok == 0 {
+            return Err(InitError::AttachDictionary);
+        }
+        Ok(this)
     }
 
     pub fn set_parameter(&mut self, param: c_uint, value: u32) -> bool {
@@ -465,7 +465,10 @@ fn encode_into(
     Some(out_len)
 }
 
-/// `BrotliEncoderMaxCompressedSize()`: 0 if the bound overflows.
-pub fn encode_bound(input_len: usize) -> usize {
-    c::BrotliEncoderMaxCompressedSize(input_len)
+/// `BrotliEncoderMaxCompressedSize()`: `None` if the bound overflows.
+pub fn encode_bound(input_len: usize) -> Option<usize> {
+    match c::BrotliEncoderMaxCompressedSize(input_len) {
+        0 => None,
+        bound => Some(bound),
+    }
 }

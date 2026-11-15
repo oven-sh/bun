@@ -14,6 +14,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
+use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 #[cfg(windows)]
 use bun_jsc as jsc;
@@ -125,11 +126,11 @@ impl Worker {
     pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);
 
-        let owner = (&raw mut *self).cast();
-        // SAFETY: fields of their owner. Coordinator holds the workers in a stable slice.
-        unsafe {
-            (self.out).set_owner(Owner::with_key(PollTag::TestWorker, 0, owner));
-            (self.err).set_owner(Owner::with_key(PollTag::TestWorker, 1, owner));
+        let ptr = (&raw mut *self).cast();
+        for (kind, reader) in [(Kind::Stdout, &self.out), (Kind::Stderr, &self.err)] {
+            let owner = Owner::with_kind(PollTag::TestParallelWorker, kind, ptr);
+            // SAFETY: `owner` points to the worker that holds this reader. Coordinator holds the workers in a stable slice.
+            unsafe { reader.set_owner(owner) };
         }
 
         // All resource cleanup on any error return — including watchOrReap
@@ -283,8 +284,11 @@ impl Worker {
     }
 
     /// The exit of the process ends the worker, not the end of a reader.
-    pub(crate) fn on_io(&mut self, key: u32, event: IoEvent) {
-        let reader = if key == 0 { &self.out } else { &self.err };
+    pub(crate) fn on_io(&mut self, kind: Kind, event: IoEvent) {
+        let reader = match kind {
+            Kind::Stdout => &self.out,
+            Kind::Stderr => &self.err,
+        };
         let event_loop = self.event_loop.as_event_loop_ctx();
         let _ = reader.read_chunks(event_loop, Some(event), |chunk, _| {
             self.captured.extend_from_slice(&chunk);

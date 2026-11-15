@@ -18,7 +18,7 @@ use bun_collections::VecExt;
 use bun_core::{CStrList, CStrRef};
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadState, ReadStatus};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
 use bun_sys::{self, SystemError};
@@ -1451,7 +1451,7 @@ impl PipeReader {
 
     fn start(self: &Rc<Self>, eager: bool) {
         #[cfg(windows)]
-        let started = (self.reader.start_with_current_pipe()).map(|()| ReadStatus::Pending);
+        let started = (self.reader.start_with_current_pipe()).map(|()| ReadResult::Pending);
         // `reader` owns the fd from here.
         #[cfg(not(windows))]
         let started = self.reader.start(
@@ -1460,8 +1460,8 @@ impl PipeReader {
             true,
         );
         match started {
-            Ok(ReadStatus::Pending) => {}
-            Ok(status) => return self.on_read_status(status),
+            Ok(ReadResult::Pending) => {}
+            Ok(result) => return self.on_read_result(result),
             // Windows only. A read error, so that the `Cmd` is still alive when the child exits.
             Err(err) => {
                 self.reader.deinit();
@@ -1470,7 +1470,8 @@ impl PipeReader {
         }
         // TODO: are these flags correct
         #[cfg(unix)]
-        self.reader.set_flags(bun_io::PosixFlags::SOCKET, true);
+        self.reader
+            .update_flags(|f| f.insert(bun_io::PosixFlags::SOCKET));
         if eager {
             self.read(None);
         }
@@ -1479,17 +1480,17 @@ impl PipeReader {
     /// The `Cmd` may drop every other `Rc`.
     pub(crate) fn read(self: &Rc<Self>, event: Option<IoEvent>) {
         let event_loop = self.event_loop.as_event_loop_ctx();
-        let status = (self.reader).read_chunks(event_loop, event, |chunk, state| {
+        let result = (self.reader).read_chunks(event_loop, event, |chunk, state| {
             self.on_read_chunk(&chunk, state)
         });
-        self.on_read_status(status);
+        self.on_read_result(result);
     }
 
-    fn on_read_status(self: &Rc<Self>, status: ReadStatus) {
-        match status {
-            ReadStatus::Pending => {}
-            ReadStatus::Done => self.on_reader_done(),
-            ReadStatus::Failed(err) => self.on_reader_error(&err),
+    fn on_read_result(self: &Rc<Self>, result: ReadResult) {
+        match result {
+            ReadResult::Pending => {}
+            ReadResult::Done => self.on_reader_done(),
+            ReadResult::Err(err) => self.on_reader_error(&err),
         }
     }
 

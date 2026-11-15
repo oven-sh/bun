@@ -376,11 +376,11 @@ impl Subprocess<'_> {
         }
 
         if !self.has_called_getter(ObservableGetter::Stdout) {
-            self.stdout.get().update_ref(true);
+            self.stdout.get().ref_();
         }
 
         if !self.has_called_getter(ObservableGetter::Stderr) {
-            self.stderr.get().update_ref(true);
+            self.stderr.get().ref_();
         }
 
         self.update_has_pending_activity();
@@ -395,11 +395,11 @@ impl Subprocess<'_> {
         }
 
         if !self.has_called_getter(ObservableGetter::Stdout) {
-            self.stdout.get().update_ref(false);
+            self.stdout.get().unref();
         }
 
         if !self.has_called_getter(ObservableGetter::Stderr) {
-            self.stderr.get().update_ref(false);
+            self.stderr.get().unref();
         }
 
         self.update_has_pending_activity();
@@ -457,8 +457,8 @@ impl Subprocess<'_> {
         // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang
         self.stdin.with_mut(|s| s.unref());
-        self.stdout.get().update_ref(false);
-        self.stderr.get().update_ref(false);
+        self.stdout.get().unref();
+        self.stderr.get().unref();
 
         match self.try_kill(self.kill_signal) {
             bun_sys::Result::Ok(()) => {}

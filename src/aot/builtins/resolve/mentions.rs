@@ -43,7 +43,7 @@ pub(super) fn expose_in(called: &mut Vec<BuiltinId>, exposed: &mut Vec<BuiltinId
     }
 }
 
-fn keeps_what_is_laid_over_it(id: BuiltinId) -> bool {
+pub(super) fn keeps_what_is_laid_over_it(id: BuiltinId) -> bool {
     let entry = table::entry(table::canonical_id(id));
     entry.kind != BuiltinKind::Accessor && entry.scope == Scope::Realm
 }
@@ -312,7 +312,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn may_read_this(&self, operand: ExprId) -> bool {
+    pub(super) fn may_read_this(&self, operand: ExprId) -> bool {
         self.may_read_this_behind_constants(operand, 0)
     }
 
@@ -501,7 +501,7 @@ impl Resolver<'_, '_> {
         self.names_of(variable).chain([assignment]).collect()
     }
 
-    fn find_receiver_handed_to_operands(
+    pub(super) fn find_receiver_handed_to_operands(
         &self,
         function: ExprId,
         id: BuiltinId,
@@ -535,7 +535,11 @@ impl Resolver<'_, '_> {
         may_read_receiver.then_some(receiver)
     }
 
-    fn find_receiver_held_as_answer(&self, function: ExprId, id: BuiltinId) -> Option<BuiltinId> {
+    pub(super) fn find_receiver_held_as_answer(
+        &self,
+        function: ExprId,
+        id: BuiltinId,
+    ) -> Option<BuiltinId> {
         let hir = self.input.hir;
         let (receiver, _) = hir.member_key(function)?;
         let receiver = mentioned_id(self.state(hir.skip_type_assertions(receiver)))?;
@@ -630,11 +634,7 @@ impl Resolver<'_, '_> {
         } else if makes_value {
             self.output.mentioned.push(id);
         }
-        if self.input.dialect == SourceDialect::Program
-            && (self.takes_method_that_hands_out_global_object_off(expr, id)
-                || (hands_out_global_object(id)
-                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)))
-        {
+        if self.may_hand_out_global_object(expr, id) {
             self.output.method_that_hands_out_global_object_may_come_out = true;
             self.mention(BuiltinId::GlobalThis);
             self.expose(BuiltinId::GlobalThis);
@@ -1229,6 +1229,13 @@ impl Resolver<'_, '_> {
                 finds_method_that_hands_out_global_object(id, None)
             }
         }
+    }
+
+    pub(super) fn may_hand_out_global_object(&self, expr: ExprId, id: BuiltinId) -> bool {
+        self.input.dialect == SourceDialect::Program
+            && (self.takes_method_that_hands_out_global_object_off(expr, id)
+                || (hands_out_global_object(id)
+                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)))
     }
 
     fn listens_for_event_that_program_alone_dispatches(

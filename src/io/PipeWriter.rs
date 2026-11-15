@@ -16,7 +16,7 @@ use bun_sys::{self as sys, Fd};
 use crate::{EventLoopHandle, FilePoll, FilePollFlag, Owner, PollTag};
 
 #[cfg(unix)]
-use crate::pipes::{FileType, PollOrFd};
+use crate::pipes::{FileType, PipeHandle};
 #[cfg(windows)]
 use crate::source::Source;
 
@@ -60,7 +60,7 @@ pub trait PosixPipeWriter {
     fn get_file_type(&self) -> FileType;
     fn get_force_sync(&self) -> bool;
 
-    fn handle(&self) -> &PollOrFd;
+    fn handle(&self) -> &PipeHandle;
 
     /// Set once `pwritev2(RWF_NOWAIT)` said this fd's file type does not support it, so we stop asking.
     fn rwf_unsupported(&self) -> &core::cell::Cell<bool>;
@@ -342,7 +342,7 @@ pub trait PosixBufferedWriterParent: WriterParent {
 
 #[cfg(unix)]
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
-    pub handle: PollOrFd,
+    pub handle: PipeHandle,
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
     pub parent: Option<bun_ptr::ParentRef<Parent, bun_ptr::Mut>>,
@@ -357,7 +357,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
 impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
     fn default() -> Self {
         Self {
-            handle: PollOrFd::closed(),
+            handle: PipeHandle::closed(),
             parent: None,
             is_done: false,
             pollable: false,
@@ -391,7 +391,7 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     fn get_force_sync(&self) -> bool {
         false
     }
-    fn handle(&self) -> &PollOrFd {
+    fn handle(&self) -> &PipeHandle {
         &self.handle
     }
     fn rwf_unsupported(&self) -> &core::cell::Cell<bool> {
@@ -641,7 +641,7 @@ pub trait PosixStreamingWriterParent: WriterParent {
 #[cfg(unix)]
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub outgoing: StreamBuffer,
-    pub handle: PollOrFd,
+    pub handle: PipeHandle,
     pub parent: *mut Parent,
     pub is_done: bool,
     pub(crate) closed_without_reporting: bool,
@@ -656,7 +656,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
     fn default() -> Self {
         Self {
             outgoing: StreamBuffer::default(),
-            handle: PollOrFd::closed(),
+            handle: PipeHandle::closed(),
             parent: core::ptr::null_mut(),
             is_done: false,
             closed_without_reporting: false,
@@ -690,7 +690,7 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     fn get_force_sync(&self) -> bool {
         self.force_sync
     }
-    fn handle(&self) -> &PollOrFd {
+    fn handle(&self) -> &PipeHandle {
         &self.handle
     }
     fn rwf_unsupported(&self) -> &core::cell::Cell<bool> {

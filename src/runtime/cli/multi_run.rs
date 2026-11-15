@@ -219,7 +219,7 @@ impl<'a> ProcessHandle<'a> {
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(self.shared.event_loop));
 
         for pipe in [&mut self.stdout_reader, &mut self.stderr_reader] {
-            let owner = Owner::new(PollTag::MultiRun, std::ptr::from_mut(pipe).cast());
+            let owner = Owner::new(PollTag::MultiRunPipeReader, std::ptr::from_mut(pipe).cast());
             // SAFETY: a field of its owner, whose slot in `State.handles` does not move.
             unsafe { pipe.reader.set_owner(owner) };
         }

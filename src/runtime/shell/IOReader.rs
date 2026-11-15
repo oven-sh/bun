@@ -4,7 +4,7 @@
 
 use core::cell::UnsafeCell;
 
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_sys::{self as sys, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
@@ -105,7 +105,7 @@ impl IOReader {
         // SAFETY: a field of its owner.
         unsafe { this.reader.set_owner(owner) };
         #[cfg(not(windows))]
-        (this.reader).set_flags(bun_io::PosixFlags::CLOSE_HANDLE, false);
+        (this.reader).update_flags(|f| f.remove(bun_io::PosixFlags::CLOSE_HANDLE));
         #[cfg(windows)]
         (this.reader).set_source(bun_io::Source::File(bun_io::Source::open_file(
             evtloop.loop_(),
@@ -175,8 +175,8 @@ impl IOReader {
             return Ok(());
         }
         match r.start(self.io_evtloop(), self.state().fd, true)? {
-            ReadStatus::Failed(err) => Err(err),
-            ReadStatus::Pending | ReadStatus::Done => Ok(()),
+            ReadResult::Err(err) => Err(err),
+            ReadResult::Pending | ReadResult::Done => Ok(()),
         }
     }
 
@@ -222,13 +222,13 @@ impl IOReader {
 
     /// A listener may drop every other `Rc`.
     pub(crate) fn on_io(self: &std::rc::Rc<Self>, event: IoEvent) {
-        let status = (self.reader).read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
+        let result = (self.reader).read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
             self.on_read_chunk(&chunk, state)
         });
-        match status {
-            ReadStatus::Pending => {}
-            ReadStatus::Done => self.on_reader_done(),
-            ReadStatus::Failed(err) => self.on_reader_error(&err),
+        match result {
+            ReadResult::Pending => {}
+            ReadResult::Done => self.on_reader_done(),
+            ReadResult::Err(err) => self.on_reader_error(&err),
         }
     }
 

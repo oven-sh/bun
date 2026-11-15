@@ -21,7 +21,7 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
-use bun_io::{IoEvent, JsKeepAlive, KeepAlive, Owner, PollTag, ReadStatus};
+use bun_io::{IoEvent, JsKeepAlive, KeepAlive, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
@@ -148,11 +148,11 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     }
 
     /// `true` if the reader has ended.
-    fn note_read_status(&self, status: ReadStatus) -> bool {
-        match status {
-            ReadStatus::Pending => return false,
-            ReadStatus::Done => {}
-            ReadStatus::Failed(err) => self.set_err(format_args!(
+    fn note_read_result(&self, result: ReadResult) -> bool {
+        match result {
+            ReadResult::Pending => return false,
+            ReadResult::Done => {}
+            ReadResult::Err(err) => self.set_err(format_args!(
                 "Failed to read process output: {}",
                 bstr::BStr::new(err.name())
             )),
@@ -164,8 +164,8 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
 
     /// May free `this` via `maybe_finished`.
     fn on_io(this: ThisPtr<Self>, event: IoEvent) {
-        let status = (this.output_reader()).read(bun_io::js_vm_ctx(), Some(event));
-        if this.note_read_status(status) {
+        let result = (this.output_reader()).read(bun_io::js_vm_ctx(), Some(event));
+        if this.note_read_result(result) {
             Self::maybe_finished(this);
         }
     }
@@ -1912,18 +1912,19 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                 let _ = sys::set_nonblocking(stdout);
                 this.remaining_fds().set(this.remaining_fds().get() + 1);
                 let reader = this.output_reader();
-                reader.set_flags(PosixFlags::NONBLOCKING | PosixFlags::SOCKET, true);
-                reader.set_flags(
-                    PosixFlags::MEMFD
-                        | PosixFlags::RECEIVED_EOF
-                        | PosixFlags::CLOSED_WITHOUT_REPORTING,
-                    false,
-                );
-                let Ok(status) = reader.start(bun_io::js_vm_ctx(), stdout, true) else {
+                reader.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
+                reader.update_flags(|f| {
+                    f.remove(
+                        PosixFlags::MEMFD
+                            | PosixFlags::RECEIVED_EOF
+                            | PosixFlags::CLOSED_WITHOUT_REPORTING,
+                    )
+                });
+                let Ok(result) = reader.start(bun_io::js_vm_ctx(), stdout, true) else {
                     this.set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
                 };
-                this.note_read_status(status);
+                this.note_read_result(result);
             } else {
                 this.output_reader().start_memfd(stdout);
             }

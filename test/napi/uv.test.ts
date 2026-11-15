@@ -423,18 +423,18 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.each(["testDefaultLoopWork", "testDefaultLoopTimer"])(
-    "%s calls back in the Worker that used uv_default_loop",
-    async name => {
-      const { stdout, stderr, exitCode } = await runInChild(`
-        const { Worker } = require("node:worker_threads");
-        new Worker(${JSON.stringify(`require(${JSON.stringify(addonPath)}).${name}();`)}, { eval: true });
-      `);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("on the calling thread: 1\n");
-      expect(exitCode).toBe(0);
-    },
-  );
+  test.concurrent.each([
+    ["uv_queue_work", "testDefaultLoopWork"],
+    ["uv_timer_t", "testDefaultLoopTimer"],
+  ])("%s on uv_default_loop calls back in the Worker that started it", async (_, name) => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      new Worker(${JSON.stringify(`require(${JSON.stringify(addonPath)}).${name}();`)}, { eval: true });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("on the calling thread: 1\n");
+    expect(exitCode).toBe(0);
+  });
 
   // Node makes these calls and races with its loop.
   const refused = -constants.errno.EINVAL;
@@ -464,11 +464,13 @@ describe.if(!isWindows)("uv stubs", () => {
         });
     `);
     expect(stderr).toBe("");
-    expect(stdout).toBe("on the calling thread: 1\n".repeat(5) + JSON.stringify(mainLoopFromAnotherThread) + "\n");
+    expect(stdout).toBe(
+      [...Array(5).fill("on the calling thread: 1"), JSON.stringify(mainLoopFromAnotherThread), ""].join("\n"),
+    );
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a thread of the addon cannot change the main thread's loop", async () => {
+  test.concurrent("an addon thread cannot change the main thread's loop", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       addon.startMainHandles();
       console.log(JSON.stringify(addon.useMainLoopFromThread()));

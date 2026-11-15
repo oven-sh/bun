@@ -560,8 +560,7 @@ pub extern "C" fn Bun__standaloneInternalModuleBytecode(
     let Some((found, found_entry_offset)) = graph.builtin_module_bytecode(id) else {
         return false;
     };
-    // `found` points into the executable's mapped section.
-    *bytes = found.cast::<u8>();
+    *bytes = found.as_ptr();
     *size = found.len();
     *entry_offset = found_entry_offset;
     true
@@ -2786,10 +2785,7 @@ pub struct RuntimeHooks {
     pub cron_clear_all_reload: fn(vm: &VirtualMachine),
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
-    /// live above `bun_jsc`; the high tier reaches them via the graph's own
-    /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
-    /// object — that shared-ref provenance is read-only and forming `&mut`
-    /// from it would be UB) and returns the lazily-decoded map (already
+    /// live above `bun_jsc`; the high tier returns the lazily-decoded map (already
     /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
     /// caches it into `source_mappings` so subsequent lookups hit the fast
     /// path. The caller gates the call on `vm.standalone_module_graph`.
@@ -7251,13 +7247,8 @@ impl VirtualMachine {
         // `bun_standalone_graph::{Graph,File,LazySourceMap}` (higher tier);
         // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
         // §Dispatch (cold path — one-time decode then cached below).
-        // Gate only — the hook reaches the concrete graph via its own
-        // `UnsafeCell` singleton (write-provenance), not via this read-only
-        // trait object.
         let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
-        // JS-thread call; hook mutates only per-`File` lazy caches under the
-        // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
         (self.source_mappings).put_parsed(path, std::sync::Arc::clone(&map));

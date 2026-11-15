@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -36,7 +36,6 @@ use bun_s3_signing::credentials::encode_uri_component;
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
 pub(crate) use crate::webcore::s3::simple_request::S3DeleteResult;
-pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
 pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
 pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
@@ -66,8 +65,7 @@ pub(crate) fn stat(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
-    callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::OnStat,
     request_payer: bool,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, stat);
@@ -82,7 +80,6 @@ pub(crate) fn stat(
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
-        callback_context,
     )
 }
 
@@ -91,8 +88,7 @@ pub(crate) fn download(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
-    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::OnDownload,
     request_payer: bool,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, download);
@@ -107,7 +103,6 @@ pub(crate) fn download(
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
-        callback_context,
     )
 }
 
@@ -118,8 +113,7 @@ pub(crate) fn download_slice(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::OnDownload,
     request_payer: bool,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, download_slice);
@@ -153,7 +147,6 @@ pub(crate) fn download_slice(
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
-        callback_context,
     )
 }
 
@@ -162,8 +155,7 @@ pub(crate) fn delete(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
-    callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::OnDelete,
     request_payer: bool,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, delete);
@@ -178,7 +170,6 @@ pub(crate) fn delete(
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
-        callback_context,
     )
 }
 
@@ -187,8 +178,7 @@ pub(crate) fn list_objects(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     list_options: &S3ListObjectsOptions,
-    callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::OnListObjects,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
@@ -285,15 +275,10 @@ pub(crate) fn list_objects(
             drop(search_params);
 
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            callback(
-                S3ListObjectsResult::Failure(Error::S3Error {
-                    code: error_code_and_message.code,
-                    message: error_code_and_message.message,
-                }),
-                callback_context,
-            )?;
-
-            return Ok(());
+            return callback(S3ListObjectsResult::Failure(Error::S3Error {
+                code: error_code_and_message.code,
+                message: error_code_and_message.message,
+            }));
         }
     };
 
@@ -306,8 +291,7 @@ pub(crate) fn list_objects(
         // Written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
+        callback: Some(s3_simple_request::Callback::ListObjects(callback)),
         headers,
         http_ticket: None,
         response_buffer: MutableString::default(),
@@ -388,8 +372,7 @@ pub(crate) fn upload(
     acl: Option<ACL>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::OnUpload,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, upload);
     s3_simple_request::execute_simple_s3_request(
@@ -408,7 +391,6 @@ pub(crate) fn upload(
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
-        callback_context,
     )
 }
 
@@ -498,12 +480,12 @@ pub(crate) fn writable_stream(
     // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
     // MultiPartUpload.
     let global_static = GlobalRef::from(cx.global());
-    let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
-        root: Cell::new(None),
-        queue: JsCell::new(None),
+    let task = RefPtr::new(MultiPartUpload {
+        unfinished: Cell::new(None),
+        queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
-        ref_count: Cell::new(2), // +1 for the stream
+        ref_count: Cell::new(1),
         ended: Cell::new(false),
         options: Cell::new(options),
         acl: None,
@@ -532,19 +514,15 @@ pub(crate) fn writable_stream(
         callback: wrapper_callback_thunk,
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
-    }));
-    // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
-    let task = unsafe { &*task_ptr };
-    task.root.set(core::ptr::NonNull::new(task_ptr));
+    });
+    task.unfinished.set(Some(task.clone()));
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
-            // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
-            task: Some(unsafe { RefPtr::from_raw(task_ptr) }),
             global_this: Some(bun_ptr::BackRef::new(cx.global())),
             writer_holders: Cell::new(2),
             ..Default::default()
@@ -555,6 +533,7 @@ pub(crate) fn writable_stream(
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
     // wrapper via `to_js()` (the C++ side stores it and calls `finalize` on collect).
     let sink = unsafe { &mut *response_stream };
+    sink.task = Some(task);
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
     debug_assert!(sink.source.is_dead());
@@ -570,10 +549,7 @@ pub(crate) struct S3UploadStreamWrapper {
     pub sink: Option<AliasableBox<NetworkSink>>,
     pub task: RefPtr<MultiPartUpload>,
     pub(crate) end_promise: bun_jsc::JSPromiseStrong,
-    pub callback: Option<fn(S3UploadResult, *mut c_void)>,
-    pub(crate) callback_context: *mut c_void,
-    /// this is owned by the task not by the wrapper
-    pub path: bun_ptr::RawSlice<u8>,
+    pub callback: Option<Box<dyn FnOnce(S3UploadResult<'_>)>>,
     /// Roots the source ReadableStream, and the JS pump reachable only through it, until this wrapper drops.
     pub readable_stream_ref: ReadableStreamStrong,
     pub global: GlobalRef, // JSC_BORROW
@@ -674,8 +650,8 @@ impl S3UploadStreamWrapper {
                 // JS error it stashed on the sink (preserves `.code` /
                 // `.name`) over the generic `UnknownError` passed to `fail()`.
                 let stashed = self.sink_mut().and_then(|s| s.upstream_error.try_swap());
-                let js_err = stashed
-                    .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self.path.slice())));
+                let js_err =
+                    stashed.unwrap_or_else(|| s3_error_to_js(err, &global, Some(&self.task.path)));
                 js_err.ensure_still_alive();
                 if let Some(sink) = self.sink_mut() {
                     // Sink pump still in-flight: fire source.close() so the JSSink
@@ -709,8 +685,8 @@ impl S3UploadStreamWrapper {
             }
         }
 
-        if let Some(callback) = self.callback {
-            callback(result, self.callback_context);
+        if let Some(callback) = self.callback.take() {
+            callback(result);
         }
         settled
     }
@@ -763,8 +739,7 @@ pub(crate) fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
-    callback: Option<fn(S3UploadResult, *mut c_void)>,
-    callback_context: *mut c_void,
+    callback: Option<Box<dyn FnOnce(S3UploadResult<'_>)>>,
 ) -> JsResult<JSValue> {
     bun_removable_features::removable_definition!(S3Client, upload_stream);
     if readable_stream.is_disturbed(cx.global()) {
@@ -850,12 +825,12 @@ pub(crate) fn upload_stream(
 
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(cx.global());
-    let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
-        root: Cell::new(None),
-        queue: JsCell::new(None),
+    let task = RefPtr::new(MultiPartUpload {
+        unfinished: Cell::new(None),
+        queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
-        ref_count: Cell::new(2), // +1 for the stream ctx (only deinit after task and context ended)
+        ref_count: Cell::new(1),
         ended: Cell::new(false),
         options: Cell::new(options),
         acl,
@@ -883,24 +858,19 @@ pub(crate) fn upload_stream(
         callback: S3UploadStreamWrapper::resolve,
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
-    }));
-    // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
-    let task = unsafe { &*task_ptr };
-    task.root.set(core::ptr::NonNull::new(task_ptr));
+    });
+    task.unfinished.set(Some(task.clone()));
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
             ref_count: Cell::new(2), // the upload's callback and the stream pump
             sink: None,
             callback,
-            callback_context,
-            path: bun_ptr::RawSlice::new(&task.path),
-            // SAFETY: adopts one of `task_ptr`'s two initial refs.
-            task: unsafe { RefPtr::from_raw(task_ptr) },
+            task,
             end_promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             readable_stream_ref: ReadableStreamStrong::default(),
             global: global_static,
@@ -909,15 +879,14 @@ pub(crate) fn upload_stream(
     let pump_ref = unsafe { RefPtr::from_raw(ctx_ptr) };
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
-    task.callback_context.set(ctx_ptr.cast::<c_void>());
+    ctx.task.callback_context.set(ctx_ptr.cast::<c_void>());
 
     // Ownership stays with `ctx.sink` (freed in `detach_sink`); the JS
     // controller created by `assign_to_stream` detaches via
     // `controller.end()/close()` before GC so its `Drop` never calls
     // `finalize` on this allocation.
     let sink = AliasableBox::new(NetworkSink {
-        // SAFETY: `task_ptr` is live.
-        task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
+        task: Some(ctx.task.clone()),
         global_this: Some(bun_ptr::BackRef::new(cx.global())),
         ..Default::default()
     });
@@ -933,7 +902,7 @@ pub(crate) fn upload_stream(
     // Transition WaitStreamCheck → NotStarted before the pump can deliver the
     // first chunk: `readStreamIntoSink`'s `readMany()` drains a pre-enqueued
     // default-controller stream synchronously inside `assign_to_stream`.
-    task.continue_stream();
+    MultiPartUpload::continue_stream(&ctx.task);
 
     ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, cx.global());
 

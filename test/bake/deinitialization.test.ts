@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {
@@ -236,6 +238,173 @@ test.skipIf(isWindows)(
   },
   60_000,
 );
+
+test.skipIf(isWindows)("a dev server that fails to start leaves no descriptor open", async () => {
+  using dir = tempDir("bake-failed-start-descriptors", {
+    "bunfig.toml": `[serve.static]\ndefine = { A = "{{" }`,
+    "index.html": `<!DOCTYPE html>`,
+    "fixture.ts": `
+      import { readdirSync } from "node:fs";
+      import html from "./index.html";
+
+      const openDescriptors = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      function start() {
+        try {
+          Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        } catch (error) {
+          return error.message;
+        }
+      }
+      console.log(start());
+      const before = openDescriptors();
+      for (let i = 0; i < 20; i++) start();
+      console.log(openDescriptors() - before < 10 ? "closed" : "left open");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("ParserError while initializing development server\nclosed\n");
+  expect(exitCode).toBe(0);
+});
+
+// /proc/self/fd is Linux-only.
+test.skipIf(!isLinux).each([
+  ["a file", (name: string) => writeFileSync(name, "")],
+  ["a FIFO", mkfifo],
+])("an import through %s fails and does not leave it open", async (_, create) => {
+  using dir = tempDir("bake-import-through-non-directory", {
+    "index.html": `<!DOCTYPE html><script type="module" src="./index.ts"></script>`,
+    "index.ts": `import "./not-a-directory/a";`,
+    "fixture.ts": `
+      import { readdirSync, readlinkSync } from "node:fs";
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      console.log((await fetch(server.url)).status);
+      const open = readdirSync("/proc/self/fd").map(fd => {
+        try {
+          return readlinkSync("/proc/self/fd/" + fd);
+        } catch {}
+      });
+      console.log(["index.ts", "not-a-directory"].map(name => open.some(target => target?.endsWith(name))).join());
+    `,
+  });
+  create(path.join(String(dir), "not-a-directory"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`Could not resolve: "./not-a-directory/a"`);
+  expect(stdout).toBe("500\ntrue,false\n");
+  expect(exitCode).toBe(0);
+});
+
+// /proc/self/fd is Linux-only.
+test.skipIf(!isLinux || !isASAN)("the watcher of a stopped dev server releases what it watched", async () => {
+  using dir = tempDir("bake-stopped-watcher", {
+    "index.html": `<!DOCTYPE html><script type="module" src="./index.ts"></script>`,
+    "index.ts": `import "./a/missing"; import "./b/missing"; import "./c/missing";`,
+    "a/.keep": "",
+    "b/.keep": "",
+    "c/.keep": "",
+    "fixture.ts": `
+      import { readdirSync, readlinkSync, writeFileSync } from "node:fs";
+      import html from "./index.html";
+
+      const watched = () =>
+        readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return readlinkSync("/proc/self/fd/" + fd).startsWith(import.meta.dir);
+          } catch {}
+        }).length;
+      await (async () => {
+        using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        await (await fetch(server.url, { keepalive: false })).text();
+        console.log(watched() >= 3);
+      })();
+      // The watcher thread ends at the first change after the server is collected.
+      for (let i = 0; i < 200 && watched() > 0; i++) {
+        Bun.gc(true);
+        writeFileSync("a/.keep", "");
+        await Bun.sleep(1);
+      }
+      console.log(watched() === 0 ? "closed" : "left open");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../leaksan.supp")}`,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("true\nclosed\n");
+  expect(stderr.match(/^(Direct|Indirect) leak of .*/gm) ?? []).toEqual([]);
+  expect(exitCode).toBe(0);
+});
+
+test("a file that is created after its import failed stays watched", async () => {
+  using dir = tempDir("bake-import-created-later", {
+    "index.html": `<!DOCTYPE html><script type="module" src="./index.ts"></script>`,
+    "index.ts": `import "./sub/later";`,
+    "sub/.keep": "",
+    "fixture.ts": `
+      import { writeFileSync } from "node:fs";
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const text = url => fetch(new URL(url, server.url)).then(res => res.text());
+      async function bundled(marker) {
+        while (true) {
+          const script = (await text("/")).match(/\\/_bun\\/client\\/[^"]+\\.js/)?.[0];
+          if (script && (await text(script)).includes(marker)) return;
+        }
+      }
+
+      const status = (await fetch(server.url)).status;
+      for (let i = 0; i < 4; i++) {
+        writeFileSync("sub/later.ts", 'console.log("v' + i + '!");');
+        await bundled("v" + i + "!");
+      }
+      console.log(status, "then bundled");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`Could not resolve: "./sub/later"`);
+  expect(stdout).toEndWith("500 then bundled\n");
+  expect(exitCode).toBe(0);
+});
 
 test("a request that crosses maxRequestBodySize while it waits for a bundle that fails", async () => {
   using dir = tempDir("dev-server-deferred-limit", {

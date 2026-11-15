@@ -21,7 +21,7 @@ use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
-use crate::parse_task::{self, ResultValue, Success, WatcherData};
+use crate::parse_task::{self, ResultValue, Success};
 
 /// `'a` is the bundle's, as for [`parse_task::ParseTask`].
 pub(crate) struct ServerComponentParseTask<'a> {
@@ -79,8 +79,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let worker = Worker::get(ctx.get());
     let mut log = Log::new();
 
-    // SAFETY: `worker.arena` is set in `Worker::create` to point at the
-    // worker-owned bump arena; lives for the worker's lifetime.
     let arena: &Arena = worker.arena();
 
     let value = match task_callback(&mut task, &mut log, arena) {
@@ -97,9 +95,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         ctx,
         // Placeholder; consumer overwrites before read.
         task: Default::default(),
-        value: core::mem::ManuallyDrop::new(value),
+        value,
         external: ExternalFreeFunction::NONE,
-        watcher_data: WatcherData::NONE,
+        file_to_watch: None,
     });
     parse_task::parse_worker::post_result(result);
 }
@@ -139,6 +137,7 @@ fn task_callback(
 
     Ok(Success {
         ast: bundled_ast,
+        stylesheet: None,
         source,
         loader: Loader::Js,
         log: core::mem::take(log),

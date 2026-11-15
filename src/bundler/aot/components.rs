@@ -1,18 +1,16 @@
 use super::services::{BuildContext, with_ast_scope};
 use crate::bun_fs as Fs;
-use crate::cache::{Contents, Entry};
 use crate::options::Target;
+use crate::parse_task::Step;
 use crate::parse_task::parse_worker::run_with_source_code;
-use crate::parse_task::{ContentsOrFd, Step};
 use crate::{ParseTask, Worker};
 use bun_aot::load::source_provider::{ComponentFile, apply_jsx_settings};
 use bun_ast::{Index, Log};
 use bun_js_parser::{
     ExpandedImportMetaGlob, leave_import_meta_globs_as_written, record_import_meta_globs,
 };
-use bun_ptr::{BackRef, ParentRef, detach_lifetime};
+use bun_ptr::{ParentRef, detach_lifetime, detach_lifetime_ref};
 use bun_react_compiler::{Observer, observe};
-use bun_sys::Fd;
 
 /// Index 0 is the runtime, and the hashbang of index 1 picks the target. Nothing looks this index up in the graph.
 const SOURCE_INDEX: u32 = 2;
@@ -44,10 +42,10 @@ pub(crate) fn expand_globs(
 fn parse(context: &BuildContext, file: &ComponentFile<'_>, log: &mut Log) -> bool {
     let mut worker = Worker::get(context.bundle());
     with_ast_scope(|arena| {
-        // A bundle keeps every AST until it finishes. This one is dead once the parser returns.
-        let arena_of_bundle = std::mem::replace(&mut worker.arena, BackRef::new(arena));
+        // SAFETY: `parsed` holds the AST that borrows `arena` and `file.contents`, and drops inside this closure.
+        let (arena, contents) =
+            unsafe { (detach_lifetime_ref(arena), detach_lifetime(file.contents)) };
         let mut worker = scopeguard::guard(&mut *worker, |worker| {
-            worker.arena = arena_of_bundle;
             let inlines_main = context.options().inline_entrypoint_import_meta_main;
             set_main_inlining(worker, inlines_main);
         });
@@ -55,16 +53,8 @@ fn parse(context: &BuildContext, file: &ComponentFile<'_>, log: &mut Log) -> boo
         worker.transpiler_for_target(TARGET).options.no_macros = true;
         set_main_inlining(&mut worker, false);
         let mut task = create_task(context, file);
-        let mut entry = Entry {
-            contents: Contents::SharedBuffer {
-                ptr: file.contents.as_ptr(),
-                len: file.contents.len(),
-            },
-            fd: Fd::INVALID,
-            ..Default::default()
-        };
         let mut step = Step::Pending;
-        let parsed = run_with_source_code(&mut task, &mut worker, &mut step, log, &mut entry);
+        let parsed = run_with_source_code(&mut task, &mut worker, &mut step, log, arena, contents);
         parsed.is_ok_and(|success| !success.log.has_errors())
     })
 }
@@ -76,12 +66,11 @@ fn set_main_inlining(worker: &mut Worker, inlines_main: bool) {
 }
 
 fn create_task(context: &BuildContext, file: &ComponentFile<'_>) -> ParseTask<'static> {
-    // SAFETY: the task is dropped inside `compile_components`, which borrows all three slices.
-    let (path, namespace, contents) = unsafe {
+    // SAFETY: the task drops inside `parse`, which borrows both slices.
+    let (path, namespace) = unsafe {
         (
             detach_lifetime(file.module.path),
             detach_lifetime(file.module.namespace),
-            detach_lifetime(file.contents),
         )
     };
     // SAFETY: the carrier outlives the build, and its pointer comes from a mutable reference.
@@ -92,7 +81,6 @@ fn create_task(context: &BuildContext, file: &ComponentFile<'_>) -> ParseTask<'s
         path: Fs::Path::init_with_namespace(path, namespace),
         ctx: Some(carrier),
         known_target: TARGET,
-        contents_or_fd: ContentsOrFd::Contents(contents),
         loader: Some(file.loader),
         jsx,
         source_index: Index::init(SOURCE_INDEX),

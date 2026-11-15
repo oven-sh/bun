@@ -1,3 +1,6 @@
+#![feature(core_io_borrowed_buf)]
+
+use bun_core::vec::BorrowedBuf;
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
 // ASCII control codes used in the ignore set below.
@@ -124,14 +127,11 @@ pub use bun_core::base64::encode;
 /// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.
 pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
     let len = simdutf::base64::encode_len(source.len(), false);
-    // SAFETY: `encode_raw` writes exactly `len` bytes into the `len` spare bytes reserved here.
-    unsafe {
-        bun_core::vec::fill_spare(out, len, |spare| {
-            let written = simdutf::base64::encode_raw(source, spare.as_mut_ptr(), false);
-            debug_assert_eq!(written, len);
-            (written, written)
-        })
-    }
+    out.reserve(len);
+    bun_core::vec::append_with(out, len, |spare| {
+        simdutf::base64::encode(source, spare, false)
+    });
+    len
 }
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
@@ -151,7 +151,9 @@ fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
 ///
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
 pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
-    simdutf::base64::encode(source, dest, true)
+    let mut dest = BorrowedBuf::from(dest);
+    simdutf::base64::encode(source, dest.unfilled(), true);
+    dest.len()
 }
 
 pub fn decode_len(source: &[u8]) -> usize {
@@ -592,8 +594,7 @@ pub mod zig_base64 {
             let mut dest_idx: usize = 0;
             let mut leftover_idx: Option<usize> = None;
             for (src_idx, &c) in source.iter().enumerate() {
-                // SAFETY: `c: u8` so `c as usize` is in 0..=255, and `char_to_index` is `[u8; 256]`.
-                let d = unsafe { *self.char_to_index.get_unchecked(c as usize) };
+                let d = self.char_to_index[c as usize];
                 if d == Self::INVALID_CHAR {
                     if self.pad_char.is_none() || c != self.pad_char.unwrap() {
                         return Err(Error::InvalidCharacter);
@@ -605,11 +606,7 @@ pub mod zig_base64 {
                 acc_len += 6;
                 if acc_len >= 8 {
                     acc_len -= 8;
-                    debug_assert!(dest_idx < dest.len());
-                    // SAFETY: callers size `dest` via `calc_size_for_slice(source)` (see doc comment),
-                    // which yields exactly the number of output bytes this loop produces; `dest_idx`
-                    // therefore stays in-bounds for any input that reaches this branch.
-                    unsafe { *dest.get_unchecked_mut(dest_idx) = (acc >> acc_len) as u8 };
+                    dest[dest_idx] = (acc >> acc_len) as u8;
                     dest_idx += 1;
                 }
             }

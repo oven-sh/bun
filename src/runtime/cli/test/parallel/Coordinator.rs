@@ -34,8 +34,7 @@ pub(crate) struct Coordinator<'a> {
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
     pub(crate) cwd: &'a [u8],
-    // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
-    // backing storage has a null at [len] for execve-style consumers.
+    /// Ends with `None`.
     pub(crate) argv: Box<[Option<bun_core::CStrRef<'static>>]>,
     /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
     pub(crate) envps: Vec<bun_core::CStringList>,
@@ -641,7 +640,7 @@ impl<'a> Coordinator<'a> {
                 log_first_time_in_test_run("the first worker is ready");
                 let w = &mut self.workers[slot];
                 if !w.can_take_work() {
-                    // Left as an exit during startup, which is what bounds the respawns.
+                    // `reached_ready` stays false, so the exit counts in `startup_failures`.
                     return;
                 }
                 w.reached_ready = true;
@@ -789,19 +788,19 @@ impl<'a> Coordinator<'a> {
     fn handle_worker_events(&mut self) {
         for slot in 0..self.spawned_count as usize {
             let w = &mut self.workers[slot];
-            if let Some(mut received) = w.ipc.take_received() {
+            if let Some(mut incoming) = w.ipc.take_incoming() {
                 // Once is enough: frames that arrive together are all of one file.
                 w.read_output_written_so_far();
-                while let Some((kind, mut rd)) = received.next_frame() {
+                while let Some((kind, mut rd)) = incoming.next_frame() {
                     self.on_frame(slot, kind, &mut rd);
                 }
-                self.workers[slot].ipc.keep_unread(received);
+                self.workers[slot].ipc.restore_incoming(incoming);
             }
         }
         // Only now: what a reap does depends on what the other workers have reported.
         for slot in 0..self.spawned_count as usize {
             let w = &mut self.workers[slot];
-            if w.ipc.failed.take()
+            if w.ipc.kill_pending.take()
                 && let Some(p) = &w.process
             {
                 // So that the exit accounts for the in-flight file and the slot can respawn.

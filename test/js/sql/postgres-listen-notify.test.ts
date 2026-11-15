@@ -244,7 +244,7 @@ describe.concurrent("in a subprocess", () => {
   });
 
   // Bun.build() runs the event loop until an async setup() settles.
-  const once = (setup: string) => `
+  const listenAndBuildOnce = (setup: string) => `
     const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
     const [a, b, c, d] = ["a", "b", "c".repeat(200), "d"].map(payload => pgNotificationResponse(1, "ch", payload));
     let waited = false;
@@ -263,14 +263,14 @@ describe.concurrent("in a subprocess", () => {
     });
   `;
 
-  test.each([0, 7].flatMap(split => ["0", "7", "b.length"].map(behind => ({ split, behind }))))(
+  test.each([0, 7].flatMap(split => ["0", "7", "b.length"].map(extra => ({ split, extra }))))(
     "a listener runs the event loop while more comes in: %j",
-    async ({ split, behind }) => {
+    async ({ split, extra }) => {
       const result = await run(`
-      ${once(`() => write(stream.subarray(a.length + ${behind}, -d.length + 7))`)}
+      ${listenAndBuildOnce(`() => write(stream.subarray(a.length + ${extra}, -d.length + 7))`)}
       const stream = Buffer.concat([a, b, c, d]);
       if (${split}) await write(stream.subarray(0, ${split}));
-      await writeAndAwaitListener(stream.subarray(${split}, a.length + ${behind}));
+      await writeAndAwaitListener(stream.subarray(${split}, a.length + ${extra}));
       await write(d.subarray(7));
       await sql.close();
     `);
@@ -280,7 +280,7 @@ describe.concurrent("in a subprocess", () => {
 
   test("a listener runs the event loop until its own connection answers", async () => {
     const result = await run(`
-      ${once(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
+      ${listenAndBuildOnce(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
       await writeAndAwaitListener(Buffer.concat([a, b]));
       await sql.close();
     `);

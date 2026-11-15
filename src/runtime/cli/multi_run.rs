@@ -83,14 +83,14 @@ impl Shared {
 }
 
 /// Parent of a reader: prints what a script writes to stdout or to stderr, line by line.
-pub(crate) struct Lines<'a> {
+pub(crate) struct ScriptOutput<'a> {
     shared: &'a Shared,
     config: &'a ScriptConfig,
     is_stderr: bool,
     line_buffer: Vec<u8>,
 }
 
-impl Lines<'_> {
+impl ScriptOutput<'_> {
     /// Child stdout -> parent stdout, child stderr -> parent stderr
     fn writer(&self) -> &'static OutputWriter {
         if self.is_stderr {
@@ -129,7 +129,7 @@ impl Lines<'_> {
 }
 
 bun_io::impl_buffered_reader_parent! {
-    MultiRunPipeReader for Lines<'a>;
+    MultiRunPipeReader for ScriptOutput<'a>;
     feature = Tools;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, _has_more| { let _ = (*this).read_chunk(&chunk); true };
@@ -141,14 +141,14 @@ bun_io::impl_buffered_reader_parent! {
 
 struct PipeReader<'a> {
     reader: BufferedReader,
-    lines: Lines<'a>,
+    output: ScriptOutput<'a>,
 }
 
 impl<'a> PipeReader<'a> {
     fn new(shared: &'a Shared, config: &'a ScriptConfig, is_stderr: bool) -> Self {
         Self {
-            reader: BufferedReader::init::<Lines>(),
-            lines: Lines {
+            reader: BufferedReader::init::<ScriptOutput>(),
+            output: ScriptOutput {
                 shared,
                 config,
                 is_stderr,
@@ -163,8 +163,8 @@ impl<'a> PipeReader<'a> {
         // Windows has no synchronous drain.
         #[cfg(unix)]
         if !reader.is_done() && reader.get_fd() != bun_sys::Fd::INVALID {
-            reader.set_parent((&raw mut self.lines).cast());
-            // SAFETY: the callbacks reach only `self.lines`, which `&mut self` covers.
+            reader.set_parent((&raw mut self.output).cast());
+            // SAFETY: the callbacks reach only `self.output`, which `&mut self` covers.
             unsafe { BufferedReader::read(reader) };
         }
         if !reader.is_done() {
@@ -215,8 +215,8 @@ impl<'a> ProcessHandle<'a> {
                 &mut env,
                 &self.config.name,
                 &self.config.cwd,
-                |env| env.map.create_null_delimited_env_map(),
-            )?;
+                |env| env.map.to_envp(),
+            );
             spawn::spawn_process(&self.options, argv.as_list(), Some(envp.as_list()))?
                 .map_err(Error::from)?
         };
@@ -224,7 +224,7 @@ impl<'a> ProcessHandle<'a> {
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(self.shared.event_loop));
 
         for pipe in [&mut self.stdout_reader, &mut self.stderr_reader] {
-            pipe.reader.set_parent((&raw mut pipe.lines).cast());
+            pipe.reader.set_parent((&raw mut pipe.output).cast());
         }
 
         #[cfg(windows)]
@@ -304,7 +304,9 @@ bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
         on_process_exit(status, _rusage) => {
             let (shared, slot) = ((*this).shared, (*this).process.as_mut().unwrap());
-            shared.has_failure.update(|before| before || !status.is_ok());
+            if !status.is_ok() {
+                shared.has_failure.set(true);
+            }
             shared.has_exits.set(true);
             slot.status = status;
             slot.end_time = Some(Instant::now());
@@ -382,8 +384,8 @@ impl<'a> State<'a> {
         }
 
         // Flush remaining buffers (stdout first, then stderr)
-        handle.stdout_reader.lines.flush()?;
-        handle.stderr_reader.lines.flush()?;
+        handle.stdout_reader.output.flush()?;
+        handle.stderr_reader.output.flush()?;
 
         // Print exit status to stderr (status messages always go to stderr)
         let writer = Output::error_writer();
@@ -430,7 +432,11 @@ impl<'a> State<'a> {
         let in_group = |handle: &ProcessHandle| handle.config.group == group;
         let rest = &self.handles[index + 1..];
         // A failure ends the pre->main->post chain, even with --no-exit-on-error.
-        let skipped = rest.iter().take_while(|h| failed && in_group(h)).count();
+        let skipped = if failed {
+            rest.iter().take_while(|h| in_group(h)).count()
+        } else {
+            0
+        };
         if (rest.get(skipped)).is_some_and(|next| self.sequential || in_group(next)) {
             self.start(index + 1 + skipped);
         }
@@ -737,9 +743,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Set up the transpiler/environment
     let _ = bun_resolver::fs::FileSystem::init(None)?;
-    // Out-param init pattern.
-    let mut this_transpiler_slot =
-        ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
+    let mut this_transpiler_slot = None;
     let (this_transpiler, _) = RunCommand::configure_env_for_run(
         ctx,
         &mut this_transpiler_slot,

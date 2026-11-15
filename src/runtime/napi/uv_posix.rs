@@ -317,7 +317,7 @@ impl UvLoop {
     }
 
     /// Returns `vm`'s loop. Returns null before `init_runtime_state` and after
-    /// `VirtualMachine::destroy`, which clears the field before freeing the state.
+    /// `VirtualMachine::drop`, which clears the field before freeing the state.
     ///
     /// # Safety
     /// `vm` hasn't been freed (the main thread's VM never is). Any thread can call

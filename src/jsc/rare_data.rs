@@ -9,7 +9,7 @@ use crate::node_path::PathOrFileDescriptor;
 use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::webcore_types::store::{Data, File, IsAllAscii, Store};
+use crate::webcore_types::store::{Data, File, Store};
 use crate::{JSGlobalObject, JsCell};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
@@ -185,7 +185,7 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    /// By file descriptor.
+    /// Indexed by `Stdio`.
     stdio: [OnceCell<StdioStore>; 3],
 
     entropy_cache: JsCell<Option<Box<EntropyCache>>>,
@@ -837,7 +837,7 @@ impl RareData {
 
 struct StdioStore {
     store: RefPtr<Store>,
-    /// As it was when the store was made.
+    /// `st_mode` when the store was created.
     mode: Mode,
 }
 
@@ -863,17 +863,15 @@ impl RareData {
                 Stdio::StdOut => Output::stdout_descriptor_type() == terminal,
                 Stdio::StdErr => Output::stderr_descriptor_type() == terminal,
             };
-            let store = RefPtr::new(Store {
-                data: Data::File(File {
+            let store = RefPtr::new(Store::new(
+                Data::File(File {
                     pathlike: PathOrFileDescriptor::Fd(fd),
                     is_atty: Some(is_atty),
                     mode,
                     ..Default::default()
                 }),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: IsAllAscii::default(),
-            });
+                bun_http_types::MimeType::NONE,
+            ));
             StdioStore { store, mode }
         })
     }
@@ -937,11 +935,11 @@ pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
-        // tls_default_ciphers / stdio:
-        // all dropped automatically via field Drop.
-
+        // Paired with `VirtualMachine::init_rare_data`.
+        bun_core::asan::unregister_root_region(
+            core::ptr::from_ref(self).cast(),
+            core::mem::size_of::<Self>(),
+        );
         self.default_client_ssl_ctx.set(None);
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

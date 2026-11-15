@@ -1034,15 +1034,16 @@ pub fn path_for_resolution<'a>(
             path_for_cached_npm_path(this, buf, &package_name, npm.version)
         }
         ResolutionTag::Github => {
-            let name_buf = &mut **bun_paths::path_buffer_pool::get();
-            let folder_name = cached_github_folder_name(this, name_buf, resolution.github(), None);
+            let mut name_buf = bun_paths::path_buffer_pool::get();
+            let folder_name =
+                cached_github_folder_name(this, &mut name_buf, resolution.github(), None);
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
-            let name_buf = &mut **bun_paths::path_buffer_pool::get();
+            let mut name_buf = bun_paths::path_buffer_pool::get();
             let folder_name =
-                cached_tarball_folder_name(this, name_buf, &integrity, resolution, None);
+                cached_tarball_folder_name(this, &mut name_buf, &integrity, resolution, None);
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         _ => Ok(&mut buf.0[..0]),

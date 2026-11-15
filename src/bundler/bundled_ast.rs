@@ -6,20 +6,6 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
-// `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
-// dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
-// erasure that forced every bundler/linker call site to `.cast()` back.
-pub use bun_css::BundlerStyleSheet;
-
-/// Arena-owned handle to a parsed CSS stylesheet.
-///
-/// It lives in a `Worker.heap`, so `BundleV2::drop` drops it before the workers.
-pub(crate) type CssAstRef<'arena> = bun_ast::StoreRef<BundlerStyleSheet<'arena>>;
-
-/// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
-/// call sites can name the column without re-spelling the pointer shape.
-pub(crate) type CssCol<'arena> = Option<CssAstRef<'arena>>;
-
 use bun_ast::import_record;
 use bun_core::strings;
 
@@ -37,7 +23,7 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 29 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 28 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
@@ -56,9 +42,6 @@ pub struct BundledAst<'arena> {
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) parts: part::List<'arena>,
-    // See `CssAstRef` doc for the arena drop-order invariant that backs the
-    // safe `Deref`.
-    pub(crate) css: CssCol<'arena>,
     pub(crate) url_for_css: &'arena [u8],
     pub(crate) symbols: symbol::List<'arena>,
     pub(crate) module_scope: Scope,
@@ -105,7 +88,6 @@ bun_collections::multi_array_columns! {
         hashbang: StoreStr,
         export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
-        css: CssCol<'arena>,
         url_for_css: &'arena [u8],
         symbols: symbol::List<'arena>,
         module_scope: Scope,
@@ -163,7 +145,6 @@ impl<'arena> BundledAst<'arena> {
             hashbang: StoreStr::EMPTY,
             export_default_alias_of_import: Ref::NONE,
             parts: part::List::new_in(arena),
-            css: None,
             url_for_css: b"",
             symbols: symbol::List::new_in(arena),
             module_scope: Scope::default(),
@@ -187,8 +168,8 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    pub(crate) fn for_printer(&self) -> bun_js_printer::BundledFile<'_> {
-        bun_js_printer::BundledFile {
+    pub(crate) fn as_printer_view(&self) -> bun_js_printer::BundledAstView<'_> {
+        bun_js_printer::BundledAstView {
             approximate_newline_count: self.approximate_newline_count as usize,
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             has_top_level_await: !self.top_level_await_keyword.is_empty(),
@@ -229,7 +210,6 @@ impl<'arena> BundledAst<'arena> {
             hashbang: ast.hashbang,
             export_default_alias_of_import: ast.export_default_alias_of_import,
             parts: ast.parts,
-            css: None,
             url_for_css: b"",
             // This list may be mutated later, so we should store the capacity
             symbols: ast.symbols,

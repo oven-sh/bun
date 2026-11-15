@@ -16,7 +16,7 @@ use bun_ast::{Dependency, ExportsKind, Ref};
 
 use crate::linker_context_mod::LinkerCtx;
 use crate::linker_graph::{
-    SymbolUses, add_part_to_file, is_external_dynamic_import, top_level_symbol_to_parts,
+    SymbolUseColumns, add_part_to_file, is_external_dynamic_import, top_level_symbol_to_parts,
 };
 
 type AstFlags = bundled_ast::Flags;
@@ -49,12 +49,13 @@ pub(crate) fn scan_imports_and_exports(
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
-    let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
+    let reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     let input_files: &[Source] = this.parse_graph().input_files.items_source();
     let loaders: &[Loader] = this.parse_graph().input_files.items_loader();
 
     {
+        let css_asts = &this.parse_graph().css_asts;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let dyn_ref_aliases = meta.dynamic_import_referenced_aliases;
@@ -72,12 +73,12 @@ pub(crate) fn scan_imports_and_exports(
             }
 
             // Is it CSS?
-            if ast.css[id].is_some() {
+            if css_asts[id].is_some() {
                 // Inline URLs for non-CSS files into the CSS file
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
                     ast.import_records[id].as_slice(),
-                    ast.css,
+                    css_asts,
                     input_files,
                     loaders,
                     log,
@@ -89,7 +90,7 @@ pub(crate) fn scan_imports_and_exports(
                     &this.graph.symbols,
                     log,
                     id,
-                    ast.css,
+                    css_asts,
                     ast.import_records,
                     input_files,
                 );
@@ -576,16 +577,13 @@ pub(crate) fn scan_imports_and_exports(
         {
             let ctx: &LinkerContext<'_, '_> = this;
             let worker_pool = this.worker_pool();
-            // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
-            // so reborrow it mutably (not actually mutated by the by-value
-            // variant). Step 6 reuses it afterwards.
             worker_pool.each(
                 ctx,
                 |ctx: &&LinkerContext<'_, '_>, source_index: Index, i: usize| {
                     // SAFETY: `reachable` names each file once, so each call has its own rows.
                     unsafe { ctx.do_step5(source_index, i) };
                 },
-                &mut reachable[..],
+                &reachable,
             );
         }
 
@@ -657,7 +655,7 @@ pub(crate) fn scan_imports_and_exports(
         let meta = this.graph.meta.split_mut();
         let entry_point_kinds = this.graph.files.items_entry_point_kind();
         let (exports_refs, module_refs) = (&*ast.exports_ref, &*ast.module_ref);
-        let mut uses = SymbolUses {
+        let mut uses = SymbolUseColumns {
             parts: ast.parts,
             ast_flags: ast.flags,
             exports_ref: exports_refs,
@@ -1627,18 +1625,17 @@ impl ExportStarContext {
 // ──────────────────────────────────────────────────────────────────────────
 mod __css_validation {
     use super::*;
+    use crate::Graph::CssAsts;
     use crate::bun_css::css_properties::css_modules::Specifier;
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
-    use crate::bundled_ast::CssCol;
-
     pub(super) fn validate_css_import_composes<'bump>(
         symbols: &symbol::Map,
         log: &mut Log,
         id: usize,
-        css_asts: &[CssCol<'bump>],
+        css_asts: &CssAsts<'bump>,
         import_records_list: &[ImportRecordList<'bump>],
         input_files: &[Source],
     ) {
@@ -1728,7 +1725,7 @@ mod __css_validation {
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         all_import_records: &[ImportRecordList<'bump>],
-        all_css_asts: &[CssCol<'bump>],
+        all_css_asts: &CssAsts<'bump>,
         all_sources: &[Source],
     ) {
         #[derive(Default)]
@@ -1749,7 +1746,7 @@ mod __css_validation {
             properties: StringArrayHashMap<PropertyInFile>,
             stack: Vec<Frame>,
             all_import_records: &'a [ImportRecordList<'bump>],
-            all_css_asts: &'a [CssCol<'bump>],
+            all_css_asts: &'a CssAsts<'bump>,
             all_symbols: &'a symbol::Map,
             all_sources: &'a [Source<'a>],
             log: &'a mut Log,

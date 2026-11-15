@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { constants } from "node:os";
 import { basename, join } from "node:path";
+import { withoutCoreDump } from "../../aot/harness/without-core-dump";
 
 let watchee: Subprocess;
 
@@ -580,20 +581,23 @@ if (isLinux || isMacOS)
     ),
   ]);
 
-// The default action of SIGQUIT also writes a core file.
-const withoutCoreFile = ["/bin/sh", "-c", 'ulimit -c 0; exec "$0" "$@"'];
+// How a test starts its command. The default action of SIGQUIT also dumps core, so a process that may die of a signal is
+// started through withoutCoreDump(): it keeps the core from a file and from a program that the kernel hands cores to.
+type StartsCommand = (cmd: string[]) => string[];
+const asItIs: StartsCommand = cmd => cmd;
+const asFirstProcess: StartsCommand = cmd => [...pidNamespace.asFirstProcess, ...cmd];
 
 // Saves the script again when it has printed `ready`, and waits until the process has ended or the script is ready again.
 async function restartOnce(
   script: string,
   killSignal: string,
-  prefix: string[],
+  started: StartsCommand,
   { shim, preload = [], ready = "ready\n" }: { shim?: string; preload?: string[]; ready?: string } = {},
 ) {
   using dir = tempDir("watch-unseen-signal", { "script.js": script, ...(shim && { "shim.c": shim }) });
   if (shim) preload = [await compileShim(String(dir)), ...preload];
   await using proc = spawn({
-    cmd: [...prefix, bunExe(), "--watch", "--watch-kill-signal", killSignal, "--no-clear-screen", "script.js"],
+    cmd: started([bunExe(), "--watch", "--watch-kill-signal", killSignal, "--no-clear-screen", "script.js"]),
     cwd: String(dir),
     env: { ...bunEnv, LD_PRELOAD: [...preload, bunEnv.LD_PRELOAD].filter(Boolean).join(":") || undefined },
     stdout: "pipe",
@@ -619,7 +623,7 @@ const exitedWith128Plus = (signal: keyof typeof constants.signals, output = "rea
 it.concurrent.skipIf(!pidNamespace.available).each(unseenAtRestart)(
   "as the first process of a PID namespace, a %s that no listener has seen ends --watch when %s",
   async (signal, _, killSignal, script) => {
-    expect(await restartOnce(script, killSignal, pidNamespace.asFirstProcess)).toEqual(exitedWith128Plus(signal));
+    expect(await restartOnce(script, killSignal, asFirstProcess)).toEqual(exitedWith128Plus(signal));
   },
 );
 
@@ -627,7 +631,7 @@ it.concurrent.skipIf(!raiseDoesNothing.available).each(unseenAtRestart)(
   "where raise() does nothing, a %s that no listener has seen ends --watch when %s",
   async (signal, _, killSignal, script) => {
     const preload = [await raiseDoesNothing.shim()];
-    expect(await restartOnce(script, killSignal, withoutCoreFile, { preload })).toEqual(exitedWith128Plus(signal));
+    expect(await restartOnce(script, killSignal, withoutCoreDump, { preload })).toEqual(exitedWith128Plus(signal));
   },
 );
 
@@ -635,7 +639,7 @@ it.concurrent.skipIf(!raiseDoesNothing.available).each(unseenAtRestart)(
 it.concurrent.skipIf(isWindows).each(unseenAtRestart.filter(([signal]) => signal !== "SIGTERM"))(
   "a %s that no listener has seen ends --watch when %s",
   async (signal, _, killSignal, script) => {
-    expect(await restartOnce(script, killSignal, withoutCoreFile)).toEqual({
+    expect(await restartOnce(script, killSignal, withoutCoreDump)).toEqual({
       output: "ready\n",
       exitCode: null,
       signalCode: signal,
@@ -645,7 +649,7 @@ it.concurrent.skipIf(isWindows).each(unseenAtRestart.filter(([signal]) => signal
 
 // Only the signals that ask the process to end do that.
 it.concurrent.skipIf(isWindows)("a SIGUSR2 that no listener has seen does not stop the restart", async () => {
-  expect(await restartOnce(whileBusy(["SIGUSR2"]), "SIGINT", [])).toEqual({
+  expect(await restartOnce(whileBusy(["SIGUSR2"]), "SIGINT", asItIs)).toEqual({
     output: "ready\nready\n",
     exitCode: null,
     signalCode: null,
@@ -710,7 +714,7 @@ int kill(pid_t pid, int sig) {
   return next(pid, sig);
 }
 `;
-async function restartWhileHandlerRuns(signal: "SIGQUIT" | "SIGTERM", prefix: string[], preload: string[] = []) {
+async function restartWhileHandlerRuns(signal: "SIGQUIT" | "SIGTERM", started: StartsCommand, preload: string[] = []) {
   const script = `
     process.on("${signal}", () => {});
     console.log("ready");
@@ -718,13 +722,13 @@ async function restartWhileHandlerRuns(signal: "SIGQUIT" | "SIGTERM", prefix: st
     setTimeout(() => process.exit(1), 30_000);
   `;
   const shim = HANDLER_RUNS_DURING_THE_RESTART_C(constants.signals[signal]);
-  return await restartOnce(script, "SIGINT", prefix, { shim, preload, ready: "ready\nin handler\n" });
+  return await restartOnce(script, "SIGINT", started, { shim, preload, ready: "ready\nin handler\n" });
 }
 
 it.concurrent.skipIf(!pidNamespace.available || !cc).each(["SIGQUIT", "SIGTERM"] as const)(
   "as the first process of a PID namespace, a %s whose handler runs while the watcher's thread restarts ends --watch",
   async signal => {
-    expect(await restartWhileHandlerRuns(signal, pidNamespace.asFirstProcess)).toEqual(
+    expect(await restartWhileHandlerRuns(signal, asFirstProcess)).toEqual(
       exitedWith128Plus(signal, "ready\nin handler\n"),
     );
   },
@@ -733,7 +737,7 @@ it.concurrent.skipIf(!pidNamespace.available || !cc).each(["SIGQUIT", "SIGTERM"]
 it.concurrent.skipIf(!raiseDoesNothing.available)(
   "where raise() does nothing, a SIGTERM whose handler runs while the watcher's thread restarts ends --watch",
   async () => {
-    expect(await restartWhileHandlerRuns("SIGTERM", [], [await raiseDoesNothing.shim()])).toEqual(
+    expect(await restartWhileHandlerRuns("SIGTERM", asItIs, [await raiseDoesNothing.shim()])).toEqual(
       exitedWith128Plus("SIGTERM", "ready\nin handler\n"),
     );
   },
@@ -742,7 +746,7 @@ it.concurrent.skipIf(!raiseDoesNothing.available)(
 it.concurrent.skipIf(!isLinux || !cc)(
   "a SIGTERM whose handler runs while the watcher's thread restarts ends --watch",
   async () => {
-    expect(await restartWhileHandlerRuns("SIGTERM", [])).toEqual({
+    expect(await restartWhileHandlerRuns("SIGTERM", asItIs)).toEqual({
       output: "ready\nin handler\n",
       exitCode: null,
       signalCode: "SIGTERM",

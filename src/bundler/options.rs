@@ -2226,8 +2226,7 @@ pub struct Env {
     pub implicit_defines: ImplicitDefines,
 }
 
-/// Who gives `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` a value without a
-/// `define`, in a `behavior` that replaces them. `LoadAllWithoutInlining` never does.
+/// Who gives `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` a value without a `define`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImplicitDefines {
     /// The transpiler replaces them with the mode and the target of the build.

@@ -944,11 +944,8 @@ impl JSTranspiler {
         let config = &mut this.config;
         let transpiler = this.transpiler.as_mut();
         transpiler.set_log(&raw const config.log);
-        // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
-        transpiler.options.log = &raw const config.log;
 
         transpiler.options.no_macros = config.no_macros;
-        transpiler.configure_linker_with_auto_jsx(false);
         transpiler.options.env.behavior = options::EnvBehavior::disable;
         if let Err(err) = transpiler.configure_defines() {
             let log = &config.log;

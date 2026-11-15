@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isWindows, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -612,6 +612,40 @@ describe("event loop routing around macros", () => {
       ].join("\n"),
     });
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Signals reach their listeners in order, so SIGUSR2 is lost if it has not arrived before SIGUSR1.
+  test.concurrent.skipIf(isWindows)("a signal sent during a macro reaches the listener after the macro", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export function probe() {\n  process.kill(process.pid, "SIGUSR2");\n  return JSON.stringify(globalThis.log);\n}\n`,
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const seen = probe();\n`,
+      "index.ts": [
+        `globalThis.log = [];`,
+        `const keepAlive = setInterval(() => {}, 2 ** 30);`,
+        `process.on("SIGUSR2", () => globalThis.log.push("SIGUSR2"));`,
+        `process.on("SIGUSR1", () => clearInterval(keepAlive));`,
+        `const { seen } = require("./with-macro.ts");`,
+        `globalThis.log.push("required");`,
+        `process.kill(process.pid, "SIGUSR1");`,
+        `process.on("exit", () => console.log(seen, JSON.stringify(globalThis.log)));`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: [`[] ["required","SIGUSR2"]`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(isWindows)("a signal reaches the listener that a macro added", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export function listen() {\n  process.on("SIGUSR2", () => console.log("listener"));\n  return 1;\n}\n`,
+      "index.ts": [
+        `import { listen } from "./m.ts" with { type: "macro" };`,
+        `console.log("value", listen());`,
+        `process.kill(process.pid, "SIGUSR2");`,
+        `setImmediate(() => console.log("immediate"));`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["value 1", "listener", "immediate"], stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

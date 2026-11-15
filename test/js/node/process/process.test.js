@@ -1648,6 +1648,31 @@ describe.concurrent(() => {
       expect(await new Response(child.stdout).text()).toBe("PASS\n");
     });
 
+    it.skipIf(isWindows)("reaches the main thread when the event loop of a Worker ticks first", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("node:worker_threads");
+          const worker = new Worker(
+            'require("node:worker_threads").parentPort.once("message", handled => { Atomics.store(handled, 0, 1); Atomics.notify(handled, 0); })',
+            { eval: true },
+          );
+          process.on("SIGUSR2", () => console.log("listener"));
+          process.kill(process.pid, "SIGUSR2");
+          const handled = new Int32Array(new SharedArrayBuffer(4));
+          worker.postMessage(handled);
+          Atomics.wait(handled, 0, 0);
+          console.log("handled");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "handled\nlistener\n", stderr: "", exitCode: 0 });
+    });
+
     it.serial("process.kill(2) works", async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), process_sleep, "1000000"],

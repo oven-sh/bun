@@ -6,9 +6,47 @@ use bun_ast::ArrayBinding;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
 use bun_ast::{AstArena, Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
-use bun_ast::{ImportRecord, ImportRecordTag, Loader};
+use bun_ast::{ImportRecordTag, Loader};
 
+use crate::bundled_ast::BundledAstRow;
+use crate::chunk::{Chunk, Content};
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
+
+/// Runs before the part ranges are printed in parallel: a file can be in several chunks.
+pub(crate) fn resolve_import_paths_for_dev_server<'a>(
+    c: &mut LinkerContext<'_, 'a>,
+    chunks: &[Chunk<'a>],
+) {
+    let input_files = &c.parse_graph().input_files;
+    let loaders = input_files.items_loader();
+    let sources = input_files.items_source();
+    let import_records = c.graph.ast.items_import_records_mut();
+    for chunk in chunks {
+        let Content::Javascript(js) = &chunk.content else {
+            continue;
+        };
+        for part_range in &js.parts_in_chunk_in_order {
+            if part_range.source_index.is_runtime() {
+                continue;
+            }
+            for record in import_records[part_range.source_index.get() as usize].as_mut_slice() {
+                if record.path.is_disabled {
+                    continue;
+                }
+                if record.source_index.is_valid()
+                    && loaders[record.source_index.get() as usize] == Loader::Css
+                {
+                    record.path.is_disabled = true;
+                    continue;
+                }
+                // Make sure the printer gets the resolved path
+                if record.source_index.is_valid() {
+                    record.path = sources[record.source_index.get() as usize].path;
+                }
+            }
+        }
+    }
+}
 
 /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
 /// The conversion logic is completely different for format .internal_bake_dev
@@ -40,45 +78,24 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   };
 ///     }, false ],
 ///        ----- "is the module async?"
-pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
-    c: &LinkerContext<'_, 'a>,
+pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump AstArena,
-    source_index: usize,
-    import_records: &mut [ImportRecord<'a>],
+    ast: &BundledAstRow<'_>,
 ) -> Result<(), AllocError> {
-    let hmr_api_ref = c.graph.ast.items_wrapper_ref()[source_index];
-    let module_ref = c.graph.ast.items_module_ref()[source_index];
+    let hmr_api_ref = ast.wrapper_ref;
+    let module_ref = ast.module_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> =
         bun_alloc::ArenaVec::new_in(bump.heap());
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
-    let input_files = &c.parse_graph().input_files;
-    let loaders = input_files.items_loader();
-    let sources = input_files.items_source();
-    for record in &mut *import_records {
-        if record.path.is_disabled {
-            continue;
-        }
-        if record.source_index.is_valid()
-            && loaders[record.source_index.get() as usize] == Loader::Css
-        {
-            record.path.is_disabled = true;
-            continue;
-        }
-        // Make sure the printer gets the resolved path
-        if record.source_index.is_valid() {
-            record.path = sources[record.source_index.get() as usize].path;
-        }
-    }
-
     // Modules which do not have side effects
     for stmt in part_stmts {
         match &stmt.data {
             StmtData::SImport(st) => {
-                let record = &mut import_records[st.import_record_index as usize];
+                let record = &ast.import_records[st.import_record_index as usize];
                 if record.path.is_disabled {
                     continue;
                 }

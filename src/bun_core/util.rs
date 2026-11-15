@@ -1869,11 +1869,6 @@ pub struct ThreadLock {
     #[cfg(debug_assertions)]
     locked_at: core::cell::Cell<crate::StoredTrace>,
 }
-// SAFETY: `locked_at` is only written after `owning_thread.swap` proves the
-// current thread is the unique acquirer; concurrent access panics first. The
-// `Cell` is `!Sync` but the AcqRel `swap` on `owning_thread` is the lock that
-// serializes its non-atomic load/store across threads.
-unsafe impl Sync for ThreadLock {}
 #[cfg(debug_assertions)]
 const INVALID_THREAD_ID: u64 = 0;
 impl ThreadLock {

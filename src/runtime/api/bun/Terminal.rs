@@ -26,8 +26,7 @@ use bun_io::{
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArrayBuffer,
-    SysErrorJsc,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
 };
 #[cfg(unix)]
 use bun_ptr::CellExt as _;
@@ -1623,9 +1622,7 @@ impl Terminal {
         // This is the pipe reader's landing frame: a buffer that cannot be
         // built (allocation failure, a terminating VM) is folded here and
         // reading goes on.
-        let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
-            .to_node_buffer(global_this)
-        {
+        let data = match JSValue::create_buffer_from_box(global_this, bytes) {
             Ok(data) => data,
             Err(err) => {
                 crate::dispatch::fold(Err(err));

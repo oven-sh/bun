@@ -57,7 +57,7 @@ use bun_jsc::{HTTPHeaderName, HeadersInit, StringJsc as _, SysErrorJsc as _, URL
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
 use crate::node::types::PathLikeExt as _;
-use crate::node::types::{Encoding, PathOrFileDescriptor};
+use crate::node::types::PathOrFileDescriptor;
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{InternalBlob, Tag as BodyTag, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
@@ -1499,15 +1499,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            let mut node_fs = node::fs::NodeFS::default();
-            let rf_args = node::fs::args::ReadFile {
-                encoding: Encoding::Buffer,
-                path: PathOrFileDescriptor::Fd(opened_file.fd()),
-                offset: blob_offset,
-                max_size: Some(blob_size),
-                ..Default::default()
-            };
-            let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
+            let res = node::fs::NodeFS::read_file_bytes(
+                PathOrFileDescriptor::Fd(opened_file.fd()),
+                blob_offset,
+                blob_size,
+            );
 
             // Eagerly close before constructing the (potentially large) JS result.
             drop(opened_file);
@@ -1518,10 +1514,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js();
                     return Ok(rejected_value);
                 }
-                Ok(result) => {
-                    body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
-                        result.slice().to_vec(),
-                    ));
+                Ok(bytes) => {
+                    body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(bytes.into_vec()));
                 }
             }
         }

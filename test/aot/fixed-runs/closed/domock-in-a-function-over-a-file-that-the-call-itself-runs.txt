@@ -1,0 +1,20 @@
+vi.doMock() in a function of a file that has yet to begin its body, for a file that this file imports and that has yet to run. A member of its import cycle calls the function, and holds the mocked file behind `import defer`. In a compiled run the call itself runs the mocked file, and in `bun test` the file runs after the call. Either way it runs once, both importers keep it, and the next import() gets the mock.
+#### a.test.js
+import { test } from "bun:test";
+import { read, readDeferred } from "./holds.js";
+test("t", async () => console.log("| CASE", read(), readDeferred(), (await import("./dep.js")).who(), "runs of dep:", globalThis.runsOfDepThatTheCallRuns));
+#### calls.js
+import { mockIt } from "./holds.js";
+import defer * as dep from "./dep.js";
+mockIt();
+export const readDeferred = () => dep.who();
+#### dep.js
+globalThis.runsOfDepThatTheCallRuns = (globalThis.runsOfDepThatTheCallRuns ?? 0) + 1;
+export const who = () => "real";
+#### holds.js
+import { vi } from "bun:test";
+import { readDeferred } from "./calls.js";
+import { who } from "./dep.js";
+export function mockIt() { vi.doMock("./dep.js", () => ({ who: () => "mock" })); }
+export const read = () => who();
+export { readDeferred };

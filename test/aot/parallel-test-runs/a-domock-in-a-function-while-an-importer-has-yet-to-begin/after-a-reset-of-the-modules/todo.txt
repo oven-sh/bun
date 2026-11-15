@@ -1,0 +1,1 @@
+"third real mock" | "third mock mock": a program with vi.resetModules() cannot let a compiled module go, so the helper does not run again and its mock is laid again over a module that is updated in place

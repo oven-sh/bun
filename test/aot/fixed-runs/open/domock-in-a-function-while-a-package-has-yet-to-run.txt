@@ -1,0 +1,26 @@
+vi.doMock() in a function of another file, called by the body of a helper that imports the mocked file, while an ES package that imports that file too has yet to run. The helper has begun its body. Such a package is no module of the project, and does not count as an importer that has yet to begin its body. So the loaded file stays as it is: the helper and the package keep what they imported, and the factory runs for the next import().
+#### a.test.js
+import { test } from "bun:test";
+import { calls, read } from "./mocks.js";
+import { via } from "package-yet-to-run";
+test("t", async () => {
+  console.log("| CASE", read(), via(), calls());
+  console.log("| CASE", (await import("./dep.js")).who(), calls());
+});
+#### dep.js
+export const who = () => "real";
+#### mocks.js
+import { mockDep } from "./wrap.js";
+import { who } from "./dep.js";
+let count = 0;
+mockDep(() => { count++; return { who: () => "mock" }; });
+export const read = () => who();
+export const calls = () => count;
+#### node_modules/package-yet-to-run/index.js
+import { who } from "../../dep.js";
+export const via = () => who();
+#### node_modules/package-yet-to-run/package.json
+{ "name": "package-yet-to-run", "type": "module", "main": "index.js" }
+#### wrap.js
+import { vi } from "bun:test";
+export const mockDep = factory => { vi.doMock("./dep.js", factory); };

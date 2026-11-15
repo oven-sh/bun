@@ -1,0 +1,32 @@
+A helper imports a file and mocks it in its body, through a function of a file that it imports. The helper keeps what it imported, and it runs and mocks again for each later test file that imports it.
+#### 1.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("first", async () => console.log("| CASE first", read(), (await import("./dep.js")).who()));
+#### 2.test.js
+import { test } from "bun:test";
+import { who } from "./dep.js";
+test("second", async () => console.log("| CASE second", who(), (await import("./dep.js")).who()));
+#### 3.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("third", async () => console.log("| CASE third", read(), (await import("./dep.js")).who()));
+#### 4.test.js
+import { test } from "bun:test";
+import { who } from "./dep.js";
+test("fourth", async () => console.log("| CASE fourth", who(), (await import("./dep.js")).who()));
+#### 5.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("fifth", async () => console.log("| CASE fifth", read(), (await import("./dep.js")).who()));
+#### dep.js
+export const who = () => "real";
+#### mocks.js
+import { mockDep } from "./wrap.js";
+import { who } from "./dep.js";
+console.log("| CASE the helper runs");
+mockDep(() => ({ who: () => "mock" }));
+export const read = () => who();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockDep = factory => { vi.doMock("./dep.js", factory); };

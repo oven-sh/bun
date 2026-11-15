@@ -1,0 +1,30 @@
+The root of an import cycle mocks a CommonJS package in its body, through a function that a preload put on globalThis. The other member of the cycle imports the package, and its body has ended by then. The member keeps what it imported, and the root runs and mocks again for each later test file that imports it.
+preload: setup.js
+#### 1.test.js
+import { test } from "bun:test";
+import { read } from "./root.js";
+test("first", async () => console.log("| CASE first", read(), (await import("held-by-a-cycle-member")).who()));
+#### 2.test.js
+import { test } from "bun:test";
+import { who } from "held-by-a-cycle-member";
+test("second", async () => console.log("| CASE second", who(), (await import("held-by-a-cycle-member")).who()));
+#### 3.test.js
+import { test } from "bun:test";
+import { read } from "./root.js";
+test("third", async () => console.log("| CASE third", read(), (await import("held-by-a-cycle-member")).who()));
+#### member.js
+import { who } from "held-by-a-cycle-member";
+import "./root.js";
+export const read = () => who();
+#### node_modules/held-by-a-cycle-member/index.js
+exports.who = () => "real";
+#### node_modules/held-by-a-cycle-member/package.json
+{ "name": "held-by-a-cycle-member", "main": "index.js" }
+#### root.js
+import { read } from "./member.js";
+console.log("| CASE the root runs");
+globalThis.mockPackageOfCycleSetup(() => ({ who: () => "mock" }));
+export { read };
+#### setup.js
+import { vi } from "bun:test";
+globalThis.mockPackageOfCycleSetup = factory => { vi.doMock("held-by-a-cycle-member", factory); };

@@ -155,6 +155,7 @@ public:
         // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
         unsigned testFile = 1;
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
+        // Also the ones that a vi.doMock() call left linked to what they import because their body had begun.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.

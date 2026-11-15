@@ -1,0 +1,30 @@
+A helper mocks one file in its body with mock.module(), and another through a function of a file that a preload also imports. The helper runs and mocks again for each later test file that imports it, and an import() of the helper after that lays no earlier mock over the new one. The last word of each line names the runs whose factory was called.
+preload: setup.js
+#### 1.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("first", async () => console.log("| CASE first", await read(), await (await import("./mocks.js")).read(), globalThis.factoriesOfTheHelperImportedAgain));
+#### 2.test.js
+import { test } from "bun:test";
+test("second", async () => console.log("| CASE second", (await import("./dep.js")).who(), globalThis.factoriesOfTheHelperImportedAgain));
+#### 3.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("third", async () => console.log("| CASE third", await read(), await (await import("./mocks.js")).read(), globalThis.factoriesOfTheHelperImportedAgain));
+#### dep.js
+export const who = () => "real";
+#### mocks.js
+import { mock } from "bun:test";
+import { mockDep } from "./wrap.js";
+globalThis.runsOfTheHelperImportedAgain = (globalThis.runsOfTheHelperImportedAgain ?? 0) + 1;
+const run = globalThis.runsOfTheHelperImportedAgain;
+mock.module("./side.js", () => ({ side: "mock" }));
+mockDep(() => { globalThis.factoriesOfTheHelperImportedAgain = (globalThis.factoriesOfTheHelperImportedAgain ?? "") + run; return { who: () => "mock of run " + run }; });
+export const read = async () => (await import("./dep.js")).who();
+#### setup.js
+import "./wrap.js";
+#### side.js
+export const side = "real";
+#### wrap.js
+import { mock } from "bun:test";
+export const mockDep = factory => { mock.module("./dep.js", factory); };

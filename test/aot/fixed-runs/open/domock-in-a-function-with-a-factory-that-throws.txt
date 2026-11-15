@@ -1,0 +1,13 @@
+vi.doMock() in a function of another file with a factory that throws, called by the body of a test file that imports the mocked file. The factory waits for the next import(), so it fails that import() and not the test file.
+#### a.test.js
+import { test } from "bun:test";
+import { mockModule } from "./wrap.js";
+import { who } from "./dep.js";
+mockModule(import.meta.dir + "/dep.js", () => { throw new Error("from the factory"); });
+console.log("| CASE the call has returned");
+test("t", async () => console.log("| CASE", who(), await import("./dep.js").then(() => "loaded", error => error.message)));
+#### dep.js
+export const who = () => "real";
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

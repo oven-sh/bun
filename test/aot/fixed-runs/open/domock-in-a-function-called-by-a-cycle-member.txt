@@ -1,0 +1,25 @@
+vi.doMock() in a function of another file, called by the body of a member of an import cycle that imports the mocked file. The member is evaluated only when the root of its cycle is, and keeps what it imported.
+#### a.test.js
+import { test } from "bun:test";
+import { calls, read, readAtRoot } from "./root.js";
+test("t", async () => {
+  console.log("| CASE", read(), readAtRoot, calls());
+  console.log("| CASE", (await import("./dep.js")).who(), read(), calls());
+});
+#### dep.js
+export const who = () => "real";
+#### member.js
+import { who } from "./dep.js";
+import "./root.js";
+import { mockModule } from "./wrap.js";
+let count = 0;
+mockModule(import.meta.dir + "/dep.js", () => { count++; return { who: () => "mock" }; });
+export const read = () => who();
+export const calls = () => count;
+#### root.js
+import { calls, read } from "./member.js";
+export { calls, read };
+export const readAtRoot = read();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

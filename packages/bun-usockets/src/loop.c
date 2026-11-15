@@ -487,6 +487,8 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
 }
 
+extern bool JSC__VM__isEntered(void *jsc_vm);
+
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
 #ifdef LIBUS_USE_QUIC
@@ -495,12 +497,11 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
     /* Runs at every tick depth because a nested tick may be waiting for this close. */
     us_internal_close_unresumable_sockets(loop);
-    /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
-     * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
-     * closed sockets: the outer tick's dispatch is mid-iteration and may still
-     * hold a pointer to one (it reads s->flags right after on_data returns).
-     * Defer to the outermost tick's loop_post. */
-    if (loop->data.tick_depth <= 1) {
+    /* Script can tick the loop (waitForPromise). What called it may still hold
+     * a socket that it closed: the dispatch of an outer tick, or a native call
+     * made from a timer, a task or a microtask, which run outside of any tick.
+     * Only a tick with none of them below it frees closed sockets. */
+    if (loop->data.tick_depth <= 1 && !(loop->data.jsc_vm && JSC__VM__isEntered(loop->data.jsc_vm))) {
         us_internal_free_closed_sockets(loop);
     }
     loop->data.post_cb(loop);

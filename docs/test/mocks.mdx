@@ -824,13 +824,32 @@ The exception is a name that `import` and `require()` resolve to two files (see 
 
 ### Path Resolution
 
-Bun resolves the module specifier the same way it resolves an `import`, supporting:
+Bun resolves the module specifier for `import` and for `require()`, supporting:
 
 - Relative paths (`'./module'`)
 - Absolute paths (`'/path/to/module'`)
 - Package names (`'lodash'`)
 
-Some names resolve to one file for `import` and to another for `require()`, such as a package whose `exports` has an `import` and a `require` condition. If your tests mock such a name with `mock.module()`, `jest.mock()` or `jest.doMock()` and also call `mock.module(require.resolve(name), factory)` to make `require()` get the mock, you can delete that line. The mock of the name reaches `require()`. The line still works if you keep it. It makes a second mock, for the file that `require()` loads, and `require()` of the name gets whichever of the two mocks was made last. Keep the line beside `vi.mock()` and `vi.doMock()`. Their mock doesn't reach `require()` of such a name.
+The functions of `vi` resolve it for `import` only.
+
+Some names resolve to one file for `import` and to another for `require()`, such as a package whose `exports` has an `import` and a `require` condition. For such a name:
+
+- A mock made with `mock.module()`, `jest.mock()` or `jest.doMock()` reaches both. `import` and `require()` of the name get the same mock, and the factory is called once. `require()` still can't wait for an async factory.
+- A mock made with `vi.mock()` or `vi.doMock()` reaches `import` only. `require()` of the name loads the real file, as in Vitest.
+
+The other functions that take a module name follow their kind, Jest or Vitest:
+
+- `jest.requireActual()`, `jest.requireMock()`, `jest.createMockFromModule()`, `jest.unmock()` and `jest.dontMock()` go by the file that `require()` loads. That file is the original for the first three, and for `jest.mock()` and `jest.doMock()` without a factory. `jest.requireMock()` returns the mock that `require()` of the name gets. `jest.unmock()` and `jest.dontMock()` remove that mock and the mock that `import` of the name gets.
+- `vi.importActual()`, `vi.importMock()`, `vi.unmock()` and `vi.doUnmock()` go by the file that `import` loads. That file is the original for the first two, for `importOriginal()`, and for `vi.mock()` and `vi.doMock()` without a factory. `vi.importMock()` returns the mock that `import` of the name gets, and `vi.unmock()` and `vi.doUnmock()` remove it.
+
+There is one exception. If a mock reaches `import` of the name and none reaches `require()`, as after `vi.mock()`, `jest.requireMock()` returns that mock, and the original for `jest.requireActual()` and `jest.createMockFromModule()` is the file that `import` loads.
+
+A mock that reaches both is still one mock, and Bun keeps it under the path of the file that `import` loads. Two things follow:
+
+- A later mock of that path, or of the name with `vi.mock()` or `vi.doMock()`, replaces it for `import` and ends it for `require()`. `import` gets the later mock, and `require()` of the name loads the real file.
+- `require.cache[require.resolve(name)]` is not the mock. `require.resolve(name)` returns the path of the real file, and `require.cache` has either that file there or nothing.
+
+If your tests mock such a name with `mock.module()`, `jest.mock()` or `jest.doMock()` and also call `mock.module(require.resolve(name), factory)` to make `require()` get the mock, you can delete that line. The mock of the name reaches `require()`. The line still works if you keep it. It makes a second mock, for the file that `require()` loads, and `require()` of the name gets whichever of the two mocks was made last. Keep the line beside `vi.mock()` and `vi.doMock()`. Their mock doesn't reach `require()` of such a name.
 
 ### Import Timing Effects
 

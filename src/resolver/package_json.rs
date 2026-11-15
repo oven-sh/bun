@@ -402,7 +402,8 @@ impl PackageJSON {
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         let r_fs = fs::FileSystem::get();
-        let r_log: &bun_ast::Log = r.log();
+        let unread_log = bun_ast::Log::init();
+        let r_log = r.log().unwrap_or(&unread_log);
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];

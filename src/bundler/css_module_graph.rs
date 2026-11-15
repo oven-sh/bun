@@ -158,7 +158,7 @@ impl<'a> CssModuleGraph<'a> {
         bump: &'a Arena,
         path_text: &[u8],
         contents: &'a [u8],
-        log: &Log,
+        log: &mut Log,
     ) -> Result<(), Failure> {
         self.0.push(CssModuleFile::parse(
             host,
@@ -178,11 +178,10 @@ impl<'a> CssModuleGraph<'a> {
                     continue;
                 }
                 let resolver = &mut host.transpiler().resolver;
-                let resolver_log =
-                    core::mem::replace(&mut resolver.log, core::ptr::NonNull::from(log));
+                let redirect = resolver.log().map(|it| it.redirect(log));
                 let resolved =
                     resolver.resolve(file.source.path.source_dir(), record.path.text, record.kind);
-                resolver.log = resolver_log;
+                drop(redirect);
                 let mut resolved = match resolved {
                     Ok(resolved) => resolved,
                     Err(_) => continue,
@@ -271,7 +270,7 @@ pub fn load_exports(
     let mut graph = CssModuleGraph(Vec::new());
     let mut skipped = Log::init();
 
-    graph.load(host, bump, path_text, contents, &skipped)?;
+    graph.load(host, bump, path_text, contents, &mut skipped)?;
     let exports = graph.exports(bump, &skipped)?;
     for msg in skipped.msgs.get_mut() {
         bun_core::scoped_log!(

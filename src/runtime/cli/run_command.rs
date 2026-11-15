@@ -1026,7 +1026,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let vm = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
-            log: ctx.log.map(::core::ptr::NonNull::from),
+            log: ctx.log,
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -1120,7 +1120,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         Self::set_time_zone_from_env(vm);
 
-        bun_http::async_http::load_env(vm.log().unwrap(), vm.env_loader());
+        bun_http::async_http::load_env(vm.log, vm.env_loader());
 
         vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1217,7 +1217,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: ctx.log.map(std::ptr::NonNull::from),
+            log: ctx.log,
             args: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             graph: Some(graph),
@@ -1264,7 +1264,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Self::set_time_zone_from_env(vm);
         }
 
-        bun_http::async_http::load_env(vm.log().unwrap(), vm.env_loader());
+        bun_http::async_http::load_env(vm.log, vm.env_loader());
 
         vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1679,14 +1679,12 @@ impl Run<'_> {
 
 #[inline]
 fn log_has_msgs(vm: &VirtualMachine) -> bool {
-    vm.log().is_some_and(|log| log.msgs_len() > 0)
+    vm.log.msgs_len() > 0
 }
 
 #[inline]
 fn log_clear_msgs(vm: &VirtualMachine) {
-    if let Some(log) = vm.log() {
-        log.with_msgs(Vec::clear);
-    }
+    vm.log.with_msgs(Vec::clear);
 }
 
 #[cold]
@@ -1697,9 +1695,7 @@ fn log_clear_msgs(vm: &VirtualMachine) {
 )]
 fn dump_build_error(vm: &VirtualMachine) {
     Output::flush();
-    if let Some(log) = vm.log() {
-        let _ = log.print(Output::error_writer_buffered());
-    }
+    let _ = vm.log.print(Output::error_writer_buffered());
     Output::flush();
 }
 

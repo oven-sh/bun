@@ -32,6 +32,9 @@ static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeStri
 {
     void* bunVM = WebCore::clientData(vm)->bunVM;
     uint64_t hash = pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;
+    // The same contents read as another file than the key names (CodeString::path) are another module.
+    if (pluginContents && !pluginContents->path.isDead())
+        hash ^= 0xc2b2ae3d27d4eb4fULL;
     // An entry point is transpiled differently from an import of the same file.
     BunString borrowedKey = Bun::toString(key);
     if (Bun__VM__isTestEntryPoint(bunVM, &borrowedKey))

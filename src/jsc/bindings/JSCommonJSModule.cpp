@@ -232,7 +232,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     String sharedWrapperKey;
     FunctionExecutable* sharedWrapper = nullptr;
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
-        sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
+        // import() in a wrapper names its importer by the source origin of the module the wrapper was linked for.
+        sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceOrigin().string(), ' ', code.provider()->sourceURL());
         if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
             auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
             if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {

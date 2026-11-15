@@ -3891,6 +3891,406 @@ it.concurrent.each([[[]], [["--isolate"]]])(
   },
 );
 
+// The key of an original ("price.ts?actual", "rate.ts?actual&spy") is Bun's own. onLoad is shown the file's path, so what it
+// returns is that file's contents.
+describe.concurrent("what onLoad returns for the original of a mocked module", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-original-contents", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const valueAndConstant = `export function value(): string { return "source"; }\nexport const constant: string = "source";\n`;
+  const where = `export function where(): string {\n  return new Error("here").stack!.split("\\n")[1];\n}\n`;
+  const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
+  it.each(isolationFlags)("gets the loader for that file when the plugin names none %j", async args => {
+    const files = {
+      "preload.ts": `
+        import { readFileSync } from "node:fs";
+        import { basename, join } from "node:path";
+        globalThis.paths = new Set();
+        const compiled = path => {
+          globalThis.paths.add(basename(path));
+          return { contents: readFileSync(path, "utf8").replaceAll("source", "compiled") };
+        };
+        Bun.plugin({
+          name: "compile",
+          setup(build) {
+            build.onLoad({ filter: /imported-[a-z]+\\.ts$/ }, async ({ path }) => (await 0, compiled(path)));
+            // require() can't wait for a promise. A callback at runtime gets no "loader", so this one names none either.
+            build.onLoad({ filter: /required-[a-z]+\\.(ts|json)$/ }, ({ path, loader }) => ({ ...compiled(path), loader }));
+            build.onLoad({ filter: /broken\\.ts$/ }, () => ({ contents: "export const broken: = 1;" }));
+            // The key of a module in a namespace is "virt:actual.ts", and onLoad is shown "actual.ts".
+            build.onLoad({ filter: /.*/, namespace: "virt" }, ({ path }) => {
+              globalThis.paths.add("in virt: " + path);
+              return { contents: readFileSync(join(import.meta.dir, "imported-where.ts"), "utf8") };
+            });
+          },
+        });
+      `,
+      "imported-original.ts": `export const price: string = "source"; export const other: string = "source";`,
+      "imported-actual.ts": `export const tax: string = "source";`,
+      "imported-spy.ts": `export function rate(): string { return "source"; }`,
+      "imported-auto.ts": valueAndConstant,
+      "imported-mock.ts": valueAndConstant,
+      "imported-where.ts": where,
+      "broken.ts": `export const broken = 1;`,
+      "also-broken.ts": `export const broken = 1;`,
+      "required-actual.json": `{ "from": "source" }`,
+      "required-mock.ts": valueAndConstant,
+      "required-create.ts": valueAndConstant,
+      "required-where.ts": where,
+      "original.test.ts": `
+        import { expect, jest, test, vi } from "bun:test";
+        import { basename } from "node:path";
+        vi.mock("./imported-original", async importOriginal => ({ ...(await importOriginal()), other: "mock" }));
+        vi.mock("./imported-actual", () => ({ tax: "mock" }));
+        vi.mock("./imported-spy", { spy: true });
+        vi.mock("./imported-auto");
+        vi.mock("./imported-mock");
+        vi.mock("./imported-where", () => ({ where: () => "mock" }));
+        vi.mock("./broken", () => ({ broken: "mock" }));
+        vi.mock("./also-broken", () => ({ broken: "mock" }));
+        vi.mock("./required-actual.json", () => ({ default: { from: "mock" } }));
+        jest.mock("./required-mock");
+        jest.mock("./required-create", () => ({ constant: "mock" }));
+        jest.mock("./required-where", () => ({ where: () => "mock" }));
+        vi.mock("virt:actual.ts", () => ({ where: () => "mock" }));
+        vi.mock("virt:spy.ts", { spy: true });
+        import { price, other } from "./imported-original";
+        import { tax } from "./imported-actual";
+        import { rate } from "./imported-spy";
+        import * as auto from "./imported-auto";
+        import { where as spied } from "virt:spy.ts";
+        test("the plugin's output", async () => {
+          expect([price, other, tax, rate()]).toEqual(["compiled", "mock", "mock", "compiled"]);
+          expect(rate).toHaveBeenCalledTimes(1);
+          expect((await vi.importActual("./imported-actual")).tax).toBe("compiled");
+          expect([auto.value(), auto.constant]).toEqual([undefined, "compiled"]);
+          const mocked = await vi.importMock("./imported-mock");
+          expect([mocked.value(), mocked.constant]).toEqual([undefined, "compiled"]);
+          expect(jest.requireActual("./required-actual.json")).toEqual({ from: "compiled" });
+          expect(jest.requireMock("./required-mock").constant).toBe("compiled");
+          expect(jest.createMockFromModule("./required-create").constant).toBe("compiled");
+          // A frame and a build error name the file, as they do for an original that no plugin serves.
+          expect((await vi.importActual("./imported-where")).where()).toMatch(/[\\\\/]imported-where\\.ts:2:\\d+\\)$/);
+          expect(jest.requireActual("./required-where").where()).toMatch(/[\\\\/]required-where\\.ts:2:\\d+\\)$/);
+          const error = await vi.importActual("./broken").catch(error => error);
+          expect([error.name, error.message, basename(error.position.file)]).toEqual(["BuildMessage", "Unexpected =", "broken.ts"]);
+          let thrown;
+          try {
+            jest.requireActual("./also-broken");
+          } catch (error) {
+            thrown = error;
+          }
+          expect([thrown.name, thrown.message, basename(thrown.position.file)]).toEqual(["BuildMessage", "Unexpected =", "also-broken.ts"]);
+          // The name of a module in a namespace is its key without Bun's part, so the namespace stays in it.
+          expect((await vi.importActual("virt:actual.ts")).where()).toMatch(/\\(virt:actual\\.ts:2:\\d+\\)$/);
+          expect(spied()).toMatch(/\\(virt:spy\\.ts:2:\\d+\\)$/);
+          expect([...globalThis.paths].sort()).toEqual([
+            "imported-actual.ts", "imported-auto.ts", "imported-mock.ts", "imported-original.ts", "imported-spy.ts",
+            "imported-where.ts", "in virt: actual.ts", "in virt: spy.ts", "required-actual.json", "required-create.ts",
+            "required-mock.ts", "required-where.ts",
+          ]);
+        });
+      `,
+    };
+    const { stderr, exitCode } = await run(files, ["test", "--preload", "./preload.ts", ...args, "./original.test.ts"]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(isolationFlags)("also for a copy that a factory gets %j", async args => {
+    const files = {
+      "preload.ts": `
+        import { readFileSync } from "node:fs";
+        import { basename } from "node:path";
+        globalThis.paths = [];
+        Bun.plugin({
+          name: "compile",
+          setup(build) {
+            build.onLoad({ filter: /(tax|dep|k|m)\\.ts$/ }, ({ path }) => {
+              globalThis.paths.push(basename(path));
+              return { contents: readFileSync(path, "utf8").replaceAll("1000", "2000") };
+            });
+          },
+        });
+      `,
+      "tax.ts": `export const tax: number = 1000;`,
+      "dep.ts": `import { tax } from "./tax";\nconst again = await import("./tax");\nexport const dep: number = 1000;\nexport const viaDep = () => [tax, again.tax];\n`,
+      "k.ts": `import { m } from "./m";\nexport function k(): number {\n  return (m as number) + 1000;\n}\n`,
+      "m.ts": `export const m: number = 1;`,
+      "copy.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        // "dep.ts" waits for "tax.ts", so the factory gets a copy of it, "dep.ts?actual". The copy's own import() has to name it.
+        vi.mock("./tax", async () => ({ tax: (await import("./dep")).dep + 1 }));
+        test("a copy of a module that waits for the mock", async () => {
+          const dep = await import("./dep");
+          expect([dep.dep, dep.viaDep()]).toEqual([2000, [2001, 2001]]);
+        });
+      `,
+      "spy.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        vi.mock("./k", { spy: true });
+        // "k.ts" waits for "m.ts", so the factory gets a copy of the spied original: "k.ts?actual&spy&actual".
+        vi.mock("./m", async importOriginal => {
+          vi.doMock("./k", { spy: true });
+          await import("./k");
+          return { m: 5 };
+        });
+        import { k } from "./k";
+        import { m } from "./m";
+        test("a copy of a spied module", () => {
+          expect([k(), m]).toEqual([2001, 5]);
+          expect(globalThis.paths.filter(path => /^[km]\\./.test(path))).toEqual(["k.ts", "m.ts", "k.ts"]);
+        });
+      `,
+      // With --isolate, a later file gets the modules of an earlier file from a cache.
+      "again.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        vi.mock("./tax", async () => ({ tax: (await import("./dep")).dep + 1 }));
+        vi.mock("./k", { spy: true });
+        vi.mock("./m", async importOriginal => {
+          vi.doMock("./k", { spy: true });
+          await import("./k");
+          return { m: 5 };
+        });
+        import { k } from "./k";
+        import { m } from "./m";
+        test("the same copies in a later file", async () => {
+          const dep = await import("./dep");
+          expect([dep.dep, dep.viaDep(), k(), m]).toEqual([2000, [2001, 2001], 2001, 5]);
+        });
+      `,
+    };
+    const { stderr, exitCode } = await run(files, [
+      "test",
+      "--preload",
+      "./preload.ts",
+      ...args,
+      "./copy.test.ts",
+      "./spy.test.ts",
+      "./again.test.ts",
+    ]);
+    expect(stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(isolationFlags)("makes the module that the same answer makes for the file %j", async args => {
+    const files = {
+      "preload.ts": `
+        Bun.plugin({
+          name: "answers",
+          setup(build) {
+            build.onLoad({ filter: /neutral\\.c?js$/ }, () => ({ contents: "globalThis.loaded = true;", loader: "js" }));
+            build.onLoad({ filter: /empty\\.cjs$/ }, () => ({ contents: "", loader: "js" }));
+            build.onLoad({ filter: /a\\.module\\.css$/ }, () => ({ contents: ".title { color: red }", loader: "css" }));
+          },
+        });
+        globalThis.files = ["./neutral.cjs", "./commonjs/neutral.js", "./empty.cjs", "./a.module.css"];
+        globalThis.shown = module => JSON.stringify({ kind: "default" in module ? "CommonJS" : "ES module", exports: module });
+        // The same answers for files that require() loads. It returns the namespace object of an ES module.
+        globalThis.requiredFiles = files.map(file => "./required" + file.slice(1));
+        globalThis.shownRequired = exports =>
+          JSON.stringify({ kind: Object.prototype.toString.call(exports) === "[object Module]" ? "ES module" : "CommonJS", exports });
+      `,
+      "neutral.cjs": "",
+      "commonjs/package.json": `{ "type": "commonjs" }`,
+      "commonjs/neutral.js": "",
+      "empty.cjs": "",
+      "a.module.css": "",
+      "required/neutral.cjs": "",
+      "required/commonjs/package.json": `{ "type": "commonjs" }`,
+      "required/commonjs/neutral.js": "",
+      "required/empty.cjs": "",
+      "required/a.module.css": "",
+      "plain.ts": `
+        for (const file of files) console.log(file, shown(await import(file)));
+        for (const file of requiredFiles) console.log(file, shownRequired(require(file)));
+      `,
+      "original.test.ts": `
+        import { jest, test, vi } from "bun:test";
+        vi.mock("./neutral.cjs", () => ({ default: "mock" }));
+        vi.mock("./commonjs/neutral.js", () => ({ default: "mock" }));
+        vi.mock("./empty.cjs", () => ({ default: "mock" }));
+        vi.mock("./a.module.css", () => ({ default: "mock" }));
+        vi.mock("./required/neutral.cjs", () => ({ default: "mock" }));
+        vi.mock("./required/commonjs/neutral.js", () => ({ default: "mock" }));
+        vi.mock("./required/empty.cjs", () => ({ default: "mock" }));
+        vi.mock("./required/a.module.css", () => ({ default: "mock" }));
+        test("originals", async () => {
+          for (const file of files) console.log(file, shown(await vi.importActual(file)));
+          for (const file of requiredFiles) console.log(file, shownRequired(jest.requireActual(file)));
+        });
+      `,
+    };
+    const [plain, original] = await Promise.all([
+      run(files, ["--preload", "./preload.ts", "plain.ts"]),
+      run(files, ["test", "--preload", "./preload.ts", ...args, "./original.test.ts"]),
+    ]);
+    const rows = (stdout: string) => stdout.split(/\r?\n/).filter(line => line.startsWith("./"));
+    expect(rows(plain.stdout)).toEqual([
+      `./neutral.cjs {"kind":"CommonJS","exports":{"default":{}}}`,
+      `./commonjs/neutral.js {"kind":"CommonJS","exports":{"default":{}}}`,
+      `./empty.cjs {"kind":"CommonJS","exports":{"default":{}}}`,
+      expect.stringMatching(
+        /^\.\/a\.module\.css \{"kind":"CommonJS","exports":\{"default":\{"title":"title_\w+"\},"title":"title_\w+"\}\}$/,
+      ),
+      `./required/neutral.cjs {"kind":"CommonJS","exports":{}}`,
+      `./required/commonjs/neutral.js {"kind":"CommonJS","exports":{}}`,
+      `./required/empty.cjs {"kind":"CommonJS","exports":{}}`,
+      expect.stringMatching(/^\.\/required\/a\.module\.css \{"kind":"CommonJS","exports":\{"title":"title_\w+"\}\}$/),
+    ]);
+    expect(rows(original.stdout)).toEqual(rows(plain.stdout));
+    expect(original.stderr).toContain(" 1 pass\n 0 fail\n");
+    expect([plain.exitCode, original.exitCode]).toEqual([0, 0]);
+  });
+
+  // With --isolate=modules, test files share the compiled wrapper of a CommonJS module that has the same text for them.
+  it.each(isolationFlags)("is its own importer in import(), and so is the module of the file %j", async args => {
+    const files = {
+      "preload.ts": `
+        import { readFileSync } from "node:fs";
+        Bun.plugin({
+          name: "compile",
+          setup(build) {
+            build.onLoad({ filter: /(importer|dep)\\.cts$/ }, ({ path }) => ({ contents: readFileSync(path, "utf8") }));
+          },
+        });
+      `,
+      "tax.ts": `export const tax: number = 1;`,
+      // The error of an import() that finds no module names the module that asked.
+      "importer.cts": `const importer = (): Promise<string> => import("./missing.ts").then(() => "", error => error.referrer);\nmodule.exports = { importer };\n`,
+      "dep.cts": `const dep: number = 9;\nmodule.exports = { dep, tax: import("./tax.ts") };\n`,
+      "first.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        import { basename } from "node:path";
+        vi.mock("./importer.cts", () => ({ default: "mock" }));
+        vi.mock("./dep.cts", () => ({ default: "mock" }));
+        test("the originals", async () => {
+          const { importer } = (await vi.importActual("./importer.cts")).default;
+          const dep = (await vi.importActual("./dep.cts")).default;
+          expect([basename(await importer()), dep.dep, (await dep.tax).tax]).toEqual(["importer.cts?actual", 9, 1]);
+        });
+      `,
+      "second.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        import { basename } from "node:path";
+        // "dep.cts" calls import() of the mocked module while this factory runs. What it gets depends on who asks.
+        vi.mock("./tax", async () => ({ tax: (await (await import("./dep.cts")).default.tax).tax + 1 }));
+        test("the modules of the same files", async () => {
+          const { importer } = (await import("./importer.cts")).default;
+          expect(basename(await importer())).toBe("importer.cts");
+          expect((await import("./tax")).tax).toBe(2);
+        });
+      `,
+    };
+    const { stderr, exitCode } = await run(files, [
+      "test",
+      "--preload",
+      "./preload.ts",
+      ...args,
+      "./first.test.ts",
+      "./second.test.ts",
+    ]);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // With --isolate, a later file gets a module of an earlier file from a cache when the key and the contents are the same.
+  it.each([[["onload.test.ts", "module.test.ts"]], [["module.test.ts", "onload.test.ts"]]])(
+    "is another module than the one build.module() makes for the same key %j",
+    async order => {
+      const files = {
+        "k.js": "",
+        "onload.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          Bun.plugin({
+            name: "onload",
+            setup(build) {
+              build.onLoad({ filter: /k\\.js$/ }, () => ({ contents: "export const stack = new Error().stack;", loader: "js" }));
+            },
+          });
+          vi.mock("./k.js", () => ({ stack: "mock" }));
+          test("the original that onLoad serves", async () => {
+            expect((await vi.importActual("./k.js")).stack).toMatch(/[\\\\/]k\\.js:1:\\d+/);
+          });
+        `,
+        "module.test.ts": `
+          import { expect, test } from "bun:test";
+          import { join } from "node:path";
+          const id = join(import.meta.dir, "k.js") + "?actual";
+          Bun.plugin({
+            name: "module",
+            setup(build) {
+              build.module(id, () => ({ contents: "export const stack = new Error().stack;", loader: "js" }));
+            },
+          });
+          test("a module of build.module() with that key and those contents", async () => {
+            expect((await import(id)).stack).toMatch(/[\\\\/]k\\.js\\?actual:1:\\d+/);
+          });
+        `,
+      };
+      const { stderr, exitCode } = await run(files, ["test", "--isolate", ...order.map(file => "./" + file)]);
+      expect(stderr).toContain(" 2 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // onLoad is shown "t.ts" for an import of "./t.ts?actual" too: the text of the key can't say who wrote it.
+  it("is named by the path onLoad was shown, and by nothing else", async () => {
+    const files = {
+      "t.ts": `export const stack: string = "disk";`,
+      "entry.ts": `
+        import { basename } from "node:path";
+        const paths = [];
+        Bun.plugin({
+          name: "answers",
+          setup(build) {
+            build.onLoad({ filter: /t\\.ts(\\?v=1)?$/ }, ({ path }) => {
+              paths.push(basename(path));
+              // TypeScript for a path that is a TypeScript file's.
+              return { contents: "export const stack" + (path.endsWith(".ts") ? ": string" : "") + " = new Error().stack;" };
+            });
+            build.module("virtual.ts?actual", () => ({ contents: "export const stack = new Error().stack;" }));
+          },
+        });
+        const stacks = {};
+        for (const specifier of ["./t.ts?actual", "./t.ts?actual&spy&actual", "./t.ts?v=1", "./t.ts?v=1&actual", "virtual.ts?actual"])
+          stacks[specifier] = await import(specifier).then(module => module.stack, error => error.name);
+        console.log(JSON.stringify({ stacks, paths }));
+      `,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["entry.ts"]);
+    const { stacks = {}, paths } = JSON.parse(stdout || "{}") as { stacks?: Record<string, string>; paths?: string[] };
+    // The name that each module has in its own frame.
+    const named = Object.fromEntries(
+      Object.entries(stacks).map(([specifier, stack]) => [specifier, /([^\\/ ]+):1:\d+/.exec(stack)?.[1] ?? stack]),
+    );
+    expect({ named, paths, stderr, exitCode }).toEqual({
+      named: {
+        "./t.ts?actual": "t.ts",
+        "./t.ts?actual&spy&actual": "t.ts",
+        // A query of the script's own stays in the name.
+        "./t.ts?v=1": "t.ts?v=1",
+        "./t.ts?v=1&actual": "t.ts?v=1",
+        // No onLoad was shown a path for a module of build.module().
+        "virtual.ts?actual": "virtual.ts?actual",
+      },
+      paths: ["t.ts", "t.ts", "t.ts?v=1", "t.ts?v=1"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe.concurrent("an invalid result from a plugin is an error", () => {
   async function run(files: Record<string, string>, args: string[]) {
     using dir = tempDir("plugin-answers", files);

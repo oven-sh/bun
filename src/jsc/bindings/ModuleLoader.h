@@ -35,6 +35,8 @@ struct CodeString {
     EncodedSlice string;
     JSC::JSValue value;
     BunLoaderType loader;
+    // The file the contents are read as, when the module's key does not name it.
+    BunString path;
 };
 
 union OnLoadResultValue {
@@ -51,6 +53,8 @@ struct OnLoadResult {
     // Backs `value.sourceText.string` when `contents` is a typed array.
     // No inline capacity, so moving the struct doesn't invalidate the pointer.
     WTF::Vector<uint8_t> sourceTextCopy;
+    // Backs `value.sourceText.path`.
+    WTF::String sourceTextPath;
 };
 
 extern "C" bool isBunTest;

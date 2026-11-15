@@ -17,7 +17,7 @@ use super::expect::Expect;
 use super::expect::get_state::full_test_name;
 use super::jest::{File as TestFile, FileId};
 use bun_collections::index_sort;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
@@ -281,7 +281,7 @@ impl Snapshots {
             && let Some(sequence) = parent.phase.sequence(&buntest)
             && (sequence.remaining_retry_count.get() > 0 || sequence.remaining_repeat_count.get() > 0)
         {
-            sequence.counted_snapshots.with_taken(|names| names.push(snapshot_name.as_slice().into()));
+            sequence.counted_snapshots.push(snapshot_name.as_slice().into());
         }
         Ok((snapshot_name, count))
     }

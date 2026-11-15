@@ -35,7 +35,7 @@ use bun_jsc::{
 };
 use bun_jsc::{HeadersInit, HeadersRef};
 use bun_paths as paths;
-use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, ThisPtr};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, ThisPtr, VecCellExt as _};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -982,8 +982,7 @@ impl ServePlugins {
         match cb {
             ServePluginsCallback::HtmlBundleRoute(route) => {
                 let route = html_bundle::PendingBuild::new(RefPtr::from_this(route));
-                this.html_bundle_routes
-                    .with_taken(|routes| routes.push(route));
+                this.html_bundle_routes.push(route);
             }
             ServePluginsCallback::DevServer => {
                 // one dev server per server

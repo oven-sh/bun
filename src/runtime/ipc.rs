@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _};
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -92,7 +92,7 @@ impl InternalMsgHolder {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
             let message = Strong::create(message, global);
-            self.messages.with_taken(|messages| messages.push(message));
+            self.messages.push(message);
             return;
         };
         global.bun_vm().event_loop().run_callback(
@@ -1006,7 +1006,7 @@ impl SendQueue {
     }
 
     fn queue_is_empty(&self) -> bool {
-        self.queue.with_taken(|queue| queue.is_empty())
+        self.queue.is_empty()
     }
 
     pub(crate) fn is_connected(&self) -> bool {

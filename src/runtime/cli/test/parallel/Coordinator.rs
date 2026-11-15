@@ -14,7 +14,7 @@ use std::os::windows::io::OwnedHandle;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::{CellExt as _, Interned};
+use bun_ptr::{Interned, VecCellExt as _};
 
 use super::frame::{self, Frame};
 use super::worker::{SpawnContext, Worker};
@@ -760,7 +760,7 @@ impl<'a> Coordinator<'a> {
                     &self.reporter.skips_to_repeat_buf,
                     &self.reporter.todos_to_repeat_buf,
                 ] {
-                    to_repeat.with_taken(|buf| buf.extend_from_slice(rd.str()));
+                    to_repeat.extend_from_slice(rd.str());
                 }
             }
             frame::Kind::CoverageFile => {

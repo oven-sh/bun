@@ -15,7 +15,7 @@ pub(crate) struct HotReloadEvent {
 }
 
 /// Hands changes from the watcher thread to the JS thread.
-pub(crate) struct PendingChanges {
+pub(crate) struct PendingReloadEvent {
     /// Null once the `DevServer` is dropped.
     owner: AtomicPtr<DevServer>,
     pub(super) state: bun_threading::Guarded<PendingState>,
@@ -26,12 +26,12 @@ pub(super) struct PendingState {
     /// When the first change in `event` was seen.
     pub(super) timer: Instant,
     /// The JS thread looks at `event` again without being told.
-    pub(super) is_submitted: bool,
+    pub(super) scheduled: bool,
 }
 
 /// The queued pointer is from `Arc::into_raw`.
-impl bun_event_loop::Taskable for PendingChanges {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+impl bun_event_loop::Taskable for PendingReloadEvent {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakePendingReloadEvent;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
         drop(unsafe { Arc::from_raw(this) });
@@ -207,14 +207,14 @@ impl HotReloadEvent {
     }
 }
 
-impl PendingChanges {
+impl PendingReloadEvent {
     pub(super) fn new(owner: *mut DevServer) -> Arc<Self> {
         Arc::new(Self {
             owner: AtomicPtr::new(owner),
             state: bun_threading::Guarded::new(PendingState {
                 event: HotReloadEvent::default(),
                 timer: Instant::now(),
-                is_submitted: false,
+                scheduled: false,
             }),
         })
     }
@@ -277,10 +277,10 @@ impl DevServer {
         let mut first_seen = None;
         loop {
             {
-                let mut pending = self.pending_changes.state.lock();
+                let mut pending = self.pending_reload_event.state.lock();
                 let timer = *first_seen.get_or_insert(pending.timer);
                 if pending.event.is_empty() {
-                    pending.is_submitted = false;
+                    pending.scheduled = false;
                     self.spare_reload_event = event;
                     return timer;
                 }

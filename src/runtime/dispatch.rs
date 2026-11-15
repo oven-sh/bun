@@ -145,7 +145,7 @@ use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
 use crate::bake::dev_server::DevServer;
-use crate::bake::dev_server::PendingChanges as BakeHotReloadEvent;
+use crate::bake::dev_server::PendingReloadEvent as BakePendingReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 #[cfg(windows)]
@@ -653,9 +653,9 @@ pub(crate) fn run_task(
             return Ok(RunTaskResult::EarlyReturn);
         }
         // ── bake dev-server ──────────────────────────────────────────────
-        task_tag::BakeHotReloadEvent => {
+        task_tag::BakePendingReloadEvent => {
             // SAFETY: §Dispatch — tag identifies pointee.
-            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
+            unsafe { BakePendingReloadEvent::run(cast_ptr!(BakePendingReloadEvent)) };
         }
         task_tag::FSWatchTask => {
             boxed_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
@@ -1572,7 +1572,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr()) }
         }
-        task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),
+        task_tag::BakePendingReloadEvent => release_in!([Bundler], BakePendingReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
             release_in!([Bundler], bun_bundler::bundle_v2::api::JSBundler::Resolve)

@@ -5,7 +5,7 @@ use bun_jsc::vm_handle::Posted;
 use std::sync::Arc;
 
 pub(super) struct WatchContext {
-    pub(super) pending_changes: Arc<PendingChanges>,
+    pub(super) pending_reload_event: Arc<PendingReloadEvent>,
     pub(super) vm_handle: bun_jsc::VmHandle,
 }
 
@@ -23,7 +23,7 @@ impl bun_watcher::WatcherContext for WatchContext {
         let file_paths = watchlist.items_file_path();
         let kinds = watchlist.items_kind();
 
-        let mut pending = self.pending_changes.state.lock();
+        let mut pending = self.pending_reload_event.state.lock();
         if pending.event.is_empty() {
             pending.timer = Instant::now();
         }
@@ -70,9 +70,9 @@ impl bun_watcher::WatcherContext for WatchContext {
             }
         }
 
-        if !pending.event.is_empty() && !core::mem::replace(&mut pending.is_submitted, true) {
+        if !pending.event.is_empty() && !core::mem::replace(&mut pending.scheduled, true) {
             drop(pending);
-            let queued = Arc::into_raw(Arc::clone(&self.pending_changes));
+            let queued = Arc::into_raw(Arc::clone(&self.pending_reload_event));
             let task = bun_event_loop::ConcurrentTask::create_from(queued.cast_mut());
             if let Posted::Refused(_) = self.vm_handle.post(bun_jsc::LoopKind::Regular, task) {
                 // SAFETY: from `into_raw` above, and not queued.

@@ -96,7 +96,7 @@ use ensure_route::{
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use hmr_socket::hmr_socket_behavior;
-pub(crate) use hot_reload_event::{HotReloadEvent, PendingChanges};
+pub(crate) use hot_reload_event::{HotReloadEvent, PendingReloadEvent};
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
     is_allowed_dev_origin, on_outdated_js_corked, origin_forbidden,
@@ -423,7 +423,7 @@ pub(crate) struct CurrentBundle {
 pub(crate) struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub(crate) route_queue: ArrayHashMap<route_bundle::Index, ()>,
-    /// `DevServer.pending_changes` is to be drained.
+    /// `DevServer.pending_reload_event` is to be drained.
     pub(crate) has_reload_event: bool,
     /// The list of requests that are blocked on this bundle.
     pub(crate) requests: deferred_request::List,
@@ -494,8 +494,8 @@ pub(crate) struct DevServer {
 
     pub(crate) bun_watcher: std::sync::Arc<Watcher>,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    pub(crate) pending_changes: std::sync::Arc<PendingChanges>,
-    /// Empty. Swapped with the one in `pending_changes` to reuse its memory.
+    pub(crate) pending_reload_event: std::sync::Arc<PendingReloadEvent>,
+    /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.
     pub(crate) spare_reload_event: HotReloadEvent,
     pub(crate) testing_batch_events: TestingBatchEvents,
 

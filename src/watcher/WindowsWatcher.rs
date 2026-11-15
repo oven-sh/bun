@@ -399,7 +399,7 @@ fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Resu
             loop {
                 {
                     // Other threads append to the watchlist under this mutex, which can reallocate it.
-                    let watchlist = &this.watched.lock().list;
+                    let watchlist = &this.state.lock().watchlist;
                     // Eviction is a swap-remove, so walk from the end to avoid skipping items.
                     item_idx = item_idx.min(watchlist.len());
                     let eventpath = &thread.platform.buf[..eventpath_len];

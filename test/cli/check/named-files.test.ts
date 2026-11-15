@@ -387,15 +387,21 @@ describe.concurrent("--no-follow-imports with references", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const lines = (stdout + stderr).replaceAll("\\", "/").split(/\r?\n/);
       return {
         errors: lines.filter(it => it.includes("error TS")),
         checked: lines.flatMap(it => it.match(/^ +[\d.]+ms  (.*)$/)?.[1] ?? []).sort(),
+        exitCode,
       };
     };
     const [some, whole] = await Promise.all([spawn("--no-follow-imports", "--timing", ...named), spawn("-p", "app")]);
-    return { ...some, whole: whole.errors };
+    return {
+      errors: some.errors,
+      checked: some.checked,
+      whole: whole.errors,
+      exitCodes: [some.exitCode, whole.exitCode],
+    };
   }
 
   test.each<[string, Record<string, string>, unknown[], string[], Record<string, string>?]>([
@@ -605,11 +611,12 @@ describe.concurrent("--no-follow-imports with references", () => {
       errors,
       whole: result.errors,
       checked,
+      exitCodes: [1, 1],
     });
   });
 
   test("files of a project and of its reference are named together", async () => {
-    const { errors, checked } = await run(
+    const { errors, checked, exitCodes } = await run(
       {
         "app/src/a.ts": shows("../../lib/src/used"),
         "lib/tsconfig.json": project([]),
@@ -619,9 +626,10 @@ describe.concurrent("--no-follow-imports with references", () => {
       },
       ["app/src/a.ts", "lib/src/named.ts"],
     );
-    expect({ errors, checked }).toEqual({
+    expect({ errors, checked, exitCodes }).toEqual({
       errors: [isShown("1"), "lib/src/named.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."],
       checked: ["app/src/a.ts", "lib/src/named.ts", "lib/src/used.ts"],
+      exitCodes: [1, 1],
     });
   });
 });

@@ -46,7 +46,7 @@ impl ZStream {
         Self { ptr }
     }
 
-    /// For a zlib call that follows neither `next_in` nor `next_out`, which dangle outside [`step`](Self::step).
+    /// `next_in` and `next_out` dangle outside `with_buffers`: only for calls that read neither.
     #[inline]
     pub(crate) fn as_ptr(&self) -> z_streamp {
         self.ptr.as_ptr()
@@ -106,13 +106,13 @@ impl ZStream {
     }
 
     /// Runs `call` on at most `u32::MAX` bytes of each buffer. Returns how much input it consumed.
-    pub(crate) fn step(
+    pub(crate) fn with_buffers(
         &mut self,
         mut buffers: impl Buffers,
         call: impl FnOnce(z_streamp) -> ReturnCode,
     ) -> (usize, ReturnCode) {
         let strm = self.as_ptr();
-        let (input, out) = buffers.parts();
+        let (input, out) = buffers.as_raw();
         let in_len = input.len().min(uInt::MAX as usize);
         let out_len = out.len().min(uInt::MAX as usize);
         // SAFETY: see `avail_out`. Only zlib lowers the two counts, `avail_out` by as many bytes as

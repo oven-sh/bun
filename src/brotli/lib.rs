@@ -53,11 +53,11 @@ pub enum InitError {
 }
 
 /// Runs `call(available_in, next_in, available_out, next_out)` and returns how much input it consumed.
-fn step<R>(
+fn with_buffers<R>(
     mut buffers: impl Buffers,
     call: impl FnOnce(*mut usize, *mut *const u8, *mut usize, *mut *mut u8) -> R,
 ) -> (usize, R) {
-    let (input, out) = buffers.parts();
+    let (input, out) = buffers.as_raw();
     let (mut available_in, mut next_in) = (input.len(), input.cast::<u8>());
     let (mut available_out, mut next_out) = (out.len(), out.cast::<u8>());
     let result = call(
@@ -121,8 +121,8 @@ impl OwnedDecoder {
 
     /// One `BrotliDecoderDecompressStream()` call. Returns how much input it consumed.
     pub fn step(&mut self, buffers: impl Buffers) -> (usize, c::BrotliDecoderResult) {
-        // SAFETY: created in `new`; the buffers are `step`'s.
-        step(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
+        // SAFETY: created in `new`; `with_buffers` passes valid pointers.
+        with_buffers(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
             c::BrotliDecoderDecompressStream(
                 self.state.as_ptr(),
                 avail_in,
@@ -197,8 +197,8 @@ impl OwnedEncoder {
 
     /// One `BrotliEncoderCompressStream()` call. Returns how much input it consumed, and whether it succeeded.
     pub fn step(&mut self, buffers: impl Buffers, op: c::BrotliEncoderOperation) -> (usize, bool) {
-        // SAFETY: created in `new`; the buffers are `step`'s.
-        step(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
+        // SAFETY: created in `new`; `with_buffers` passes valid pointers.
+        with_buffers(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
             c::BrotliEncoderCompressStream(
                 self.state.as_ptr(),
                 op,

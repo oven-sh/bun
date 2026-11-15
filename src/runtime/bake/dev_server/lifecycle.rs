@@ -606,7 +606,7 @@ impl Drop for DevServer {
             unsafe { ::core::ptr::drop_in_place(ptr) };
         }
         self.bundler_framework_views.clear();
-        // It is in the same arena, which drops nothing.
+        // The log is in the arena, which does not run `Drop`.
         self.log.clear_and_free();
 
         debug_assert!(self.magic == Magic::Valid);

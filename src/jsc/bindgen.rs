@@ -9,8 +9,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::Environment;
 
 use crate::{
-    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
-    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, DOMExceptionCode, ErrorCode, JSArray, JSGlobalObject, JSObject,
+    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -112,6 +112,21 @@ impl<'a> JsHeap<'a> {
             array.put_index(global, index as u32, value?)?;
         }
         Ok(JsLocal::from_raw(array))
+    }
+
+    /// As [`create_array`](Self::create_array), for WebIDL's `FrozenArray<T>`.
+    pub fn create_frozen_array<I: IntoIterator>(
+        &self,
+        items: I,
+        convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        let array = self.create_array(items, convert)?;
+        let global = self.global_object();
+        // SAFETY: an array.
+        crate::call_false_is_throw(global, || unsafe {
+            extern_types::Bun__Bindgen__freezeArray(global, array.0)
+        })?;
+        Ok(array)
     }
 
     #[inline]
@@ -252,6 +267,19 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn range_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(self.global_object().create_range_error_instance(args))
+    }
+
+    /// As [`error`](Self::error), a `DOMException`.
+    #[cold]
+    pub fn dom_exception(
+        &self,
+        code: DOMExceptionCode,
+        args: core::fmt::Arguments<'_>,
+    ) -> Error<'a> {
+        Error::unthrown(
+            self.global_object()
+                .create_dom_exception_instance(code, args),
+        )
     }
 
     /// As [`error`](Self::error), with a `code`, which also picks the class.
@@ -720,6 +748,12 @@ impl<'a> JsLocal<'a, BufferSource> {
         result
     }
 
+    /// `BYTES_PER_ELEMENT` of a typed array, 1 for anything else.
+    #[inline]
+    pub fn element_size(self) -> usize {
+        usize::from(self.0.js_type().bytes_per_element().unwrap_or(1))
+    }
+
     /// As [`with_bytes`](Self::with_bytes), to write them.
     ///
     /// # Safety
@@ -937,10 +971,12 @@ impl core::ops::Deref for PinnedBytes {
 pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
+    /// What the class of WebCore that this one extends is made of, if it takes anything.
+    type Base: WebCoreBase;
     /// # Safety
-    /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
+    /// The caller writes the payload before anything else runs.
     #[doc(hidden)]
-    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
+    unsafe fn create_cell(global: *mut JSGlobalObject, base: &Self::Base) -> NonNull<c_void>;
     /// With `estimatedSize`, the extra memory to report to the GC for a new object.
     #[doc(hidden)]
     #[inline(always)]
@@ -950,14 +986,29 @@ pub unsafe trait JsPayload: Sized + 'static {
 
     /// A new JS object that owns `self`.
     #[inline]
-    fn into_js<'a>(self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
-        // SAFETY: a null structure is always valid.
-        unsafe { JsWrapper::create_with_structure(heap, core::ptr::null_mut(), self) }
+    fn into_js<'a>(self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self>
+    where
+        Self: JsPayload<Base = ()>,
+    {
+        self.into_js_with_base(heap, &())
+    }
+
+    /// As [`into_js`](Self::into_js), for a class that extends `Event` or `DOMException`.
+    #[inline]
+    fn into_js_with_base<'a>(self, heap: &JsHeap<'a>, base: &Self::Base) -> JsWrapper<'a, Self> {
+        // SAFETY: it does that.
+        let this =
+            unsafe { JsWrapper::create_with(heap, |global| Self::create_cell(global, base), self) };
+        Self::Base::did_create_natively(heap, this.to_js());
+        this
     }
 
     /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
     #[inline]
-    fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
+    fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self>
+    where
+        Self: JsPayload<Base = ()>,
+    {
         self.into_js(JsHeap::from_global(global))
     }
 
@@ -972,12 +1023,99 @@ pub unsafe trait JsPayload: Sized + 'static {
     }
 }
 
+#[doc(hidden)]
+pub trait WebCoreBase {
+    #[inline(always)]
+    fn did_create_natively(_: &JsHeap<'_>, _object: JSValue) {}
+}
+impl WebCoreBase for () {}
+impl WebCoreBase for EventBase {}
+impl WebCoreBase for DOMExceptionBase {
+    /// It has a `stack`, as every `DOMException` has that native code makes.
+    fn did_create_natively(heap: &JsHeap<'_>, object: JSValue) {
+        // SAFETY: an object.
+        unsafe { extern_types::Bun__Bindgen__addErrorInfo(heap.global_object(), object) }
+    }
+}
+
+/// `extends: "Event"`.
+#[repr(C)]
+pub struct EventBase {
+    pub r#type: bun_core::String,
+    pub bubbles: bool,
+    pub cancelable: bool,
+    pub composed: bool,
+    pub is_trusted: bool,
+}
+
+/// `extends: "DOMException"`. The `name` is that of the class.
+#[repr(C)]
+pub struct DOMExceptionBase {
+    pub message: bun_core::String,
+}
+
+/// `extends: "EventTarget"`. SAFETY: implemented by generated code only.
+pub unsafe trait EventTarget: JsPayload {}
+
+/// `setlike`: the provided methods are the members.
+pub trait SetLike: Sized {
+    /// ASCII, each once. They do not change.
+    fn set_values(&self) -> &[&'static str];
+
+    #[doc(hidden)]
+    fn get_size(&self) -> u32 {
+        self.set_values().len() as u32
+    }
+    #[doc(hidden)]
+    fn has(&self, value: &bun_core::String) -> bool {
+        let mut values = self.set_values().iter();
+        values.any(|candidate| value.eq_ascii(candidate.as_bytes()))
+    }
+    #[doc(hidden)]
+    fn entries<'a>(&self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a>> {
+        create_set_iterator(heap, self.set_values(), true)
+    }
+    #[doc(hidden)]
+    fn values<'a>(&self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a>> {
+        create_set_iterator(heap, self.set_values(), false)
+    }
+    #[doc(hidden)]
+    fn for_each<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        callback: JsLocal<'a, Callable>,
+        this_arg: Option<JsLocal<'a>>,
+    ) -> Result<'a, ()> {
+        let this_arg = this_arg.unwrap_or(JsLocal::UNDEFINED);
+        for value in self.set_values() {
+            let value = to_js::utf8(&cx.heap, value)?;
+            let arguments = [value, value, this_value.as_value().as_value()];
+            callback.call(cx, this_arg, &arguments)?;
+        }
+        Ok(())
+    }
+}
+
+fn create_set_iterator<'a>(
+    heap: &JsHeap<'a>,
+    values: &[&str],
+    as_entries: bool,
+) -> Result<'a, JsLocal<'a>> {
+    let values = heap.create_array(values, to_js::utf8)?;
+    let global = heap.global_object();
+    // SAFETY: the array that was just made.
+    JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+        extern_types::Bun__Bindgen__createSetIterator(global, values.0, as_entries)
+    }))
+}
+
 /// A class whose constructor creates the object itself: `passStructure`.
 ///
 /// # Safety
 /// Implemented by generated code only.
 pub unsafe trait JsCreateWithStructure: Sized {
-    /// The struct, or a ref on the struct of a `refCounted` class.
+    /// The struct, a ref on the struct of a `refCounted` class, or `(Base, struct)` where [`JsPayload::Base`] is not `()`.
     type Wrapped;
     /// # Safety
     /// `structure` is a Structure of this class.
@@ -1087,20 +1225,35 @@ impl<'a, T> JsWrapper<'a, T> {
     }
 }
 
-impl<'a, T: JsPayload> JsWrapper<'a, T> {
-    /// # Safety
-    /// `structure` is null or a Structure of `T`'s cell class.
-    #[doc(hidden)]
-    #[inline]
-    pub unsafe fn create_with_structure(
-        heap: &JsHeap<'a>,
-        structure: *mut c_void,
-        payload: T,
-    ) -> Self {
-        // SAFETY: forwarded.
-        unsafe { Self::create_with(heap, |global| T::create_cell(global, structure), payload) }
+impl<'a, T: crate::JsClass> JsWrapper<'a, T> {
+    /// As [`JsLocal::new`]. `None` if `value` is no instance.
+    pub fn from_js(_: &JsHeap<'a>, value: JSValue) -> Option<Self> {
+        T::from_js(value)?;
+        let cell = NonNull::new(value.encoded() as *mut c_void)?;
+        Some(JsWrapper(cell, PhantomData, PhantomData))
     }
+}
 
+impl<'a, T: EventTarget> JsWrapper<'a, T> {
+    /// Makes an event and dispatches it. `false` if a listener called `preventDefault()`. What a listener throws is reported as uncaught.
+    pub fn dispatch_new_event<E: JsPayload<Base = EventBase>>(
+        self,
+        cx: &mut JsScope<'a>,
+        base: &EventBase,
+        event: E,
+        initialize: impl FnOnce(&mut JsScope<'a>, JsWrapper<'a, E>),
+    ) -> Result<'a, bool> {
+        let event = event.into_js_with_base(&cx.heap, base);
+        initialize(cx, event);
+        // SAFETY: the bounds say what the cells are.
+        crate::call_check_slow(cx.global(), || unsafe {
+            extern_types::Bun__Bindgen__dispatchEvent(self.0.as_ptr(), event.0.as_ptr())
+        })
+        .map_err(Error::pending)
+    }
+}
+
+impl<'a, T: JsPayload> JsWrapper<'a, T> {
     /// # Safety
     /// `create_cell` only allocates a cell of `T`'s cell class or of a subclass of it.
     #[doc(hidden)]

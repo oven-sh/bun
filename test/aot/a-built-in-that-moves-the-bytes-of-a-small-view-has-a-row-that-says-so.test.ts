@@ -4,6 +4,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { envOfDriver } from "../js/web/webgpu/driver";
 import type { SmallViewsFound } from "./built-ins-alone/small-views";
 import { builtinTableOf } from "./harness/builtin-table";
 import { test } from "./supported";
@@ -12,7 +13,7 @@ function weigh(...forgotten: string[]): SmallViewsFound {
   const { stdout, stderr } = Bun.spawnSync({
     cmd: [bunExe(), join(import.meta.dir, "built-ins-alone/small-views.ts"), builtinTableOf(bunExe()), ...forgotten],
     cwd: String(tempDir("aot-small-views", {})),
-    env: bunEnv,
+    env: { ...bunEnv, ...envOfDriver },
     stdout: "pipe",
     stderr: "pipe",
   });

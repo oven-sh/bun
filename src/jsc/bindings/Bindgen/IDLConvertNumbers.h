@@ -4,6 +4,7 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSBigIntInlines.h>
 #include <JavaScriptCore/MathCommon.h>
+#include <cmath>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -161,6 +162,29 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictDoubleOrDate> : Bun::DefaultTry
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwTypeMustBe(globalObject, scope, "a number or Date"_s);
+    }
+};
+
+template<std::floating_point T>
+struct WebCore::Converter<Bun::Bindgen::IDLFinite<T>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLFinite<T>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<T> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        // What is too large for T rounds to an infinity.
+        static_assert(std::numeric_limits<T>::is_iec559);
+        T number = static_cast<T>(value.toNumber(&globalObject));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!std::isfinite(number)) [[unlikely]]
+            return std::nullopt;
+        return number;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, std::is_same_v<T, float> ? "a finite number in the range of a 32-bit float"_s : "a finite number"_s);
     }
 };
 

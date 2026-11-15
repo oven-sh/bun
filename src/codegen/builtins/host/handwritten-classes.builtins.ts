@@ -186,7 +186,7 @@ export default b.declarations(
   b.class("EventTarget", {
     instanceCppClass: b.cppClass("JSEventTarget"),
     construct: {
-      returns: b.instance("EventTarget").fresh,
+      returns: b.instance("EventTarget").exactly.fresh,
       capability: "heap",
       throws: true,
       implementation: b.hostCall,

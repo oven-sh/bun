@@ -827,6 +827,7 @@ mod write_execute {
             Feature::NativeAddons,
             Feature::SqliteExtensions,
             Feature::Secrets,
+            Feature::WebGpu,
         ]
         .into_iter()
         .all(is_removed);

@@ -585,6 +585,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_dawn_sys"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_opaque",
+]
+
+[[package]]
 name = "bun_dispatch"
 version = "0.0.0"
 dependencies = [
@@ -1610,6 +1618,7 @@ dependencies = [
  "bun_csrf",
  "bun_css",
  "bun_css_jsc",
+ "bun_dawn_sys",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",

@@ -1,7 +1,8 @@
 // What `bun build --compile --aot --trim` keeps and removes for a handful of programs and build options. trim-by-use/ has a program for each part of Bun.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isWindows } from "harness";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
 import { sharedBuilds, sizeOf, type Build } from "../aot/harness/shared-builds";
@@ -71,6 +72,7 @@ const textsOfLibraries: Record<string, string[]> = {
   SQLite: ["malformed database schema", "unable to open database file", "SQLite format 3"],
   TinyCC: ["cannot use local functions", "invalid operand types for binary operation"],
   "lol-html": ["The selector is empty", "Unexpected token in selector"],
+  Dawn: ["Buffer usages must not be 0", "missing return at end of function"],
 };
 const linkedLibraries = Object.keys(textsOfLibraries).filter(library => !(isMacOS && library === "SQLite"));
 const textsOfLibrariesIn = (file: Buffer) =>
@@ -81,6 +83,9 @@ const textsOfLibrariesIn = (file: Buffer) =>
 const files = {
   "hello.ts": `console.log("hello world");`,
   "bundled.ts": `export const answer: number = 42;`,
+  "webgpu.ts": `${readFileSync(join(import.meta.dir, "trim-by-use/programs/webgpu.ts"), "utf8")}
+    console.log(device ? "on a device" : "without a device");
+  `,
   "serves-its-default-export.ts": `
     export default { port: 0, fetch: () => new Response("served") };
     setTimeout(() => process.exit(0), 50);
@@ -269,6 +274,19 @@ const files = {
           saysSo: saysFeatureWasRemoved(failed.stderr, featureOf(feature.implements)),
         }).toEqual({ stderr: failed.stderr, saysSo: true });
         expect([70, 1]).toContain(failed.exitCode);
+      },
+    );
+
+    // Elsewhere the driver of a machine without a GPU needs executable memory.
+    test.skipIf(!isCI || !(isMacOS || isWindows))(
+      "what is left of a program that uses WebGPU reaches the system's driver",
+      async () => {
+        expect(await started(await trimmed("webgpu.ts"))).toEqual({
+          stdout:
+            "[object GPU] true\ninvalid internal\n1,4,9,16 0 unmapped true true validation error 1 destroyed\non a device\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
     );
 

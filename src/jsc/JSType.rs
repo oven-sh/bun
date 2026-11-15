@@ -702,6 +702,17 @@ impl JSType {
         )
     }
 
+    /// `None` for what is not a typed array.
+    pub(crate) fn bytes_per_element(self) -> Option<u8> {
+        match self {
+            JSType::Uint8Array | JSType::Uint8ClampedArray | JSType::Int8Array => Some(1),
+            JSType::Uint16Array | JSType::Int16Array | JSType::Float16Array => Some(2),
+            JSType::Uint32Array | JSType::Int32Array | JSType::Float32Array => Some(4),
+            JSType::BigUint64Array | JSType::BigInt64Array | JSType::Float64Array => Some(8),
+            _ => None,
+        }
+    }
+
     pub(crate) fn to_typed_array_type(self) -> TypedArrayType {
         match self {
             JSType::Int8Array => TypedArrayType::TypeInt8,

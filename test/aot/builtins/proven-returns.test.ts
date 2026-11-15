@@ -135,9 +135,10 @@ test("a definition that disagrees is reported", async () => {
 async function errorsOf(lines: string[]) {
   using dir = tempDir("proven-returns", {
     // bun-types leaves some members out, and `void` tells the caller not to look at the result: there is nothing to agree with then.
+    // The table does not tell a frozen array from another.
     "agree.ts":
       [
-        "type Agree<Declared, Defined> = [void] extends [Declared] ? true : [Declared] extends [Defined] ? true : [Defined] extends [Declared] ? true : false; type Member<Holder, Name> = Name extends keyof Holder ? Holder[Name] : never;",
+        "type Agree<Declared, Defined> = [void] extends [Declared] ? true : [Declared] extends [Defined] ? true : [Defined] extends [Declared] ? true : [Declared, Defined] extends [readonly unknown[], unknown[]] ? true : false; type Member<Holder, Name> = Name extends keyof Holder ? Holder[Name] : never;",
         ...lines,
       ].join("\n") + "\n",
     "tsconfig.json": JSON.stringify({

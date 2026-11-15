@@ -10,6 +10,7 @@ import {
   getterHostFunctionName,
   getterSymbolName,
   hasThunk,
+  isDOMAttribute,
   methodHostFunctionName,
   methodSymbolName,
   pathOfBoundNamespace,
@@ -18,20 +19,26 @@ import {
   type SchemaFile,
 } from "../bindgen-emit.ts";
 import {
+  Alias,
   AnyType,
   ArrayType,
   ClassType,
+  CollectionType,
   Constant,
   DictionaryType,
+  EventHandler,
   FunctionDefinition,
   Getter,
   InternalFieldAccessor,
   Method,
   OptionalType,
+  RecordType,
   RefType,
   RestType,
+  SequenceType,
   Signature,
   Type,
+  ignoringParameterType,
   memberIdentifier,
   symbolDescription,
   type Builtin,
@@ -199,7 +206,17 @@ export function dispatchOfBindgen(
   dispatchWithin = (signature: Signature): DispatchDeclaration => ({ signature: fn.signatures.indexOf(signature) }),
 ): DispatchDeclaration {
   const converted = new Map<OverloadDispatch, DispatchDeclaration>();
-  const convertNode = ({ argument, byKind }: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+  const convertNode = (node: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+    if ("ifNotPassed" in node) {
+      return {
+        argument: node.argument,
+        branches: [
+          { tested: b.notPassed.spec, then: convert(node.ifNotPassed) },
+          { tested: typeOfKind("other"), then: convert(node.ifPassed) },
+        ],
+      };
+    }
+    const { argument, byKind } = node;
     const groups = Array.from(
       Map.groupBy(byKind, ([, target]) => target),
       ([target, entries]) => ({ target, kinds: entries.map(([kind]) => kind) }),
@@ -228,7 +245,14 @@ export function dispatchOfBindgen(
   return convert(fn.dispatch);
 }
 
-const isContainer = (type: Type): boolean => type instanceof ArrayType || type instanceof DictionaryType;
+const isContainer = (type: Type): boolean =>
+  type instanceof ArrayType || type instanceof CollectionType || type instanceof DictionaryType;
+
+/** How the wrapper goes over a container. The `parameterType` of a dictionary names what it reads. */
+function protocolsOfContainer(type: Type): KeyedProtocol[] {
+  if (type instanceof ArrayType || type instanceof SequenceType) return ["Iterate"];
+  return type instanceof RecordType ? ["OwnKeys", "OwnValues"] : [];
+}
 
 function collectParts(roots: readonly Type[]): Set<Type> {
   const parts = new Set<Type>();
@@ -254,7 +278,7 @@ function computeContentProtocols(containers: readonly Type[]): ProtocolSpec[] {
   const protocols = new Set<KeyedProtocol>();
   const names = new Set<string>();
   for (const part of collectParts(containers.flatMap(container => container.dependencies))) {
-    if (part instanceof ArrayType) protocols.add("Iterate");
+    for (const protocol of protocolsOfContainer(part)) protocols.add(protocol);
     const { accepted, conversion, members } = part.parameterType;
     if (acceptsStringObject(accepted)) protocols.add("ToPrimitive");
     for (const protocol of conversionProtocols[conversion]) {
@@ -281,11 +305,12 @@ function computeConversionUses(type: Type): UseSpec[] {
   const ownConversion = runsToString ? [b.runs("ToPrimitive")] : [];
   const containers = findContainers(type);
   if (containers.length === 0) return ownConversion;
+  const ownProtocols = new Set(containers.flatMap(protocolsOfContainer));
   const contentProtocols = computeContentProtocols(containers);
   return [
     ...ownConversion,
     b.readsContents(),
-    ...(containers.some(container => container instanceof ArrayType) ? [b.runs("Iterate")] : []),
+    ...(ownProtocols.size > 0 ? [b.runs(...ownProtocols)] : []),
     ...(contentProtocols.length > 0 ? [b.runsTransitively(...contentProtocols)] : []),
   ];
 }
@@ -369,9 +394,26 @@ function leavesCellsAlone(type: Type, converted: TypeSpec): boolean {
   return isImmediate(converted) || (type.isReadInPlace && Bun.deepEquals(converted, type.directForm?.type));
 }
 
-// The wrapper goes over a list by the @@iterator that the operand has.
+// The wrapper goes over a list by the @@iterator that the operand has, and over a record by its keys.
 const iteratesOperand = ({ args }: Signature): boolean =>
-  args.some(({ type }) => findContainers(type).some(container => container instanceof ArrayType));
+  [...collectParts(args.map(({ type }) => type))].some(part => protocolsOfContainer(part).length > 0);
+
+// What ends the call before the last conversion: an argument that is refused, and where the function rejects, anything.
+function mayEndBeforeConversion({ args, rejects }: Signature): boolean {
+  const last = args.findLastIndex(({ type }) =>
+    conversionProtocols[type.parameterType.conversion].includes("ToPrimitive"),
+  );
+  return last !== -1 && (rejects || args.slice(0, last).some(({ type }) => type.canRefuse));
+}
+
+function parameterOf(signature: Signature, index: number): b.TableType {
+  const parameter = signature.args[index].type.parameterType;
+  // The call returns whatever it is handed.
+  if (signature.rejects && parameter.mode !== "Rest") return new b.TableType(ignoringParameterType(parameter));
+  if (index >= signature.requiredCount) return new b.TableType(parameter);
+  const required = new b.TableType({ ...parameter, mode: "Required" });
+  return signature.webIDL && !signature.args[index].type.takesUndefined ? required.refusing(b.notPassed) : required;
+}
 
 function capabilityOf(signature: Signature, result: TypeSpec, converted: readonly TypeSpec[]): Capability {
   const { args, capability } = signature;
@@ -405,13 +447,7 @@ function createField(
   return {
     ...columns,
     this: receiver === null ? undefined : new b.TableType(receiver.type),
-    args: Object.fromEntries(
-      args.map(({ name, type }, index): [string, b.TableType] => {
-        const isFollowedByRequired = index < signature.requiredCount;
-        const parameter = type.parameterType;
-        return [name, new b.TableType(isFollowedByRequired ? { ...parameter, mode: "Required" } : parameter)];
-      }),
-    ),
+    args: Object.fromEntries(args.map(({ name }, index) => [name, parameterOf(signature, index)])),
     returns: createStrictType(result),
     // A thunk holds what the Rust function returns to the words, or hands back the wrapper itself (answersThis). A body in C++ has no thunk.
     resultIsDeclaredOnly: (!hasThunk(signature) && checkedWordsOf(signature.returns) !== null) || undefined,
@@ -423,6 +459,8 @@ function createField(
     ),
     runsOnlyOperandCode:
       columns.runsOnlyOperandCode ?? ((capability !== "js" && iteratesOperand(signature)) || undefined),
+    readsStateBeforeConversions:
+      columns.readsStateBeforeConversions ?? (mayEndBeforeConversion(signature) || undefined),
     throws:
       signature.throws ||
       isHeld(signature) ||
@@ -569,7 +607,9 @@ function collectFunction(
       signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),
     ),
   );
-  const fields = overloads.flatMap(overload => overload.fields);
+  // For what reads no dispatch and takes the first that fits: by the types alone, one fits a call that has more arguments.
+  const countOf = ({ args }: DeclaredField) => (fn.dispatchesByCount ? Object.keys(args).length : 0);
+  const fields = overloads.flatMap(overload => overload.fields).toSorted((a, b) => countOf(b) - countOf(a));
   // Nobody has read a member of a class of which the schema says nothing but that it is there.
   const isUnread = fn.signatures.every(
     signature =>
@@ -706,7 +746,7 @@ type SymbolColumns = Pick<
 // The function takes its receiver for an instance without a test: the engine tests that before it enters a getter of the table.
 function symbolColumnsOfAccessor(type: ClassType, accessor: Getter | InternalFieldAccessor): SymbolColumns {
   const getter = accessor instanceof Getter ? accessor : null;
-  if (getter?.isStatic || !hasInstanceReceiver(type)) return {};
+  if (!isDOMAttribute(type, accessor)) return {};
   const symbol = getterHostFunctionName(type, accessor);
   return {
     nativeSymbols: [...(getter?.columns.nativeSymbols ?? []), symbol],
@@ -776,7 +816,7 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
   return declareMember(path, isStatic, {
     ...columns,
     ...symbolColumns,
-    this: isStatic ? b.any : undefined,
+    this: isStatic || getter?.rejects ? b.any : undefined,
     getter: createStrictType(result),
     // A property that takes any value answers with it.
     resultIsDeclaredOnly: (getter !== null && getter.writable && checkedWordsOf(getter.type) !== null) || undefined,
@@ -820,7 +860,16 @@ function directEntryOfMethod(type: ClassType, fn: FunctionDefinition): DirectEnt
   };
 }
 
-function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinPath, isStatic: boolean): Declaration[] {
+function collectClassMember(
+  type: ClassType,
+  member: ClassMember,
+  classPath: BuiltinPath,
+  isStatic: boolean,
+): Declaration[] {
+  const path = pathOfMember(classPath, isStatic ? "static" : "proto", member.name);
+  if (member instanceof Alias) return b.same(path, pathOfMember(classPath, "proto", member.original));
+  // It keeps what is assigned and calls it later. An accessor of which nothing is said may do that.
+  if (member instanceof EventHandler) return [createStructureMember(path, "Accessor", null)];
   if (member instanceof Getter || member instanceof InternalFieldAccessor) return collectAccessor(type, member, path);
   if (member instanceof Constant) return collectConstant(type, member, path);
   if (!(member instanceof FunctionDefinition)) return collectBuiltin(type, member, path);
@@ -828,8 +877,8 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   if (methods.some(method => method.privateSymbol !== undefined)) return [];
   if (isStatic) return collectFunction(member, path, null, signature => methodSymbolName(type, signature as Method));
   if (!hasInstanceReceiver(type)) return collectFunction(member, path, null, () => null);
-  // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
-  if (methods[0].invalidThis === "undefined")
+  // The host function answers a receiver that is no instance with undefined or a rejected promise, and the thunk takes an instance.
+  if (methods[0].invalidThis === "undefined" || methods[0].rejects)
     return collectFunction(member, path, b.any.parameter, () => null, type.name);
   // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
   if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);
@@ -885,7 +934,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
     types: [...(constructorPath === undefined ? [] : [b.exactType(constructorPath)]), b.exactType(`$Bindgen.${name}`)],
     stateHeap: externalStateHeap,
     ...type.columns,
-    extends: type.base?.name,
+    extends: type.base?.name ?? type.webCoreBase?.name,
     instanceCppClass: ofInstances ? b.cppClass(cpp, headerOf(type)) : undefined,
     prototypeCppExpression: ofInstances ? `Bun::Bindgen::prototypeForClass<${cpp}>(globalObject)` : undefined,
     instanceStructureCppExpression: ofInstances
@@ -917,18 +966,19 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       .map(member => pathOfMember(path, "proto", member))
       .filter(member => !joins.writtenMembers.has(member))
       .flatMap(member => b.method(member, b.property(b.string))),
-    ...type.protoMembers
-      .toSorted(byName)
-      .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false)),
-    ...type.staticMembers
-      .toSorted(byName)
-      .flatMap(member => collectClassMember(type, member, pathOfMember(path, "static", member.name), true)),
+    ...type.protoMembers.toSorted(byName).flatMap(member => collectClassMember(type, member, path, false)),
+    ...type.staticMembers.toSorted(byName).flatMap(member => collectClassMember(type, member, path, true)),
   ];
 }
 
+const dataMembersOf = (namespace: NamespaceDefinition): Record<string, b.Field> => ({
+  ...Object.fromEntries(namespace.constants.map(({ name, value }) => [name, b.constant(value)])),
+  ...(namespace.webIDL ? { "@@toStringTag": b.property(b.string) } : {}),
+});
+
 function collectNamespace(namespace: NamespaceDefinition, path: BuiltinPath): Declaration[] {
   return [
-    ...b.namespace(path, {}, namespace.columns),
+    ...b.namespace(path, dataMembersOf(namespace), namespace.columns),
     ...(namespace.call === undefined ? [] : declareFunction(namespace.call, path)),
     ...namespace.functions.flatMap(fn => declareFunction(fn, joinPath([path, fn.name]))),
   ];
@@ -942,7 +992,7 @@ function collectBoundNamespace(
   usesFeature: readonly FeatureUseSpec[],
 ): Declaration[] {
   return [
-    ...b.namespace(path, {}, { scope: "Module", listsAllMembers: true, ...namespace.columns }),
+    ...b.namespace(path, dataMembersOf(namespace), { scope: "Module", listsAllMembers: true, ...namespace.columns }),
     ...(usesFeature.length > 0 ? b.extend(path, { usesFeature }) : []),
     ...(namespace.call === undefined ? b.inherits(path, "Object.prototype") : declareFunction(namespace.call, path)),
     ...namespace.functions.flatMap(fn => [

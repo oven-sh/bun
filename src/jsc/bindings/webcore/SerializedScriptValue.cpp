@@ -4474,12 +4474,27 @@ void markAsUntransferable(VM& vm, JSObject& object)
     markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
 }
 
+void setHolderOfDetachKey(VM& vm, JSArrayBuffer& arrayBuffer, JSObject* holder)
+{
+    arrayBuffer.putDirect(vm, builtinNames(vm).isUntransferablePrivateName(), holder ? JSValue(holder) : jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+}
+
+static std::optional<Exception> exceptionIfUntransferable(VM& vm, JSObject& object)
+{
+    JSValue mark = object.getDirect(vm, builtinNames(vm).isUntransferablePrivateName());
+    if (!mark)
+        return std::nullopt;
+    if (mark.isObject())
+        return Exception { TypeError, "Cannot transfer an ArrayBuffer that is not detachable"_s };
+    return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+}
+
 // Serializing runs user code (getters, Proxy traps) that can invalidate entries create() accepted; runs before anything is detached.
 static std::optional<Exception> transferListChangedDuringSerialization(VM& vm, const Vector<JSC::Strong<JSC::JSObject>>& transferList, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<MessagePort>>& messagePorts)
 {
     for (auto& transferable : transferList) {
-        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
-            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+        if (auto exception = exceptionIfUntransferable(vm, *transferable.get()))
+            return exception;
     }
     for (auto& arrayBuffer : arrayBuffers) {
         if (arrayBuffer->isDetached())
@@ -4900,9 +4915,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     Vector<RefPtr<JSC::ArrayBuffer>> arrayBuffers;
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
-        // markAsUntransferable marker: a DontEnum JSC private name (see markAsUncloneable).
-        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
-            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+        if (auto exception = exceptionIfUntransferable(vm, *transferable.get()))
+            return WTF::move(*exception);
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };

@@ -922,9 +922,9 @@ fn auto_tick(vm: &VirtualMachine) {
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
     el.tick_immediate_tasks();
-    let has_yielded_tasks = el.promote_yield_tasks();
+    let has_tasks_after_poll = el.promote_yield_tasks() || vm.has_ready_task_source();
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_tasks_after_poll || el.immediate_task_count() > 0 {
         el.wakeup();
     }
 
@@ -980,7 +980,7 @@ fn auto_tick(vm: &VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // A started idle handle keeps the poll from blocking, like in libuv.
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = has_tasks_after_poll
             || uv_idle_started
             || el.immediate_task_count() > 0
             || el.has_pending_tasks();
@@ -1040,9 +1040,9 @@ fn auto_tick_active(vm: &VirtualMachine) {
     let loop_ = el.usockets_loop();
 
     el.tick_immediate_tasks();
-    let has_yielded_tasks = el.promote_yield_tasks();
+    let has_tasks_after_poll = el.promote_yield_tasks() || vm.has_ready_task_source();
     #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 {
+    if has_tasks_after_poll || el.immediate_task_count() > 0 {
         el.wakeup();
     }
 
@@ -1073,7 +1073,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     let uv_idle_started = false;
 
     {
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = has_tasks_after_poll
             || uv_idle_started
             || el.immediate_task_count() > 0
             || el.has_pending_tasks();

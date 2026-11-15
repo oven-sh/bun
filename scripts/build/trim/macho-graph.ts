@@ -7,7 +7,7 @@ import { createSectionGraph, nodeAt } from "./graph.ts";
 import type { LinkedImage } from "./linked-image.ts";
 import { machOImage } from "./linked-image.ts";
 import type { MachOReferences } from "./macho-objects.ts";
-import { LC_SEGMENT_64, readMachOObject } from "./macho-objects.ts";
+import { LC_SEGMENT_64, nameSeparator, readMachOObject } from "./macho-objects.ts";
 import { xxh3 } from "./xxh3.ts";
 
 export function* pointersInMachO(path: string): Generator<[at: number, target: number]> {
@@ -195,7 +195,17 @@ function parseMap(mapPath: string): LinkMap {
       name: `literal ${(literals.address + at).toString(16)}`,
     });
   atoms.sort((a, b) => a.address - b.address);
-  return { files, sections, atoms, zeroSizeSymbols, literals };
+  // In a section that ld64.lld cuts into records, as it does __objc_selrefs, each name of a record has its size.
+  const isAnotherName = (atom: MapSymbol, index: number) =>
+    atom.address === atoms[index - 1]?.address && atom.size === atoms[index - 1]!.size;
+  for (const atom of atoms.filter(isAnotherName)) zeroSizeSymbols.push({ ...atom, size: 0 });
+  return {
+    files,
+    sections,
+    atoms: atoms.filter((atom, index) => !isAnotherName(atom, index)),
+    zeroSizeSymbols,
+    literals,
+  };
 }
 
 function findOutputs(atoms: MapSymbol[], sections: OutputSection[]): string[] {
@@ -229,11 +239,11 @@ function createAtomLookup(
   nodeByName: Map<string, number>,
   external: Map<string, number>,
 ): AtomLookup {
-  const findExternalName = (names: string) => names.split("\x01").find(name => external.has(name));
+  const findExternalName = (names: string) => names.split(nameSeparator).find(name => external.has(name));
   return {
     findExternalName,
     findInFile(file, names) {
-      for (const name of names.split("\x01")) {
+      for (const name of names.split(nameSeparator)) {
         const node = nodeInFile.get(file + "\0" + name);
         if (node !== undefined) return node;
       }
@@ -242,7 +252,7 @@ function createAtomLookup(
     findInAnyFile(names) {
       const externalName = findExternalName(names);
       if (externalName !== undefined) return external.get(externalName);
-      for (const name of names.split("\x01")) {
+      for (const name of names.split(nameSeparator)) {
         const node = /^[lL]/.test(name) ? undefined : nodeByName.get(name);
         if (node !== undefined) return node;
       }
@@ -411,7 +421,7 @@ function connectReferences(
     }
     const hasNoBytes = (name: string) =>
       isLocal ? symbolsWithoutBytes.has(file + "\0" + name) : namesWithoutBytes.has(name);
-    if (names.split("\x01").some(hasNoBytes)) symbolsOutsideGraph++;
+    if (names.split(nameSeparator).some(hasNoBytes)) symbolsOutsideGraph++;
     else if (isLocal || (definedExternals.has(names) && !externalStrings.has(names)))
       failures.push({ kind: "UnresolvedReference", object: files.get(file)!, section: source, target: names });
   };

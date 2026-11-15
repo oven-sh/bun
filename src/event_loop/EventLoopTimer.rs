@@ -215,6 +215,7 @@ pub enum Tag {
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
     WorkerWaitsForRoom,
+    WebGpuFreeMemory,
 }
 
 impl Tag {
@@ -239,7 +240,8 @@ impl Tag {
             | Tag::DateHeaderTimer
             | Tag::BunTest
             | Tag::EventLoopDelayMonitor
-            | Tag::GcRepeating => true,
+            | Tag::GcRepeating
+            | Tag::WebGpuFreeMemory => true,
             Tag::TimeoutObject
             | Tag::ImmediateObject
             | Tag::StatWatcherScheduler

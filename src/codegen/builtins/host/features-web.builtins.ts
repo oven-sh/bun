@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { pathOfNativeBinding } from "../paths.ts";
+import { classesOfWebGPU } from "./classes-of-webgpu.ts";
 import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
 
 const extendAll = (uses: readonly b.FeatureUseSpec[], ...paths: readonly b.BuiltinPath[]) =>
@@ -92,6 +93,13 @@ export default b.declarations(
     "SubtleCrypto",
     ...methodsOfSubtleCrypto.map(name => `SubtleCrypto.prototype.${name}`),
   ),
+  // Native code of which the table says nothing may make an object of any class below DOMException and Event, so those two would keep the rest.
+  extendAll(
+    ["WebGpu", "Events"],
+    "navigator.gpu",
+    ...classesOfWebGPU.filter(name => name !== "GPUPipelineError" && name !== "GPUUncapturedErrorEvent"),
+  ),
+  extendAll(["Events"], "GPUUncapturedErrorEvent"),
   extendAll(["CryptoObject", "CryptoGlobal"], "Crypto"),
   extendAll(["CryptoGlobal", "CryptoObject"], "crypto"),
 

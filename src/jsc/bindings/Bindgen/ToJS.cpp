@@ -12,6 +12,8 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSSetInlines.h>
+#include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/NativeExecutable.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
@@ -97,6 +99,27 @@ extern "C" bool Bun__Bindgen__putRecordEntry(JSGlobalObject* globalObject, Encod
     asObject(JSValue::decode(record))->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, name), JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, false);
     return true;
+}
+
+extern "C" bool Bun__Bindgen__freezeArray(JSGlobalObject* globalObject, EncodedJSValue array)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    objectConstructorFreeze(globalObject, asArray(JSValue::decode(array)));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+extern "C" EncodedJSValue Bun__Bindgen__createSetIterator(JSGlobalObject* globalObject, EncodedJSValue values, bool asEntries)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* array = asArray(JSValue::decode(values));
+    JSSet* set = JSSet::create(vm, globalObject->setStructure());
+    for (unsigned i = 0; i < array->length(); ++i) {
+        set->add(globalObject, array->getIndexQuickly(i));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(JSSetIterator::create(vm, globalObject->setIteratorStructure(), set, asEntries ? IterationKind::Entries : IterationKind::Values));
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)

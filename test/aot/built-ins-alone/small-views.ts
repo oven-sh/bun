@@ -237,6 +237,36 @@ const notCalled: Record<string, string> = {
   "Atomics.wait": "it asks for shared memory, which never lies in the cell",
   "Atomics.waitAsync": "it asks for shared memory, which never lies in the cell",
 };
+
+const device = await (await navigator.gpu.requestAdapter())?.requestDevice();
+if (device) device.onuncapturederror = event => event.preventDefault();
+const createTexture = () => device!.createTexture({ size: [2], format: "rgba8unorm", usage: 0x12 });
+const encoders = {
+  GPUComputePassEncoder: () => device!.createCommandEncoder().beginComputePass(),
+  GPURenderBundleEncoder: () => device!.createRenderBundleEncoder({ colorFormats: ["rgba8unorm"] }),
+  GPURenderPassEncoder: () =>
+    device!
+      .createCommandEncoder()
+      .beginRenderPass({ colorAttachments: [{ view: createTexture(), loadOp: "clear", storeOp: "store" }] }),
+};
+const routesOfDevice: Record<string, Route> = {
+  "GPUQueue.prototype.writeBuffer": [
+    view => device!.queue.writeBuffer(device!.createBuffer({ size: 8, usage: GPUBufferUsage.COPY_DST }), 0, view),
+  ],
+  "GPUQueue.prototype.writeTexture": [view => device!.queue.writeTexture({ texture: createTexture() }, view, {}, [2])],
+};
+for (const [name, create] of Object.entries(encoders)) {
+  routesOfDevice[`${name}.prototype.setBindGroup`] = [
+    view => create().setBindGroup(0, null, view, 0, 1),
+    () => new Uint32Array(2),
+  ];
+  routesOfDevice[`${name}.prototype.setImmediates`] = [view => create().setImmediates(0, view)];
+}
+for (const [path, route] of Object.entries(routesOfDevice)) {
+  if (device) routes[path] = [route];
+  else notCalled[path] = "this machine has no adapter";
+}
+
 const isForTestsOfBunAlone = (path: string) => /(ArchiveInternals|InternalSourceMap|[Bb]un_string_jsc)/.test(path);
 
 function callWith(entry: Listed, row: Row, taker: Operand, view: ArrayBufferView): boolean {

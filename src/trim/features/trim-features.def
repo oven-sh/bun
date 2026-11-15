@@ -60,7 +60,7 @@ trim-feature ipc : Ipc ProcessIpc
   saves 0.0 0.0
 
 trim-feature native-code : Ffi NativeAddons SqliteExtensions
-  about "Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, and `Database.loadExtension()` in `bun:sqlite`. Includes `\"ffi\"` and `\"native-addons\"`. Without it, `loadExtension()` throws an `SQLiteError`. On macOS, `\"sqlite\"` loads native code too: the system's SQLite library."
+  about "Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, and `Database.loadExtension()` in `bun:sqlite`. Includes `\"ffi\"` and `\"native-addons\"`. Without it, `loadExtension()` throws an `SQLiteError`. `\"webgpu\"` loads native code too: the GPU's driver. So does `\"sqlite\"` on macOS: the system's SQLite library."
   saves 0.7 0.5
 
 trim-feature jit : JIT
@@ -194,6 +194,10 @@ trim-feature web-crypto : WebCrypto
   about "`crypto.subtle`, `SubtleCrypto` and `CryptoKey`. `crypto.getRandomValues()` and `crypto.randomUUID()` don't need it."
   also "receiving a `CryptoKey` from another process"
   saves 0.2 0.0
+
+trim-feature webgpu : WebGpu
+  about "`navigator.gpu` and the `GPU*` classes, with the shader compiler."
+  saves 4.2 3.5
 
 trim-feature password : Password
   about "`Bun.password`."

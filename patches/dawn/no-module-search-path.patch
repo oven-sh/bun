@@ -1,0 +1,16 @@
+Dawn is linked into the executable. glibc's dladdr() names the executable by
+argv[0], which realpath() resolves against the working directory, so this made
+a directory with a file called `bun` a place to load libvulkan.so.1 from.
+
+--- a/src/dawn/native/Instance.cpp
++++ b/src/dawn/native/Instance.cpp
+@@ -406,9 +406,6 @@
+ 
+     // Default paths to search are next to the shared library, next to the executable, and
+     // no path (just libvulkan.so).
+-    if (auto p = GetModuleDirectory()) {
+-        mRuntimeSearchPaths.push_back(std::move(*p));
+-    }
+     if (auto p = GetExecutableDirectory()) {
+         mRuntimeSearchPaths.push_back(std::move(*p));
+     }

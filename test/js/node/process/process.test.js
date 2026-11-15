@@ -778,6 +778,7 @@ it("process.versions", async () => {
     libdeflate: "libdeflate",
     zstd: "zstd",
     lshpack: "lshpack",
+    dawn: "dawn",
   };
 
   const expectedVersions = {};

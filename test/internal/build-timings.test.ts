@@ -53,7 +53,7 @@ beforeAll(async () => {
   n.pool("dep", 4);
   n.pool("compile", 2);
   n.rule("dep_fetch", {
-    command: "fetch $name $repo $commit $dest $cache $patches",
+    command: "fetch $name $repo $commit $dest $cache $exclude $patches",
     description: "fetch $name",
     restat: true,
     pool: "dep",
@@ -66,7 +66,7 @@ beforeAll(async () => {
     outputs: [ref],
     rule: "dep_fetch",
     inputs: [],
-    vars: { name: "dep", repo: "o/dep", commit: "abc", dest: "vendor/dep", cache: "cache", patches: "" },
+    vars: { name: "dep", repo: "o/dep", commit: "abc", dest: "vendor/dep", cache: "cache", exclude: "", patches: "" },
   });
   const crate = (name: string, implicitInputs: string[], what = "") =>
     n.build({
@@ -330,14 +330,22 @@ describe("a build in which ninja started over", () => {
     const where = { buildDir: dir, cwd: String(restarted), host: { os: "linux" } };
     const n = new Ninja({ buildDir: dir });
     n.rule("dep_fetch", {
-      command: "fetch $name $repo $commit $dest $cache $patches",
+      command: "fetch $name $repo $commit $dest $cache $exclude $patches",
       description: "fetch $name",
       restat: true,
     });
     n.rule("regen", { command: "configure", description: "reconfigure", generator: true });
     n.rule("cxx", { command: "c++ $cxxflags -c $in -o $out", description: "cxx $out" });
     const stamp = join(String(restarted), "vendor", ".ref");
-    const vars = { name: "dep", repo: "o/dep", commit: "abc", dest: "vendor", cache: "cache", patches: "" };
+    const vars = {
+      name: "dep",
+      repo: "o/dep",
+      commit: "abc",
+      dest: "vendor",
+      cache: "cache",
+      exclude: "",
+      patches: "",
+    };
     n.build({ outputs: [stamp], rule: "dep_fetch", inputs: [], vars });
     n.build({ outputs: [join(dir, "build.ninja")], rule: "regen", inputs: [], implicitInputs: [stamp] });
     // Nothing in the graph says x.o needs build.ninja.

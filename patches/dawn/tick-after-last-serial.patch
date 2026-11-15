@@ -1,0 +1,32 @@
+A wait or a thread of Metal can raise the completed serial. What a tick frees then stayed until the next submit.
+
+--- a/src/dawn/native/Device.cpp
++++ b/src/dawn/native/Device.cpp
+@@ -1607,7 +1607,8 @@
+     if (mState == State::Disconnecting) {
+         Disconnect();
+     }
+-    if (IsLost() || !mQueue->HasScheduledCommands()) {
++    if (IsLost() || (!mQueue->HasScheduledCommands() &&
++                     mLastTickedSerial == mQueue->GetCompletedCommandSerial())) {
+         return {};
+     }
+ 
+@@ -1615,6 +1616,7 @@
+     // 1. the last submitted serial has moved beyond the completed serial
+     // 2. or the backend still has pending commands to submit.
+     DAWN_TRY(mQueue->UpdateCompletedSerial(QueuePriority::Lowest));
++    mLastTickedSerial = mQueue->GetCompletedCommandSerial();
+     DAWN_TRY(TickImpl());
+ 
+     // TODO(crbug.com/dawn/833): decouple TickImpl from updating the serial so that we can
+--- a/src/dawn/native/Device.h
++++ b/src/dawn/native/Device.h
+@@ -668,6 +668,7 @@
+     Ref<TextureViewBase> mExternalTexturePlaceholderView;
+ 
+     std::unique_ptr<DynamicUploader> mDynamicUploader;
++    ExecutionSerial mLastTickedSerial = kBeginningOfGPUTime;
+     std::unique_ptr<MemoryBlockAllocator> mMemoryBlockAllocator;
+     Ref<QueueBase> mQueue;
+ 

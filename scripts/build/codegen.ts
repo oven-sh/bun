@@ -33,6 +33,7 @@ import type { Sources } from "../glob-sources.ts";
 import { builtinUsesArguments, emitAotCodegen, guardInputs, hashTableInputs, type EngineSources } from "./aot.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import { webkitVersionName, type CodegenFields } from "./config.ts";
+import { dawnSysChecks } from "./deps/dawn.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
@@ -50,6 +51,8 @@ export interface Ctx {
   dirStamp: string;
   /** The JavaScriptCore this graph builds against (deps/webkit.ts webkitEngineSources). Undefined: the graph has none (`mode: "codegen"`). */
   engine?: EngineSources | undefined;
+  /** Dawn's description of webgpu.h (deps/dawn.ts). Undefined: the graph fetches nothing (`mode: "codegen"`). */
+  dawnJson?: string | undefined;
 }
 
 /**
@@ -284,7 +287,12 @@ export interface CodegenOutputs {
  * Call after registerCodegenRules() and after registerDirStamps() (we use
  * the `mkdir_stamp` rule for the codegen dir).
  */
-export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engine?: EngineSources): CodegenOutputs {
+export function emitCodegen(
+  n: Ninja,
+  cfg: CodegenFields,
+  sources: Sources,
+  { engine, dawnJson }: Pick<Ctx, "engine" | "dawnJson"> = {},
+): CodegenOutputs {
   n.comment("─── Codegen ───");
   n.blank();
 
@@ -307,7 +315,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
     rootInstall,
   };
 
-  const ctx: Ctx = { n, cfg, sources, o, dirStamp, engine };
+  const ctx: Ctx = { n, cfg, sources, o, dirStamp, engine, dawnJson };
 
   // Configure-time write (not a ninja edge — it's a constant manifest like
   // depVersionsHeader). bun_core `include!`s it, and bun_core/build.rs emits the
@@ -338,6 +346,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
   emitJsModules(ctx);
   emitBakeCodegen(ctx);
   emitBindgen(ctx);
+  emitDawnSys(ctx);
   emitObjectLuts(ctx);
   emitLintDocs(ctx);
   emitCompressedEmbeds(ctx);
@@ -990,6 +999,29 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
   o.rustInputs.push(...rust);
   o.cppSources.push(...cpp);
   o.cppHeaders.push(...headers);
+}
+
+function emitDawnSys({ n, cfg, sources, o, dirStamp, dawnJson }: Ctx): void {
+  if (dawnJson === undefined) return;
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-dawn-sys.ts");
+  const rust = resolve(cfg.codegenDir, "dawn_sys.rs");
+  const outputs = [rust, dawnSysChecks(cfg)];
+
+  n.build({
+    outputs,
+    rule: "codegen",
+    inputs: [script, dawnJson],
+    implicitInputs: sources.bindgenCodegen,
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "dawn.json → dawn_sys.rs",
+      args: shJoin(cfg, [script, dawnJson, cfg.codegenDir]),
+    },
+  });
+
+  o.all.push(...outputs);
+  o.rustInputs.push(rust);
 }
 
 /** `node_os` → `NodeOs`. A copy of `pascalCase()` in src/codegen/bindgen-lib-internal.ts, which node warns about importing here (MODULE_TYPELESS_PACKAGE_JSON). build-codegen-declared-outputs.test.ts holds the two together. */

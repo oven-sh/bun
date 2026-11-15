@@ -1,0 +1,24 @@
+Everything the Vulkan backend does for desktop Linux holds on FreeBSD.
+
+--- a/src/utils/platform.h
++++ b/src/utils/platform.h
+@@ -60,7 +60,7 @@
+ #error "Unsupported Windows platform."
+ #endif
+ 
+-#elif defined(__linux__)
++#elif defined(__linux__) || defined(__FreeBSD__)
+ #define DAWN_PLATFORM_IS_LINUX 1
+ #define DAWN_PLATFORM_IS_POSIX 1
+ #if defined(__ANDROID__)
+--- a/include/dawn/native/VulkanBackend.h
++++ b/include/dawn/native/VulkanBackend.h
+@@ -99,7 +99,7 @@
+ };
+ 
+ // Can't use DAWN_PLATFORM_IS(LINUX) since header included in both Dawn and Chrome
+-#if defined(__linux__) || defined(__Fuchsia__)
++#if defined(__linux__) || defined(__FreeBSD__) || defined(__Fuchsia__)
+ 
+ // Common properties of external images represented by FDs. On successful import the file
+ // descriptor's ownership is transferred to the Dawn implementation and they shouldn't be

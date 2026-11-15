@@ -1,0 +1,44 @@
+ReduceMemoryUsage() left the heaps that are kept for reuse. With Vulkan it frees them.
+
+--- a/src/dawn/native/d3d12/DeviceD3D12.cpp
++++ b/src/dawn/native/d3d12/DeviceD3D12.cpp
+@@ -921,4 +921,9 @@
+     return info;
+ }
+ 
++bool Device::ReduceMemoryUsageImpl() {
++    (*mResourceAllocatorManager)->FreeRecycledAllocations();
++    return !mUsedComObjectRefs->Empty();
++}
++
+ }  // namespace dawn::native::d3d12
+--- a/src/dawn/native/d3d12/DeviceD3D12.h
++++ b/src/dawn/native/d3d12/DeviceD3D12.h
+@@ -179,6 +179,7 @@
+     uint64_t GetBufferCopyOffsetAlignmentForDepthStencil() const override;
+ 
+     AllocatorMemoryInfo GetAllocatorMemoryInfo() const override;
++    bool ReduceMemoryUsageImpl() override;
+ 
+     // Dawn APIs
+     void SetLabelImpl() override;
+--- a/src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.h
++++ b/src/dawn/native/d3d12/ResourceAllocatorManagerD3D12.h
+@@ -93,6 +93,8 @@
+ 
+     void Tick(ExecutionSerial lastCompletedSerial);
+ 
++    void FreeRecycledAllocations();
++
+     uint64_t GetTotalAllocatedMemory() const;
+     uint64_t GetTotalUsedMemory() const;
+ 
+@@ -110,8 +112,6 @@
+         const D3D12_RESOURCE_DESC& resourceDescriptor,
+         const D3D12_CLEAR_VALUE* optimizedClearValue,
+         D3D12_RESOURCE_STATES initialUsage);
+-
+-    void FreeRecycledAllocations();
+ 
+     raw_ptr<Device> mDevice;
+ 

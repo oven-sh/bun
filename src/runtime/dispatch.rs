@@ -418,6 +418,16 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
+        task_tag::WebGpuProcessEvents => in_features!(
+            [WebGpu],
+            (
+                instance: *mut crate::webgpu::Instance = cast_ptr!(crate::webgpu::Instance),
+                vm: &VirtualMachine = vm,
+            ) -> JsResult<()> {
+                // SAFETY: the pointer that was queued, which the arm consumes.
+                unsafe { crate::webgpu::Instance::run(instance, vm) }
+            }
+        )?,
         task_tag::DnsErrorDeferred => feature_arm!(
             [Dns],
             |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> {
@@ -1283,6 +1293,11 @@ pub(crate) unsafe fn fire_timer(
                 (*c).on_room_timer(vm)
             })
         }
+        EventLoopTimerTag::WebGpuFreeMemory => {
+            feature_timer_arm!([WebGpu], crate::webgpu::Device, timer, |c, _now, _vm| {
+                crate::webgpu::Device::on_timer(c)
+            })
+        }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
                 GarbageCollectionController,
@@ -1654,6 +1669,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ValkeyDeferredFailure => {
             release_in!([Valkey], crate::valkey_jsc::valkey::DeferredFailure)
         }
+        task_tag::WebGpuProcessEvents => release_in!([WebGpu], crate::webgpu::Instance),
         task_tag::DnsErrorDeferred => {
             release_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
         }

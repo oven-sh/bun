@@ -80,6 +80,7 @@ pub(crate) mod dns_jsc;
 pub(crate) mod image;
 pub(crate) mod test_runner;
 pub(crate) mod valkey_jsc;
+pub(crate) mod webgpu;
 
 // ─── crate-root re-exports for `cli/` submodules ────────────────────────────
 // Modules under `src/runtime/cli/**` use crate-root paths

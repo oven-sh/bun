@@ -1,8 +1,9 @@
 #pragma once
 #include "root.h"
 #include "Bindgen/IDLTypes.h"
-#include "JSDOMConvertNumbers.h"
+#include "BunIDLConvertBase.h"
 #include "NodeValidator.h"
+#include <cmath>
 
 namespace Bun::Bindgen {
 
@@ -14,19 +15,47 @@ struct IDLEnforceRange : WebCore::IDLType<T> {};
 template<std::integral T, T Min, T Max>
 struct IDLValidateInteger : WebCore::IDLType<T> {};
 
+namespace Detail {
+
+template<std::integral T, T Min, T Max>
+ALWAYS_INLINE bool isInt32InRange(JSC::JSValue value)
+{
+    return value.isInt32() && value.asInt32() >= static_cast<int64_t>(Min) && value.asInt32() <= static_cast<int64_t>(Max);
+}
+
+// std::nullopt if it threw.
+template<IDLConversionContext Ctx>
+NEVER_INLINE std::optional<int64_t> enforceRange(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, int64_t min, int64_t max)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double number = value.toNumber(&globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    double integer = std::trunc(number);
+    if (integer >= static_cast<double>(min) && integer <= static_cast<double>(max))
+        return static_cast<int64_t>(integer);
+    ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("in the range ["_s, min, ", "_s, max, "] (received "_s, number, ')'));
+    return std::nullopt;
+}
+
+}
+
 }
 
 template<std::integral T, T Min, T Max>
 struct WebCore::Converter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> : WebCore::DefaultConverter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> {
-    // False if it threw.
-    static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result)
+    // False if it threw. Inlined so that an int32 in range costs its tests and nothing else.
+    template<Bun::IDLConversionContext Ctx>
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, T& result)
     {
-        auto& vm = JSC::getVM(&globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        double number = value.toNumber(&globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        result = static_cast<T>(WebCore::enforceRange(globalObject, number, Min, Max));
-        RETURN_IF_EXCEPTION(scope, false);
+        if (Bun::Bindgen::Detail::isInt32InRange<T, Min, Max>(value)) [[likely]] {
+            result = static_cast<T>(value.asInt32());
+            return true;
+        }
+        auto converted = Bun::Bindgen::Detail::enforceRange(globalObject, value, ctx, Min, Max);
+        if (!converted)
+            return false;
+        result = static_cast<T>(*converted);
         return true;
     }
 };
@@ -36,12 +65,9 @@ struct WebCore::Converter<Bun::Bindgen::IDLValidateInteger<T, Min, Max>> : WebCo
     // False if it threw. Inlined so that an int32 in range costs its tests and nothing else.
     static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, WTF::ASCIILiteral name, T& result)
     {
-        if (value.isInt32()) [[likely]] {
-            int64_t number = value.asInt32();
-            if (number >= static_cast<int64_t>(Min) && number <= static_cast<int64_t>(Max)) [[likely]] {
-                result = static_cast<T>(number);
-                return true;
-            }
+        if (Bun::Bindgen::Detail::isInt32InRange<T, Min, Max>(value)) [[likely]] {
+            result = static_cast<T>(value.asInt32());
+            return true;
         }
         auto converted = convertSlow(globalObject, value, name);
         if (!converted)

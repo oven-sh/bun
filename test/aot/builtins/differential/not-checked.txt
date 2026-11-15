@@ -137,6 +137,8 @@ ExpectExtend/0: it differs in receiver
 FileInternalReadableStreamSourcePrototypeSetRawMode/0: the process ended or did not come back
 FrameworkFileSystemRouterPrototypeMatch/0: no set of operands selects it
 FrameworkFileSystemRouterPrototypeToJSON/0: no set of operands selects it
+GPUExternalTexturePrototypeLabel/0: no set of operands selects it
+GPUExternalTexturePrototypeLabel/1: no set of operands selects it
 HTMLBundlePrototypeIndex/0: no set of operands selects it
 ImportMetaResolve/0: it is not called: this realm does not have it
 ImportMetaResolveSync/0: it is not called: this realm does not have it

@@ -257,6 +257,7 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_bundler: ["bake.server.js", "compressed/codegen/bake.client.js.zst"],
   bun_core: ["build_options.rs"],
   bun_css_jsc: ["generated_bindgen_bun_css_jsc.rs"],
+  bun_dawn_sys: ["dawn_sys.rs"],
   bun_http_jsc: ["generated_bindgen_bun_http_jsc.rs"],
   bun_install: ["bun-shim-impl.exe"],
   bun_install_jsc: ["generated_bindgen_bun_install_jsc.rs"],

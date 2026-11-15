@@ -1,4 +1,5 @@
 import * as b from "bun-builtins-table";
+import { classesOfWebGPU } from "./classes-of-webgpu.ts";
 
 // Machine code is native code and no text that nobody has seen.
 const machineCodeLoaders = [
@@ -100,6 +101,7 @@ const classesWithConstructor = [
   "%FileSink%",
   "%FileSystemRouter%",
   "%FrameworkFileSystemRouter%",
+  ...classesOfWebGPU.map(name => `%${name}%`),
   "%H2FrameParser%",
   "%HTMLRewriter%",
   "%Histogram%",

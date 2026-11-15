@@ -90,6 +90,7 @@ export const mydep: Dependency = {
   // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
   // `local` (user-managed checkout: what a github-archive dep becomes via
   // `--local-deps`, see above), `in-tree` (source in src/).
+  // `exclude: ["test"]` leaves directories in the tarball.
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
@@ -151,6 +152,9 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
+- **dawn.ts** — fetched direct build with source `groups`, generator `steps`
+  (Python, with jinja.ts and markupsafe.ts as source-only deps), and sources
+  of this repository compiled against the dep's internal headers
 - **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
   source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable
   `steps`, a per-group PCH, and file lists read from the checkout's own CMake

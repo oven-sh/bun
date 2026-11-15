@@ -2,7 +2,6 @@
 //! running through the js_parser. It emits a ParseTask.Result and joins
 //! with the same logic that it runs though.
 
-use core::mem::offset_of;
 use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
@@ -22,7 +21,7 @@ use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
-use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
+use crate::parse_task::{self, ResultValue, Success, WatcherData};
 
 /// `'a` is the bundle's, as for [`parse_task::ParseTask`].
 pub(crate) struct ServerComponentParseTask<'a> {
@@ -98,51 +97,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         ctx,
         // Placeholder; consumer overwrites before read.
         task: Default::default(),
-        value,
+        value: core::mem::ManuallyDrop::new(value),
         external: ExternalFreeFunction::NONE,
         watcher_data: WatcherData::NONE,
     });
-    let result = bun_core::heap::into_raw(result);
-
-    // Running `on_complete` inline on the worker thread would violate
-    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-    // bundler graph, which is owned by the main/bundler thread).
-    match worker.ctx.any_loop() {
-        bun_event_loop::AnyEventLoop::Js { .. } => {
-            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
-            let poster = worker
-                .ctx
-                .js_poster
-                .as_ref()
-                .expect("JS-owned bundle has a poster");
-            if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                // Owning JS VM torn down mid-bundle: free the hop and the result.
-                // SAFETY: refused ⇒ we own the task box and the leaked result.
-                unsafe {
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                    <parse_task::Result as bun_event_loop::Taskable>::release_unrun(result);
-                }
-            }
-        }
-        bun_event_loop::AnyEventLoop::Mini(mini) => {
-            // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
-            // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
-            unsafe {
-                mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(parse_task::Result, task),
-                );
-            }
-        }
-    }
-}
-
-fn on_complete_mini(result: *mut parse_task::Result<'static>, _ctx: *mut BundleV2<'static>) {
-    // `on_complete` already recovers `ctx` from `result.ctx`.
-    // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
-    // `run_from_thread_pool`; ownership transfers to `on_complete`.
-    unsafe { on_complete(result) };
+    parse_task::parse_worker::post_result(result);
 }
 
 fn task_callback(

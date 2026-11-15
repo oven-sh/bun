@@ -8,7 +8,6 @@ use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{NodeId, Progress};
 
@@ -119,7 +118,6 @@ fn link_deferred(
 
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
-    ctx: Command::Context,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
@@ -354,7 +352,6 @@ pub(crate) fn install_hoisted_packages(
                 workspaces_seen: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
-                command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
                 pending_install_count: 0,

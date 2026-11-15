@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, AstAlloc};
 use bun_ast::import_record;
 use bun_collections::StringArrayHashMap;
 use bun_collections::VecExt;
@@ -19,7 +19,7 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
     pub stmts: Vec<Stmt>,
 }
 // Note: the consumers of the four collections
-// (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
+// (a move to the AST heap for `export_props`, arena copy for `stmts`) want
 // global-heap `Vec<T>`. Kept as `Vec` so callers can construct via
 // `Default::default()` without needing `&'a Bump`.
 
@@ -626,20 +626,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         // prefix obtained via `split_last_mut`, disjoint from `self.last_part`.
         head_parts: &mut [js_ast::Part],
     ) -> Result<(), AllocError> {
-        if !self.export_star_props.is_empty() {
-            if self.export_props.is_empty() {
-                core::mem::swap(&mut self.export_props, &mut self.export_star_props);
-            } else {
-                bun_collections::prepend_from(&mut self.export_props, &mut self.export_star_props);
-            }
-        }
-
-        if !self.export_props.is_empty() {
+        if !self.export_star_props.is_empty() || !self.export_props.is_empty() {
+            let star_props = core::mem::take(&mut self.export_star_props);
+            let props = core::mem::take(&mut self.export_props);
             let obj = Expr::init(
                 E::Object {
-                    properties: G::PropertyList::move_from_list(core::mem::take(
-                        &mut self.export_props,
-                    )),
+                    properties: AstAlloc::vec_from_iter(star_props.into_iter().chain(props)),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,

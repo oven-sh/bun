@@ -94,11 +94,11 @@ impl ArrayBufferSink {
 
         self.done = true;
         // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
-        let mut bytes = core::mem::take(&mut self.bytes);
+        let bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC: the trait impl below converts the returned
         // `ArrayBuffer` with `to_js_unchecked`, which installs
         // `MarkedArrayBuffer_deallocator` (frees via `mi_free` on GC).
-        let owned = bytes.to_owned_slice();
+        let owned = bytes.into_boxed_slice();
         Ok(ArrayBuffer::from_owned_bytes(
             owned,
             if self.as_uint8array {

@@ -749,7 +749,7 @@ fn numbered_name_buffer(name: &[u8]) -> MutableString {
 
 /// `candidate[..prefix_len]` followed by `n`.
 fn write_numbered_name(candidate: &mut MutableString, prefix_len: usize, n: u32) {
-    candidate.reset_to(prefix_len);
+    candidate.list.truncate(prefix_len);
     candidate.append_int(u64::from(n)).expect("unreachable");
 }
 

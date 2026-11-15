@@ -1165,32 +1165,13 @@ fn extract_to_disk_filtered(
         })?;
 
     // Open/create target directory using bun.sys
-    let cwd = Fd::cwd();
-    let _ = cwd.make_path(root);
-    let dir_fd: Fd = 'brk: {
-        if bun_paths::is_absolute(root) {
-            break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        } else {
-            break 'brk match bun_sys::openat_a(
-                cwd,
-                root,
-                bun_sys::O::RDONLY | bun_sys::O::DIRECTORY,
-                0,
-            ) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        }
-    };
-    let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
+    let _ = Fd::cwd().make_path(root);
+    let dir = bun_sys::Dir::open(root).map_err(|_| crate::Error::OpenError)?;
 
     #[cfg(unix)]
-    let make_path = |path: &[u8]| beneath::make_path(dir_fd, path, Symlinks::FollowInside);
+    let make_path = |path: &[u8]| beneath::make_path(dir.fd(), path, Symlinks::FollowInside);
     #[cfg(windows)]
-    let make_path = |path: &[u8]| dir_fd.make_path(path);
+    let make_path = |path: &[u8]| dir.fd().make_path(path);
 
     let mut count: u32 = 0;
     let mut write_strategy = bun_archive::WriteStrategy::default();
@@ -1252,9 +1233,9 @@ fn extract_to_disk_filtered(
                 let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                 #[cfg(unix)]
                 let open =
-                    || beneath::openat(dir_fd, pathname_z, flags, mode, Symlinks::FollowInside);
+                    || beneath::openat(dir.fd(), pathname_z, flags, mode, Symlinks::FollowInside);
                 #[cfg(windows)]
-                let open = || bun_sys::openat(dir_fd, pathname_z, flags, mode);
+                let open = || bun_sys::openat(dir.fd(), pathname_z, flags, mode);
                 let opened = open().or_else(|err| {
                     make_path(bun_core::dirname(pathname).ok_or(err)?)?;
                     open()
@@ -1270,9 +1251,9 @@ fn extract_to_disk_filtered(
                 if !write_success {
                     // Remove partial file on failure
                     #[cfg(unix)]
-                    let _ = beneath::unlinkat(dir_fd, pathname, Symlinks::FollowInside);
+                    let _ = beneath::unlinkat(dir.fd(), pathname, Symlinks::FollowInside);
                     #[cfg(windows)]
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    let _ = bun_sys::unlinkat(dir.fd(), pathname_z);
                     return Err(crate::Error::ReadError);
                 }
                 count += 1;
@@ -1299,7 +1280,7 @@ fn extract_to_disk_filtered(
 
     #[cfg(unix)]
     {
-        count += bun_archive::create_deferred_symlinks(dir_fd, &deferred_symlinks, false);
+        count += bun_archive::create_deferred_symlinks(dir.fd(), &deferred_symlinks, false);
     }
 
     Ok(count)

@@ -75,8 +75,8 @@ pub(crate) struct Worker {
 pub(crate) struct SpawnContext<'a> {
     pub(crate) vm: &'a VirtualMachine,
     pub(crate) cwd: &'a [u8],
-    pub(crate) argv: &'a [bun_spawn::CStrPtr],
-    pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
+    pub(crate) argv: bun_core::CStrList<'a>,
+    pub(crate) envps: &'a [bun_core::CStringList],
     /// Windows hands it over as an inherited handle, which the worker's arguments name.
     #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
@@ -165,19 +165,12 @@ impl Worker {
                 linux_pdeathsig: None,
                 ..Default::default()
             };
-            // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
-            // C-string arrays with argv[0] non-null; valid for this call.
-            let mut spawned = unsafe {
-                spawn::spawn_process(
-                    &options,
-                    coord.argv.as_ptr(),
-                    coord.envps[this.idx as usize].as_ptr(),
-                )
-            }?
-            .map_err(|e| {
-                Output::err(e, "spawnProcess failed for test worker", ());
-                crate::Error::SpawnFailed
-            })?;
+            let envp = coord.envps[this.idx as usize].as_list();
+            let mut spawned =
+                spawn::spawn_process(&options, coord.argv, Some(envp))?.map_err(|e| {
+                    Output::err(e, "spawnProcess failed for test worker", ());
+                    crate::Error::SpawnFailed
+                })?;
             let stdout = spawned.stdout.take();
             let stderr = spawned.stderr.take();
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
@@ -227,19 +220,12 @@ impl Worker {
                 stream: true,
                 ..Default::default()
             };
-            // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
-            // C-string arrays with argv[0] non-null; valid for this call.
-            let mut spawned = unsafe {
-                spawn::spawn_process(
-                    &options,
-                    coord.argv.as_ptr(),
-                    coord.envps[this.idx as usize].as_ptr(),
-                )
-            }?
-            .map_err(|e| {
-                Output::err(e, "spawnProcess failed for test worker", ());
-                crate::Error::SpawnFailed
-            })?;
+            let envp = coord.envps[this.idx as usize].as_list();
+            let mut spawned =
+                spawn::spawn_process(&options, coord.argv, Some(envp))?.map_err(|e| {
+                    Output::err(e, "spawnProcess failed for test worker", ());
+                    crate::Error::SpawnFailed
+                })?;
             this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {

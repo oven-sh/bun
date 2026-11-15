@@ -317,14 +317,11 @@ impl DeferredFailure {
     }
 }
 
-impl bun_event_loop::Taskable for DeferredFailure {
+impl bun_event_loop::BoxedTask for DeferredFailure {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredFailure;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed at the enqueue site.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

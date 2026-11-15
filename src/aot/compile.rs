@@ -646,6 +646,7 @@ impl<'a> Build<'a> {
         }
         let leftovers = core::mem::take(&mut self.leftovers);
         let beside = self.beside_runner();
+        let order_files = self.options.aot.order_files.as_slice();
         let clock = &mut self.clock;
         let provider = self.provider;
         let paths = PathsOfProgram {
@@ -662,7 +663,7 @@ impl<'a> Build<'a> {
             || {
                 clock.stop();
                 let entered = Instant::now();
-                let engine = engine::compile(bytes, engine_options, &output.texts);
+                let engine = engine::compile(bytes, engine_options, &output.texts, order_files);
                 (engine, entered.elapsed())
             },
         );

@@ -15,13 +15,12 @@ use crate::patch_install::Callback as PatchTaskCallback;
 use crate::retry_timer;
 use crate::tarball_stream::TarballStream;
 use bun_install::{
-    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
-    Repository,
+    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn,
-    Subcommand, TaskCallbackList,
+    ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
+    TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
@@ -50,7 +49,7 @@ macro_rules! add_error_or_warning_pretty {
 pub(crate) use add_error_or_warning_pretty;
 
 /// Who runs the tasks, which decides where their results go.
-pub enum Caller<'c, 'i> {
+pub(crate) enum Caller<'c, 'i> {
     /// Resolves dependencies for a command.
     Resolver,
     /// Resolves the dependency of an import that blocks the runtime's thread.
@@ -59,21 +58,6 @@ pub enum Caller<'c, 'i> {
     ManifestCache,
     HoistedLinker(&'c mut PackageInstaller<'i>),
     IsolatedLinker(&'c mut Store::Installer<'i>),
-    PendingImports(&'c mut dyn PendingImports),
-}
-
-/// The imports of the runtime that wait for a package without blocking its thread.
-pub trait PendingImports {
-    fn on_package_manifest_error(&mut self, name: &[u8], err: crate::Error, url: &[u8]);
-
-    fn on_package_download_error(
-        &mut self,
-        package_id: PackageID,
-        name: &[u8],
-        resolution: &bun_install::Resolution,
-        err: crate::Error,
-        url: &[u8],
-    );
 }
 
 impl Caller<'_, '_> {
@@ -102,11 +86,6 @@ impl Caller<'_, '_> {
             manager.is_network_task_required(task_id)
         };
         match self {
-            Self::PendingImports(imports) => {
-                let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
-                imports.on_package_download_error(package_id, name, resolution, err, url);
-                None
-            }
             Self::IsolatedLinker(installer) if is_required => {
                 installer.on_package_download_error(task_id, name, resolution, err, url);
                 None
@@ -223,7 +202,7 @@ pub(crate) fn resolve_waiters_of_appended_package(
     result
 }
 
-pub fn run_tasks(
+pub(crate) fn run_tasks(
     manager: &mut PackageManager,
     mut caller: Caller<'_, '_>,
     install_peer: bool,
@@ -387,12 +366,9 @@ pub fn run_tasks(
             let list_val = (installer.tasks[entry_id.get() as usize].scripts.as_deref())
                 .expect("a queued entry has a scripts list")
                 .clone();
-            // reborrow instead of moving the field out of `*installer`
-            let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
             // `installer.manager == manager`, so this is called through the reborrow of
             // `manager_ptr`.
             let spawn_res = manager.spawn_package_lifecycle_scripts(
-                command_ctx,
                 list_val,
                 optional,
                 false,
@@ -428,10 +404,10 @@ pub fn run_tasks(
         match &mut task.callback {
             NetworkTaskCallback::PackageManifest {
                 loaded_manifest,
-                name,
+                name: stored_name,
                 is_extended_manifest,
             } => {
-                let name = name.slice();
+                let name = stored_name.slice();
                 let is_extended_manifest = *is_extended_manifest;
                 name_progress(manager, name, DOWNLOAD);
 
@@ -491,36 +467,30 @@ pub fn run_tasks(
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
                 else {
                     // Handle non-retry-able errors.
-                    if let Caller::PendingImports(imports) = &mut caller {
-                        imports.on_package_manifest_error(name, err, &task.url_buf);
-                        let _ = (manager.manifest_failures)
-                            .insert(task.task_id, ManifestFailure::already_reported());
-                    } else {
-                        // The dependency that reports it decides between error and warning.
-                        let is_required = manager.is_network_task_required(task.task_id)
-                            || manager.task_queue.contains_key(&task.task_id);
-                        let log_mark = manager.log_mut().msgs.len();
-                        add_error_or_warning_pretty!(
-                            manager.log_mut(),
-                            is_required,
-                            "{} downloading package manifest <b>{}<r>",
-                            DownloadFailure(err.name(), &task.response),
-                            bstr::BStr::new(name),
-                        );
+                    // The dependency that reports it decides between error and warning.
+                    let is_required = manager.is_network_task_required(task.task_id)
+                        || manager.task_queue.contains_key(&task.task_id);
+                    let log_mark = manager.log_mut().msgs.len();
+                    add_error_or_warning_pretty!(
+                        manager.log_mut(),
+                        is_required,
+                        "{} downloading package manifest <b>{}<r>",
+                        DownloadFailure(err.name(), &task.response),
+                        bstr::BStr::new(name),
+                    );
 
-                        let failure = ManifestFailure {
-                            is_unanswered: true,
-                            ..Default::default()
-                        };
-                        if !leave_failure_to_dependencies(
-                            manager,
-                            install_peer,
-                            task.task_id,
-                            log_mark,
-                            failure,
-                        )? {
-                            fail_update_requests(manager, task.task_id, name, None, is_required);
-                        }
+                    let failure = ManifestFailure {
+                        is_unanswered: true,
+                        ..Default::default()
+                    };
+                    if !leave_failure_to_dependencies(
+                        manager,
+                        install_peer,
+                        task.task_id,
+                        log_mark,
+                        failure,
+                    )? {
+                        fail_update_requests(manager, task.task_id, name, None, is_required);
                     }
 
                     return_network_task(task_ptr);
@@ -533,24 +503,6 @@ pub fn run_tasks(
                         && let Some(entry) = manager.network_dedupe_map.get_mut(&task.task_id)
                     {
                         entry.missing_until = npm::Registry::manifest_expiry(&response.headers);
-                    }
-                    if let Caller::PendingImports(imports) = &mut caller {
-                        let err: PackageManifestError = match response.status_code {
-                            400 => PackageManifestError::PackageManifestHTTP400,
-                            401 => PackageManifestError::PackageManifestHTTP401,
-                            402 => PackageManifestError::PackageManifestHTTP402,
-                            403 => PackageManifestError::PackageManifestHTTP403,
-                            404 => PackageManifestError::PackageManifestHTTP404,
-                            405..=499 => PackageManifestError::PackageManifestHTTP4xx,
-                            _ => PackageManifestError::PackageManifestHTTP5xx,
-                        };
-
-                        imports.on_package_manifest_error(name, err.into(), &task.url_buf);
-                        let _ = (manager.manifest_failures)
-                            .insert(task.task_id, ManifestFailure::already_reported());
-
-                        return_network_task(task_ptr);
-                        continue;
                     }
 
                     // A dist-tag on the name of an unpublished workspace links the workspace, once
@@ -690,17 +642,17 @@ pub fn run_tasks(
                     }
                 }
 
-                // reshaped — `enqueue_parse_npm_package` takes
-                // `StringOrTinyString` by value; reconstruct from the slice we
-                // captured (the original lives in `task.callback`, which the
-                // enqueued resolve Task takes ownership of via `network`).
-                let name_tiny = stored_string(name);
                 // reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
                 // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
                 // and exclusively owned by this batch; `manager` is the live PackageManager.
                 let queued = unsafe {
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr)
+                    enqueue::enqueue_parse_npm_package(
+                        manager,
+                        task.task_id,
+                        *stored_name,
+                        task_ptr,
+                    )
                 };
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
@@ -921,13 +873,10 @@ pub fn run_tasks(
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
         let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
-            && task.status == Task::Status::Fail
-            && !matches!(caller, Caller::PendingImports(_));
+            && task.status == Task::Status::Fail;
         if !task.log.msgs.is_empty() && !holds_log {
-            // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-            // not `&mut Writer` (the underlying `Writer` is the FFI shape).
             // Propagate the write error (WriteFailed) out of `run_tasks`.
-            task.log.print(std::ptr::from_mut(Output::error_writer()))?;
+            task.log.print(Output::error_writer())?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
@@ -952,31 +901,25 @@ pub fn run_tasks(
                     let name = name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if let Caller::PendingImports(imports) = &mut caller {
-                        imports.on_package_manifest_error(name, err, &network.url_buf);
-                        let _ = (manager.manifest_failures)
-                            .insert(task.id, ManifestFailure::already_reported());
-                    } else {
-                        bun_ast::add_error_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "{} parsing package manifest for <b>{}<r>",
-                            err.name(),
-                            bstr::BStr::new(name),
-                        );
-                        let failure = ManifestFailure {
-                            spares_optional: false,
-                            ..Default::default()
-                        };
-                        leave_failure_to_dependencies(
-                            manager,
-                            install_peer,
-                            task.id,
-                            log_mark,
-                            failure,
-                        )?;
-                    }
+                    bun_ast::add_error_pretty!(
+                        manager.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "{} parsing package manifest for <b>{}<r>",
+                        err.name(),
+                        bstr::BStr::new(name),
+                    );
+                    let failure = ManifestFailure {
+                        spares_optional: false,
+                        ..Default::default()
+                    };
+                    leave_failure_to_dependencies(
+                        manager,
+                        install_peer,
+                        task.id,
+                        log_mark,
+                        failure,
+                    )?;
 
                     continue;
                 };
@@ -1115,11 +1058,6 @@ pub fn run_tasks(
                     let is_required = manager.is_network_task_required(task.id);
                     let waiters = forget_failed_git_task(manager, task.id, name);
 
-                    if let Caller::PendingImports(imports) = &mut caller {
-                        imports.on_package_manifest_error(name, err, url);
-                        continue;
-                    }
-
                     if let Caller::IsolatedLinker(installer) = &mut caller {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
@@ -1248,12 +1186,10 @@ pub fn run_tasks(
                 sha,
             } => {
                 let name = commit.name.slice();
-                let url = commit.url.slice();
                 // Pending while it ran, but not one of the N downloads the summary prints.
                 manager.total_tasks -= 1;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(crate::Error::Failed);
                     let is_required = manager.is_network_task_required(task.id);
                     // The repository (with `--offline`, its cached clone) has no such commit.
                     for waiter in forget_failed_git_task(manager, task.id, name).iter() {
@@ -1261,19 +1197,15 @@ pub fn run_tasks(
                             manager.lockfile.unbind_refreshing(id);
                         }
                     }
-                    if let Caller::PendingImports(imports) = &mut caller {
-                        imports.on_package_manifest_error(name, err, url);
-                    } else {
-                        add_error_or_warning(
-                            manager.log_mut(),
-                            is_required,
-                            format_args!(
-                                "no commit matching \"{}\" found for \"{}\" (but repository exists)",
-                                bun_core::fmt::escape_control_chars(commit.committish.slice()),
-                                bun_core::fmt::for_terminal(bstr::BStr::new(name)),
-                            ),
-                        );
-                    }
+                    add_error_or_warning(
+                        manager.log_mut(),
+                        is_required,
+                        format_args!(
+                            "no commit matching \"{}\" found for \"{}\" (but repository exists)",
+                            bun_core::fmt::escape_control_chars(commit.committish.slice()),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(name)),
+                        ),
+                    );
                     continue;
                 }
 
@@ -1843,7 +1775,7 @@ pub fn generate_network_task_for_tarball<'a>(
         github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
             stored_string(this.lockfile.str(&package.resolution.github().resolved))
         } else {
-            strings::StringOrTinyString::init(b"")
+            strings::StringOrTinyString::EMPTY
         },
     };
 
@@ -1889,7 +1821,7 @@ pub fn generate_network_task_for_tarball<'a>(
 }
 
 impl PackageManager {
-    pub fn drain_dependency_list(&mut self) {
+    pub(crate) fn drain_dependency_list(&mut self) {
         loop {
             // Step 2. If there were cached dependencies, go through all of those but don't download
             // the devDependencies for them.

@@ -2013,7 +2013,7 @@ impl Package<u64> {
         let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
             Err(err) => {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print(Output::error_writer());
                 bun_core::pretty_errorln!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),

@@ -296,7 +296,7 @@ impl UpgradeCommand {
                     refresher.refresh();
 
                     if log.errors > 0 {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = log.print(Output::error_writer());
                         Global::exit(1);
                     } else {
                         bun_core::pretty_errorln!(
@@ -317,7 +317,7 @@ impl UpgradeCommand {
                 refresher.end();
                 refresher.refresh();
 
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print(Output::error_writer());
                 Global::exit(1);
             }
 
@@ -1241,13 +1241,13 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // `spawn_sync` takes the C-style `[*:null]?[*:0]const u8` envp
+                // `spawn_sync` takes the null-terminated envp
                 // directly, so build it from the DotEnv map. Output is buffered and
                 // silently dropped along with any spawn error.
                 if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
                     let _ = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_ptr().cast::<*const c_char>()),
+                        envp: Some(envp.as_list()),
                         cwd: Box::<[u8]>::from(target_dirname),
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Buffer,

@@ -71,10 +71,17 @@ pub(crate) fn write_request(
     let mut remaining: &mut [u8] = &mut lower;
 
     let mut authority: &[u8] = host;
-    // SAFETY: capacity for `request.headers.len() + 4` was reserved above; slots
-    // 0..4 are fully written below (the four pseudo-headers) before `headers`
-    // is read by `send_headers`. quic::Header has no Drop.
-    unsafe { headers.set_len(4) };
+    let path = if !request.path.is_empty() {
+        request.path
+    } else {
+        b"/"
+    };
+    headers.extend([
+        quic::Header::init(b":method", request.method, Some(Qpack::MethodGet)),
+        quic::Header::init(b":scheme", b"https", Some(Qpack::SchemeHttps)),
+        quic::Header::init(b":authority", b"", Some(Qpack::Authority)),
+        quic::Header::init(b":path", path, Some(Qpack::Path)),
+    ]);
     for h in request.headers {
         if let Some(class) = Qpack::classify(h.name()) {
             match class {
@@ -94,18 +101,7 @@ pub(crate) fn write_request(
     if authority.is_empty() {
         authority = session.hostname.as_slice();
     }
-    headers[0] = quic::Header::init(b":method", request.method, Some(Qpack::MethodGet));
-    headers[1] = quic::Header::init(b":scheme", b"https", Some(Qpack::SchemeHttps));
     headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
-    headers[3] = quic::Header::init(
-        b":path",
-        if !request.path.is_empty() {
-            request.path
-        } else {
-            b"/"
-        },
-        Some(Qpack::Path),
-    );
 
     let has_inline_body = is_bytes && !req_body.is_empty();
 

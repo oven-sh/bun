@@ -80,9 +80,7 @@ pub fn install_with_manager(
 
     // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
         Global::crash();
     }
 
@@ -666,9 +664,7 @@ pub fn install_with_manager(
     warn_unchecked_sources(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()))?;
+    manager.log_mut().print(Output::error_writer())?;
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
     super::package_json_write_back::fold_resolved_positionals(manager);
@@ -726,7 +722,6 @@ pub fn install_with_manager(
                 && load_result.migrated_from().is_none();
             run_security_scanner(
                 manager,
-                ctx,
                 original_cwd,
                 &lockfile_before_clean,
                 &named.moved,
@@ -880,9 +875,7 @@ pub fn install_with_manager(
 
     if manager.options.lockfile_only {
         if log_level != Options::LogLevel::Silent {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().print(Output::error_writer())?;
         }
         if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
             Global::crash();
@@ -937,7 +930,6 @@ pub fn install_with_manager(
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
-                ctx,
                 install_root_dependencies,
                 &workspace_filters,
                 None,
@@ -946,7 +938,6 @@ pub fn install_with_manager(
         } else {
             install_hoisted_packages(
                 manager,
-                ctx,
                 &workspace_filters,
                 install_root_dependencies,
                 log_level,
@@ -978,9 +969,7 @@ pub fn install_with_manager(
         warn_unsupported_platform(manager, &workspace_filters, install_root_dependencies);
     }
     if log_level != Options::LogLevel::Silent {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
@@ -1079,7 +1068,7 @@ pub fn install_with_manager(
     }
 
     if runs_root_scripts {
-        run_root_lifecycle_scripts(manager, ctx, log_level)?;
+        run_root_lifecycle_scripts(manager, log_level)?;
     }
 
     if log_level != Options::LogLevel::Silent {
@@ -1328,7 +1317,7 @@ fn print_summary_tree(
     // Ensure at this point buffering is enabled.
     // We deliberately do not disable it after this.
     Output::enable_buffering();
-    let writer = Output::writer_buffered();
+    let writer = &mut Output::writer_buffered();
     LockfilePrinter::Tree::print(
         &printer,
         // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
@@ -1617,9 +1606,7 @@ fn report_lockfile_load_error(
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
         if manager.log_mut().errors > 0 {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().print(Output::error_writer())?;
         }
 
         Output::err(
@@ -2061,9 +2048,7 @@ fn root_package_json_source(
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
     if manager.log_mut().errors > 0 {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
     }
     Output::err(
         err,
@@ -2549,7 +2534,6 @@ fn reresolve_rows_outside_overrides(
 #[inline(never)]
 fn run_security_scanner(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     original_cwd: &[u8],
     before_clean: &Lockfile,
     moved: &[(DependencyID, PackageID)],
@@ -2563,7 +2547,6 @@ fn run_security_scanner(
     ));
     match security_scanner::perform_security_scan_after_resolution(
         manager,
-        ctx,
         original_cwd,
         &seeds,
         loaded_bun_lockfile,
@@ -2746,7 +2729,6 @@ fn write_yarn_lock_with_progress(
 #[inline(never)]
 fn run_root_lifecycle_scripts(
     manager: &mut PackageManager,
-    ctx: Command::Context,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
@@ -2766,13 +2748,7 @@ fn run_root_lifecycle_scripts(
         let output_in_foreground = true;
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (`package_name` is owned by the List and drops with it).
-        manager.spawn_package_lifecycle_scripts(
-            ctx,
-            scripts,
-            optional,
-            output_in_foreground,
-            None,
-        )?;
+        manager.spawn_package_lifecycle_scripts(scripts, optional, output_in_foreground, None)?;
 
         // .monotonic is okay because at this point, this value is only accessed from this
         // thread.

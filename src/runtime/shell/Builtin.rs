@@ -310,7 +310,7 @@ impl BuiltinIO {
     /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
     /// slice without an intermediate heap clone.
     ///
-    /// `shell` is the `ShellExecEnv` owning this builtin (i.e. `cmd.base.shell`);
+    /// `shell` is the `ShellExecEnv` owning this builtin (i.e. `cmd.shell`);
     /// only used for the [`BuiltinIO::Buf`] arm.
     pub(crate) fn write_no_io_to(
         &mut self,
@@ -795,13 +795,7 @@ impl Builtin {
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_cmd_mut(cmd)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
+            let stderr = unsafe { interp.as_cmd_mut(cmd).shell.buffered_stderr_mut() };
             stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
@@ -866,7 +860,7 @@ impl Builtin {
         // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
         let cmd_node = interp.as_cmd_mut(cmd);
-        let shell = cmd_node.base.shell_mut();
+        let shell = &mut *cmd_node.shell;
         let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
             panic!("Cmd {} is not running a builtin", cmd);
         };
@@ -883,7 +877,7 @@ impl Builtin {
         interp: &'a Interpreter,
         cmd: NodeId,
     ) -> &'a crate::shell::interpreter::ShellExecEnv {
-        interp.as_cmd(cmd).base.shell()
+        &interp.as_cmd(cmd).shell
     }
 
     /// Event loop handle (forwarded from the interpreter).

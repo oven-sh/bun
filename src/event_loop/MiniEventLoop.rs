@@ -54,8 +54,7 @@ pub struct MiniEventLoop {
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
     file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
-    /// Mutable; callers (shell spawn,
-    /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
+    /// Stored as `NonNull`
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
     /// mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
@@ -101,8 +100,7 @@ impl MiniEventLoop {
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
     /// a `&mut`-returning accessor is provided: the loader may be shared via
     /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
-    /// other safe paths (`EventLoopHandle::create_null_delimited_env_map`,
-    /// `interpreter.rs`) materialize `&mut DotEnvLoader` from the same
+    /// other safe paths materialize `&mut DotEnvLoader` from the same
     /// allocation via raw deref.
     /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
     /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers

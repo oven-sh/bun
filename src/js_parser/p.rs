@@ -5409,7 +5409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.log().level = bun_ast::Level::Verbose;
-        let _ = self.log().print(std::ptr::from_mut(Output::error_writer()));
+        let _ = self.log().print(Output::error_writer());
 
         Output::panic(format_args!("{}\n{}", fmt, args));
     }

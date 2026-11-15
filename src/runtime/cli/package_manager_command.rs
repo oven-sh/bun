@@ -303,7 +303,7 @@ impl PackageManagerCommand {
         }
 
         if strings::eql_comptime(subcommand, b"scan") {
-            ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
+            ScanCommand::exec_with_manager(pm, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pack") {
             PackCommand::exec_with_manager(ctx, pm, &cwd)?;

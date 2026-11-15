@@ -16,13 +16,9 @@ use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
-// Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
-// impl lives in `bun_resolver`, which this crate can't reach without a cycle).
-pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
+struct FilenameStoreAppender<'a>(&'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+    fn append(&mut self, s: &[u8]) -> Result<&'static [u8], bun_alloc::AllocError> {
         self.0.append(s)
     }
 }
@@ -786,7 +782,7 @@ impl NetworkTask {
             let version = tarball_.resolution.npm().version;
             Box::from(extract_tarball::build_url(
                 scope.url.href(),
-                &tarball_.name,
+                tarball_.name.slice(),
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
             )?)

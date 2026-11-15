@@ -430,24 +430,10 @@ impl Archiver {
         // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
-        // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
-        let dir: Fd = 'brk: {
-            let cwd = Fd::cwd();
-
-            // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
-            if bun_paths::is_absolute(root) {
-                let Ok(d) = bun_sys::open_dir_absolute(root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            } else {
-                let Ok(d) = bun_sys::open_dir_at(cwd, root) else {
-                    return Ok(());
-                };
-                break 'brk d;
-            }
+        // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
+        let Ok(dir) = bun_sys::Dir::open(root) else {
+            return Ok(());
         };
-        let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
         let mut reader = open_memory(file_buffer, Dialect::General)?;
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
@@ -511,11 +497,10 @@ impl Archiver {
             let size: usize = usize::try_from(entry.size().max(0)).unwrap();
             let in_the_way = leaves_root(pathname)?
                 || (size > 0
-                    && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
-                        Ok(opened) => {
-                            let _close = bun_sys::CloseOnDrop::new(opened);
-                            bun_sys::get_file_size(opened)? > 0
-                        }
+                    && match bun_sys::openat_a(&dir, pathname, bun_sys::O::WRONLY, 0)
+                        .map(bun_sys::CloseOnDrop::new)
+                    {
+                        Ok(opened) => opened.get_end_pos()? > 0,
                         Err(_) => false,
                     });
 

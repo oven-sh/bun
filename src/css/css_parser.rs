@@ -824,7 +824,7 @@ impl<'bump> CustomAtRuleParser<'bump> for BundlerAtRuleParser<'bump> {
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
-        this.enclosing_layer.v.set_len(len);
+        this.enclosing_layer.v.truncate(len);
     }
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {

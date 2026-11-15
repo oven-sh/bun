@@ -874,7 +874,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_which",
@@ -1484,7 +1483,6 @@ name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_core_macros",
 ]
@@ -2105,13 +2103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_transpiler"
-version = "0.0.0"
-dependencies = [
- "bun_bundler",
-]
-
-[[package]]
 name = "bun_trim"
 version = "0.0.0"
 dependencies = [
@@ -2230,7 +2221,6 @@ name = "bun_zlib"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_zlib_sys",
  "strum",

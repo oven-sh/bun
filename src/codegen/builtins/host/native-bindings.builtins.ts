@@ -94,6 +94,14 @@ const stringEncodings = b.enumeration([
 ]);
 
 export default b.declarations(
+  fsSyncFunction("appendFileSync", b.undefined),
+  fsSyncFunction("chmodSync", b.undefined),
+  fsSyncFunction("closeSync", b.undefined),
+  fsSyncFunction(
+    "fstatSync",
+    b.union(b.instance("Stats"), b.instance("BigIntStats")).fresh,
+    withoutFsOptions(b.instance("Stats").fresh),
+  ),
   fsSyncFunction("lstatSync", statsIfFound, withoutFsOptions(b.instance("Stats").fresh)),
   fsSyncFunction(
     "readdirSync",

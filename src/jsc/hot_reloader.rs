@@ -594,7 +594,7 @@ where
             let handle = (*core::ptr::addr_of!((*self.reloader).reload_handle))
                 .as_ref()
                 .expect("reload_handle set for a reloader that enqueues");
-            if let crate::vm_handle::Posted::Refused(_) = handle.post(
+            if let crate::vm_handle::Posted::Refused(()) = handle.post_intrusive(
                 crate::LoopKind::Regular,
                 core::ptr::NonNull::from(concurrent),
             ) {
@@ -640,7 +640,7 @@ fn arm_watch_reload_grace_timer() {
         .name("WatchReloadGrace".into())
         .spawn(move || {
             // `force()` clears the terminal through this thread's `Output`
-            // writers; they are zeroed until the thread is configured.
+            // writers, which print nothing until the thread is configured.
             Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when

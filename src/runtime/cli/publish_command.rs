@@ -17,7 +17,6 @@ use bun_parsers::json as json_mod;
 use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
 use bun_sha_hmac as sha;
-use bun_simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
 use bun_url::URL;
@@ -259,9 +258,7 @@ impl Context {
                 Ok(j) => j,
                 Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
                 Err(_) => {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = manager.log_mut().print(Output::error_writer());
                     Output::err_generic("failed to parse tarball package.json", ());
                     Global::crash();
                 }
@@ -1180,17 +1177,16 @@ impl PublishCommand {
 
     /// The first README `readdir` returns, as `npm publish` picks it.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
-        let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
-        let _close = bun_sys::CloseOnDrop::new(workspace_dir);
+        let workspace_dir = bun_sys::Dir::open(abs_workspace_path).ok()?;
 
-        let mut iter = DirIterator::iterate(workspace_dir);
+        let mut iter = DirIterator::iterate(workspace_dir.fd());
         while let Some(entry) = pack::next_dir_entry(&mut iter, b"") {
             let name = entry.name.slice_u8();
             // Symlinks are not packed, so a symlinked README is not the readme either.
             if entry.kind == bun_sys::EntryKind::File && is_readme_filename(name) {
                 return Some(ReadmeInfo {
                     filename: name.to_vec(),
-                    contents: bun_sys::File::read_from(workspace_dir, name).ok()?,
+                    contents: bun_sys::File::read_from(&workspace_dir, name).ok()?,
                 });
             }
         }
@@ -1357,7 +1353,7 @@ impl PublishCommand {
             bun_sys::O::DIRECTORY,
             0,
         ) {
-            Ok(fd) => fd,
+            Ok(fd) => bun_sys::Dir::from_fd(fd),
             Err(e) => {
                 Output::err(
                     e,
@@ -1368,12 +1364,11 @@ impl PublishCommand {
             }
         };
 
-        let mut dirs: Vec<(Fd, Box<[u8]>)> = vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
+        let mut dirs: Vec<(bun_sys::Dir, Box<[u8]>)> =
+            vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
 
         while let Some((dir, dir_subpath)) = dirs.pop() {
-            let _close = bun_sys::CloseOnDrop::new(dir);
-
-            let mut iter = DirIterator::iterate(dir);
+            let mut iter = DirIterator::iterate(dir.fd());
             while let Some(entry) = pack::next_dir_entry(&mut iter, &dir_subpath) {
                 let name = entry.name.as_zstr();
                 let mut join: Vec<u8> = Vec::new();
@@ -1397,10 +1392,10 @@ impl PublishCommand {
                 ));
 
                 if entry.kind == bun_sys::EntryKind::Directory {
-                    let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0) else {
+                    let Ok(subdir) = bun_sys::openat(&dir, name, bun_sys::O::DIRECTORY, 0) else {
                         continue;
                     };
-                    dirs.push((subdir, subpath.into()));
+                    dirs.push((bun_sys::Dir::from_fd(subdir), subpath.into()));
                 }
             }
         }
@@ -1513,14 +1508,7 @@ impl PublishCommand {
             ),
         );
 
-        // SAFETY: `encode_raw` writes exactly `encoded_tarball_len` bytes into the reserved spare
-        // capacity; `fill_spare` commits exactly that count.
-        let count = unsafe {
-            bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
-                let n = simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
-                (n, n)
-            })
-        };
+        let count = bun_base64::encode_append(&mut buf, &ctx.tarball_bytes);
         debug_assert!(count == encoded_tarball_len);
 
         let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());

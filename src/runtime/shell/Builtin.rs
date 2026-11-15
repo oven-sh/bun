@@ -16,7 +16,7 @@ use crate::shell::io::{OutFd, OutKind};
 use crate::shell::io_reader::{IOReader, IOReaderId};
 use crate::shell::io_writer::{self, IOWriter, IOWriterId};
 use crate::shell::states::cmd::{Cmd, CmdState};
-use crate::shell::yield_::{Action, Yield};
+use crate::shell::yield_::{ReentrantAction, Yield};
 
 pub(crate) struct Builtin {
     pub(crate) kind: Kind,
@@ -360,7 +360,7 @@ impl Builtin {
 
     /// `PinnedArrayBuffer::drop`'s unpin would write to a `JSC::ArrayBuffer`
     /// impl the heap sweep already deleted; see
-    /// `SubprocExec::defuse_array_buffer_unpins`. VM-shutdown finalizer
+    /// `SubprocExec::defuse_array_buf_pins`. VM-shutdown finalizer
     /// only.
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
@@ -543,7 +543,7 @@ impl Builtin {
                 }
             }
             Some(ast::Redirect::JsBuf(jsbuf)) => {
-                let action = Action::StartBuiltin(cmd, *jsbuf, redirect);
+                let action = ReentrantAction::StartBuiltinWithJsBuf(cmd, *jsbuf, redirect);
                 return Some(Yield::Action(action));
             }
             None if redirect.duplicate_out() => {

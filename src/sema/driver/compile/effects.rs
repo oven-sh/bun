@@ -144,7 +144,6 @@ const ENDINGS_OF_A_RELATIVE_IMPORT: [&[u8]; 10] = [
     b".json",
 ];
 
-const UNTYPED_MODULE_CODE: u32 = 7016;
 const AUGMENTATION_OF_UNKNOWN_MODULE_CODE: u32 = 2664;
 const UMD_GLOBAL_IN_MODULE_CODE: u32 = 2686;
 const THIS_IS_UNDEFINED_CODES: [u32; 2] = [2407, 2532];
@@ -222,7 +221,7 @@ impl ProgramOrigins<'_, '_> {
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
                 DiagnosticSubject::ModuleSpecifier(specifier) => {
-                    self.is_import_that_the_build_loads(diagnostic, specifier)
+                    self.is_import_that_the_build_loads(diagnostic.file, specifier)
                 }
                 DiagnosticSubject::None | DiagnosticSubject::MemberContainer(_) => false,
             }
@@ -349,9 +348,8 @@ impl ProgramOrigins<'_, '_> {
         endings.any(|ending| disk.is_file(&[&path[..], ending].concat()))
     }
 
-    fn is_import_that_the_build_loads(&self, diagnostic: &Diagnostic, specifier: Atom) -> bool {
-        let is_untyped = diagnostic.code == UNTYPED_MODULE_CODE;
-        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+    fn is_import_that_the_build_loads(&self, file: Option<FileId>, specifier: Atom) -> bool {
+        let (Some(files), Some(file)) = (self.files, file) else {
             return false;
         };
         let Some(compiled) = files.compiled(file) else {
@@ -362,18 +360,13 @@ impl ProgramOrigins<'_, '_> {
             .import_sites
             .iter()
             .zip(compiled.code_answers);
-        let mut answers = sites
-            .filter(|(site, _)| site.specifier == ImportSpecifier::Constant(specifier))
-            .map(|(_, answer)| answer)
-            .peekable();
-        let is_dropped = answers.peek().is_none();
-        (is_untyped && is_dropped)
-            || answers.any(|answer| {
-                !matches!(
+        sites.into_iter().any(|(site, answer)| {
+            site.specifier == ImportSpecifier::Constant(specifier)
+                && !matches!(
                     answer,
                     CodeAnswer::Erased | CodeAnswer::Computed(_) | CodeAnswer::NotFound(_)
                 )
-            })
+        })
     }
 
     pub(super) fn apply_effects(&self, diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {

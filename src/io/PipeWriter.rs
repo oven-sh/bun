@@ -501,7 +501,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn register_poll(&mut self) {
-        match self.handle.register(FilePollFlag::Writable, self.get_fd()) {
+        match self.handle.register(FilePollFlag::Writable) {
             sys::Result::Err(err) => {
                 // Same report as a failed write (the streaming writer does the
                 // same): parents expect every error to be followed by `on_close`.
@@ -590,9 +590,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let had_poll = self.handle.has_poll();
         if !had_poll {
             self.create_poll(fd);
+        } else if fd != self.get_fd() {
+            return sys::Result::Err(sys::Error::from_code(sys::E::EBUSY, sys::Tag::write));
         }
 
-        match self.handle.register(FilePollFlag::Writable, fd) {
+        match self.handle.register(FilePollFlag::Writable) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if !had_poll {
@@ -839,7 +841,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     fn register_poll(&mut self) {
-        match self.handle.register(FilePollFlag::Writable, self.get_fd()) {
+        match self.handle.register(FilePollFlag::Writable) {
             sys::Result::Err(err) => self.report_error_and_close(err),
             sys::Result::Ok(()) => {}
         }
@@ -1083,9 +1085,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             // SAFETY: parent BACKREF set via set_parent; outlives this writer.
             let event_loop = unsafe { Parent::event_loop(self.parent()) };
             self.handle.set_poll(event_loop, fd);
+        } else if fd != self.get_fd() {
+            return sys::Result::Err(sys::Error::from_code(sys::E::EBUSY, sys::Tag::write));
         }
 
-        match self.handle.register(FilePollFlag::Writable, fd) {
+        match self.handle.register(FilePollFlag::Writable) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if !had_poll {

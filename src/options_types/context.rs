@@ -5,6 +5,8 @@
 //! `create()` (which calls `Arguments.parse`) and the
 //! `context_data` storage stay in `cli.rs`.
 
+use std::sync::Arc;
+
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
 use bun_core::AtomicCell;
@@ -26,6 +28,8 @@ pub struct ContextData {
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
+    /// The loader that an earlier step of the command filled, for the next step to take.
+    pub env_loader: Option<Arc<bun_dotenv::Loader>>,
 
     pub debug: DebugOptions,
     pub test_options: TestOptions,
@@ -71,6 +75,7 @@ impl Default for ContextData {
             positionals: Vec::new(),
             passthrough: Vec::new(),
             install: None,
+            env_loader: None,
             debug: DebugOptions::default(),
             test_options: TestOptions::default(),
             bundler_options: BundlerOptions::default(),

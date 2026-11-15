@@ -1817,7 +1817,7 @@ impl FetchTasklet {
         fetch_tasklet.tracker.did_schedule(cx.global());
 
         let url = fetch_options.url;
-        let env = cx.vm().transpiler.get().env_mut();
+        let env = cx.vm().env_loader();
         // Capture the proxy env so the HTTP thread can re-resolve per redirect
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
@@ -1832,14 +1832,6 @@ impl FetchTasklet {
             ProxyPolicy::Env if !fetch_tasklet.unix_socket_path.is_empty() => None,
             ProxyPolicy::Env => http::ProxySettings::from_env(env),
         };
-        // Hop-0 proxy borrows the boxed `ProxySettings` heap storage, which is
-        // moved into `AsyncHTTP::init` below and lives on `client` for the
-        // lifetime of the request.
-        let proxy: Option<ZigURL> = proxy_settings.as_deref().and_then(|s| {
-            let href: *const [u8] = s.resolve(&url)?;
-            // SAFETY: see block comment above.
-            Some(ZigURL::parse(unsafe { &*href }))
-        });
 
         // The callback keeps a request on HTTP/1.1. Under `rejectUnauthorized:
         // false` its verdict is not enforced, so a request pinned to h2/h3
@@ -1898,7 +1890,7 @@ impl FetchTasklet {
             ),
             fetch_options.redirect_type,
             http::async_http::Options {
-                http_proxy: proxy,
+                http_proxy: None,
                 proxy_settings,
                 proxy_headers: fetch_options.proxy_headers,
                 signals: Some(fetch_tasklet.signals),

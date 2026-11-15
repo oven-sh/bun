@@ -120,8 +120,7 @@ fn find_settings_and_template(
         executable.embeds_source_maps,
     );
     add_build_option_requirements(request.options, &mut settings.exec_argv);
-    // SAFETY: the loader outlives the request, and nothing below this call reaches the transpiler.
-    let env = unsafe { &mut *executable.env };
+    let env = &executable.env;
     let template = target_executable(executable.target, env, executable.executable_path)
         .map_err(CompileFailure::Executable)?;
     Ok((settings, template))

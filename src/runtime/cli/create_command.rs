@@ -313,9 +313,7 @@ impl CreateCommand {
 
         fs::FileSystem::init(None)?;
         let filesystem = fs::FileSystem::get();
-        // Process-lifetime: every mini event loop (the tasks', a Windows spawn's) keeps a pointer to it.
-        let env_loader: &'static mut DotEnv::Loader = Box::leak(Box::new(DotEnv::Loader::init()));
-        DotEnv::set_instance(std::ptr::from_mut::<DotEnv::Loader>(env_loader));
+        let env_loader = &mut DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -1050,7 +1048,7 @@ impl CreateCommand {
                 #[cfg(windows)]
                 windows: spawn_sync::WindowsOptions {
                     loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None),
+                        bun_event_loop::MiniEventLoop::init_global(),
                     ),
                     ..Default::default()
                 },
@@ -1164,7 +1162,7 @@ impl CreateCommand {
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: bun_event_loop::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None),
+                            bun_event_loop::MiniEventLoop::init_global(),
                         ),
                         ..Default::default()
                     },
@@ -1625,7 +1623,6 @@ impl Example {
             })?;
         }
 
-        let http_proxy = env_loader.get_http_proxy_for(&api_url);
         let mut mutable = MutableString::default();
 
         let mut async_http = HTTP::AsyncHTTP::init_sync(
@@ -1634,7 +1631,6 @@ impl Example {
             header_entries,
             headers_buf,
             b"",
-            http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
@@ -1707,17 +1703,12 @@ impl Example {
             &url_buf[..written]
         });
 
-        let mut http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(&api_url)
-            .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
-
         let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             Default::default(),
             b"",
             b"",
-            http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
@@ -1786,10 +1777,6 @@ impl Example {
 
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        http_proxy = env_loader
-            .get_http_proxy_for(&parsed_tarball_url)
-            .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
-
         refresher.maybe_refresh();
 
         let mut async_http = HTTP::AsyncHTTP::init_sync(
@@ -1798,7 +1785,6 @@ impl Example {
             Default::default(),
             b"",
             b"",
-            http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
@@ -1830,7 +1816,6 @@ impl Example {
         progress: Option<&mut Progress>,
     ) -> crate::Result<Vec<Example>> {
         let url = URL::parse(Self::EXAMPLES_URL);
-        let http_proxy = env_loader.get_http_proxy_for(&url);
 
         // Never freed because the returned `Example` names borrow from the body.
         let mutable: &'static mut MutableString =
@@ -1846,7 +1831,6 @@ impl Example {
             Default::default(),
             b"",
             b"",
-            http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
@@ -1990,7 +1974,7 @@ impl GitHandler {
         let mut bun_path_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None),
+            bun_event_loop::MiniEventLoop::init_global(),
         );
         if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();

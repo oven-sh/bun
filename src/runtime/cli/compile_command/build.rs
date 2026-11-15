@@ -365,13 +365,11 @@ fn write_product(
         return Ok(());
     }
 
-    // SAFETY: the loader outlives the request, and the build, which reads it, has ended.
-    let env = unsafe { &mut *settings.env };
     let mut executable_request = ExecutableRequest {
         graph,
         root_dir: settings.root_dir,
         outfile,
-        env,
+        env: &settings.env,
         windows: settings.windows,
         executable_path: settings.executable_path,
         trim: product.plan,

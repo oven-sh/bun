@@ -132,14 +132,7 @@ pub(crate) fn s3_credentials_from_env(
 
 #[inline(never)]
 fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3Credentials {
-    s3_credentials_from_env(
-        global_this
-            .bun_vm()
-            .transpiler
-            .get()
-            .env_mut()
-            .get_s3_credentials(),
-    )
+    s3_credentials_from_env(global_this.bun_vm().env_loader().get_s3_credentials())
 }
 
 /// `Blob.Any` accessor shim.
@@ -258,7 +251,13 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
 
     // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
     let vm = VirtualMachine::get();
-    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
+    if vm
+        .env_loader()
+        .snapshot()
+        .get_http_proxy_for(&url)
+        .is_some()
+        || vm.tls_default_ciphers().is_some()
+    {
         return Ok(());
     }
     http::async_http::preconnect(href.into());
@@ -1459,6 +1458,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let env_proxy_is_tls = !proxy_direct
                 && vm
                     .env_loader()
+                    .snapshot()
                     .get_http_proxy_for(&url)
                     .is_some_and(|env_proxy| env_proxy.is_https());
             if proxy.is_none()
@@ -1577,8 +1577,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Read before the S3 branch replaces `url_proxy_buffer`, which `proxy` borrows.
     let has_proxy = proxy.is_some();
     if url.is_s3() {
-        // get ENV config — `Transpiler::env_mut` is the safe accessor for the
-        // process-singleton dotenv loader (set during init).
+        // get ENV config
         let env_creds = bun_removable_features::call_removable_or!(
             S3Client,
             Throw,

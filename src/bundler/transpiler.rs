@@ -4,6 +4,7 @@
 
 use core::cell::OnceCell;
 use core::sync::SyncView;
+use std::sync::Arc;
 
 use bun_alloc::Arena;
 use bun_ast::AstArena;
@@ -48,9 +49,6 @@ pub struct Transpiler<'a> {
     pub(crate) resolve_results: Box<ResolveResults>,
     pub(crate) resolve_queue: ResolveQueue,
     pub(crate) elapsed: u64,
-
-    // Raw ptr — the global `DotEnv::Loader` singleton.
-    pub env: *mut dot_env::Loader,
 }
 
 impl<'a> Transpiler<'a> {
@@ -67,20 +65,20 @@ impl<'a> Transpiler<'a> {
     }
 
     /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `log`/`env` are aliased/singletons; left alone.
+    /// so free `BundleOptions` here. `log` is borrowed; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
     /// `resolver_bundle_options_subset`) is released.
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
+    /// `resolve_results` / `resolver.env_loader`, leaving them logically uninitialized. After this
     /// returns, `self` must never be dropped (or `deinit`'d again) — every
     /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
     /// `VirtualMachine` field. Owned `Transpiler`s from [`Self::for_worker`] must use
     /// normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
+        // SAFETY: these fields are init'd and never
         // read past `destroy()`. Caller upholds
         // the no-auto-drop contract above.
         unsafe {
@@ -88,6 +86,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::drop_in_place(&raw mut self.result);
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
+            core::ptr::drop_in_place(&raw mut self.resolver.env_loader);
         }
     }
 
@@ -96,31 +95,15 @@ impl<'a> Transpiler<'a> {
         self.log.as_mut()
     }
 
-    /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
-    /// [`Self::env_mut`] when only inspecting env vars (e.g. `.get()`), so
-    /// call sites can overlap with other `&` borrows of the same loader.
     #[inline]
-    pub fn env(&self) -> &'a dot_env::Loader {
-        // SAFETY: `self.env` is non-null after `init` — set to either the
-        // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
-        // which live for at least `'a`. Shared access cannot conflict with the
-        // raw aliases in `resolver.env_loader` (those are reads or serialized
-        // writes on the same thread).
-        unsafe { &*self.env }
+    pub fn env(&self) -> &Arc<dot_env::Loader> {
+        &self.resolver.env_loader
     }
 
-    /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
-    /// `&self` so call sites in `configure_defines` / `run_env_loader` can
-    /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
-    /// borrows.
+    /// Panics if the loader is shared.
     #[inline]
-    pub fn env_mut(&self) -> &'a mut dot_env::Loader {
-        // SAFETY: `self.env` is non-null after `init` — set to either the
-        // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
-        // which live for at least `'a`. No other live `&mut Loader` exists at
-        // any call site (single-threaded; `resolver.env_loader` aliases as a
-        // raw `NonNull`, never as a held `&mut`).
-        unsafe { &mut *self.env }
+    pub fn env_mut(&mut self) -> &mut dot_env::Loader {
+        self.resolver.env_loader_mut()
     }
 
     /// Per-worker / client-transpiler constructor.
@@ -158,7 +141,6 @@ impl<'a> Transpiler<'a> {
             resolve_results: Box::new(ResolveResults::default()),
             resolve_queue: ResolveQueue::default(),
             elapsed: 0,
-            env: from.env,
         }
     }
 
@@ -352,7 +334,8 @@ impl<'a> Transpiler<'a> {
 
         self.run_env_loader(self.options.env.disable_default_env_files)?;
 
-        let env_loader = self.env_mut();
+        let log = self.log();
+        let env_loader = &*self.resolver.env_loader;
         let mut is_production = env_loader.is_production();
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
@@ -373,7 +356,6 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        let log = self.log();
         self.options
             .load_defines(log, self.arena.as_mut(), Some(env_loader))?;
 
@@ -473,9 +455,6 @@ impl<'a> Transpiler<'a> {
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
         use bun_options_types::schema::api::DotEnvBehavior;
-        // Derived once up front; no other live `&mut` to this `Loader` exists
-        // for the duration of this call.
-        let env: &mut dot_env::Loader = self.env_mut();
 
         match self.options.env.behavior {
             DotEnvBehavior::prefix
@@ -486,6 +465,7 @@ impl<'a> Transpiler<'a> {
                 // that inherited environment variables are always available
                 // even when a parent directory is not readable.
                 let was_production = self.options.production;
+                let env = self.env_mut();
                 env.load_process()?;
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {
@@ -536,6 +516,7 @@ impl<'a> Transpiler<'a> {
                 // `--env-file` list is bounded (CLI args), not hot-path.
                 let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
+                let env = self.resolver.env_loader_mut();
                 let suffix = if self.options.is_test() || env.is_test() {
                     dot_env::DotEnvFileSuffix::Test
                 } else if self.options.production {
@@ -546,8 +527,10 @@ impl<'a> Transpiler<'a> {
                 env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {
-                env.load_process()?;
-                if env.is_production() {
+                if !self.env().did_load_process() {
+                    self.env_mut().load_process()?;
+                }
+                if self.env().is_production() {
                     self.options.set_production(true);
                     // See note in the `.prefix` arm.
                     self.resolver.opts.set_production(true);
@@ -556,7 +539,7 @@ impl<'a> Transpiler<'a> {
             DotEnvBehavior::_none => {}
         }
 
-        if env.get(b"BUN_DISABLE_TRANSPILER").unwrap_or(b"0") == b"1" {
+        if self.env().get(b"BUN_DISABLE_TRANSPILER").unwrap_or(b"0") == b"1" {
             self.options.disable_transpilation = true;
         }
         Ok(())
@@ -867,13 +850,11 @@ impl<'a> Transpiler<'a> {
     /// to write `vm.transpiler`. Builds on:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
-    ///
-    /// `env_loader_` is a raw pointer (not `&'a mut`) to match the struct field type.
     pub fn init(
         arena: &'a AstArena,
         log: &'a bun_ast::Log,
         opts: api::TransformOptions,
-        env_loader_: Option<*mut dot_env::Loader>,
+        mut env: Arc<dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
         // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the
@@ -888,29 +869,9 @@ impl<'a> Transpiler<'a> {
         };
         let fs: *mut Fs::FileSystem = init_file_system(cwd)?;
 
-        let env_loader: *mut dot_env::Loader = match env_loader_ {
-            Some(l) => l,
-            None => match dot_env::instance() {
-                Some(l) => l,
-                None => {
-                    // PORTING.md §Forbidden bars `Box::leak` even for
-                    // process-lifetime singletons. Transfer ownership into the
-                    // global singleton via `heap::alloc` (the AtomicPtr becomes
-                    // the owner; matches `MiniEventLoop::init_global`).
-                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init()))
-                }
-            },
-        };
-
-        if dot_env::instance().is_none() {
-            dot_env::set_instance(env_loader);
-        }
-
-        // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `env_loader` is either caller-owned or the
-        // leak above; no other live `&mut` to it at this point.
-        unsafe {
-            (*env_loader).quiet = !log.level.get().at_least(bun_ast::Level::Info);
+        // hide elapsed time when loglevel is warn or error. A shared loader keeps its setting.
+        if let Some(env) = Arc::get_mut(&mut env) {
+            env.quiet = !log.level.get().at_least(bun_ast::Level::Info);
         }
 
         // var pool = try arena.create(ThreadPool);
@@ -938,13 +899,12 @@ impl<'a> Transpiler<'a> {
                 outbase,
                 ..Default::default()
             },
-            resolver: Resolver::init1(log, fs, resolver_opts),
+            resolver: Resolver::init1(log, fs, resolver_opts, env),
             output_files: Vec::new(),
             resolve_results,
             resolve_queue: ResolveQueue::default(),
             elapsed: 0,
             // .thread_pool = pool,
-            env: env_loader,
         })
     }
 

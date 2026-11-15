@@ -222,7 +222,7 @@ pub unsafe fn is_no_proxy(hostname_ptr: *const u8, hostname_len: usize, port: u1
     let vm = VirtualMachine::get();
     // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname = unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) };
-    vm.env_loader().is_no_proxy(hostname, port)
+    vm.env_loader().snapshot().is_no_proxy(hostname, port)
 }
 
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)

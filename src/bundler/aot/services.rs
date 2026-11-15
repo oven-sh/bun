@@ -179,7 +179,8 @@ pub(crate) fn with_test_context<R>(
         ..Default::default()
     };
     let transpiler = arena.alloc(
-        Transpiler::init(&arena, &log, transform_options, None).expect("default options are valid"),
+        Transpiler::init(&arena, &log, transform_options, std::sync::Arc::default())
+            .expect("default options are valid"),
     );
     configure(&mut transpiler.options);
     let mut bundle = BundleV2::init(

@@ -886,15 +886,14 @@ impl BunxCommand {
 
     pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
         // Don't log stuff
-        bun_options_types::context::IS_SILENT.store(true, core::sync::atomic::Ordering::Relaxed);
+        bun_options_types::context::IS_SILENT.store(true);
 
         let opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
-        let ctx_log = ctx.log();
         let update_requests = UpdateRequest::parse(
             None,
-            ctx_log,
+            ctx.log(),
             &[opts.package_name],
             &mut requests_buf,
             bun_install::Subcommand::Add,

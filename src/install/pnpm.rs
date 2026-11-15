@@ -1628,8 +1628,7 @@ fn parse_append_importer_dependencies(
                 }
             }
 
-            let log = Some(log);
-            if !append_dependency(lockfile, log, name_str, specifier_str, group_behavior)? {
+            if !append_dependency(lockfile, Some(log), name_str, specifier_str, group_behavior)? {
                 return Err(InvalidPnpmLockfile);
             }
         }
@@ -1644,8 +1643,7 @@ fn parse_append_importer_dependencies(
                 ImporterName(importer_path)
             );
         }
-        let log = Some(log);
-        if !append_dependency(lockfile, log, peer_name, decl.range, decl.behavior())? {
+        if !append_dependency(lockfile, Some(log), peer_name, decl.range, decl.behavior())? {
             return Err(InvalidPnpmLockfile);
         }
     }

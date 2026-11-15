@@ -2184,7 +2184,7 @@ impl<'a> Repl<'a> {
         // Don't call ast.deinit() - the arena handles cleanup
 
         // Check for parse errors
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             return None;
         }
         // Print the transformed AST back to JavaScript

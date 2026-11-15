@@ -2265,7 +2265,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     maybe_watch_file(jsc_vm, &mut input_file, is_node_override, path, hash);
                 }
 
-                if jsc_vm.log.errors.get() > 0 {
+                if jsc_vm.log.has_errors() {
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).

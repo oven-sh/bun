@@ -96,7 +96,7 @@ fn load_router(
             &config_dir,
         )
     });
-    if loaded.is_err() || (load == Load::Cached && log.errors.get() + log.warnings.get() > 0) {
+    if loaded.is_err() || (load == Load::Cached && log.has_any()) {
         let error = log.to_js(global, format_args!("loading routes"))?;
         return Err(global.throw_value(error));
     }

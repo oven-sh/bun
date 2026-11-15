@@ -1305,10 +1305,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
         // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
         // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
-        IS_SILENT.store(
-            args.flag(b"--silent"),
-            core::sync::atomic::Ordering::Relaxed,
-        );
+        IS_SILENT.store(args.flag(b"--silent"));
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
@@ -1670,10 +1667,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 }
             };
             // Treat depth=0 as maxInt(u16) for infinite depth
-            CONSOLE_DEPTH.store(
-                if depth == 0 { u16::MAX } else { depth },
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            CONSOLE_DEPTH.store(if depth == 0 { u16::MAX } else { depth });
         }
 
         if let Some(order) = args.option(b"--dns-result-order") {
@@ -1962,7 +1956,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {
-            IS_SILENT.store(true, core::sync::atomic::Ordering::Relaxed);
+            IS_SILENT.store(true);
         }
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {

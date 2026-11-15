@@ -240,14 +240,14 @@ pub struct Lexer<'a, 'log> {
     pub(crate) all_comments: Vec<Range>,
 }
 
-impl<'a> LexerLog<'a> for Lexer<'a, '_> {
+impl LexerLog for Lexer<'_, '_> {
     type Err = Error;
     #[inline]
     fn log(&self) -> &Log {
         self.log
     }
     #[inline]
-    fn source(&self) -> &'a Source<'a> {
+    fn source(&self) -> &Source<'_> {
         self.source
     }
     #[inline]

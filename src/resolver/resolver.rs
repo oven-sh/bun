@@ -4647,7 +4647,7 @@ impl<'a> Resolver<'a> {
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging && let Some(log) = self.log() {
                                     let pretty = queue_top_unsafe_path;
-                                    let _ = log.add_error_fmt(
+                                    log.add_error_fmt(
                                         None,
                                         bun_ast::Loc::default(),
                                         format_args!(
@@ -6417,7 +6417,7 @@ impl<'a> Resolver<'a> {
                     return Ok(None);
                 };
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    let _ = log.add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)),
@@ -6425,7 +6425,7 @@ impl<'a> Resolver<'a> {
                 } else if err != crate::Error::ParseErrorAlreadyLogged
                     && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                 {
-                    let _ = log.add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(

@@ -1705,6 +1705,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     let temp_log = bun_ast::Log::init();
+    scopeguard::defer! { temp_log.append_to(log_to_copy_into) }
     let lexer = js_lexer::Lexer::init_without_reading(&temp_log, source, bump);
     let range = lexer.range();
     let parser = Parser {
@@ -1718,15 +1719,12 @@ pub fn new_lazy_export_ast_impl<'bump>(
     let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
-            if temp_log.errors.get() == 0 {
+            if !temp_log.has_errors() {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
-            temp_log.append_to(log_to_copy_into);
             return Ok(None);
         }
     };
-
-    temp_log.append_to(log_to_copy_into);
     match result {
         crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;

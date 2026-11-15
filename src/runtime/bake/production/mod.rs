@@ -396,10 +396,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let vm_log = vm.log;
     let (server_transpiler, _) = framework.init_transpiler(
         &options.arena,
-        vm_log,
+        vm.log,
         crate::bake::Mode::ProductionStatic,
         crate::bake::Graph::Server,
         &mut server_transpiler,
@@ -407,7 +406,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     )?;
     let (client_transpiler, _) = framework.init_transpiler(
         &options.arena,
-        vm_log,
+        vm.log,
         crate::bake::Mode::ProductionStatic,
         crate::bake::Graph::Client,
         &mut client_transpiler,
@@ -416,7 +415,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut ssr_transpiler = if separate_ssr_graph {
         let (ssr_transpiler, _) = framework.init_transpiler(
             &options.arena,
-            vm_log,
+            vm.log,
             crate::bake::Mode::ProductionStatic,
             crate::bake::Graph::Ssr,
             &mut ssr_transpiler,

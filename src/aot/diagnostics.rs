@@ -214,7 +214,7 @@ impl LoadMessages {
             mut internal_errors,
         } = std::mem::take(&mut *self.lists.lock());
         let mut heard = heard.lists.lock();
-        if log.msgs_len() > 0 || log.warnings.get() != 0 || log.errors.get() != 0 {
+        if log.has_msgs() || log.has_any() {
             log.append_to(&heard.log);
         }
         heard.internal_errors.append(&mut internal_errors);
@@ -228,7 +228,7 @@ impl LoadMessages {
     }
 
     pub(crate) fn say(&self, log: &Log) {
-        if log.msgs_len() > 0 || log.warnings.get() != 0 || log.errors.get() != 0 {
+        if log.has_msgs() || log.has_any() {
             log.append_to(&self.lists.lock().log);
         }
     }

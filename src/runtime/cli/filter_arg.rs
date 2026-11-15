@@ -69,9 +69,7 @@ fn get_candidate_package_patterns<'a>(
                 break 'body;
             };
 
-            log.with_msgs(Vec::clear);
-            log.errors.set(0);
-            log.warnings.set(0);
+            log.reset();
 
             // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).

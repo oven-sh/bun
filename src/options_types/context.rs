@@ -5,10 +5,9 @@
 //! `create()` (which calls `Arguments.parse`) and the
 //! `context_data` storage stay in `cli.rs`.
 
-use core::sync::atomic::{AtomicBool, AtomicU16};
-
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
+use bun_core::AtomicCell;
 
 use crate::bundle_enums;
 use crate::code_coverage_options::CodeCoverageOptions;
@@ -241,10 +240,10 @@ impl Default for BundlerOptions {
 pub type Context<'a> = &'a mut ContextData;
 
 /// `--console-depth`, `console.depth`. Read by every thread that runs JavaScript.
-pub static CONSOLE_DEPTH: AtomicU16 = AtomicU16::new(2);
+pub static CONSOLE_DEPTH: AtomicCell<u16> = AtomicCell::new(2);
 
 /// `--silent`, `run.silent`. Read by every thread that runs a server.
-pub static IS_SILENT: AtomicBool = AtomicBool::new(false);
+pub static IS_SILENT: AtomicCell<bool> = AtomicCell::new(false);
 
 pub struct DebugOptions {
     pub hot_reload: HotReload,

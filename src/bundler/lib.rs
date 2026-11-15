@@ -383,7 +383,7 @@ pub use bundle_v2::dispatch;
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
-        fn insert_stale_owner(abs_path: &[u8], graph: bake_types::Graph) -> u32;
+        fn insert_stale_owner(abs_path: &[u8], graph: bake_types::Graph) -> bake_types::OwnerPacked;
         fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
         fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: &bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;

@@ -233,8 +233,7 @@ fn read_package_json_from_disk(
 
     // Borrow splitting: `manager.lockfile` and `manager` are
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
-    // so split via raw pointer once here. `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument,
+    // so split via raw pointer once here. `parse{,_with_json}` reaches `manager` through `pm`,
     // and it derefs `lockfile` only under `Features::workspaces`, which none
     // of the `features` that `get_or_put` passes has.
     let log: &bun_ast::Log = manager.log();
@@ -245,8 +244,7 @@ fn read_package_json_from_disk(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
         // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` points into a separate `Log` allocation,
-        // so this `&mut` reborrow aliases no
+        // argument; `log` is a separate allocation, so this `&mut` reborrow aliases no
         // other live reference.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache

@@ -38,7 +38,7 @@ const sections = {
   "modes": 7,
   "a top-level variable in a factory of jest.mock": 18,
   "a top-level variable in a factory of vi.mock": 18,
-  "errors": 9,
+  "errors": 13,
   "source locations": 4,
 };
 
@@ -70,6 +70,6 @@ test.each(Object.entries(sections))(
     expect(named("fail")).toEqual(differing.sort());
     expect(named("pass")).toHaveLength(passing);
     // A section that is not listed here would run in no case.
-    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(128 + 13 - passing - differing.length);
+    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(132 + 13 - passing - differing.length);
   },
 );

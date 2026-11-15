@@ -8975,7 +8975,8 @@ bool isModuleMockFactoryRunning(Zig::GlobalObject* globalObject, const String& k
 {
     return globalObject->onLoadPlugins.runningModuleMocks.containsIf([&](const auto& running) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
-        return mock->factory && mock->factory.get().isCallable() && mock->specifier->tryGetValue().data == key;
+        // A compiled run waits for the body of the original before it calls a factory that takes it.
+        return mock->factory && mock->factory.get().isCallable() && !mock->isAwaitingRunningBody && mock->specifier->tryGetValue().data == key;
     });
 }
 

@@ -1247,6 +1247,29 @@ describe.concurrent("errors", () => {
     ).toEqual([...neverFinished, unsettled("hoist.test.ts"), unsettled("stuck.ts")]);
   });
 
+  // The factory takes the original, whose body never ends, so the factory is never called.
+  test("a factory that was not called is not named", async () => {
+    const lines = await loadError({
+      "stuck.ts": `
+        globalThis.began();
+        await new Promise(() => {});
+        export const value = "real";
+      `,
+      "hoist.test.ts": `
+        const { promise, resolve } = Promise.withResolvers();
+        globalThis.began = resolve;
+        void import("./stuck");
+        await promise;
+        vi.doMock("./stuck", async importOriginal => ({ ...(await importOriginal()), value: "mocked" }));
+        await import("./stuck");
+        test("unreachable", () => {});
+      `,
+    });
+    // A compiled run does not list the original, which runs from source.
+    expect(lines.slice(0, 3)).toEqual([...neverFinished, unsettled("hoist.test.ts")]);
+    expect(lines.filter(line => line.includes("never settled for"))).toEqual([]);
+  });
+
   // vi.importActual() resolves ./mod. The import() after it is of ./stuck.
   test("a factory is not named for an import() of another module", async () => {
     expect(

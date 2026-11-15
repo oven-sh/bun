@@ -103,7 +103,7 @@ bun_opaque::opaque_ffi! {
 #[inline]
 fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
     let Some(h) = h else { return };
-    if h.owner.is_null() {
+    if h.owner().is_null() {
         return;
     }
     h.on_process_exit(status, rusage);
@@ -1500,7 +1500,7 @@ mod spawn_process_body {
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
         // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
-            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner.is_null()),
+            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner().is_null()),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \

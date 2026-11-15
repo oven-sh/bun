@@ -182,15 +182,8 @@ impl Drop for ReturnNetworkTask {
         if self.task.is_null() {
             return;
         }
-        // SAFETY: see `ReturnResolveTask`. `unsafe_http_client` is `MaybeUninit` so
-        // `put()`'s `drop_in_place<NetworkTask>` skips it — drop manually
-        // (HTTP completed, so it IS init) so the inner
-        // `AsyncHTTP.{request,response}_headers: EntryList` don't
-        // leak per put/get cycle.
-        unsafe {
-            (*self.task).unsafe_http_client.assume_init_drop();
-            (*self.manager).preallocated_network_tasks.put(self.task);
-        }
+        // SAFETY: see `ReturnResolveTask`.
+        unsafe { (*self.manager).preallocated_network_tasks.put(self.task) };
     }
 }
 
@@ -626,11 +619,7 @@ pub fn run_tasks(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        // SAFETY: `unsafe_http_client` was initialized by
-                        // `for_manifest`/`for_tarball` before `schedule()`;
-                        // direct field access (not `task.http()`) to keep the
-                        // split borrow with `&mut task.callback` above.
-                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
+                        task.http.as_ref().map_or(0, |http| http.elapsed) as f64
                             / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
@@ -886,11 +875,7 @@ pub fn run_tasks(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        // SAFETY: `unsafe_http_client` was initialized by
-                        // `for_manifest`/`for_tarball` before `schedule()`;
-                        // direct field access (not `task.http()`) to keep the
-                        // split borrow with `&mut task.callback` above.
-                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
+                        task.http.as_ref().map_or(0, |http| http.elapsed) as f64
                             / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
@@ -1459,11 +1444,12 @@ pub fn flush_network_queue(this: &mut PackageManager) {
         // SAFETY: both queues store live `*mut NetworkTask` pushed by
         // `enqueue_network_task` / `retry_timer::retry`; exclusive ownership transferred here.
         let nt = unsafe { &mut *network_task };
-        nt.schedule(if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
+        let batch = if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
             &mut this.network_tarball_batch
         } else {
             &mut this.network_resolve_batch
-        });
+        };
+        batch.push(nt.take_request());
     }
 }
 
@@ -1497,8 +1483,8 @@ pub fn flush_dependency_queue(this: &mut PackageManager) {
 
 pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     let count = manager.task_batch.len
-        + manager.network_resolve_batch.len
-        + manager.network_tarball_batch.len
+        + manager.network_resolve_batch.len()
+        + manager.network_tarball_batch.len()
         + manager.patch_apply_batch.len
         + manager.patch_calc_hash_batch.len;
 
@@ -1512,10 +1498,8 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     manager
         .thread_pool
         .schedule(core::mem::take(&mut manager.task_batch));
-    manager
-        .network_resolve_batch
-        .push(core::mem::take(&mut manager.network_tarball_batch));
-    http::HTTPThread::schedule(core::mem::take(&mut manager.network_resolve_batch));
+    let manifests = manager.network_resolve_batch.drain(..);
+    http::HTTPThread::schedule(manifests.chain(manager.network_tarball_batch.drain(..)));
     // Git tasks were counted as pending when they were queued.
     manager.start_git_tasks();
     count
@@ -1817,8 +1801,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
     unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref) };
-    // SAFETY: `write_init` populated every field with a drop-safe value;
-    // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
+    // SAFETY: `write_init` populated every field.
     let network_task = unsafe { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);

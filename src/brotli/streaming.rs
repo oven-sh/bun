@@ -1,4 +1,5 @@
-use crate::{DecodeStatus, Decoder, Error, Output, Result};
+use crate::{DecodeStatus, Decoder, Error, Result};
+use bun_core::vec::append_with;
 
 const MIN_OUTPUT_ROOM: usize = 4096;
 
@@ -52,10 +53,9 @@ impl StreamingDecoder {
             if out.try_reserve(MIN_OUTPUT_ROOM).is_err() {
                 break Error::OutOfMemory;
             }
-            let limit = max_output - out.len();
-            let status = self
-                .decoder
-                .decompress(&mut rest, &mut Output::append(out, limit));
+            let status = append_with(out, max_output - out.len(), |output| {
+                self.decoder.decompress(&mut rest, output)
+            });
             self.state = State::Inflating;
             match status {
                 Ok(DecodeStatus::Finished) => {

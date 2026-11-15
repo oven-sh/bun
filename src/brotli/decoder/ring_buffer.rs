@@ -1,7 +1,7 @@
 use super::{Stop, transform};
-use crate::Output;
 use crate::format::WINDOW_GAP;
 use crate::memory;
+use bun_core::vec::BorrowedCursor;
 
 /// Past [`RingBuffer::limit`], for a word of the dictionary that starts before it and for copies that round up.
 pub(super) const SLACK: usize = 64;
@@ -116,13 +116,13 @@ impl RingBuffer {
     }
 
     /// Wraps around once everything up to the end of the window is out.
-    pub(super) fn flush(&mut self, output: &mut Output<'_>) -> Result<(), Stop> {
+    pub(super) fn flush(&mut self, output: &mut BorrowedCursor<'_, u8>) -> Result<(), Stop> {
         if self.size == 0 {
             return Ok(());
         }
         let end = self.position.min(self.size);
         let unflushed = self.bytes.get(self.flushed..end).ok_or(Stop::UNREACHABLE)?;
-        self.flushed += output.write(unflushed);
+        self.flushed += memory::append_what_fits(output, unflushed);
         if self.flushed < end {
             return Err(Stop::NeedsOutput);
         }

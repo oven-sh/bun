@@ -14,8 +14,9 @@ use crate::format::{
     LARGE_MAX_WINDOW_BITS, LITERAL_SYMBOLS, MAX_BLOCK_TYPES, MAX_DICTIONARY_SIZE, MIN_WINDOW_BITS,
     max_backward_distance,
 };
-use crate::{DecodeError, Output, memory};
+use crate::{DecodeError, memory};
 use bit_reader::{BitReader, Bits};
+use bun_core::vec::BorrowedCursor;
 use commands::{Command, Phase, RecentDistances, push_command_tree, push_distance_tree};
 use context_map::ContextMap;
 use huffman::{Forest, Ranges, Root, Symbol, read_symbol};
@@ -254,18 +255,18 @@ impl Decoder {
         !matches!(self.state, State::Failed(_)) && self.ring.has_unflushed()
     }
 
-    /// Advances `input` and `output`. After an error, every call returns that error.
+    /// Advances `input` by what it consumed. After an error, every call returns that error.
     #[inline(never)]
     pub fn decompress(
         &mut self,
         input: &mut &[u8],
-        output: &mut Output<'_>,
+        mut output: BorrowedCursor<'_, u8>,
     ) -> Result<DecodeStatus, DecodeError> {
         bun_removable_features::removable_definition!(BrotliDecoder, Self::decompress);
         let mut reader = BitReader::new(self.bits, input);
-        let mut result = self.run(&mut reader, output);
+        let mut result = self.run(&mut reader, &mut output);
         if result == Err(Stop::NeedsInput)
-            && let Err(failure @ Stop::Failed(_)) = self.flush(output)
+            && let Err(failure @ Stop::Failed(_)) = self.flush(&mut output)
         {
             result = Err(failure);
         }
@@ -283,7 +284,11 @@ impl Decoder {
         }
     }
 
-    fn run(&mut self, reader: &mut BitReader<'_>, output: &mut Output<'_>) -> Result<(), Stop> {
+    fn run(
+        &mut self,
+        reader: &mut BitReader<'_>,
+        output: &mut BorrowedCursor<'_, u8>,
+    ) -> Result<(), Stop> {
         loop {
             self.state = match self.state {
                 State::StreamHeader => {
@@ -535,7 +540,7 @@ impl Decoder {
         })
     }
 
-    fn flush(&mut self, output: &mut Output<'_>) -> Result<(), Stop> {
+    fn flush(&mut self, output: &mut BorrowedCursor<'_, u8>) -> Result<(), Stop> {
         if self.remaining < 0 {
             return Err(DecodeError::BlockLength1.into());
         }

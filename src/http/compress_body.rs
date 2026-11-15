@@ -191,23 +191,24 @@ fn compress_brotli(
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
-    use bun_brotli::{EncodeError, Encoder, Operation, Output};
+    use bun_brotli::{EncodeError, EncodeStatus, Encoder, Operation};
+    use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
     let bound = bun_brotli::max_compressed_size(input.len());
-    let shared_len = state.shared_buffer.len();
-    let mut output = if bound <= shared_len {
-        Output::Slice(&mut state.shared_buffer)
+    let mut encoder = Encoder::with_quality(level.unwrap_or(DEFAULT_BROTLI_QUALITY));
+    let mut compress =
+        |output: BorrowedCursor<'_, u8>| encoder.compress(Operation::Finish, &mut input, output);
+    let (result, output) = if bound <= state.shared_buffer.len() {
+        let mut shared = BorrowedBuf::from(&mut state.shared_buffer[..]);
+        let result = compress(shared.unfilled());
+        (result, CompressOutput::Shared(shared.len()))
     } else {
         spill
             .try_reserve_exact(bound)
             .map_err(|_| bun_alloc::AllocError)?;
-        Output::append(spill, bound)
+        (append_with(spill, bound, compress), CompressOutput::Spilled)
     };
-    let mut encoder = Encoder::with_quality(level.unwrap_or(DEFAULT_BROTLI_QUALITY));
-    match encoder.compress(Operation::Finish, &mut input, &mut output) {
-        Ok(()) if output.room() != 0 => Ok(match output {
-            Output::Slice(rest) => CompressOutput::Shared(shared_len - rest.len()),
-            Output::Append { .. } => CompressOutput::Spilled,
-        }),
+    match result {
+        Ok(EncodeStatus::Done) => Ok(output),
         Err(EncodeError::OutOfMemory) => Err(bun_alloc::AllocError.into()),
         _ => Err(crate::Error::CompressionFailed),
     }

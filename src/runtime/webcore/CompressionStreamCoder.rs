@@ -20,6 +20,7 @@ use core::ffi::c_int;
 use core::ptr;
 
 use bun_core::EncodedSlice;
+use bun_core::vec::append_with;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
@@ -416,18 +417,17 @@ impl CompressionStreamCoder {
                         });
                     }
                     let room = spare(out, cap)?.len();
-                    let mut output = bun_brotli::Output::append(out, room);
-                    match encoder.compress(operation, &mut remaining, &mut output) {
-                        Ok(()) => {}
+                    match append_with(out, room, |output| {
+                        encoder.compress(operation, &mut remaining, output)
+                    }) {
+                        Ok(bun_brotli::EncodeStatus::Done) => return Ok(Progress::Done),
+                        Ok(bun_brotli::EncodeStatus::NeedsOutput) => {}
                         Err(bun_brotli::EncodeError::OutOfMemory) => {
                             return Err(CodecError::OutOfMemory);
                         }
                         Err(bun_brotli::EncodeError::InvalidOperation) => {
                             return Err(CodecError::Message("brotli encode failed"));
                         }
-                    }
-                    if remaining.is_empty() && output.room() != 0 {
-                        return Ok(Progress::Done);
                     }
                 }
             }
@@ -446,8 +446,9 @@ impl CompressionStreamCoder {
                         });
                     }
                     let room = spare(out, cap)?.len();
-                    let mut output = bun_brotli::Output::append(out, room);
-                    match decoder.decompress(&mut remaining, &mut output) {
+                    match append_with(out, room, |output| {
+                        decoder.decompress(&mut remaining, output)
+                    }) {
                         Ok(bun_brotli::DecodeStatus::Finished) => {
                             self.ended = true;
                             if !remaining.is_empty() {

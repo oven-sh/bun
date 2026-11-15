@@ -1,6 +1,6 @@
 //! Brotli (RFC 7932), with large windows and raw dictionaries (RFC 9841). Parts derive from google/brotli (LICENSE.md).
 #![forbid(unsafe_code)]
-#![feature(hint_prefetch)]
+#![feature(core_io_borrowed_buf, hint_prefetch)]
 // Streams come from anywhere and a panic aborts the process.
 #![deny(
     clippy::indexing_slicing,
@@ -18,11 +18,11 @@ mod encoder;
 mod error;
 mod format;
 mod memory;
-mod output;
 mod streaming;
 
 pub use decoder::{DecodeStatus, Decoder};
-pub use encoder::{Encoder, MAX_QUALITY, MIN_QUALITY, Operation, max_compressed_size};
+pub use encoder::{
+    EncodeStatus, Encoder, MAX_QUALITY, MIN_QUALITY, Operation, max_compressed_size,
+};
 pub use error::{DecodeError, EncodeError, Error, Result};
-pub use output::Output;
 pub use streaming::StreamingDecoder;

@@ -4,6 +4,8 @@ pub(crate) use bun_alloc::AllocError;
 pub(crate) use bun_core::ffi::Zeroable;
 pub(crate) use bun_core::vec::try_zeroed as zeroed;
 
+use bun_core::vec::BorrowedCursor;
+
 pub(crate) type Result<T> = core::result::Result<T, AllocError>;
 
 pub(crate) fn try_reserve<T>(vec: &mut Vec<T>, additional: usize) -> Result<()> {
@@ -53,4 +55,11 @@ pub(crate) fn zeroed_array<T: Zeroable, const N: usize>() -> Result<Box<[T; N]>>
 
 pub(crate) fn filled_array<T: Clone, const N: usize>(value: T) -> Result<Box<[T; N]>> {
     filled(value, N)?.try_into().map_err(|_| AllocError)
+}
+
+/// Returns how many of `bytes` that is.
+pub(crate) fn append_what_fits(output: &mut BorrowedCursor<'_, u8>, bytes: &[u8]) -> usize {
+    let (fits, _) = bytes.split_at(bytes.len().min(output.capacity()));
+    output.append(fits);
+    fits.len()
 }

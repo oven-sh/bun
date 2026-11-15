@@ -40,7 +40,7 @@ use windowed::Windowed;
 use crate::error::EncodeError;
 use crate::format::{COMMAND_SYMBOLS, LITERAL_SYMBOLS, MAX_DICTIONARY_SIZE};
 use crate::memory;
-use crate::output::Output;
+use bun_core::vec::BorrowedCursor;
 
 const MAX_METADATA_SIZE: usize = 1 << 24;
 
@@ -52,6 +52,13 @@ pub enum Operation {
     Finish,
     /// The input is for decoders to skip.
     EmitMetadata,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodeStatus {
+    Done,
+    /// Repeat the operation, with what is left of the input.
+    NeedsOutput,
 }
 
 #[derive(Default)]
@@ -89,20 +96,20 @@ impl Encoder {
         self.stream.is_none() && self.requested.set(key, value)
     }
 
-    /// Advances `input` by what it consumed. The operation is complete when `output` has room left.
+    /// Advances `input` by what it consumed.
     #[inline(never)]
     pub fn compress(
         &mut self,
         operation: Operation,
         input: &mut &[u8],
-        output: &mut Output<'_>,
-    ) -> Result<(), EncodeError> {
+        mut output: BorrowedCursor<'_, u8>,
+    ) -> Result<EncodeStatus, EncodeError> {
         bun_removable_features::removable_definition!(BrotliEncoder, Self::compress);
         let stream = match &mut self.stream {
             Some(stream) => stream,
             none => none.insert(Stream::new(&self.requested, input.len())?),
         };
-        let result = stream.compress(self.dictionary.as_ref(), operation, input, output);
+        let result = stream.compress(self.dictionary.as_ref(), operation, input, &mut output);
         if result == Err(EncodeError::OutOfMemory) {
             stream.state = State::OutOfMemory;
         }
@@ -110,7 +117,7 @@ impl Encoder {
     }
 }
 
-/// An output of this size has room left after [`Encoder::with_quality`] finished a stream in one call.
+/// Enough for [`Encoder::with_quality`] to finish a stream in one call.
 pub fn max_compressed_size(input_size: usize) -> usize {
     input_size.saturating_add(4 * (input_size >> 14) + 6)
 }
@@ -178,12 +185,12 @@ impl Stream {
     }
 
     /// Returns whether nothing is left.
-    fn deliver(&mut self, output: &mut Output<'_>) -> bool {
+    fn deliver(&mut self, output: &mut BorrowedCursor<'_, u8>) -> bool {
         if self.lone_header == Some(self.writer.position()) {
             return true;
         }
         self.lone_header = None;
-        self.delivered += output.write(self.pending());
+        self.delivered += memory::append_what_fits(output, self.pending());
         let delivered_all = self.pending().is_empty();
         if delivered_all {
             self.delivered = 0;
@@ -197,8 +204,8 @@ impl Stream {
         dictionary: Option<&PreparedDictionary>,
         operation: Operation,
         input: &mut &[u8],
-        output: &mut Output<'_>,
-    ) -> Result<(), EncodeError> {
+        output: &mut BorrowedCursor<'_, u8>,
+    ) -> Result<EncodeStatus, EncodeError> {
         let is_metadata = operation == Operation::EmitMetadata;
         match self.state {
             State::OutOfMemory => return Err(EncodeError::OutOfMemory),
@@ -223,17 +230,17 @@ impl Stream {
                 *input = rest;
             }
             if !self.deliver(output) {
-                return Ok(());
+                return Ok(EncodeStatus::NeedsOutput);
             }
             match self.state {
                 State::Processing => {
                     if !self.process(dictionary, operation, input)? {
-                        return Ok(());
+                        return Ok(EncodeStatus::Done);
                     }
                 }
                 State::Flushing if self.writer.is_at_byte_boundary() => {
                     self.state = State::Processing;
-                    return Ok(());
+                    return Ok(EncodeStatus::Done);
                 }
                 // Pads the output to a byte boundary.
                 State::Flushing => write_metadata_header(&mut self.writer, 0),
@@ -243,15 +250,18 @@ impl Stream {
                     self.state = State::InMetadata { left: size };
                 }
                 State::InMetadata { left } => {
-                    let written = output.write(input);
+                    let written = memory::append_what_fits(output, input);
                     *input = &input[written..];
-                    self.state = match left - written {
-                        0 => State::Processing,
-                        left => State::InMetadata { left },
-                    };
-                    return Ok(());
+                    if written < left {
+                        let left = left - written;
+                        self.state = State::InMetadata { left };
+                        return Ok(EncodeStatus::NeedsOutput);
+                    }
+                    self.state = State::Processing;
+                    return Ok(EncodeStatus::Done);
                 }
-                State::Finished | State::OutOfMemory => return Ok(()),
+                State::Finished => return Ok(EncodeStatus::Done),
+                State::OutOfMemory => return Err(EncodeError::OutOfMemory),
             }
         }
     }

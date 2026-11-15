@@ -1,7 +1,9 @@
 use core::ffi::c_int;
+use core::mem::MaybeUninit;
 use core::ptr;
 
-use bun_brotli::{DecodeError, DecodeStatus, Decoder, Encoder, Operation, Output};
+use bun_brotli::{DecodeError, DecodeStatus, Decoder, Encoder, Operation};
+use bun_core::vec::BorrowedBuf;
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
@@ -358,32 +360,36 @@ mod _impl {
             let mut input = unsafe { core::slice::from_raw_parts(self.next_in, self.avail_in) };
             let overlap = self.next_in.addr() < self.next_out.addr() + self.avail_out
                 && self.next_out.addr() < self.next_in.addr() + self.avail_in;
-            let mut staged = Vec::new();
-            let mut output = if !overlap {
+            let mut staged = Vec::<u8>::new();
+            let output: &mut [MaybeUninit<u8>] = if !overlap {
                 // SAFETY: as above, and `input` does not overlap it.
-                let out = unsafe { core::slice::from_raw_parts_mut(self.next_out, self.avail_out) };
-                Output::Slice(out)
+                unsafe { core::slice::from_raw_parts_mut(self.next_out.cast(), self.avail_out) }
             } else if staged.try_reserve_exact(self.avail_out).is_ok() {
-                Output::append(&mut staged, self.avail_out)
+                &mut staged.spare_capacity_mut()[..self.avail_out]
             } else {
                 self.encoded = false;
                 self.error = Some(DecodeError::AllocRingBuffer1);
                 return;
             };
+            let mut output = BorrowedBuf::from(output);
             match state {
                 State::Encoder(encoder) => {
-                    let result = encoder.compress(self.flush, &mut input, &mut output);
+                    let result = encoder.compress(self.flush, &mut input, output.unfilled());
                     self.encoded = result.is_ok();
                 }
                 State::Decoder(decoder) => {
-                    let result = decoder.decompress(&mut input, &mut output);
+                    let result = decoder.decompress(&mut input, output.unfilled());
                     self.needs_input = result == Ok(DecodeStatus::NeedsInput);
                     self.error = result.err().or(self.error);
                 }
             }
-            (self.avail_in, self.avail_out) = (input.len(), output.room());
-            // SAFETY: `staged` is no longer than `avail_out` was, and `input` is not read again.
-            unsafe { ptr::copy_nonoverlapping(staged.as_ptr(), self.next_out, staged.len()) };
+            self.avail_in = input.len();
+            self.avail_out -= output.len();
+            if overlap {
+                let staged = output.filled();
+                // SAFETY: `staged` is no longer than `avail_out` was, and `input` is not read again.
+                unsafe { ptr::copy_nonoverlapping(staged.as_ptr(), self.next_out, staged.len()) };
+            }
         }
 
         pub(crate) fn write_result(&self) -> [u32; 2] {

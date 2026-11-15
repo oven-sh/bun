@@ -128,7 +128,7 @@ impl Host for DeclarationsHost<'_> {
         build_tree(source, atoms, arena)
     }
 
-    fn parse_package_json(&self, _arena: &Arena, _text: &[u8]) -> Option<Json> {
+    fn parse_package_json(&self, _text: &[u8]) -> Option<Json> {
         None
     }
 

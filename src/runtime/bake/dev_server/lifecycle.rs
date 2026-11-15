@@ -168,7 +168,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // box. Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let arena: &'static bun_ast::AstArena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
     let log: &'static Log = arena.alloc(Log::init());
     let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
         Vec::with_capacity(4);

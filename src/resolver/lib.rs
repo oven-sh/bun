@@ -1757,8 +1757,7 @@ pub mod dir_entry_accessor {
 pub use dir_entry_accessor::DirEntryAccessor;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `cache` — `Set`/`Fs`/`Entry`/
-// `Json`). These types live below `bun_bundler` in
+// `cache` — `Set`/`Fs`/`Entry`. These types live below `bun_bundler` in
 // the crate graph because `Resolver.caches` is typed by them and the bundler
 // constructs/assigns it (`transpiler.resolver.caches = Set::init()`). The
 // bundler crate re-exports/extends these as `bun_bundler::cache::*`.
@@ -1773,14 +1772,12 @@ pub mod cache {
     use crate::fs::{
         self as fs_mod, ByteOrderMark, read_file_contents, read_file_contents_in_arena,
     };
-    pub use crate::tsconfig_json::JsonCache as Json;
 
     bun_core::declare_scope!(CacheFs, visible);
 
-    /// Bundle of the per-transpiler caches: file cache and JSON cache.
+    /// Bundle of the per-transpiler caches.
     pub struct Set {
         pub fs: Fs,
-        pub json: Json,
     }
 
     impl Set {
@@ -1792,7 +1789,6 @@ pub mod cache {
                     use_alternate_source_cache: false,
                     stream: false,
                 },
-                json: Json::init(),
             }
         }
     }

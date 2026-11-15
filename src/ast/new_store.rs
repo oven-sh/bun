@@ -458,15 +458,6 @@ macro_rules! thread_local_ast_store {
             }
 
             #[inline]
-            pub(crate) fn assert() {
-                if cfg!(debug_assertions) {
-                    if instance().is_null() && memory_allocator().is_null() {
-                        unreachable!("Store must be init'd");
-                    }
-                }
-            }
-
-            #[inline]
             pub fn append<T: $crate::new_store::StoredIn<Backing>>(
                 value: T,
             ) -> $crate::StoreRef<T> {
@@ -475,8 +466,7 @@ macro_rules! thread_local_ast_store {
                     return ma.append(value);
                 }
                 Disabler::assert();
-                // assert() guarantees instance is non-null on this thread; slab
-                // returns stable addresses until reset().
+                // The slab returns stable addresses until reset().
                 $crate::StoreRef::from_non_null(Backing::append(
                     instance_mut().expect(concat!($label, " Store must be init'd")),
                     value,

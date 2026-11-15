@@ -109,7 +109,7 @@ impl Host for DiskWithBuiltinModules {
         fn is_case_sensitive(&self) -> bool;
         fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
         fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
-        fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json>;
+        fn parse_package_json(&self, text: &[u8]) -> Option<Json>;
         fn extended_config(&self, path: &[u8]) -> Option<CachedConfig>;
         fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> CachedConfig);
         fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths>;
@@ -158,8 +158,8 @@ impl Host for DiskWithBuiltinModules {
 
 impl CodeHost for DiskWithBuiltinModules {
     forward_to_disk! {
-        fn parse_runtime_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json>;
-        fn parse_runtime_tsconfig(&self, arena: &Arena, text: &[u8]) -> Option<Json>;
+        fn parse_runtime_package_json(&self, text: &[u8]) -> Option<Json>;
+        fn parse_runtime_tsconfig(&self, text: &[u8]) -> Option<Json>;
     }
 
     fn resolve_code(&self, request: &CodeRequest<'_>) -> HostResolution {

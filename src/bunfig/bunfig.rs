@@ -1287,12 +1287,8 @@ impl Bunfig {
     ) -> crate::Result<()> {
         let log_count = log.errors.get() + log.warnings.get();
 
-        // This previously called `Arena::new()` (= `mi_heap_new` +
-        // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
-        // `bun -e ''` startup to. Borrow the process default heap instead so
-        // TOML/JSON parse allocations route through plain `mi_malloc`.
-        // Parsed config lives for the process lifetime either way.
-        let bump = Bump::borrowing_default();
+        // Avoids `mi_heap_new` at startup.
+        let bump = bun_ast::AstArena::borrowing_default();
 
         let ext = source.path.name().ext;
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
@@ -1351,10 +1347,7 @@ impl Bunfig {
 
     /// Checks whether the file sets `[install.security] scanner` without applying any settings.
     pub(crate) fn has_security_scanner(source: &bun_ast::Source) -> crate::Result<bool> {
-        // The AST store is not reset afterwards, because the caller may be in the middle of
-        // parsing a module whose nodes live in the same store.
-        bun_ast::initialize_store();
-        let bump = Bump::borrowing_default();
+        let bump = bun_ast::AstArena::borrowing_default();
         let file = TOML::parse(source, &bun_ast::Log::init(), &bump, true)?;
         let security = file.get(b"install").and_then(|it| it.get(b"security"));
         Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
@@ -1364,9 +1357,6 @@ impl Bunfig {
     pub(crate) fn parse_install_section(
         source: &bun_ast::Source,
     ) -> crate::Result<Option<Box<api::BunInstall>>> {
-        // The AST store is not reset afterwards, because the caller may be in the middle of
-        // parsing a module whose nodes live in the same store.
-        bun_ast::initialize_store();
         let log = bun_ast::Log::init();
         let mut ctx = ContextData::default();
         let cmd = CommandTag::InstallCommand;

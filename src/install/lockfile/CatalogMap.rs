@@ -1,7 +1,7 @@
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
-use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
+use crate::bun_json::{E, Expr, ExprData, JsonView, value_loc_of_property};
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{Log, Source};
@@ -255,20 +255,20 @@ impl CatalogMap {
         Ok(entry.value_ptr)
     }
 
-    pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    pub(crate) fn parse_count(&mut self, expr: JsonView<'_>, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
-            Self::count_catalog_group(&default_catalog, builder);
+            Self::count_catalog_group(default_catalog, builder);
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
             catalogs.for_each_property(|catalog_name, _, catalog_value| {
                 builder.count(catalog_name);
-                Self::count_catalog_group(&catalog_value, builder);
+                Self::count_catalog_group(catalog_value, builder);
             });
         }
     }
 
-    fn count_catalog_group(group: &Expr, builder: &mut StringBuilder) {
+    fn count_catalog_group(group: JsonView<'_>, builder: &mut StringBuilder) {
         group.for_each_property(|dep_name, _, version| {
             builder.count(dep_name);
             if let Some(version_str) = version.as_utf8_string_literal() {
@@ -282,14 +282,14 @@ impl CatalogMap {
         pm: &mut PackageManager,
         log: &Log,
         source: &Source,
-        expr: Expr,
+        expr: JsonView<'_>,
         builder: &mut StringBuilder,
     ) -> crate::Result<bool> {
         let mut found_any = false;
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            Self::parse_append_group(group, pm, log, source, &default_catalog, builder)?;
+            Self::parse_append_group(group, pm, log, source, default_catalog, builder)?;
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
@@ -297,7 +297,7 @@ impl CatalogMap {
             catalogs.try_for_each_property(|catalog_name_str, _, catalog_value| {
                 let catalog_name = builder.append::<String>(catalog_name_str);
                 let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
-                Self::parse_append_group(group, pm, log, source, &catalog_value, builder)
+                Self::parse_append_group(group, pm, log, source, catalog_value, builder)
             })?;
         }
 
@@ -341,7 +341,7 @@ impl CatalogMap {
         pm: &mut PackageManager,
         log: &Log,
         source: &Source,
-        catalog: &Expr,
+        catalog: JsonView<'_>,
         builder: &mut StringBuilder,
     ) -> Result<(), AllocError> {
         catalog.try_for_each_property(|dep_name_str, key_loc, value| {
@@ -365,7 +365,7 @@ impl CatalogMap {
             ) else {
                 log.add_error(
                     Some(source),
-                    value_loc_of_property(&source.contents, key_loc, &value),
+                    value_loc_of_property(&source.contents, key_loc, value.loc),
                     b"Invalid dependency version",
                 );
                 return Ok(());

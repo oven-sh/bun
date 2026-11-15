@@ -1,6 +1,6 @@
 use crate::expr::{self, Expr};
 use crate::s as S;
-use crate::{DebugOnlyDisabler, StoreRef};
+use crate::{AstArena, DebugOnlyDisabler, StoreRef};
 
 #[derive(Clone, Copy)]
 pub struct Stmt {
@@ -15,13 +15,6 @@ impl Stmt {
     #[inline]
     pub fn data_store_reset() {
         data::Store::reset();
-    }
-
-    /// Initializes the thread-local statement-data `Store` for the current
-    /// thread; counterpart of `data_store_reset()`.
-    #[inline]
-    pub fn data_store_create() {
-        data::Store::create();
     }
 
     pub fn assign(a: Expr, b: Expr) -> Stmt {
@@ -90,7 +83,7 @@ pub trait StatementData: Sized {
     /// Store-append `self` and wrap.
     fn store_alloc(self) -> Data;
     /// Arena-allocate `self` and wrap.
-    fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data;
+    fn arena_alloc(self, bump: &AstArena) -> Data;
 }
 
 impl Stmt {
@@ -110,11 +103,7 @@ impl Stmt {
         }
     }
 
-    fn allocate_data<T: StatementData>(
-        bump: &bun_alloc::Arena,
-        orig_data: T,
-        loc: crate::Loc,
-    ) -> Stmt {
+    fn allocate_data<T: StatementData>(bump: &AstArena, orig_data: T, loc: crate::Loc) -> Stmt {
         Stmt {
             loc,
             data: orig_data.arena_alloc(bump),
@@ -123,7 +112,6 @@ impl Stmt {
 
     #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
-        data::Store::assert();
         Stmt::comptime_alloc(orig_data, loc)
     }
 }
@@ -134,16 +122,11 @@ impl Stmt {
     /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
-    pub fn allocate<T: StatementData>(
-        bump: &bun_alloc::Arena,
-        orig_data: T,
-        loc: crate::Loc,
-    ) -> Stmt {
-        data::Store::assert();
+    pub fn allocate<T: StatementData>(bump: &AstArena, orig_data: T, loc: crate::Loc) -> Stmt {
         Stmt::allocate_data(bump, orig_data, loc)
     }
 
-    pub fn allocate_expr(bump: &bun_alloc::Arena, expr: Expr) -> Stmt {
+    pub fn allocate_expr(bump: &AstArena, expr: Expr) -> Stmt {
         Stmt::allocate(
             bump,
             S::SExpr {
@@ -170,12 +153,8 @@ macro_rules! impl_statement_data {
                     Data::$variant(data::Store::append(self))
                 }
                 #[inline]
-                fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
-                    // `StoreRef::from_bump` is the settled crate-wide arena-ref
-                    // convention (see its docs in nodes.rs); expr.rs
-                    // `arena_alloc` does the same. No separate `&'bump` ref
-                    // type is planned.
-                    Data::$variant(StoreRef::from_bump(bump.alloc(self)))
+                fn arena_alloc(self, bump: &AstArena) -> Data {
+                    Data::$variant(bump.alloc_node(self))
                 }
             }
         )*
@@ -186,7 +165,7 @@ macro_rules! impl_statement_data {
                 #[inline]
                 fn store_alloc(self) -> Data { Data::$ivariant(self) }
                 #[inline]
-                fn arena_alloc(self, _bump: &bun_alloc::Arena) -> Data { Data::$ivariant(self) }
+                fn arena_alloc(self, _bump: &AstArena) -> Data { Data::$ivariant(self) }
             }
         )*
     };

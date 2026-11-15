@@ -191,9 +191,9 @@ pub(crate) fn parse(heap: &JsHeap<'_>, source: &[u8]) -> JsResult<JSValue> {
     let global = unsafe { heap.global() };
     let env = global.bun_vm().transpiler.get().env();
     let source = bun_ast::Source::init_path_string(b"<src>", source);
-    let arena = bun_alloc::Arena::new();
-    let mut parser = Parser::init(&source, env);
-    parser.parse(&arena)?;
+    let arena = bun_ast::AstArena::new();
+    let mut parser = Parser::init(&source, env, &arena);
+    parser.parse()?;
 
     match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
         Ok(v) => Ok(v),

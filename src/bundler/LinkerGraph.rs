@@ -253,11 +253,28 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
+
+    /// The files to copy to the output directory, which `AdditionalFile::OutputFile` refers to.
+    pub(crate) additional_output_files: Vec<crate::options::OutputFile>,
+    /// Source index of the HTML file that each of `Graph::html_imports` stands for.
+    pub(crate) html_source_indices: Vec<u32>,
+}
+
+impl Drop for LinkerGraph<'_> {
+    fn drop(&mut self) {
+        // The slab-only `MultiArrayList::drop` does not drop these.
+        for bits in self.files.items_entry_bits_mut() {
+            if let AutoBitSet::Dynamic(bits) = bits {
+                bits.deinit();
+            }
+        }
+    }
 }
 
 // SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
 // - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
-//   `items_raw()`, and each task writes only the rows of its own file or chunk.
+//   `ast.get()`, and each task writes only the rows of its own file or chunk. The gap:
+//   a file in two `internal_bake_dev` chunks has its import records written by both.
 //   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
 // - The `BitSet`s, which workers only read.
 // - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
@@ -289,6 +306,8 @@ impl<'a> LinkerGraph<'a> {
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
+            additional_output_files: Vec::new(),
+            html_source_indices: Vec::new(),
         }
     }
 }

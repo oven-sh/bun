@@ -63,11 +63,9 @@ fn absolute_directory(directory: &BunString) -> Box<[u8]> {
     } else {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         match bun_sys::getcwd_z(&mut cwd_buf) {
-            Ok(cwd) => bun_paths::resolve_path::join::<bun_paths::resolve_path::platform::Auto>(&[
-                cwd.as_bytes(),
-                &directory,
-            ])
-            .to_vec(),
+            Ok(cwd) => bun_paths::resolve_path::join_string_vec::<
+                bun_paths::resolve_path::platform::Auto,
+            >(&[cwd.as_bytes(), &directory]),
             Err(_) => directory,
         }
     };

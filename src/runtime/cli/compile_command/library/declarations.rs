@@ -1,7 +1,6 @@
 use bun_ast::Loader;
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::{platform_to_posix_in_place, relative_platform};
+use bun_paths::resolve_path::{SpillBuf, platform_to_posix_in_place, relative_spill};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::declaration_imports::name_imported_files;
 
@@ -77,7 +76,8 @@ pub(crate) fn add_declaration_files(
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
-    let relative = relative_platform::<Auto, false>(root_directory, source);
+    let mut buf = SpillBuf::default();
+    let relative = relative_spill(&mut buf, root_directory, source);
     if leaves_its_directory(relative) {
         return None;
     }

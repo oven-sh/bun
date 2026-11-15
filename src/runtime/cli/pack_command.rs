@@ -20,7 +20,7 @@ use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
 use bun_parsers::json as JSON;
-use bun_paths::resolve_path::{self, normalize_buf_z_spill};
+use bun_paths::resolve_path::{self, SpillBuf, normalize_buf_z_spill};
 use bun_paths::{self as path, SEP_STR};
 use bun_sha_hmac::sha;
 use bun_sys::{
@@ -635,7 +635,7 @@ impl Bundle {
 /// The folder that `require(name)` resolves to from `from`, with symlinks resolved, and whether it
 /// is in `from`'s own `node_modules`. The search does not go above `project`.
 fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
-    let mut spill: Vec<u8> = Vec::new();
+    let mut spill = SpillBuf::default();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
     let ancestors = || core::iter::successors(Some(from), |&dir| path::dirname(dir));
     let last = ancestors()
@@ -1234,7 +1234,7 @@ pub(crate) fn bin_kind_without_following_symlinks(
 ) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
     let bin_path = strings::without_trailing_slash(bin_path);
-    let mut spill: Vec<u8> = Vec::new();
+    let mut spill = SpillBuf::default();
     let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
     for end in slashes.chain([bin_path.len()]) {
         // Use the absolute path, because on Windows `lstatat` reports a reparse point as the kind

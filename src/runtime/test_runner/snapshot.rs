@@ -11,13 +11,13 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
 
 use super::bun_test::{BunTest, EntryId, ScopeId, TestScheduleEntry};
-use super::cells::CellExt as _;
 use super::diff_format::DiffFormatter;
 use super::execution::Result as TestResult;
 use super::expect::Expect;
 use super::expect::get_state::full_test_name;
 use super::jest::{File as TestFile, FileId};
 use bun_collections::index_sort;
+use bun_ptr::CellExt as _;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 

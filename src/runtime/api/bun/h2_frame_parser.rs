@@ -1574,6 +1574,11 @@ impl Stream {
             bytes.len(),
             end_stream
         );
+        if self.state.get() == StreamState::CLOSED {
+            // The queue of a closed stream is never flushed.
+            client.dispatch_write_callback(callback);
+            return;
+        }
         let global_this = client.global_this;
         let callback = if callback.is_callable() {
             StrongOptional::create(callback, &global_this)
@@ -4941,14 +4946,11 @@ impl H2FrameParser {
 
             while offset < payload.len() {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
-                let mut max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
+                let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
                     .min(self.remote_window_left())
                     .min(stream.remote_window_left());
-                let mut is_flow_control_limited = false;
-                if max_size == 0 {
-                    is_flow_control_limited = true;
-                    // this will be handled later if cannot send the entire payload in one frame
-                    max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
+                if self.has_backpressure() || self.outbound_queue_size.get() > 0 || max_size == 0 {
+                    break;
                 }
                 let size = (payload.len() - offset).min(max_size);
 
@@ -4956,132 +4958,117 @@ impl H2FrameParser {
                 offset += size;
                 let end_stream = offset >= payload.len() && can_close;
 
-                if self.has_backpressure()
-                    || self.outbound_queue_size.get() > 0
-                    || is_flow_control_limited
-                {
-                    // Preserve wire order: anything already batched goes out before the
-                    // queued remainder is flushed later by the drain path.
-                    self.flush_batch_buffer();
-                    enqueued = true;
-                    // write the full frame in memory and queue the frame
-                    // the callback will only be called after the last frame is sended
-                    stream.queue_data(
-                        self,
-                        slice,
-                        if offset >= payload.len() {
-                            callback
-                        } else {
-                            JSValue::UNDEFINED
-                        },
-                        offset >= payload.len() && close,
-                    );
-                } else {
-                    let padding = stream.get_padding(size, max_size - 1);
-                    let payload_size = size
-                        + if padding != 0 {
-                            padding as usize + 1
-                        } else {
-                            0
-                        };
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "padding: {} size: {} max_size: {} payload_size: {}",
-                        padding,
-                        size,
-                        max_size,
-                        payload_size
-                    );
-                    stream
-                        .remote_used_window_size
-                        .update(|used| used + payload_size as u64);
-                    self.remote_used_window_size
-                        .set(self.remote_used_window_size.get() + payload_size as u64);
-                    self.note_engine_send_consumed(stream_id, payload_size as u64);
-                    let mut flags: u8 = if end_stream {
-                        DataFrameFlags::END_STREAM as u8
+                let padding = stream.get_padding(size, max_size - 1);
+                let payload_size = size
+                    + if padding != 0 {
+                        padding as usize + 1
                     } else {
                         0
                     };
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "padding: {} size: {} max_size: {} payload_size: {}",
+                    padding,
+                    size,
+                    max_size,
+                    payload_size
+                );
+                stream
+                    .remote_used_window_size
+                    .update(|used| used + payload_size as u64);
+                self.remote_used_window_size
+                    .set(self.remote_used_window_size.get() + payload_size as u64);
+                self.note_engine_send_consumed(stream_id, payload_size as u64);
+                let mut flags: u8 = if end_stream {
+                    DataFrameFlags::END_STREAM as u8
+                } else {
+                    0
+                };
+                if padding != 0 {
+                    flags |= DataFrameFlags::PADDED as u8;
+                }
+                let data_header = FrameHeader {
+                    type_: FrameType::HTTP_FRAME_DATA as u8,
+                    flags,
+                    stream_identifier: stream_id,
+                    length: u32::try_from(payload_size).expect("int cast"),
+                };
+                if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
+                    // Single-frame payload: the cork coalesces it with neighbors.
+                    let mut writer = self.to_writer();
+                    let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
                     if padding != 0 {
-                        flags |= DataFrameFlags::PADDED as u8;
-                    }
-                    let data_header = FrameHeader {
-                        type_: FrameType::HTTP_FRAME_DATA as u8,
-                        flags,
-                        stream_identifier: stream_id,
-                        length: u32::try_from(payload_size).expect("int cast"),
-                    };
-                    if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
-                        // Single-frame payload: the cork coalesces it with neighbors.
-                        let mut writer = self.to_writer();
-                        let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
-                        if padding != 0 {
-                            let _ = writer.write_padded(slice, padding);
-                        } else {
-                            let _ = writer.write_all(slice);
-                        }
+                        let _ = writer.write_padded(slice, padding);
                     } else {
-                        // Multi-frame payload: accumulate header + slice in the batch so
-                        // the whole write reaches the socket in one syscall (and, on TLS,
-                        // far fewer SSL_writes) instead of one flush per frame. Plain TCP
-                        // records payload slices by reference and flushes with writev —
-                        // TLS cannot vectorize (SSL_write must consume the bytes to seal
-                        // records), so it keeps the contiguous copy.
-                        let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
-                            && !self.has_backpressure();
-                        BATCH_BUFFER.with_borrow_mut(|batch| {
-                            if batch.is_empty() {
-                                batch.reserve(if vectorize {
-                                    1024
-                                } else {
-                                    payload.len()
-                                        + (payload.len() / MAX_PAYLOAD_SIZE_WITHOUT_FRAME + 2)
-                                            * FrameHeader::BYTE_SIZE
+                        let _ = writer.write_all(slice);
+                    }
+                } else {
+                    // Multi-frame payload: accumulate header + slice in the batch so
+                    // the whole write reaches the socket in one syscall (and, on TLS,
+                    // far fewer SSL_writes) instead of one flush per frame. Plain TCP
+                    // records payload slices by reference and flushes with writev —
+                    // TLS cannot vectorize (SSL_write must consume the bytes to seal
+                    // records), so it keeps the contiguous copy.
+                    let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
+                        && !self.has_backpressure();
+                    BATCH_BUFFER.with_borrow_mut(|batch| {
+                        if batch.is_empty() {
+                            batch.reserve(if vectorize {
+                                1024
+                            } else {
+                                payload.len()
+                                    + (payload.len() / MAX_PAYLOAD_SIZE_WITHOUT_FRAME + 2)
+                                        * FrameHeader::BYTE_SIZE
+                            });
+                            self.drain_cork_into(batch);
+                            if vectorize && !batch.is_empty() {
+                                BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                    segs.push(BatchSegment::Batch {
+                                        off: 0,
+                                        len: batch.len() as u32,
+                                    })
                                 });
-                                self.drain_cork_into(batch);
-                                if vectorize && !batch.is_empty() {
-                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                        segs.push(BatchSegment::Batch {
-                                            off: 0,
-                                            len: batch.len() as u32,
-                                        })
-                                    });
-                                }
                             }
-                            let header_off = batch.len();
-                            let _ = data_header.write(batch, &self.frames_sent_legacy);
-                            if padding != 0 {
-                                batch.push(padding);
-                                batch.extend_from_slice(slice);
-                                batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
-                                if vectorize {
-                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                        segs.push(BatchSegment::Batch {
-                                            off: header_off as u32,
-                                            len: (batch.len() - header_off) as u32,
-                                        })
-                                    });
-                                }
-                            } else if vectorize {
+                        }
+                        let header_off = batch.len();
+                        let _ = data_header.write(batch, &self.frames_sent_legacy);
+                        if padding != 0 {
+                            batch.push(padding);
+                            batch.extend_from_slice(slice);
+                            batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
+                            if vectorize {
                                 BATCH_SEGMENTS.with_borrow_mut(|segs| {
                                     segs.push(BatchSegment::Batch {
                                         off: header_off as u32,
                                         len: (batch.len() - header_off) as u32,
-                                    });
-                                    segs.push(BatchSegment::Ext {
-                                        ptr: slice.as_ptr(),
-                                        len: slice.len() as u32,
-                                    });
+                                    })
                                 });
-                            } else {
-                                batch.extend_from_slice(slice);
                             }
-                        });
-                    }
+                        } else if vectorize {
+                            BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                segs.push(BatchSegment::Batch {
+                                    off: header_off as u32,
+                                    len: (batch.len() - header_off) as u32,
+                                });
+                                segs.push(BatchSegment::Ext {
+                                    ptr: slice.as_ptr(),
+                                    len: slice.len() as u32,
+                                });
+                            });
+                        } else {
+                            batch.extend_from_slice(slice);
+                        }
+                    });
                 }
             }
+            // Preserve wire order: anything already batched goes out before the
+            // queued remainder is flushed later by the drain path.
             self.flush_batch_buffer();
+            if offset < payload.len() {
+                enqueued = true;
+                // the callback will only be called after the last frame is sended
+                stream.queue_data(self, &payload[offset..], callback, close);
+            }
         }
 
         let mut settled_state: u8 = 0;
